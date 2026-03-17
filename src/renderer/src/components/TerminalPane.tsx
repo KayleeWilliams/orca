@@ -149,7 +149,7 @@ export default function TerminalPane({
 }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const resttyRef = useRef<Restty | null>(null)
-  const wasActiveRef = useRef(isActive)
+  const wasActiveRef = useRef(false)
 
   const updateTabTitle = useAppStore((s) => s.updateTabTitle)
   const updateTabPtyId = useAppStore((s) => s.updateTabPtyId)
@@ -162,6 +162,24 @@ export default function TerminalPane({
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+    let resizeRaf: number | null = null
+
+    const queueResizeAll = (focusActive: boolean): void => {
+      if (resizeRaf !== null) cancelAnimationFrame(resizeRaf)
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = null
+        const restty = resttyRef.current
+        if (!restty) return
+        const panes = restty.getPanes()
+        for (const p of panes) {
+          p.app.updateSize(true)
+        }
+        if (focusActive) {
+          const active = restty.getActivePane() ?? panes[0]
+          active?.canvas.focus({ preventScroll: true })
+        }
+      })
+    }
 
     const onTitleChange = (title: string): void => {
       updateTabTitle(tabId, title)
@@ -214,15 +232,21 @@ export default function TerminalPane({
         pane.app.updateSize(true)
         pane.app.connectPty('')
         pane.canvas.focus({ preventScroll: true })
+        queueResizeAll(true)
       },
       onPaneClosed: () => {},
-      onActivePaneChange: () => {}
+      onActivePaneChange: () => {},
+      onLayoutChanged: () => {
+        queueResizeAll(false)
+      }
     })
 
     restty.createInitialPane({ focus: isActive })
     resttyRef.current = restty
+    queueResizeAll(isActive)
 
     return () => {
+      if (resizeRaf !== null) cancelAnimationFrame(resizeRaf)
       restty.destroy()
       resttyRef.current = null
     }
@@ -234,8 +258,8 @@ export default function TerminalPane({
     const restty = resttyRef.current
     if (!restty) return
 
-    if (isActive && !wasActiveRef.current) {
-      // Tab just became active - focus and resize
+    if (isActive) {
+      // Ensure size/focus is correct both on initial mount and tab activation.
       requestAnimationFrame(() => {
         const panes = restty.getPanes()
         for (const p of panes) {
@@ -248,6 +272,23 @@ export default function TerminalPane({
       })
     }
     wasActiveRef.current = isActive
+  }, [isActive])
+
+  // ResizeObserver to keep terminal sized to container
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const ro = new ResizeObserver(() => {
+      const restty = resttyRef.current
+      if (!restty || !isActive) return
+      const panes = restty.getPanes()
+      for (const p of panes) {
+        p.app.updateSize(true)
+      }
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
   }, [isActive])
 
   // Terminal pane shortcuts handled at window capture phase so they remain
@@ -299,8 +340,8 @@ export default function TerminalPane({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0"
-      style={{ display: isActive ? 'block' : 'none' }}
+      className="absolute inset-0 min-h-0 min-w-0"
+      style={{ display: isActive ? 'flex' : 'none' }}
     />
   )
 }

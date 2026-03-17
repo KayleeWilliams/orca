@@ -330,6 +330,12 @@
   position: relative;
 }
 
+/* Ensure Restty pane root fills its absolutely-positioned container */
+.restty-pane-root {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 /* ── Landing ─────────────────────────────────────────── */
 
 .landing {
