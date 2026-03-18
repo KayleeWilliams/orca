@@ -95,14 +95,16 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
       </div>
 
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <button
-            aria-hidden
-            tabIndex={-1}
-            className="pointer-events-none absolute size-px opacity-0"
-            style={{ left: menuPoint.x, top: menuPoint.y }}
-          />
-        </DropdownMenuTrigger>
+        <DropdownMenuTrigger
+          render={
+            <button
+              aria-hidden
+              tabIndex={-1}
+              className="pointer-events-none absolute size-px opacity-0"
+              style={{ left: menuPoint.x, top: menuPoint.y }}
+            />
+          }
+        />
         <DropdownMenuContent className="w-52" sideOffset={0} align="start">
           <DropdownMenuItem onSelect={handleOpenInFinder}>
             <FolderOpen className="size-3.5" />

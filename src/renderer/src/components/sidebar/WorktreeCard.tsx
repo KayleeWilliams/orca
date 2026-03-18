@@ -176,27 +176,30 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
           {/* Line 3: PR */}
           {pr && (
-            <HoverCard openDelay={300}>
-              <HoverCardTrigger asChild>
-                <div className="flex items-center justify-between gap-2 min-w-0 cursor-default">
-                  <div className="flex items-center gap-1 min-w-0">
-                    <span className="text-[10px] text-muted-foreground shrink-0">PR</span>
-                    <span className="text-[10px] text-foreground/80 truncate">{pr.title}</span>
+            <HoverCard>
+              <HoverCardTrigger
+                delay={300}
+                render={
+                  <div className="flex items-center justify-between gap-2 min-w-0 cursor-default">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-[10px] text-muted-foreground shrink-0">PR</span>
+                      <span className="text-[10px] text-foreground/80 truncate">{pr.title}</span>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        'h-3.5 px-1 text-[8px] rounded-sm shrink-0',
+                        pr.state === 'merged' && 'text-purple-400',
+                        pr.state === 'open' && 'text-emerald-400',
+                        pr.state === 'closed' && 'text-neutral-400',
+                        pr.state === 'draft' && 'text-neutral-500'
+                      )}
+                    >
+                      {prStateLabel(pr.state)}
+                    </Badge>
                   </div>
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      'h-3.5 px-1 text-[8px] rounded-sm shrink-0',
-                      pr.state === 'merged' && 'text-purple-400',
-                      pr.state === 'open' && 'text-emerald-400',
-                      pr.state === 'closed' && 'text-neutral-400',
-                      pr.state === 'draft' && 'text-neutral-500'
-                    )}
-                  >
-                    {prStateLabel(pr.state)}
-                  </Badge>
-                </div>
-              </HoverCardTrigger>
+                }
+              />
               <HoverCardContent side="right" align="start" className="w-72 p-3 text-xs space-y-1.5">
                 <div className="font-semibold text-[13px]">
                   #{pr.number} {pr.title}
@@ -221,24 +224,27 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
           {/* Line 4: Issue */}
           {issue && (
-            <HoverCard openDelay={300}>
-              <HoverCardTrigger asChild>
-                <div className="flex items-center justify-between gap-2 min-w-0 cursor-default">
-                  <div className="flex items-center gap-1 min-w-0">
-                    <span className="text-[10px] text-muted-foreground shrink-0">Issue</span>
-                    <span className="text-[10px] text-foreground/80 truncate">{issue.title}</span>
+            <HoverCard>
+              <HoverCardTrigger
+                delay={300}
+                render={
+                  <div className="flex items-center justify-between gap-2 min-w-0 cursor-default">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-[10px] text-muted-foreground shrink-0">Issue</span>
+                      <span className="text-[10px] text-foreground/80 truncate">{issue.title}</span>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        'h-3.5 px-1 text-[8px] rounded-sm shrink-0',
+                        issue.state === 'open' ? 'text-emerald-400' : 'text-neutral-400'
+                      )}
+                    >
+                      {issue.state === 'open' ? 'Open' : 'Closed'}
+                    </Badge>
                   </div>
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      'h-3.5 px-1 text-[8px] rounded-sm shrink-0',
-                      issue.state === 'open' ? 'text-emerald-400' : 'text-neutral-400'
-                    )}
-                  >
-                    {issue.state === 'open' ? 'Open' : 'Closed'}
-                  </Badge>
-                </div>
-              </HoverCardTrigger>
+                }
+              />
               <HoverCardContent side="right" align="start" className="w-72 p-3 text-xs space-y-1.5">
                 <div className="font-semibold text-[13px]">
                   #{issue.number} {issue.title}
@@ -269,12 +275,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
           {/* Line 5: Comment */}
           {worktree.comment && (
-            <HoverCard openDelay={300}>
-              <HoverCardTrigger asChild>
-                <div className="text-[10px] text-muted-foreground truncate cursor-default italic">
-                  {worktree.comment}
-                </div>
-              </HoverCardTrigger>
+            <HoverCard>
+              <HoverCardTrigger
+                delay={300}
+                render={
+                  <div className="text-[10px] text-muted-foreground truncate cursor-default italic">
+                    {worktree.comment}
+                  </div>
+                }
+              />
               <HoverCardContent side="right" align="start" className="w-64 p-3 text-xs">
                 <p className="whitespace-pre-wrap">{worktree.comment}</p>
               </HoverCardContent>

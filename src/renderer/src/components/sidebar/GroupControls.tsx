@@ -18,10 +18,11 @@ const GroupControls = React.memo(function GroupControls() {
   return (
     <div className="flex items-center justify-between px-2 pb-1.5">
       <ToggleGroup
-        type="single"
-        value={groupBy}
-        onValueChange={(v) => {
-          if (v) setGroupBy(v as typeof groupBy)
+        multiple={false}
+        value={[groupBy]}
+        onValueChange={(values) => {
+          const next = values[0]
+          if (next) setGroupBy(next as typeof groupBy)
         }}
         variant="outline"
         size="sm"
@@ -44,7 +45,7 @@ const GroupControls = React.memo(function GroupControls() {
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent position="popper" align="end">
+        <SelectContent align="end" alignItemWithTrigger={false}>
           <SelectItem value="name">Name</SelectItem>
           <SelectItem value="recent">Recent</SelectItem>
           <SelectItem value="repo">Repo</SelectItem>

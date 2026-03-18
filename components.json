@@ -1,6 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "new-york-v4",
+  "style": "base-maia",
   "tailwind": {
     "config": "",
     "css": "src/renderer/src/assets/main.css",
@@ -17,5 +17,7 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
+  "menuColor": "default-translucent",
+  "menuAccent": "subtle",
   "registries": {}
 }

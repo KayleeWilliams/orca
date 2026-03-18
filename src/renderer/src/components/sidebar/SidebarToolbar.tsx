@@ -11,32 +11,33 @@ const SidebarToolbar = React.memo(function SidebarToolbar() {
   return (
     <div className="mt-auto flex items-center justify-between px-2 py-1.5 border-t border-sidebar-border shrink-0">
       <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => addRepo()}
-            className="gap-1.5 text-muted-foreground"
-          >
-            <FolderPlus className="size-3.5" />
-            <span className="text-[11px]">Add Repo</span>
-          </Button>
-        </TooltipTrigger>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => addRepo()}
+              className="gap-1.5 text-muted-foreground"
+            >
+              <FolderPlus className="size-3.5" />
+              <span className="text-[11px]">Add Repo</span>
+            </Button>
+          }
+        />
         <TooltipContent side="top" sideOffset={4}>
           Open folder picker to add a repo
         </TooltipContent>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setActiveView('settings')}
-            className="text-muted-foreground"
-          >
-            <Settings className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
+        <Button
+          render={<TooltipTrigger />}
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => setActiveView('settings')}
+          className="text-muted-foreground"
+        >
+          <Settings className="size-3.5" />
+        </Button>
         <TooltipContent side="top" sideOffset={4}>
           Settings
         </TooltipContent>

@@ -70,7 +70,7 @@ export default function Sidebar(): React.JSX.Element {
   )
 
   return (
-    <TooltipProvider delayDuration={400}>
+    <TooltipProvider delay={400}>
       <div
         className="relative flex-shrink-0 bg-sidebar flex flex-col overflow-hidden transition-[width] duration-200 scrollbar-sleek-parent"
         style={{

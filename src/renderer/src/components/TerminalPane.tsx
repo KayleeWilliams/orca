@@ -584,14 +584,16 @@ export default function TerminalPane({
         }}
       />
       <DropdownMenu open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <button
-            aria-hidden
-            tabIndex={-1}
-            className="pointer-events-none absolute size-px opacity-0"
-            style={{ left: terminalMenuPoint.x, top: terminalMenuPoint.y }}
-          />
-        </DropdownMenuTrigger>
+        <DropdownMenuTrigger
+          render={
+            <button
+              aria-hidden
+              tabIndex={-1}
+              className="pointer-events-none absolute size-px opacity-0"
+              style={{ left: terminalMenuPoint.x, top: terminalMenuPoint.y }}
+            />
+          }
+        />
         <DropdownMenuContent className="w-56" sideOffset={0} align="start">
           <DropdownMenuItem onSelect={() => void handleCopy()}>
             <Copy />

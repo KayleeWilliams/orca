@@ -13,16 +13,15 @@ const SidebarHeader = React.memo(function SidebarHeader() {
         Worktrees
       </span>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => openModal('create-worktree')}
-            aria-label="Add worktree"
-          >
-            <Plus className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
+        <Button
+          render={<TooltipTrigger />}
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => openModal('create-worktree')}
+          aria-label="Add worktree"
+        >
+          <Plus className="size-3.5" />
+        </Button>
         <TooltipContent side="right" sideOffset={6}>
           New worktree
         </TooltipContent>

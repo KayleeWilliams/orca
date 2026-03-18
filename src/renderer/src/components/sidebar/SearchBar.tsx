@@ -47,16 +47,15 @@ const SearchBar = React.memo(function SearchBar() {
             </Button>
           )}
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={handleToggleActive}
-                className={cn('size-5', showActiveOnly && 'bg-accent text-accent-foreground')}
-              >
-                <Activity className="size-3" />
-              </Button>
-            </TooltipTrigger>
+            <Button
+              render={<TooltipTrigger />}
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleToggleActive}
+              className={cn('size-5', showActiveOnly && 'bg-accent text-accent-foreground')}
+            >
+              <Activity className="size-3" />
+            </Button>
             <TooltipContent side="bottom" sideOffset={4}>
               {showActiveOnly ? 'Show all' : 'Active only'}
             </TooltipContent>
@@ -82,7 +81,7 @@ const SearchBar = React.memo(function SearchBar() {
                   )}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent position="popper" align="end">
+              <SelectContent align="end" alignItemWithTrigger={false}>
                 <SelectItem value="__all__">All repos</SelectItem>
                 {repos.map((r) => (
                   <SelectItem key={r.id} value={r.id}>

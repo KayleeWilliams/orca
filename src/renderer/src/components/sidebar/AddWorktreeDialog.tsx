@@ -93,7 +93,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
           {/* Repo selector */}
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-muted-foreground">Repository</label>
-            <Select value={repoId} onValueChange={setRepoId}>
+            <Select value={repoId} onValueChange={(value) => setRepoId(value ?? '')}>
               <SelectTrigger className="h-8 text-xs w-full">
                 <SelectValue placeholder="Select repo...">
                   {selectedRepo ? (
