@@ -469,7 +469,7 @@ export default function TerminalPane({
       root: container,
       createInitialPane: false,
       autoInit: false,
-      shortcuts: { enabled: true },
+      shortcuts: { enabled: false },
       defaultContextMenu: false,
       appOptions: ({ id }) => {
         const onExit = (): void => {
@@ -670,6 +670,15 @@ export default function TerminalPane({
         if (!pane) return
         toggleExpandPane(pane.id)
         return
+      }
+
+      // Cmd+D / Cmd+Shift+D split the active pane in the focused tab only.
+      if (e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        e.stopPropagation()
+        const pane = restty.getActivePane() ?? restty.getPanes()[0]
+        if (!pane) return
+        restty.splitPane(pane.id, e.shiftKey ? 'horizontal' : 'vertical')
       }
     }
 
