@@ -389,6 +389,11 @@ export default function TerminalPane({
   )
   // Track transports per pane for PTY communication
   const paneTransportsRef = useRef<Map<number, PtyTransport>>(new Map())
+  // Buffer PTY data for background (non-visible) terminals to avoid
+  // unnecessary parser/render work. Flushed when the tab becomes active.
+  const pendingWritesRef = useRef<Map<number, string>>(new Map())
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const [terminalMenuPoint, setTerminalMenuPoint] = useState({ x: 0, y: 0 })
   const [expandedPaneId, setExpandedPaneId] = useState<number | null>(null)
@@ -637,18 +642,39 @@ export default function TerminalPane({
       transport.resize(cols, rows)
     })
 
-    // Connect PTY and wire PTY → terminal
-    const cols = pane.terminal.cols
-    const rows = pane.terminal.rows
-    transport.connect({
-      url: '',
-      cols,
-      rows,
-      callbacks: {
-        onData: (data) => {
-          pane.terminal.write(data)
-        }
+    // Defer PTY spawn to next frame so FitAddon has time to calculate
+    // the correct terminal dimensions from the laid-out container. Without
+    // this, the PTY is spawned with the default 80×24 and never resized
+    // to fill the actual container.
+    pendingWritesRef.current.set(pane.id, '')
+    requestAnimationFrame(() => {
+      // Fit first so cols/rows reflect the real container size
+      try {
+        pane.fitAddon.fit()
+      } catch {
+        /* ignore */
       }
+      const cols = pane.terminal.cols
+      const rows = pane.terminal.rows
+      transport.connect({
+        url: '',
+        cols,
+        rows,
+        callbacks: {
+          onData: (data) => {
+            if (isActiveRef.current) {
+              // Visible — write immediately for responsive output
+              pane.terminal.write(data)
+            } else {
+              // Hidden — buffer data to avoid unnecessary render work.
+              // The buffer is flushed in one write() call when the tab
+              // becomes visible, which is much cheaper than N small writes.
+              const pending = pendingWritesRef.current
+              pending.set(pane.id, (pending.get(pane.id) ?? '') + data)
+            }
+          }
+        }
+      })
     })
   }
 
@@ -697,6 +723,7 @@ export default function TerminalPane({
           paneTransportsRef.current.delete(paneId)
         }
         paneFontSizesRef.current.delete(paneId)
+        pendingWritesRef.current.delete(paneId)
       },
       onActivePaneChange: () => {
         if (shouldPersistLayout) persistLayoutSnapshot()
@@ -712,9 +739,15 @@ export default function TerminalPane({
         return {
           fontSize: currentSettings?.terminalFontSize ?? 14,
           fontFamily: buildFontFamily(currentSettings?.terminalFontFamily ?? 'SF Mono'),
-          scrollback: Math.max(
-            1000,
-            Math.round((currentSettings?.terminalScrollbackBytes ?? 10_000_000) / 100)
+          // Convert byte budget to line count. ~200 bytes/line is a reasonable
+          // average for typical terminal output (columns × ~2 bytes + overhead).
+          // Default 10MB → ~50K lines; cap at 50K to keep memory reasonable.
+          scrollback: Math.min(
+            50_000,
+            Math.max(
+              1000,
+              Math.round((currentSettings?.terminalScrollbackBytes ?? 10_000_000) / 200)
+            )
           ),
           cursorStyle: currentSettings?.terminalCursorStyle ?? 'bar',
           cursorBlink: currentSettings?.terminalCursorBlink ?? true
@@ -760,6 +793,7 @@ export default function TerminalPane({
         transport.destroy?.()
       }
       paneTransportsRef.current.clear()
+      pendingWritesRef.current.clear()
       manager.destroy()
       managerRef.current = null
       setTabPaneExpanded(tabId, false)
@@ -821,12 +855,24 @@ export default function TerminalPane({
     })
   }, [isActive])
 
-  // Handle focus and resize when tab becomes active
+  // Handle focus, resize, and WebGL suspend/resume when tab becomes active/inactive
   useEffect(() => {
     const manager = managerRef.current
     if (!manager) return
 
     if (isActive) {
+      // Resume GPU rendering — recreate WebGL addons that were disposed
+      manager.resumeRendering()
+
+      // Flush any buffered PTY data that arrived while hidden
+      for (const [paneId, buf] of pendingWritesRef.current.entries()) {
+        if (buf.length > 0) {
+          const pane = manager.getPanes().find((p) => p.id === paneId)
+          if (pane) pane.terminal.write(buf)
+          pendingWritesRef.current.set(paneId, '')
+        }
+      }
+
       // Ensure size/focus is correct both on initial mount and tab activation.
       requestAnimationFrame(() => {
         const panes = manager.getPanes()
@@ -842,6 +888,9 @@ export default function TerminalPane({
           active.terminal.focus()
         }
       })
+    } else if (wasActiveRef.current) {
+      // Went from active → inactive: free GPU contexts
+      manager.suspendRendering()
     }
     wasActiveRef.current = isActive
   }, [isActive])

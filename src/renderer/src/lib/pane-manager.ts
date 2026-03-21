@@ -72,6 +72,13 @@ export class PaneManager {
   createInitialPane(opts?: { focus?: boolean }): ManagedPane {
     const pane = this.createPaneInternal()
 
+    // When the pane is the sole child of root (no splits), it must
+    // fill the root container so FitAddon calculates correct dimensions.
+    pane.container.style.width = '100%'
+    pane.container.style.height = '100%'
+    pane.container.style.position = 'relative'
+    pane.container.style.overflow = 'hidden'
+
     // Place directly into root
     this.root.appendChild(pane.container)
 
@@ -198,16 +205,14 @@ export class PaneManager {
         const grandparent = parent.parentElement
         if (grandparent) {
           if (grandparent === this.root) {
-            // Going back to root level — remove flex styles so it fills naturally
+            // Going back to root level — fill the root container
             sibling.style.flex = ''
             sibling.style.minWidth = ''
             sibling.style.minHeight = ''
-            sibling.style.position = ''
-            sibling.style.overflow = ''
-            if (sibling.classList.contains('pane-split')) {
-              sibling.style.width = '100%'
-              sibling.style.height = '100%'
-            }
+            sibling.style.width = '100%'
+            sibling.style.height = '100%'
+            sibling.style.position = 'relative'
+            sibling.style.overflow = 'hidden'
           } else if (grandparent.classList.contains('pane-split')) {
             // Going into another split — inherit the flex slot from the
             // split container we're removing
@@ -281,6 +286,36 @@ export class PaneManager {
     this.applyPaneOpacity()
     this.applyDividerStyles()
     this.applyRootBackground()
+  }
+
+  /**
+   * Suspend GPU rendering for all panes. Disposes WebGL addons to free
+   * GPU contexts while keeping Terminal instances alive (scrollback, cursor,
+   * screen buffer all preserved). Call when this tab/worktree becomes hidden.
+   */
+  suspendRendering(): void {
+    for (const pane of this.panes.values()) {
+      if (pane.webglAddon) {
+        try {
+          pane.webglAddon.dispose()
+        } catch {
+          /* ignore */
+        }
+        pane.webglAddon = null
+      }
+    }
+  }
+
+  /**
+   * Resume GPU rendering for all panes. Recreates WebGL addons. Call when
+   * this tab/worktree becomes visible again. Must be followed by a fit() pass.
+   */
+  resumeRendering(): void {
+    for (const pane of this.panes.values()) {
+      if (!pane.webglAddon) {
+        this.attachWebgl(pane)
+      }
+    }
   }
 
   destroy(): void {
@@ -374,24 +409,28 @@ export class PaneManager {
     // Activate unicode 11
     terminal.unicode.activeVersion = '11'
 
-    // Try WebGL, fall back to canvas
+    // Attach GPU renderer
+    this.attachWebgl(pane)
+
+    // Initial fit (deferred to ensure layout has settled)
+    requestAnimationFrame(() => {
+      this.safeFit(pane)
+    })
+  }
+
+  private attachWebgl(pane: ManagedPaneInternal): void {
     try {
       const webglAddon = new WebglAddon()
       webglAddon.onContextLoss(() => {
         webglAddon.dispose()
         pane.webglAddon = null
       })
-      terminal.loadAddon(webglAddon)
+      pane.terminal.loadAddon(webglAddon)
       pane.webglAddon = webglAddon
     } catch {
-      // WebGL not available — default canvas renderer is fine
+      // WebGL not available — default DOM renderer is fine
       pane.webglAddon = null
     }
-
-    // Initial fit (deferred to ensure layout has settled)
-    requestAnimationFrame(() => {
-      this.safeFit(pane)
-    })
   }
 
   private safeFit(pane: ManagedPaneInternal): void {
