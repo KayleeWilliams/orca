@@ -278,6 +278,7 @@ function App(): React.JSX.Element {
       <Toaster
         theme="system"
         position="bottom-right"
+        closeButton
         toastOptions={{ className: 'font-sans text-sm' }}
       />
     </div>

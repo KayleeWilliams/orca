@@ -31,6 +31,8 @@ export interface UISlice {
   hydratePersistedUI: (ui: PersistedUIState) => void
   updateStatus: UpdateStatus
   setUpdateStatus: (status: UpdateStatus) => void
+  dismissedUpdateVersion: string | null
+  dismissUpdate: () => void
 }
 
 export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => ({
@@ -78,5 +80,11 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
     }),
 
   updateStatus: { state: 'idle' },
-  setUpdateStatus: (status) => set({ updateStatus: status })
+  setUpdateStatus: (status) => set({ updateStatus: status }),
+  dismissedUpdateVersion: null,
+  dismissUpdate: () =>
+    set((s) => ({
+      dismissedUpdateVersion:
+        'version' in s.updateStatus ? s.updateStatus.version ?? null : null
+    }))
 })

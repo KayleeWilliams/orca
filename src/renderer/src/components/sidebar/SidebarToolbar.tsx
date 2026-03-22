@@ -1,5 +1,5 @@
 import React from 'react'
-import { Download, FolderPlus, Settings } from 'lucide-react'
+import { Download, FolderPlus, Settings, X } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -8,30 +8,46 @@ const SidebarToolbar = React.memo(function SidebarToolbar() {
   const addRepo = useAppStore((s) => s.addRepo)
   const setActiveView = useAppStore((s) => s.setActiveView)
   const updateStatus = useAppStore((s) => s.updateStatus)
+  const dismissedUpdateVersion = useAppStore((s) => s.dismissedUpdateVersion)
+  const dismissUpdate = useAppStore((s) => s.dismissUpdate)
 
+  const updateVersion = 'version' in updateStatus ? updateStatus.version : null
   const showUpdateBanner =
-    updateStatus.state === 'downloaded' || updateStatus.state === 'available'
+    (updateStatus.state === 'downloaded' || updateStatus.state === 'available') &&
+    updateVersion !== dismissedUpdateVersion
 
   return (
     <div className="mt-auto shrink-0">
       {showUpdateBanner && (
-        <button
-          onClick={() =>
-            updateStatus.state === 'downloaded'
-              ? window.api.updater.quitAndInstall()
-              : undefined
-          }
-          className="flex items-center gap-1.5 w-full px-2 py-1.5 text-[11px] font-medium text-primary bg-primary/10 hover:bg-primary/15 transition-colors cursor-pointer border-t border-sidebar-border"
-        >
-          <Download className="size-3.5 shrink-0" />
-          {updateStatus.state === 'downloaded' ? (
-            <span>Restart now (update)</span>
-          ) : (
-            <span>
-              Downloading <span className="font-semibold">v{updateStatus.version}</span>…
-            </span>
-          )}
-        </button>
+        <div className="flex items-center border-t border-sidebar-border bg-primary/10">
+          <button
+            onClick={() =>
+              updateStatus.state === 'downloaded'
+                ? window.api.updater.quitAndInstall()
+                : undefined
+            }
+            className="flex items-center gap-1.5 flex-1 min-w-0 px-2 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/15 transition-colors cursor-pointer"
+          >
+            <Download className="size-3.5 shrink-0" />
+            {updateStatus.state === 'downloaded' ? (
+              <span>Restart now (update)</span>
+            ) : (
+              <span>
+                Downloading <span className="font-semibold">v{updateStatus.version}</span>…
+              </span>
+            )}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              dismissUpdate()
+            }}
+            className="shrink-0 p-1 mr-1 rounded text-primary/60 hover:text-primary hover:bg-primary/15 transition-colors"
+            title="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
       )}
       <div className="flex items-center justify-between px-2 py-1.5 border-t border-sidebar-border">
         <Tooltip>
