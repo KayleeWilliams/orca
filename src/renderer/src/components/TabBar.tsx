@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -305,7 +305,7 @@ interface TabBarProps {
   onTogglePaneExpand: (tabId: string) => void
 }
 
-export default function TabBar({
+export default React.memo(function TabBar({
   tabs,
   activeTabId,
   worktreeId,
@@ -377,4 +377,4 @@ export default function TabBar({
       </button>
     </div>
   )
-}
+})

@@ -1,13 +1,12 @@
-import { useEffect, useCallback, useRef } from 'react'
+import React, { useEffect, useCallback, useRef, useState } from 'react'
 import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { useAppStore } from '../store'
 import TabBar from './TabBar'
 import TerminalPane from './TerminalPane'
 
-export default function Terminal(): React.JSX.Element | null {
+export default React.memo(function Terminal(): React.JSX.Element | null {
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const activeView = useAppStore((s) => s.activeView)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
   const createTab = useAppStore((s) => s.createTab)
@@ -22,7 +21,6 @@ export default function Terminal(): React.JSX.Element | null {
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
 
   const tabs = activeWorktreeId ? (tabsByWorktree[activeWorktreeId] ?? []) : []
-  const allWorktrees = Object.values(worktreesByRepo).flat()
   const prevTabCountRef = useRef(tabs.length)
 
   // Ensure activeTabId is valid (adjusting state during render)
@@ -33,10 +31,24 @@ export default function Terminal(): React.JSX.Element | null {
   // Track which worktrees have been activated during this app session.
   // Only mount TerminalPanes for visited worktrees to prevent mass PTY
   // spawning when restoring a session with many saved worktree tabs.
+  // Uses state (not just a ref) so adding a new worktree triggers a re-render,
+  // but avoids subscribing to worktreesByRepo which changes on ANY worktree update.
+  const [mountedWorktrees, setMountedWorktrees] = useState<Array<{ id: string; path: string }>>([])
   const mountedWorktreeIdsRef = useRef(new Set<string>())
-  if (activeWorktreeId) {
+
+  // When a new worktree is activated, add it to the mounted list.
+  // Uses the same "set state during render" pattern as the activeTabId
+  // correction above — React handles this synchronously without an extra commit.
+  if (activeWorktreeId && !mountedWorktreeIdsRef.current.has(activeWorktreeId)) {
     mountedWorktreeIdsRef.current.add(activeWorktreeId)
+    const state = useAppStore.getState()
+    const all = Object.values(state.worktreesByRepo).flat()
+    const wt = all.find((w) => w.id === activeWorktreeId)
+    if (wt) {
+      setMountedWorktrees((prev) => [...prev, { id: wt.id, path: wt.path }])
+    }
   }
+
   const tabBarRef = useRef<HTMLDivElement>(null)
   const initialTabCreationGuardRef = useRef<string | null>(null)
 
@@ -110,6 +122,21 @@ export default function Terminal(): React.JSX.Element | null {
     },
     [consumeSuppressedPtyExit, handleCloseTab]
   )
+
+  // Stable per-tab onPtyExit handlers so TerminalPane React.memo is effective.
+  // Each handler is created once per tab and calls the latest handlePtyExit via ref.
+  const handlePtyExitRef = useRef(handlePtyExit)
+  handlePtyExitRef.current = handlePtyExit
+  const ptyExitHandlersRef = useRef(new Map<string, (ptyId: string) => void>())
+
+  function getStablePtyExitHandler(tabId: string): (ptyId: string) => void {
+    let handler = ptyExitHandlersRef.current.get(tabId)
+    if (!handler) {
+      handler = (ptyId: string) => handlePtyExitRef.current(tabId, ptyId)
+      ptyExitHandlersRef.current.set(tabId, handler)
+    }
+    return handler
+  }
 
   const handleCloseOthers = useCallback(
     (tabId: string) => {
@@ -224,32 +251,30 @@ export default function Terminal(): React.JSX.Element | null {
 
       {/* Terminal panes container */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
-        {allWorktrees
-          .filter((wt) => mountedWorktreeIdsRef.current.has(wt.id))
-          .map((worktree) => {
-            const worktreeTabs = tabsByWorktree[worktree.id] ?? []
-            const isVisible = activeView !== 'settings' && worktree.id === activeWorktreeId
+        {mountedWorktrees.map(({ id: wtId, path: wtPath }) => {
+          const worktreeTabs = tabsByWorktree[wtId] ?? []
+          const isVisible = activeView !== 'settings' && wtId === activeWorktreeId
 
-            return (
-              <div
-                key={worktree.id}
-                className={isVisible ? 'absolute inset-0' : 'absolute inset-0 hidden'}
-                aria-hidden={!isVisible}
-              >
-                {worktreeTabs.map((tab) => (
-                  <TerminalPane
-                    key={tab.id}
-                    tabId={tab.id}
-                    worktreeId={worktree.id}
-                    cwd={worktree.path}
-                    isActive={isVisible && tab.id === activeTabId}
-                    onPtyExit={(ptyId) => handlePtyExit(tab.id, ptyId)}
-                  />
-                ))}
-              </div>
-            )
-          })}
+          return (
+            <div
+              key={wtId}
+              className={isVisible ? 'absolute inset-0' : 'absolute inset-0 hidden'}
+              aria-hidden={!isVisible}
+            >
+              {worktreeTabs.map((tab) => (
+                <TerminalPane
+                  key={tab.id}
+                  tabId={tab.id}
+                  worktreeId={wtId}
+                  cwd={wtPath}
+                  isActive={isVisible && tab.id === activeTabId}
+                  onPtyExit={getStablePtyExitHandler(tab.id)}
+                />
+              ))}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
-}
+})

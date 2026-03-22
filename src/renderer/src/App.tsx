@@ -5,39 +5,40 @@ import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { useAppStore } from './store'
 import { useIpcEvents } from './hooks/useIpcEvents'
+import { useSessionPersistence } from './hooks/useSessionPersistence'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import Landing from './components/Landing'
 import Settings from './components/Settings'
 
 function App(): React.JSX.Element {
+  // ── Store subscriptions needed for rendering ──────────────────
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
   const activeView = useAppStore((s) => s.activeView)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const activeRepoId = useAppStore((s) => s.activeRepoId)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
   const expandedPaneByTabId = useAppStore((s) => s.expandedPaneByTabId)
   const canExpandPaneByTabId = useAppStore((s) => s.canExpandPaneByTabId)
-  const terminalLayoutsByTabId = useAppStore((s) => s.terminalLayoutsByTabId)
-  const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
+  const openModal = useAppStore((s) => s.openModal)
+  const repos = useAppStore((s) => s.repos)
+  const settings = useAppStore((s) => s.settings)
+
+  // ── Store subscriptions for one-time init only ────────────────
   const fetchRepos = useAppStore((s) => s.fetchRepos)
   const fetchAllWorktrees = useAppStore((s) => s.fetchAllWorktrees)
   const fetchSettings = useAppStore((s) => s.fetchSettings)
   const initGitHubCache = useAppStore((s) => s.initGitHubCache)
   const hydrateWorkspaceSession = useAppStore((s) => s.hydrateWorkspaceSession)
   const hydratePersistedUI = useAppStore((s) => s.hydratePersistedUI)
-  const openModal = useAppStore((s) => s.openModal)
-  const repos = useAppStore((s) => s.repos)
-  const sidebarWidth = useAppStore((s) => s.sidebarWidth)
-  const groupBy = useAppStore((s) => s.groupBy)
-  const sortBy = useAppStore((s) => s.sortBy)
-  const persistedUIReady = useAppStore((s) => s.persistedUIReady)
 
   // Subscribe to IPC push events
   useIpcEvents()
 
-  const settings = useAppStore((s) => s.settings)
+  // Session & UI persistence extracted to a dedicated hook so that changes
+  // to persisted values (sidebarWidth, activeTabId, etc.) trigger IPC calls
+  // WITHOUT re-rendering the entire App component tree.
+  useSessionPersistence()
 
   // Fetch initial data + hydrate GitHub cache from disk
   useEffect(() => {
@@ -89,43 +90,6 @@ function App(): React.JSX.Element {
     hydratePersistedUI,
     hydrateWorkspaceSession
   ])
-
-  useEffect(() => {
-    if (!workspaceSessionReady) return
-
-    const timer = window.setTimeout(() => {
-      void window.api.session.set({
-        activeRepoId,
-        activeWorktreeId,
-        activeTabId,
-        tabsByWorktree,
-        terminalLayoutsByTabId
-      })
-    }, 150)
-
-    return () => window.clearTimeout(timer)
-  }, [
-    workspaceSessionReady,
-    activeRepoId,
-    activeWorktreeId,
-    activeTabId,
-    tabsByWorktree,
-    terminalLayoutsByTabId
-  ])
-
-  useEffect(() => {
-    if (!persistedUIReady) return
-
-    const timer = window.setTimeout(() => {
-      void window.api.ui.set({
-        sidebarWidth,
-        groupBy,
-        sortBy
-      })
-    }, 150)
-
-    return () => window.clearTimeout(timer)
-  }, [persistedUIReady, sidebarWidth, groupBy, sortBy])
 
   // Apply theme to document
   useEffect(() => {

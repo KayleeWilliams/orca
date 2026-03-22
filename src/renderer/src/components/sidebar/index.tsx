@@ -29,13 +29,18 @@ export default function Sidebar(): React.JSX.Element {
   }, [repoCount, fetchAllWorktrees])
 
   // ─── Resize logic ────────────────────────────────────
-  const isResizing = useRef(false)
+  // Listeners are attached to document ONLY while dragging (on pointerdown),
+  // and removed on pointerup. Previously they were always active via useEffect.
   const startX = useRef(0)
   const startWidth = useRef(0)
 
-  const handleMouseMove = useCallback(
+  // Use refs for the handlers so they're stable across the drag lifecycle.
+  // This avoids stale closure issues since the refs always point to the latest callbacks.
+  const handleMouseMoveRef = useRef<(e: MouseEvent) => void>(() => {})
+  const handleMouseUpRef = useRef<() => void>(() => {})
+
+  handleMouseMoveRef.current = useCallback(
     (e: MouseEvent) => {
-      if (!isResizing.current) return
       const delta = e.clientX - startX.current
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
       setSidebarWidth(next)
@@ -43,32 +48,37 @@ export default function Sidebar(): React.JSX.Element {
     [setSidebarWidth]
   )
 
-  const handleMouseUp = useCallback(() => {
-    isResizing.current = false
+  handleMouseUpRef.current = useCallback(() => {
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', stableMouseMove)
+    document.removeEventListener('mouseup', stableMouseUp)
   }, [])
 
-  useEffect(() => {
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [handleMouseMove, handleMouseUp])
+  // Stable function references that delegate to the refs
+  const stableMouseMove = useCallback((e: MouseEvent) => handleMouseMoveRef.current(e), [])
+  const stableMouseUp = useCallback(() => handleMouseUpRef.current(), [])
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
-      isResizing.current = true
       startX.current = e.clientX
       startWidth.current = sidebarWidth
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', stableMouseMove)
+      document.addEventListener('mouseup', stableMouseUp)
     },
-    [sidebarWidth]
+    [sidebarWidth, stableMouseMove, stableMouseUp]
   )
+
+  // Clean up listeners if component unmounts mid-drag
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', stableMouseMove)
+      document.removeEventListener('mouseup', stableMouseUp)
+    }
+  }, [stableMouseMove, stableMouseUp])
 
   return (
     <TooltipProvider delayDuration={400}>

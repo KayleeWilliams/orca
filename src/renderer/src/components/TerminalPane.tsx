@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, memo } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties } from 'react'
 import type { ITheme } from '@xterm/xterm'
@@ -372,7 +372,7 @@ interface TerminalPaneProps {
   onPtyExit: (ptyId: string) => void
 }
 
-export default function TerminalPane({
+export default memo(function TerminalPane({
   tabId,
   worktreeId,
   cwd,
@@ -945,153 +945,133 @@ export default function TerminalPane({
 
   // Terminal pane shortcuts handled at window capture phase so they remain
   // reliable even when focus is inside the canvas/IME internals.
+  // All keyboard shortcuts consolidated into a single listener to reduce
+  // event handler overhead (previously 4 separate listeners).
   useEffect(() => {
     if (!isActive) return
 
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.repeat) return
-      if (!e.metaKey || e.altKey || e.ctrlKey) return
-
       const manager = managerRef.current
       if (!manager) return
 
-      // Cmd+F opens search
-      if (!e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault()
-        e.stopPropagation()
-        setSearchOpen((prev) => !prev)
-        return
+      // ── Cmd+* shortcuts (no repeat) ──────────────────────────────
+      if (e.metaKey && !e.repeat && !e.altKey && !e.ctrlKey) {
+        // Cmd+F opens search
+        if (!e.shiftKey && e.key.toLowerCase() === 'f') {
+          e.preventDefault()
+          e.stopPropagation()
+          setSearchOpen((prev) => !prev)
+          return
+        }
+
+        // Cmd+K clears active pane screen + scrollback.
+        if (!e.shiftKey && e.key.toLowerCase() === 'k') {
+          e.preventDefault()
+          e.stopPropagation()
+          const pane = manager.getActivePane() ?? manager.getPanes()[0]
+          if (pane) {
+            pane.terminal.clear()
+          }
+          return
+        }
+
+        // Cmd+[ / Cmd+] cycles active split pane focus.
+        if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
+          const panes = manager.getPanes()
+          if (panes.length < 2) return
+          e.preventDefault()
+          e.stopPropagation()
+
+          // Collapse expanded pane before switching
+          if (expandedPaneIdRef.current !== null) {
+            setExpandedPane(null)
+            restoreExpandedLayout()
+            refreshPaneSizes(true)
+            persistLayoutSnapshot()
+          }
+
+          const activeId = manager.getActivePane()?.id ?? panes[0].id
+          const currentIdx = panes.findIndex((p) => p.id === activeId)
+          if (currentIdx === -1) return
+
+          const dir = e.code === 'BracketRight' ? 1 : -1
+          const nextPane = panes[(currentIdx + dir + panes.length) % panes.length]
+          manager.setActivePane(nextPane.id, { focus: true })
+          return
+        }
+
+        // Cmd+Shift+Enter expands/collapses the active pane to full terminal area.
+        if (e.shiftKey && e.key === 'Enter' && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+          const panes = manager.getPanes()
+          if (panes.length < 2) return
+          e.preventDefault()
+          e.stopPropagation()
+          const pane = manager.getActivePane() ?? panes[0]
+          if (!pane) return
+          toggleExpandPane(pane.id)
+          return
+        }
+
+        // Cmd+W closes only the active split pane and prevents the tab-level
+        // handler from closing the entire terminal tab.
+        if (!e.shiftKey && e.key.toLowerCase() === 'w') {
+          const panes = manager.getPanes()
+          if (panes.length < 2) return
+          e.preventDefault()
+          e.stopPropagation()
+          const pane = manager.getActivePane() ?? panes[0]
+          if (!pane) return
+          manager.closePane(pane.id)
+          return
+        }
+
+        // Cmd+D / Cmd+Shift+D split the active pane in the focused tab only.
+        if (e.key.toLowerCase() === 'd') {
+          e.preventDefault()
+          e.stopPropagation()
+          const pane = manager.getActivePane() ?? manager.getPanes()[0]
+          if (!pane) return
+          manager.splitPane(pane.id, e.shiftKey ? 'horizontal' : 'vertical')
+          return
+        }
       }
 
-      // Cmd+K clears active pane screen + scrollback.
-      if (!e.shiftKey && e.key.toLowerCase() === 'k') {
+      // ── Ctrl+Backspace → send \x17 (backward-kill-word) to PTY ──
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === 'Backspace') {
         e.preventDefault()
         e.stopPropagation()
         const pane = manager.getActivePane() ?? manager.getPanes()[0]
-        if (pane) {
-          pane.terminal.clear()
-        }
-        return
-      }
-
-      // Cmd+[ / Cmd+] cycles active split pane focus.
-      if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
-        const panes = manager.getPanes()
-        if (panes.length < 2) return
-        e.preventDefault()
-        e.stopPropagation()
-
-        // Collapse expanded pane before switching
-        if (expandedPaneIdRef.current !== null) {
-          setExpandedPane(null)
-          restoreExpandedLayout()
-          refreshPaneSizes(true)
-          persistLayoutSnapshot()
-        }
-
-        const activeId = manager.getActivePane()?.id ?? panes[0].id
-        const currentIdx = panes.findIndex((p) => p.id === activeId)
-        if (currentIdx === -1) return
-
-        const dir = e.code === 'BracketRight' ? 1 : -1
-        const nextPane = panes[(currentIdx + dir + panes.length) % panes.length]
-        manager.setActivePane(nextPane.id, { focus: true })
-        return
-      }
-
-      // Cmd+Shift+Enter expands/collapses the active pane to full terminal area.
-      if (e.shiftKey && e.key === 'Enter' && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
-        const panes = manager.getPanes()
-        if (panes.length < 2) return
-        e.preventDefault()
-        e.stopPropagation()
-        const pane = manager.getActivePane() ?? panes[0]
         if (!pane) return
-        toggleExpandPane(pane.id)
+        const transport = paneTransportsRef.current.get(pane.id)
+        transport?.sendInput('\x17')
         return
       }
 
-      // Cmd+W closes only the active split pane and prevents the tab-level
-      // handler from closing the entire terminal tab.
-      if (!e.shiftKey && e.key.toLowerCase() === 'w') {
-        const panes = manager.getPanes()
-        if (panes.length < 2) return
-        e.preventDefault()
-        e.stopPropagation()
-        const pane = manager.getActivePane() ?? panes[0]
-        if (!pane) return
-        manager.closePane(pane.id)
-        return
-      }
-
-      // Cmd+D / Cmd+Shift+D split the active pane in the focused tab only.
-      if (e.key.toLowerCase() === 'd') {
+      // ── Alt+Backspace → send ESC + DEL (\x1b\x7f) to PTY ───────
+      if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'Backspace') {
         e.preventDefault()
         e.stopPropagation()
         const pane = manager.getActivePane() ?? manager.getPanes()[0]
         if (!pane) return
-        manager.splitPane(pane.id, e.shiftKey ? 'horizontal' : 'vertical')
+        const transport = paneTransportsRef.current.get(pane.id)
+        transport?.sendInput('\x1b\x7f')
+        return
       }
-    }
 
-    // Ctrl+Backspace → send \x17 (backward-kill-word) to PTY.
-    const onCtrlBackspace = (e: KeyboardEvent): void => {
-      if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
-      if (e.key !== 'Backspace') return
-
-      const manager = managerRef.current
-      if (!manager) return
-
-      e.preventDefault()
-      e.stopPropagation()
-      const pane = manager.getActivePane() ?? manager.getPanes()[0]
-      if (!pane) return
-      const transport = paneTransportsRef.current.get(pane.id)
-      transport?.sendInput('\x17')
-    }
-
-    // Alt+Backspace → send ESC + DEL (\x1b\x7f, backward-kill-word) to PTY.
-    const onAltBackspace = (e: KeyboardEvent): void => {
-      if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return
-      if (e.key !== 'Backspace') return
-
-      const manager = managerRef.current
-      if (!manager) return
-
-      e.preventDefault()
-      e.stopPropagation()
-      const pane = manager.getActivePane() ?? manager.getPanes()[0]
-      if (!pane) return
-      const transport = paneTransportsRef.current.get(pane.id)
-      transport?.sendInput('\x1b\x7f')
-    }
-
-    // Shift+Enter → insert a literal newline into the shell command line.
-    const onShiftEnter = (e: KeyboardEvent): void => {
-      if (!e.shiftKey || e.metaKey || e.altKey || e.ctrlKey) return
-      if (e.key !== 'Enter') return
-
-      const manager = managerRef.current
-      if (!manager) return
-
-      e.preventDefault()
-      e.stopPropagation()
-      const pane = manager.getActivePane() ?? manager.getPanes()[0]
-      if (!pane) return
-      const transport = paneTransportsRef.current.get(pane.id)
-      transport?.sendInput('\x16\x0a')
+      // ── Shift+Enter → literal newline into shell command line ────
+      if (e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault()
+        e.stopPropagation()
+        const pane = manager.getActivePane() ?? manager.getPanes()[0]
+        if (!pane) return
+        const transport = paneTransportsRef.current.get(pane.id)
+        transport?.sendInput('\x16\x0a')
+        return
+      }
     }
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
-    window.addEventListener('keydown', onCtrlBackspace, { capture: true })
-    window.addEventListener('keydown', onAltBackspace, { capture: true })
-    window.addEventListener('keydown', onShiftEnter, { capture: true })
-    return () => {
-      window.removeEventListener('keydown', onKeyDown, { capture: true })
-      window.removeEventListener('keydown', onCtrlBackspace, { capture: true })
-      window.removeEventListener('keydown', onAltBackspace, { capture: true })
-      window.removeEventListener('keydown', onShiftEnter, { capture: true })
-    }
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
   }, [isActive])
 
   const resolveMenuPane = () => {
@@ -1316,4 +1296,4 @@ export default function TerminalPane({
       </DropdownMenu>
     </>
   )
-}
+})
