@@ -66,6 +66,8 @@ export type TerminalPaneLayoutNode =
       direction: TerminalPaneSplitDirection
       first: TerminalPaneLayoutNode
       second: TerminalPaneLayoutNode
+      /** Flex ratio of the first child (0–1). Defaults to 0.5 if absent. */
+      ratio?: number
     }
 
 export interface TerminalLayoutSnapshot {

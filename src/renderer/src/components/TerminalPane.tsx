@@ -295,11 +295,28 @@ function serializePaneTree(node: HTMLElement | null): TerminalPaneLayoutNode | n
   const secondNode = serializePaneTree(second ?? null)
   if (!firstNode || !secondNode) return null
 
+  // Capture the flex ratio so resized panes survive serialization round-trips.
+  // We read the computed flex-grow values to derive the first-child proportion.
+  let ratio: number | undefined
+  if (first && second) {
+    const firstGrow = parseFloat(first.style.flex) || 1
+    const secondGrow = parseFloat(second.style.flex) || 1
+    const total = firstGrow + secondGrow
+    if (total > 0) {
+      const r = firstGrow / total
+      // Only store if meaningfully different from 0.5 (default equal split)
+      if (Math.abs(r - 0.5) > 0.005) {
+        ratio = Math.round(r * 1000) / 1000
+      }
+    }
+  }
+
   return {
     type: 'split',
     direction: node.classList.contains('is-horizontal') ? 'horizontal' : 'vertical',
     first: firstNode,
-    second: secondNode
+    second: secondNode,
+    ...(ratio !== undefined && { ratio })
   }
 }
 
@@ -337,7 +354,9 @@ function replayTerminalLayout(
       return
     }
 
-    const createdPane = manager.splitPane(paneId, node.direction as TerminalPaneSplitDirection)
+    const createdPane = manager.splitPane(paneId, node.direction as TerminalPaneSplitDirection, {
+      ratio: node.ratio
+    })
     if (!createdPane) {
       collectLeafIds(node, paneByLeafId, paneId)
       return

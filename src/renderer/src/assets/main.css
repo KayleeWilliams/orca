@@ -449,19 +449,46 @@
   overflow-y: auto;
 }
 
+/* Divider: the element is a wide transparent hit area; the visible line is
+   drawn by ::after so that setting `background` on the element never hides it. */
 .pane-divider.is-vertical,
 .pane-divider.is-horizontal {
-  background: var(--orca-terminal-divider-color, transparent) !important;
+  --divider-thickness: 4px;
+  background: transparent !important;
 }
 
-.pane-divider.is-vertical:hover,
-.pane-divider.is-vertical.is-dragging,
-.pane-divider.is-horizontal:hover,
-.pane-divider.is-horizontal.is-dragging {
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--orca-terminal-divider-color, transparent);
+  transition: background 100ms ease;
+}
+
+.pane-divider.is-vertical::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--divider-thickness);
+  transform: translateX(-50%);
+}
+
+.pane-divider.is-horizontal::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--divider-thickness);
+  transform: translateY(-50%);
+}
+
+.pane-divider.is-vertical:hover::after,
+.pane-divider.is-vertical.is-dragging::after,
+.pane-divider.is-horizontal:hover::after,
+.pane-divider.is-horizontal.is-dragging::after {
   background: var(
     --orca-terminal-divider-color-strong,
     var(--orca-terminal-divider-color, transparent)
-  ) !important;
+  );
 }
 
 .number-input-clean {

@@ -95,7 +95,11 @@ export class PaneManager {
     return this.toPublic(pane)
   }
 
-  splitPane(paneId: number, direction: 'vertical' | 'horizontal'): ManagedPane | null {
+  splitPane(
+    paneId: number,
+    direction: 'vertical' | 'horizontal',
+    opts?: { ratio?: number }
+  ): ManagedPane | null {
     const existing = this.panes.get(paneId)
     if (!existing) return null
 
@@ -139,6 +143,15 @@ export class PaneManager {
 
     // Apply flex styles to new pane container
     this.applyPaneFlexStyle(newPane.container)
+
+    // Apply custom ratio if provided (e.g. restoring a saved layout)
+    const ratio = opts?.ratio
+    if (ratio !== undefined && ratio > 0 && ratio < 1) {
+      const firstGrow = ratio
+      const secondGrow = 1 - ratio
+      existing.container.style.flex = `${firstGrow} 1 0%`
+      newPane.container.style.flex = `${secondGrow} 1 0%`
+    }
 
     // Replace existing pane with split in the DOM
     parent.replaceChild(split, existing.container)
@@ -516,28 +529,36 @@ export class PaneManager {
     const divider = document.createElement('div')
     divider.className = `pane-divider ${isVertical ? 'is-vertical' : 'is-horizontal'}`
 
-    const thickness = this.styleOptions.dividerThicknessPx ?? 4
+    // Ghostty-style: the element itself is a wide transparent hit area for easy
+    // grabbing. The visible line is drawn by a CSS ::after pseudo-element
+    // (see main.css), so `background` on the element stays transparent.
+    const hitSize = this.getDividerHitSize()
     if (isVertical) {
-      divider.style.width = `${thickness}px`
+      divider.style.width = `${hitSize}px`
       divider.style.cursor = 'col-resize'
     } else {
-      divider.style.height = `${thickness}px`
+      divider.style.height = `${hitSize}px`
       divider.style.cursor = 'row-resize'
     }
     divider.style.flex = 'none'
-
-    if (this.styleOptions.splitBackground) {
-      divider.style.background = this.styleOptions.splitBackground
-    }
+    divider.style.position = 'relative'
 
     this.attachDividerDrag(divider, isVertical)
     return divider
+  }
+
+  /** Total hit area size = visible thickness + invisible padding on each side */
+  private getDividerHitSize(): number {
+    const thickness = this.styleOptions.dividerThicknessPx ?? 4
+    const HIT_PADDING = 3
+    return thickness + HIT_PADDING * 2
   }
 
   private attachDividerDrag(divider: HTMLElement, isVertical: boolean): void {
     const MIN_PANE_SIZE = 50
 
     let dragging = false
+    let didMove = false
     let startPos = 0
     let prevFlex = 0
     let nextFlex = 0
@@ -550,6 +571,7 @@ export class PaneManager {
       divider.setPointerCapture(e.pointerId)
       divider.classList.add('is-dragging')
       dragging = true
+      didMove = false
 
       startPos = isVertical ? e.clientX : e.clientY
 
@@ -572,6 +594,7 @@ export class PaneManager {
 
     const onPointerMove = (e: PointerEvent): void => {
       if (!dragging || !prevEl || !nextEl) return
+      didMove = true
 
       const currentPos = isVertical ? e.clientX : e.clientY
       const delta = currentPos - startPos
@@ -605,11 +628,31 @@ export class PaneManager {
       divider.classList.remove('is-dragging')
       prevEl = null
       nextEl = null
+
+      // Persist updated ratios after a real drag
+      if (didMove) {
+        this.options.onLayoutChanged?.()
+      }
+    }
+
+    // Ghostty-style: double-click divider to equalize sibling panes
+    const onDoubleClick = (): void => {
+      const prev = divider.previousElementSibling as HTMLElement | null
+      const next = divider.nextElementSibling as HTMLElement | null
+      if (!prev || !next) return
+
+      prev.style.flex = '1 1 0%'
+      next.style.flex = '1 1 0%'
+
+      this.refitPanesUnder(prev)
+      this.refitPanesUnder(next)
+      this.options.onLayoutChanged?.()
     }
 
     divider.addEventListener('pointerdown', onPointerDown)
     divider.addEventListener('pointermove', onPointerMove)
     divider.addEventListener('pointerup', onPointerUp)
+    divider.addEventListener('dblclick', onDoubleClick)
   }
 
   private refitPanesUnder(el: HTMLElement): void {
@@ -650,18 +693,19 @@ export class PaneManager {
 
   private applyDividerStyles(): void {
     const thickness = this.styleOptions.dividerThicknessPx ?? 4
-    const bg = this.styleOptions.splitBackground ?? ''
+    const hitSize = this.getDividerHitSize()
 
     const dividers = this.root.querySelectorAll('.pane-divider')
     for (const div of dividers) {
       const el = div as HTMLElement
       const isVertical = el.classList.contains('is-vertical')
       if (isVertical) {
-        el.style.width = `${thickness}px`
+        el.style.width = `${hitSize}px`
       } else {
-        el.style.height = `${thickness}px`
+        el.style.height = `${hitSize}px`
       }
-      el.style.background = bg
+      // Store the visual thickness for the CSS ::after pseudo-element
+      el.style.setProperty('--divider-thickness', `${thickness}px`)
     }
   }
 
