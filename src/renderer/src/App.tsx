@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { Toaster } from 'sonner'
 import { Minimize2, PanelLeft } from 'lucide-react'
 import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
@@ -233,6 +234,11 @@ function App(): React.JSX.Element {
           {activeView === 'settings' ? <Settings /> : !activeWorktreeId ? <Landing /> : null}
         </div>
       </div>
+      <Toaster
+        theme="system"
+        position="bottom-right"
+        toastOptions={{ className: 'font-sans text-sm' }}
+      />
     </div>
   )
 }

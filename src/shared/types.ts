@@ -123,12 +123,12 @@ export interface RepoHookSettings {
 // ─── Updater ─────────────────────────────────────────────────────────
 export type UpdateStatus =
   | { state: 'idle' }
-  | { state: 'checking' }
+  | { state: 'checking'; userInitiated?: boolean }
   | { state: 'available'; version: string }
-  | { state: 'not-available' }
+  | { state: 'not-available'; userInitiated?: boolean }
   | { state: 'downloading'; percent: number }
   | { state: 'downloaded'; version: string }
-  | { state: 'error'; message: string }
+  | { state: 'error'; message: string; userInitiated?: boolean }
 
 // ─── Settings ────────────────────────────────────────────────────────
 export interface GlobalSettings {

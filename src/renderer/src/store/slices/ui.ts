@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
-import type { PersistedUIState } from '../../../../shared/types'
+import type { PersistedUIState, UpdateStatus } from '../../../../shared/types'
 
 export interface UISlice {
   sidebarOpen: boolean
@@ -29,6 +29,8 @@ export interface UISlice {
   clearPendingRevealWorktreeId: () => void
   persistedUIReady: boolean
   hydratePersistedUI: (ui: PersistedUIState) => void
+  updateStatus: UpdateStatus
+  setUpdateStatus: (status: UpdateStatus) => void
 }
 
 export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => ({
@@ -72,5 +74,8 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
       groupBy: ui.groupBy,
       sortBy: ui.sortBy,
       persistedUIReady: true
-    })
+    }),
+
+  updateStatus: { state: 'idle' },
+  setUpdateStatus: (status) => set({ updateStatus: status })
 })

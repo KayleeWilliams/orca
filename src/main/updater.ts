@@ -1,10 +1,11 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { is } from '@electron-toolkit/utils'
 import type { UpdateStatus } from '../shared/types'
 
 let mainWindowRef: BrowserWindow | null = null
 let currentStatus: UpdateStatus = { state: 'idle' }
+let userInitiatedCheck = false
 
 function sendStatus(status: UpdateStatus): void {
   currentStatus = status
@@ -26,56 +27,35 @@ export function checkForUpdates(): void {
   })
 }
 
-/** Menu-triggered check that shows native dialogs for feedback */
+/** Menu-triggered check — delegates feedback to renderer toasts via userInitiated flag */
 export function checkForUpdatesFromMenu(): void {
   if (!app.isPackaged || is.dev) {
-    dialog.showMessageBox({ type: 'info', message: 'You\u2019re on the latest version.' })
+    sendStatus({ state: 'not-available', userInitiated: true })
     return
   }
 
-  sendStatus({ state: 'checking' })
-
-  const onAvailable = (): void => {
-    cleanup()
-  }
-  const onNotAvailable = (): void => {
-    cleanup()
-    dialog.showMessageBox({ type: 'info', message: 'You\u2019re on the latest version.' })
-  }
-  const onError = (err: Error): void => {
-    cleanup()
-    dialog.showMessageBox({
-      type: 'error',
-      title: 'Update Error',
-      message: 'Could not check for updates.',
-      detail: err?.message
-    })
-  }
-
-  function cleanup(): void {
-    autoUpdater.off('update-available', onAvailable)
-    autoUpdater.off('update-not-available', onNotAvailable)
-    autoUpdater.off('error', onError)
-  }
-
-  autoUpdater.once('update-available', onAvailable)
-  autoUpdater.once('update-not-available', onNotAvailable)
-  autoUpdater.once('error', onError)
+  userInitiatedCheck = true
+  sendStatus({ state: 'checking', userInitiated: true })
 
   autoUpdater.checkForUpdates().catch((err) => {
-    sendStatus({ state: 'error', message: String(err?.message ?? err) })
-    cleanup()
-    dialog.showMessageBox({
-      type: 'error',
-      title: 'Update Error',
-      message: 'Could not check for updates.',
-      detail: String(err?.message ?? err)
-    })
+    userInitiatedCheck = false
+    sendStatus({ state: 'error', message: String(err?.message ?? err), userInitiated: true })
   })
 }
 
 export function quitAndInstall(): void {
-  autoUpdater.quitAndInstall()
+  // Graceful shutdown: close all windows before letting the updater restart.
+  // This prevents macOS from showing "quit unexpectedly" dialogs because
+  // autoUpdater.quitAndInstall() calls app.exit() which bypasses lifecycle.
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.removeAllListeners('close')
+    win.destroy()
+  }
+
+  setImmediate(() => {
+    autoUpdater.quitAndInstall(false, true)
+  })
 }
 
 export function setupAutoUpdater(mainWindow: BrowserWindow): void {
@@ -92,15 +72,18 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
   autoUpdater.allowPrerelease = true
 
   autoUpdater.on('checking-for-update', () => {
-    sendStatus({ state: 'checking' })
+    sendStatus({ state: 'checking', userInitiated: userInitiatedCheck || undefined })
   })
 
   autoUpdater.on('update-available', (info) => {
+    userInitiatedCheck = false
     sendStatus({ state: 'available', version: info.version })
   })
 
   autoUpdater.on('update-not-available', () => {
-    sendStatus({ state: 'not-available' })
+    const wasUserInitiated = userInitiatedCheck
+    userInitiatedCheck = false
+    sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
   })
 
   autoUpdater.on('download-progress', (progress) => {
@@ -109,20 +92,16 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
 
   autoUpdater.on('update-downloaded', (info) => {
     sendStatus({ state: 'downloaded', version: info.version })
-    dialog
-      .showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Update Ready',
-        message: `Version ${info.version} has been downloaded. Restart to install.`,
-        buttons: ['Restart Now', 'Later']
-      })
-      .then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall()
-      })
   })
 
   autoUpdater.on('error', (err) => {
-    sendStatus({ state: 'error', message: err?.message ?? 'Unknown error' })
+    const wasUserInitiated = userInitiatedCheck
+    userInitiatedCheck = false
+    sendStatus({
+      state: 'error',
+      message: err?.message ?? 'Unknown error',
+      userInitiated: wasUserInitiated || undefined
+    })
   })
 
   autoUpdater.checkForUpdatesAndNotify()

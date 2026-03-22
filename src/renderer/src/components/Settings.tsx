@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import type { OrcaHooks, Repo, RepoHookSettings, UpdateStatus } from '../../../shared/types'
+import type { OrcaHooks, Repo, RepoHookSettings } from '../../../shared/types'
 import { REPO_COLORS, getDefaultRepoHookSettings } from '../../../shared/constants'
 import { useAppStore } from '../store'
 import { ScrollArea } from './ui/scroll-area'
@@ -448,16 +448,11 @@ function Settings(): React.JSX.Element {
     getFallbackTerminalFonts()
   )
   const terminalFontsLoadedRef = useRef(false)
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
+  const updateStatus = useAppStore((s) => s.updateStatus)
 
   useEffect(() => {
     fetchSettings()
   }, [fetchSettings])
-
-  useEffect(() => {
-    window.api.updater.getStatus().then(setUpdateStatus)
-    return window.api.updater.onStatus(setUpdateStatus)
-  }, [])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')

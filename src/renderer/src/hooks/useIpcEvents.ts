@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
+import { toast } from 'sonner'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
+import type { UpdateStatus } from '../../../shared/types'
 
 const ZOOM_STEP = 0.5
 
@@ -23,6 +25,46 @@ export function useIpcEvents(): void {
     unsubs.push(
       window.api.ui.onOpenSettings(() => {
         useAppStore.getState().setActiveView('settings')
+      })
+    )
+
+    // Hydrate initial update status then subscribe to changes
+    window.api.updater.getStatus().then((status) => {
+      useAppStore.getState().setUpdateStatus(status as UpdateStatus)
+    })
+
+    let checkingToastId: string | number | undefined
+    unsubs.push(
+      window.api.updater.onStatus((raw) => {
+        const status = raw as UpdateStatus
+        useAppStore.getState().setUpdateStatus(status)
+
+        // Show toasts for user-initiated checks
+        if (status.state === 'checking' && 'userInitiated' in status && status.userInitiated) {
+          checkingToastId = toast.loading('Checking for updates...')
+        } else if (status.state === 'not-available') {
+          if ('userInitiated' in status && status.userInitiated) {
+            toast.success('You\u2019re on the latest version.', { id: checkingToastId })
+            checkingToastId = undefined
+          }
+        } else if (status.state === 'available') {
+          if (checkingToastId) toast.dismiss(checkingToastId)
+          checkingToastId = undefined
+        } else if (status.state === 'downloaded') {
+          toast.success(`Version ${status.version} is ready to install.`, {
+            duration: Infinity,
+            action: {
+              label: 'Restart Now',
+              onClick: () => window.api.updater.quitAndInstall()
+            }
+          })
+        } else if (status.state === 'error' && 'userInitiated' in status && status.userInitiated) {
+          toast.error('Could not check for updates.', {
+            description: status.message,
+            id: checkingToastId
+          })
+          checkingToastId = undefined
+        }
       })
     )
 
