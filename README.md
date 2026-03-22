@@ -1,10 +1,18 @@
-# Orca
+<p align="center">
+  <img src="build/icon.png" alt="Orca" width="128" />
+</p>
 
-![Orca Screenshot](screenshot.png)
+<h1 align="center">Orca</h1>
 
-Orca is an AI Orchestrator for nerds.
-It lets users seamlessly manage multiple worktrees and open multiple terminals running anything (usually Claude Code, Codex, OpenCode, etc).
-It has built in status tracking across worktrees, notifications, and unread markers. It makes coding multiple features across multiple repos a breeze
+<p align="center">
+  <strong>An AI Orchestrator for nerds.</strong><br/>
+  Seamlessly manage multiple worktrees and open multiple terminals running anything — Claude Code, Codex, OpenCode, and more.<br/>
+  Built-in status tracking, notifications, and unread markers. Makes coding multiple features across multiple repos a breeze.
+</p>
+
+<p align="center">
+  <img src="screenshot.png" alt="Orca Screenshot" width="800" />
+</p>
 
 ## Project Setup
 
