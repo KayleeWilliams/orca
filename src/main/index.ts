@@ -230,6 +230,7 @@ app.whenReady().then(() => {
 
   // Updater IPC
   ipcMain.handle('updater:getStatus', () => getUpdateStatus())
+  ipcMain.handle('updater:getVersion', () => app.getVersion())
   ipcMain.handle('updater:check', () => checkForUpdates())
   ipcMain.handle('updater:quitAndInstall', () => quitAndInstall())
 

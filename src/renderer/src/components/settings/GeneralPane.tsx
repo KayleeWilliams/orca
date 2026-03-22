@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -18,6 +19,11 @@ export function GeneralPane({
   displayedGitUsername
 }: GeneralPaneProps): React.JSX.Element {
   const updateStatus = useAppStore((s) => s.updateStatus)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.api.updater.getVersion().then(setAppVersion)
+  }, [])
 
   const handleBrowseWorkspace = async () => {
     const path = await window.api.repos.pickFolder()
@@ -136,7 +142,9 @@ export function GeneralPane({
       <section className="space-y-4">
         <div className="space-y-1">
           <h2 className="text-sm font-semibold">Updates</h2>
-          <p className="text-xs text-muted-foreground">Check for new versions of Orca.</p>
+          <p className="text-xs text-muted-foreground">
+            Current version: {appVersion ?? '…'}
+          </p>
         </div>
 
         <div className="flex items-center gap-3">

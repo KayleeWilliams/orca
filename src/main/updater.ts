@@ -21,7 +21,8 @@ export function checkForUpdates(): void {
     sendStatus({ state: 'not-available' })
     return
   }
-  sendStatus({ state: 'checking' })
+  // Don't send 'checking' here — the 'checking-for-update' event handler does it,
+  // and sending it from both places causes duplicate notifications (issue #35).
   autoUpdater.checkForUpdates().catch((err) => {
     sendStatus({ state: 'error', message: String(err?.message ?? err) })
   })
@@ -35,7 +36,8 @@ export function checkForUpdatesFromMenu(): void {
   }
 
   userInitiatedCheck = true
-  sendStatus({ state: 'checking', userInitiated: true })
+  // Don't send 'checking' here — the 'checking-for-update' event handler does it,
+  // and sending it from both places causes duplicate notifications (issue #35).
 
   autoUpdater.checkForUpdates().catch((err) => {
     userInitiatedCheck = false
@@ -44,18 +46,25 @@ export function checkForUpdatesFromMenu(): void {
 }
 
 export function quitAndInstall(): void {
-  // Graceful shutdown: close all windows before letting the updater restart.
-  // This prevents macOS from showing "quit unexpectedly" dialogs because
-  // autoUpdater.quitAndInstall() calls app.exit() which bypasses lifecycle.
-  const windows = BrowserWindow.getAllWindows()
-  for (const win of windows) {
-    win.removeAllListeners('close')
-    win.destroy()
+  if (process.platform === 'darwin') {
+    // On macOS, autoUpdater.quitAndInstall() calls app.exit() which bypasses
+    // the normal quit lifecycle, causing the "quit unexpectedly" crash dialog.
+    // Instead, use app.relaunch() + app.quit() which goes through the proper
+    // lifecycle. autoInstallOnAppQuit (set in setupAutoUpdater) ensures the
+    // update is applied during the quit process.
+    app.relaunch()
+    app.quit()
+  } else {
+    // On Windows/Linux, quitAndInstall works correctly with the NSIS installer.
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.removeAllListeners('close')
+      win.destroy()
+    }
+    setImmediate(() => {
+      autoUpdater.quitAndInstall(false, true)
+    })
   }
-
-  setImmediate(() => {
-    autoUpdater.quitAndInstall(false, true)
-  })
 }
 
 export function setupAutoUpdater(mainWindow: BrowserWindow): void {
