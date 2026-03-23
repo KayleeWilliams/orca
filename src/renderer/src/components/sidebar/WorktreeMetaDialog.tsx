@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import {
   Dialog,
@@ -32,12 +32,24 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   const [commentInput, setCommentInput] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const prevIsOpenRef = useRef(false)
   if (isOpen && !prevIsOpenRef.current) {
     setIssueInput(currentIssue)
     setCommentInput(currentComment)
   }
   prevIsOpenRef.current = isOpen
+
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${ta.scrollHeight}px`
+  }, [])
+
+  useEffect(() => {
+    if (isEditComment) autoResize()
+  }, [isEditComment, commentInput, autoResize])
 
   const canSave = useMemo(() => {
     if (!worktreeId) return false
@@ -112,12 +124,13 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-muted-foreground">Comment</label>
             <textarea
+              ref={textareaRef}
               value={commentInput}
               onChange={(e) => setCommentInput(e.target.value)}
               placeholder="Notes about this worktree..."
               rows={3}
               autoFocus
-              className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 resize-none"
+              className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 resize-none max-h-60 overflow-y-auto"
             />
           </div>
         )}
