@@ -42,31 +42,42 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
 
   const autoResize = useCallback(() => {
     const ta = textareaRef.current
-    if (!ta) return
+    if (!ta) {
+      return
+    }
     ta.style.height = 'auto'
     ta.style.height = `${ta.scrollHeight}px`
   }, [])
 
   useEffect(() => {
-    if (isEditComment) autoResize()
+    if (isEditComment) {
+      autoResize()
+    }
   }, [isEditComment, commentInput, autoResize])
 
   const canSave = useMemo(() => {
-    if (!worktreeId) return false
-    if (isLinkIssue)
+    if (!worktreeId) {
+      return false
+    }
+    if (isLinkIssue) {
       return issueInput.trim() === '' || parseGitHubIssueOrPRNumber(issueInput) !== null
+    }
     return true
   }, [worktreeId, isLinkIssue, issueInput])
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      if (!open) closeModal()
+      if (!open) {
+        closeModal()
+      }
     },
     [closeModal]
   )
 
   const handleSave = useCallback(async () => {
-    if (!worktreeId) return
+    if (!worktreeId) {
+      return
+    }
     setSaving(true)
     try {
       if (isLinkIssue) {
@@ -91,6 +102,16 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     updateWorktreeMeta,
     closeModal
   ])
+
+  const handleCommentKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        handleSave()
+      }
+    },
+    [handleSave]
+  )
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -127,11 +148,15 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
               ref={textareaRef}
               value={commentInput}
               onChange={(e) => setCommentInput(e.target.value)}
+              onKeyDown={handleCommentKeyDown}
               placeholder="Notes about this worktree..."
               rows={3}
               autoFocus
               className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 resize-none max-h-60 overflow-y-auto"
             />
+            <p className="text-[10px] text-muted-foreground">
+              Press Enter to save, Shift+Enter for a new line.
+            </p>
           </div>
         )}
 
