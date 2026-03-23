@@ -10,7 +10,7 @@ import { FolderOpen, Copy, Bell, BellOff, Link, MessageSquare, XCircle, Trash2 }
 import { useAppStore } from '@/store'
 import type { Worktree } from '../../../../shared/types'
 
-interface Props {
+type Props = {
   worktree: Worktree
   children: React.ReactNode
 }
@@ -21,6 +21,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const openModal = useAppStore((s) => s.openModal)
   const shutdownWorktreeTerminals = useAppStore((s) => s.shutdownWorktreeTerminals)
+  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
+  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const clearWorktreeDeleteState = useAppStore((s) => s.clearWorktreeDeleteState)
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -53,9 +55,12 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
     openModal('edit-comment', { worktreeId: worktree.id, currentComment: worktree.comment })
   }, [worktree.id, worktree.comment, openModal])
 
-  const handleCloseTerminals = useCallback(() => {
-    shutdownWorktreeTerminals(worktree.id)
-  }, [worktree.id, shutdownWorktreeTerminals])
+  const handleCloseTerminals = useCallback(async () => {
+    await shutdownWorktreeTerminals(worktree.id)
+    if (activeWorktreeId === worktree.id) {
+      setActiveWorktree(null)
+    }
+  }, [worktree.id, shutdownWorktreeTerminals, activeWorktreeId, setActiveWorktree])
 
   const handleDelete = useCallback(() => {
     clearWorktreeDeleteState(worktree.id)

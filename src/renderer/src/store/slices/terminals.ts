@@ -5,9 +5,9 @@ import type {
   TerminalTab,
   WorkspaceSessionState
 } from '../../../../shared/types'
-import { detectAgentStatusFromTitle } from '@/lib/agent-status'
+import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-helpers'
 
-export interface TerminalSlice {
+export type TerminalSlice = {
   tabsByWorktree: Record<string, TerminalTab[]>
   activeTabId: string | null
   ptyIdsByTabId: Record<string, string[]>
@@ -170,26 +170,25 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const next = { ...s.tabsByWorktree }
       for (const wId of Object.keys(next)) {
         next[wId] = next[wId].map((t) => {
-          if (t.id !== tabId) return t
+          if (t.id !== tabId) {
+            return t
+          }
           const remainingPtyIds = ptyId
             ? (s.ptyIdsByTabId[tabId] ?? []).filter((id) => id !== ptyId)
             : []
-          return { ...t, ptyId: remainingPtyIds[remainingPtyIds.length - 1] ?? null }
+          return { ...t, ptyId: remainingPtyIds.at(-1) ?? null }
         })
       }
       const nextPtyIdsByTabId = { ...s.ptyIdsByTabId }
-      if (ptyId) {
-        nextPtyIdsByTabId[tabId] = (nextPtyIdsByTabId[tabId] ?? []).filter((id) => id !== ptyId)
-      } else {
-        nextPtyIdsByTabId[tabId] = []
-      }
+      nextPtyIdsByTabId[tabId] = ptyId
+        ? (nextPtyIdsByTabId[tabId] ?? []).filter((id) => id !== ptyId)
+        : []
       return { tabsByWorktree: next, ptyIdsByTabId: nextPtyIdsByTabId }
     })
   },
 
   shutdownWorktreeTerminals: async (worktreeId) => {
     const tabs = get().tabsByWorktree[worktreeId] ?? []
-    const tabIds = new Set(tabs.map((tab) => tab.id))
     const ptyIds = tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
 
     set((s) => {
@@ -211,13 +210,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       return {
         tabsByWorktree: nextTabsByWorktree,
         ptyIdsByTabId: nextPtyIdsByTabId,
-        suppressedPtyExitIds: nextSuppressedPtyExitIds,
-        activeWorktreeId: s.activeWorktreeId === worktreeId ? null : s.activeWorktreeId,
-        activeTabId: s.activeTabId && tabIds.has(s.activeTabId) ? null : s.activeTabId
+        suppressedPtyExitIds: nextSuppressedPtyExitIds
       }
     })
 
-    if (ptyIds.length === 0) return
+    if (ptyIds.length === 0) {
+      return
+    }
 
     await Promise.allSettled(ptyIds.map((ptyId) => window.api.pty.kill(ptyId)))
   },
@@ -225,7 +224,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   consumeSuppressedPtyExit: (ptyId) => {
     let wasSuppressed = false
     set((s) => {
-      if (!s.suppressedPtyExitIds[ptyId]) return {}
+      if (!s.suppressedPtyExitIds[ptyId]) {
+        return {}
+      }
       wasSuppressed = true
       const next = { ...s.suppressedPtyExitIds }
       delete next[ptyId]
@@ -249,8 +250,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   setTabLayout: (tabId, layout) => {
     set((s) => {
       const next = { ...s.terminalLayoutsByTabId }
-      if (layout) next[tabId] = layout
-      else delete next[tabId]
+      if (layout) {
+        next[tabId] = layout
+      } else {
+        delete next[tabId]
+      }
       return { terminalLayoutsByTabId: next }
     })
   },
@@ -311,24 +315,3 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     })
   }
 })
-
-function emptyLayoutSnapshot(): TerminalLayoutSnapshot {
-  return {
-    root: null,
-    activeLeafId: null,
-    expandedLeafId: null
-  }
-}
-
-function clearTransientTerminalState(tab: TerminalTab, index: number): TerminalTab {
-  return {
-    ...tab,
-    ptyId: null,
-    title: getResetTitle(tab, index)
-  }
-}
-
-function getResetTitle(tab: TerminalTab, index: number): string {
-  const fallbackTitle = tab.customTitle?.trim() || `Terminal ${index + 1}`
-  return detectAgentStatusFromTitle(tab.title) ? fallbackTitle : tab.title
-}
