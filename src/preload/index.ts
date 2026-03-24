@@ -10,7 +10,9 @@ document.addEventListener(
   'dragover',
   (e) => {
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy'
+    }
   },
   true
 )
@@ -21,13 +23,17 @@ document.addEventListener(
     e.preventDefault()
     e.stopPropagation()
     const files = e.dataTransfer?.files
-    if (!files || files.length === 0) return
+    if (!files || files.length === 0) {
+      return
+    }
 
     const paths: string[] = []
     for (let i = 0; i < files.length; i++) {
       // webUtils.getPathForFile is the Electron 28+ replacement for File.path
       const filePath = webUtils.getPathForFile(files[i])
-      if (filePath) paths.push(filePath)
+      if (filePath) {
+        paths.push(filePath)
+      }
     }
 
     if (paths.length > 0) {
@@ -144,7 +150,13 @@ const api = {
   shell: {
     openPath: (path: string): Promise<void> => ipcRenderer.invoke('shell:openPath', path),
 
-    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url)
+    openUrl: (url: string): Promise<void> => ipcRenderer.invoke('shell:openUrl', url),
+
+    openFilePath: (path: string): Promise<void> => ipcRenderer.invoke('shell:openFilePath', path),
+
+    openFileUri: (uri: string): Promise<void> => ipcRenderer.invoke('shell:openFileUri', uri),
+
+    pathExists: (path: string): Promise<boolean> => ipcRenderer.invoke('shell:pathExists', path)
   },
 
   hooks: {
@@ -205,7 +217,6 @@ const api = {
     discard: (args: { worktreePath: string; filePath: string }): Promise<void> =>
       ipcRenderer.invoke('git:discard', args)
   },
-
 
   ui: {
     get: (): Promise<unknown> => ipcRenderer.invoke('ui:get'),

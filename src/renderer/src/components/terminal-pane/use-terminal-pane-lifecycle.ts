@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react'
+import type { IDisposable } from '@xterm/xterm'
 import { PaneManager } from '@/lib/pane-manager/pane-manager'
+import { useAppStore } from '@/store'
+import { createFilePathLinkProvider, handleOscLink } from './terminal-link-handlers'
+import type { LinkHandlerDeps } from './terminal-link-handlers'
 import type { GlobalSettings, TerminalLayoutSnapshot } from '../../../../shared/types'
 import { buildFontFamily, replayTerminalLayout } from './layout-serialization'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
@@ -67,6 +71,7 @@ export function useTerminalPaneLifecycle({
 }: UseTerminalPaneLifecycleDeps): void {
   const systemPrefersDarkRef = useRef(systemPrefersDark)
   systemPrefersDarkRef.current = systemPrefersDark
+  const linkProviderDisposablesRef = useRef(new Map<number, IDisposable>())
 
   const applyAppearance = (manager: PaneManager): void => {
     const currentSettings = settingsRef.current
@@ -91,6 +96,24 @@ export function useTerminalPaneLifecycle({
     const expandedStyleSnapshots = expandedStyleSnapshotRef.current
     const paneTransports = paneTransportsRef.current
     const pendingWrites = pendingWritesRef.current
+    const linkDisposables = linkProviderDisposablesRef.current
+    const worktreePath =
+      useAppStore
+        .getState()
+        .allWorktrees()
+        .find((candidate) => candidate.id === worktreeId)?.path ??
+      cwd ??
+      ''
+    const startupCwd = cwd ?? worktreePath
+    const pathExistsCache = new Map<string, boolean>()
+    const linkDeps: LinkHandlerDeps = {
+      worktreeId,
+      worktreePath,
+      startupCwd,
+      managerRef,
+      linkProviderDisposablesRef,
+      pathExistsCache
+    }
     let resizeRaf: number | null = null
 
     const queueResizeAll = (focusActive: boolean): void => {
@@ -133,11 +156,24 @@ export function useTerminalPaneLifecycle({
 
     const manager = new PaneManager(container, {
       onPaneCreated: (pane) => {
+        const linkProviderDisposable = pane.terminal.registerLinkProvider(
+          createFilePathLinkProvider(pane.id, linkDeps)
+        )
+        linkProviderDisposablesRef.current.set(pane.id, linkProviderDisposable)
+        pane.terminal.options.linkHandler = {
+          allowNonHttpProtocols: true,
+          activate: (_event, text) => handleOscLink(text)
+        }
         applyAppearance(manager)
         connectPanePty(pane, manager, ptyDeps)
         queueResizeAll(true)
       },
       onPaneClosed: (paneId) => {
+        const linkProviderDisposable = linkProviderDisposablesRef.current.get(paneId)
+        if (linkProviderDisposable) {
+          linkProviderDisposable.dispose()
+          linkProviderDisposablesRef.current.delete(paneId)
+        }
         const transport = paneTransportsRef.current.get(paneId)
         if (transport) {
           transport.destroy?.()
@@ -176,7 +212,7 @@ export function useTerminalPaneLifecycle({
         }
       },
       onLinkClick: (url) => {
-        window.api.shell.openExternal(url)
+        void window.api.shell.openUrl(url)
       }
     })
 
@@ -217,6 +253,10 @@ export function useTerminalPaneLifecycle({
         cancelAnimationFrame(resizeRaf)
       }
       restoreExpandedLayoutFrom(expandedStyleSnapshots)
+      for (const disposable of linkDisposables.values()) {
+        disposable.dispose()
+      }
+      linkDisposables.clear()
       for (const transport of paneTransports.values()) {
         transport.destroy?.()
       }

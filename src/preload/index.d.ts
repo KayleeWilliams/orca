@@ -62,7 +62,10 @@ type SettingsApi = {
 
 type ShellApi = {
   openPath: (path: string) => Promise<void>
-  openExternal: (url: string) => Promise<void>
+  openUrl: (url: string) => Promise<void>
+  openFilePath: (path: string) => Promise<void>
+  openFileUri: (uri: string) => Promise<void>
+  pathExists: (path: string) => Promise<boolean>
 }
 
 type HooksApi = {

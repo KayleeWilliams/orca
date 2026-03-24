@@ -4,7 +4,7 @@ import type { editor } from 'monaco-editor'
 import { useAppStore } from '@/store'
 import '@/lib/monaco-setup'
 
-interface MonacoEditorProps {
+type MonacoEditorProps = {
   filePath: string
   content: string
   language: string
@@ -51,12 +51,37 @@ export default function MonacoEditor({
 
   // Update editor options when settings change
   useEffect(() => {
-    if (!editorRef.current || !settings) return
+    if (!editorRef.current || !settings) {
+      return
+    }
     editorRef.current.updateOptions({
       fontSize: settings.terminalFontSize,
       fontFamily: settings.terminalFontFamily || 'monospace'
     })
-  }, [settings?.terminalFontSize, settings?.terminalFontFamily])
+  }, [settings])
+
+  useEffect(() => {
+    const handler = (event: Event): void => {
+      const detail = (event as CustomEvent).detail as
+        | { filePath?: string; line?: number; column?: number | null }
+        | undefined
+      if (!detail || detail.filePath !== filePath || !detail.line) {
+        return
+      }
+      const editor = editorRef.current
+      if (!editor) {
+        return
+      }
+      const targetColumn = Math.max(1, detail.column ?? 1)
+      const targetLine = Math.max(1, detail.line)
+      editor.revealPositionInCenter({ lineNumber: targetLine, column: targetColumn })
+      editor.setPosition({ lineNumber: targetLine, column: targetColumn })
+      editor.focus()
+    }
+
+    window.addEventListener('orca:editor-reveal-location', handler as EventListener)
+    return () => window.removeEventListener('orca:editor-reveal-location', handler as EventListener)
+  }, [filePath])
 
   return (
     <Editor
