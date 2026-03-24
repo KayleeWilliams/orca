@@ -215,6 +215,7 @@ export default function EditorPanel(): React.JSX.Element | null {
             return (
               <MonacoEditor
                 filePath={activeFile.filePath}
+                relativePath={activeFile.relativePath}
                 content={editBuffers[activeFile.id] ?? fc.content}
                 language={resolvedLanguage}
                 onContentChange={handleContentChange}

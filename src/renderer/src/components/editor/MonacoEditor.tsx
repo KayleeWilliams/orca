@@ -6,6 +6,7 @@ import '@/lib/monaco-setup'
 
 type MonacoEditorProps = {
   filePath: string
+  relativePath: string
   content: string
   language: string
   onContentChange: (content: string) => void
@@ -17,6 +18,7 @@ type MonacoEditorProps = {
 
 export default function MonacoEditor({
   filePath,
+  relativePath,
   content,
   language,
   onContentChange,
@@ -45,9 +47,51 @@ export default function MonacoEditor({
 
       // Track cursor line for "copy path to line" feature
       const pos = editorInstance.getPosition()
-      if (pos) setEditorCursorLine(filePath, pos.lineNumber)
+      if (pos) {
+        setEditorCursorLine(filePath, pos.lineNumber)
+      }
       editorInstance.onDidChangeCursorPosition((e) => {
         setEditorCursorLine(filePath, e.position.lineNumber)
+      })
+
+      // Show context menu on line number gutter right-click
+      editorInstance.onMouseDown((e) => {
+        if (
+          e.event.rightButton &&
+          e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+        ) {
+          e.event.preventDefault()
+          e.event.stopPropagation()
+          // Move cursor to the clicked line so actions use the right line number
+          const line = e.target.position?.lineNumber
+          if (line) {
+            editorInstance.setPosition({ lineNumber: line, column: 1 })
+          }
+          // Trigger Monaco's context menu programmatically
+          editorInstance.trigger('gutter', 'editor.action.showContextMenu', null)
+        }
+      })
+
+      // Add "Copy Path to Line" actions to Monaco's right-click context menu
+      editorInstance.addAction({
+        id: 'orca.copyPathToLine',
+        label: 'Copy Path to Line',
+        contextMenuGroupId: '9_cutcopypaste',
+        contextMenuOrder: 100,
+        run: (ed) => {
+          const line = ed.getPosition()?.lineNumber ?? 1
+          navigator.clipboard.writeText(`${filePath}#L${line}`)
+        }
+      })
+      editorInstance.addAction({
+        id: 'orca.copyRelativePathToLine',
+        label: 'Copy Relative Path to Line',
+        contextMenuGroupId: '9_cutcopypaste',
+        contextMenuOrder: 101,
+        run: (ed) => {
+          const line = ed.getPosition()?.lineNumber ?? 1
+          navigator.clipboard.writeText(`${relativePath}#L${line}`)
+        }
       })
 
       // If there's a pending reveal at mount time, execute it now
@@ -59,7 +103,7 @@ export default function MonacoEditor({
         editorInstance.focus()
       }
     },
-    [onSave, filePath, setEditorCursorLine, setPendingEditorReveal]
+    [onSave, filePath, relativePath, setEditorCursorLine]
   )
 
   const handleChange = useCallback(
