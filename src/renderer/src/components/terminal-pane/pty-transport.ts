@@ -1,3 +1,5 @@
+import { detectAgentStatusFromTitle, clearWorkingIndicators } from '@/lib/agent-status'
+
 export type PtyTransport = {
   connect: (options: {
     url: string
@@ -69,6 +71,12 @@ export function createIpcPtyTransport(
   let pendingEscape = false
   let inOsc = false
   let pendingOscEscape = false
+  let lastEmittedTitle: string | null = null
+  let staleTitleTimer: ReturnType<typeof setTimeout> | null = null
+
+  // How long data must flow without a title update before we consider
+  // the last agent-working title stale and clear it (ms).
+  const STALE_TITLE_TIMEOUT = 3000
   let storedCallbacks: {
     onConnect?: () => void
     onDisconnect?: () => void
@@ -110,7 +118,33 @@ export function createIpcPtyTransport(
           if (onTitleChange) {
             const title = extractLastOscTitle(data)
             if (title !== null) {
+              // Got a fresh title — clear any pending stale-title timer
+              if (staleTitleTimer) {
+                clearTimeout(staleTitleTimer)
+                staleTitleTimer = null
+              }
+              lastEmittedTitle = title
               onTitleChange(title)
+            } else if (
+              lastEmittedTitle &&
+              detectAgentStatusFromTitle(lastEmittedTitle) === 'working'
+            ) {
+              // Data flowing but no title update — the agent may have exited.
+              // Start/restart a debounce timer to clear the stale working title.
+              if (staleTitleTimer) {
+                clearTimeout(staleTitleTimer)
+              }
+              staleTitleTimer = setTimeout(() => {
+                staleTitleTimer = null
+                if (
+                  lastEmittedTitle &&
+                  detectAgentStatusFromTitle(lastEmittedTitle) === 'working'
+                ) {
+                  const cleared = clearWorkingIndicators(lastEmittedTitle)
+                  lastEmittedTitle = cleared
+                  onTitleChange(cleared)
+                }
+              }, STALE_TITLE_TIMEOUT)
             }
           }
           if (onBell && chunkContainsBell(data)) {
@@ -120,6 +154,10 @@ export function createIpcPtyTransport(
 
         const spawnedId = result.id
         ptyExitHandlers.set(spawnedId, (code) => {
+          if (staleTitleTimer) {
+            clearTimeout(staleTitleTimer)
+            staleTitleTimer = null
+          }
           connected = false
           ptyId = null
           unregisterPtyHandlers(spawnedId)
@@ -137,6 +175,10 @@ export function createIpcPtyTransport(
     },
 
     disconnect() {
+      if (staleTitleTimer) {
+        clearTimeout(staleTitleTimer)
+        staleTitleTimer = null
+      }
       if (ptyId) {
         const id = ptyId
         window.api.pty.kill(id)
