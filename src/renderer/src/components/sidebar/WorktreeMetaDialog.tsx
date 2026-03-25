@@ -23,12 +23,15 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   const isOpen = isEditMeta
 
   const worktreeId = typeof modalData.worktreeId === 'string' ? modalData.worktreeId : ''
+  const currentDisplayName =
+    typeof modalData.currentDisplayName === 'string' ? modalData.currentDisplayName : ''
   const currentIssue =
     typeof modalData.currentIssue === 'number' ? String(modalData.currentIssue) : ''
   const currentComment =
     typeof modalData.currentComment === 'string' ? modalData.currentComment : ''
   const focusField = typeof modalData.focus === 'string' ? modalData.focus : 'comment'
 
+  const [displayNameInput, setDisplayNameInput] = useState('')
   const [issueInput, setIssueInput] = useState('')
   const [commentInput, setCommentInput] = useState('')
   const [saving, setSaving] = useState(false)
@@ -36,7 +39,9 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   const issueInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const prevIsOpenRef = useRef(false)
+  const displayNameInputRef = useRef<HTMLInputElement>(null)
   if (isOpen && !prevIsOpenRef.current) {
+    setDisplayNameInput(currentDisplayName)
     setIssueInput(currentIssue)
     setCommentInput(currentComment)
   }
@@ -84,8 +89,12 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
       const finalLinkedIssue =
         trimmedIssue === '' ? null : linkedIssueNumber !== null ? linkedIssueNumber : undefined
 
+      const trimmedDisplayName = displayNameInput.trim()
       const updates: Partial<WorktreeMeta> = {
-        comment: commentInput.trim()
+        comment: commentInput.trim(),
+        ...(trimmedDisplayName !== currentDisplayName && {
+          displayName: trimmedDisplayName || undefined
+        })
       }
       if (finalLinkedIssue !== undefined) {
         updates.linkedIssue = finalLinkedIssue
@@ -96,7 +105,15 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     } finally {
       setSaving(false)
     }
-  }, [worktreeId, issueInput, commentInput, updateWorktreeMeta, closeModal])
+  }, [
+    worktreeId,
+    displayNameInput,
+    currentDisplayName,
+    issueInput,
+    commentInput,
+    updateWorktreeMeta,
+    closeModal
+  ])
 
   const handleCommentKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -124,7 +141,9 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
         className="max-w-md"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
-          if (focusField === 'issue') {
+          if (focusField === 'displayName') {
+            displayNameInputRef.current?.focus()
+          } else if (focusField === 'issue') {
             issueInputRef.current?.focus()
           } else {
             textareaRef.current?.focus()
@@ -139,6 +158,22 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-muted-foreground">Display Name</label>
+            <Input
+              ref={displayNameInputRef}
+              value={displayNameInput}
+              onChange={(e) => setDisplayNameInput(e.target.value)}
+              onKeyDown={handleIssueKeyDown}
+              placeholder="Custom display name..."
+              className="h-8 text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Only changes the name shown in the sidebar — the folder on disk stays the same. Leave
+              blank to use the branch or folder name.
+            </p>
+          </div>
+
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-muted-foreground">GH Issue / PR</label>
             <Input

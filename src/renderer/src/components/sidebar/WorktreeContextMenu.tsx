@@ -6,7 +6,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { FolderOpen, Copy, Bell, BellOff, Link, MessageSquare, XCircle, Trash2 } from 'lucide-react'
+import {
+  FolderOpen,
+  Copy,
+  Bell,
+  BellOff,
+  Link,
+  MessageSquare,
+  Pencil,
+  XCircle,
+  Trash2
+} from 'lucide-react'
 import { useAppStore } from '@/store'
 import type { Worktree } from '../../../../shared/types'
 
@@ -47,23 +57,35 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
     updateWorktreeMeta(worktree.id, { isUnread: !worktree.isUnread })
   }, [worktree.id, worktree.isUnread, updateWorktreeMeta])
 
+  const handleRename = useCallback(() => {
+    openModal('edit-meta', {
+      worktreeId: worktree.id,
+      currentDisplayName: worktree.displayName,
+      currentIssue: worktree.linkedIssue,
+      currentComment: worktree.comment,
+      focus: 'displayName'
+    })
+  }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
+
   const handleLinkIssue = useCallback(() => {
     openModal('edit-meta', {
       worktreeId: worktree.id,
+      currentDisplayName: worktree.displayName,
       currentIssue: worktree.linkedIssue,
       currentComment: worktree.comment,
       focus: 'issue'
     })
-  }, [worktree.id, worktree.linkedIssue, worktree.comment, openModal])
+  }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
   const handleComment = useCallback(() => {
     openModal('edit-meta', {
       worktreeId: worktree.id,
+      currentDisplayName: worktree.displayName,
       currentIssue: worktree.linkedIssue,
       currentComment: worktree.comment,
       focus: 'comment'
     })
-  }, [worktree.id, worktree.linkedIssue, worktree.comment, openModal])
+  }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
   const handleCloseTerminals = useCallback(async () => {
     await shutdownWorktreeTerminals(worktree.id)
@@ -111,6 +133,10 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
             Copy Path
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={handleRename} disabled={isDeleting}>
+            <Pencil className="size-3.5" />
+            Rename
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={handleToggleRead} disabled={isDeleting}>
             {worktree.isUnread ? <BellOff className="size-3.5" /> : <Bell className="size-3.5" />}
             {worktree.isUnread ? 'Mark Read' : 'Mark Unread'}

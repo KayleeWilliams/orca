@@ -166,10 +166,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const handleDoubleClick = useCallback(() => {
     openModal('edit-meta', {
       worktreeId: worktree.id,
+      currentDisplayName: worktree.displayName,
       currentIssue: worktree.linkedIssue,
       currentComment: worktree.comment
     })
-  }, [worktree.id, worktree.linkedIssue, worktree.comment, openModal])
+  }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
   const handleToggleUnreadQuick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
