@@ -1,13 +1,15 @@
-import { createStore } from 'zustand/vanilla'
+import { createStore, type StoreApi } from 'zustand/vanilla'
 import { describe, expect, it } from 'vitest'
 import { createEditorSlice } from './editor'
 import type { AppState } from '../types'
 
-function createEditorStore() {
-  return createStore<AppState>()((...args) => ({
+function createEditorStore(): StoreApi<AppState> {
+  // Only the editor slice + activeWorktreeId are needed for these tests.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return createStore<any>()((...args: any[]) => ({
     activeWorktreeId: 'wt-1',
-    ...createEditorSlice(...args)
-  })) as ReturnType<typeof createStore<AppState>>
+    ...createEditorSlice(...(args as Parameters<typeof createEditorSlice>))
+  })) as unknown as StoreApi<AppState>
 }
 
 describe('createEditorSlice openDiff', () => {
