@@ -26,6 +26,42 @@ function containsAny(title: string, words: string[]): boolean {
   return words.some((word) => lower.includes(word))
 }
 
+const WORKING_KEYWORDS = ['working', 'thinking', 'running']
+
+/**
+ * Strip working-status indicators from a title so that
+ * `detectAgentStatusFromTitle` will no longer return 'working'.
+ * Used to clear stale titles when an agent exits without resetting its title.
+ */
+export function clearWorkingIndicators(title: string): string {
+  let cleaned = title
+
+  // Gemini working symbol
+  cleaned = cleaned.replace(GEMINI_WORKING, '')
+
+  // Braille spinner characters (U+2800–U+28FF)
+  // eslint-disable-next-line no-control-regex -- intentional unicode range
+  cleaned = cleaned.replace(/[\u2800-\u28FF]/g, '')
+
+  // Claude Code ". " working prefix
+  if (cleaned.startsWith('. ')) {
+    cleaned = cleaned.slice(2)
+  }
+
+  // Strip working keywords that detectAgentStatusFromTitle would pick up
+  // when the title also contains an agent name.
+  if (containsAgentName(cleaned)) {
+    for (const keyword of WORKING_KEYWORDS) {
+      cleaned = cleaned.replace(new RegExp(`\\b${keyword}\\b`, 'gi'), '')
+    }
+  }
+
+  // Collapse whitespace after removals
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').trim()
+
+  return cleaned || title
+}
+
 export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   if (!title) {
     return null
