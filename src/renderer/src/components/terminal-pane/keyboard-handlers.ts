@@ -140,11 +140,16 @@ export function useTerminalKeyboardShortcuts({
     }
 
     // Ctrl+Backspace → send \x17 (backward-kill-word) to PTY.
+    // Skip when focus is in an input/textarea so native word-delete still works.
     const onCtrlBackspace = (e: KeyboardEvent): void => {
       if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) {
         return
       }
       if (e.key !== 'Backspace') {
+        return
+      }
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
         return
       }
 
@@ -164,11 +169,16 @@ export function useTerminalKeyboardShortcuts({
     }
 
     // Alt+Backspace → send ESC + DEL (\x1b\x7f, backward-kill-word) to PTY.
+    // Skip when focus is in an input/textarea so native word-delete still works.
     const onAltBackspace = (e: KeyboardEvent): void => {
       if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) {
         return
       }
       if (e.key !== 'Backspace') {
+        return
+      }
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
         return
       }
 
