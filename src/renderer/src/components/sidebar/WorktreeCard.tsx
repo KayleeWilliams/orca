@@ -265,19 +265,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
                   </TooltipContent>
                 </Tooltip>
               )}
-              {pr && (
-                <span
-                  className={cn(
-                    'text-[9px] font-bold uppercase tracking-wider h-3.5 flex items-center',
-                    pr.state === 'merged' && 'text-purple-500/80',
-                    pr.state === 'open' && 'text-emerald-500/80',
-                    pr.state === 'closed' && 'text-muted-foreground/60',
-                    pr.state === 'draft' && 'text-muted-foreground/50'
-                  )}
-                >
-                  {prStateLabel(pr.state)}
-                </span>
-              )}
             </div>
           </div>
 
