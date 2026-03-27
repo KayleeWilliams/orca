@@ -18,6 +18,30 @@ function sendStatus(status: UpdateStatus): void {
   mainWindowRef?.webContents.send('updater:status', status)
 }
 
+function sendErrorStatus(message: string, userInitiated?: boolean): void {
+  if (
+    currentStatus.state === 'error' &&
+    currentStatus.message === message &&
+    currentStatus.userInitiated === userInitiated
+  ) {
+    return
+  }
+  sendStatus({ state: 'error', message, userInitiated })
+}
+
+function isBenignCheckFailure(message: string): boolean {
+  return message.includes('net::ERR_FAILED')
+}
+
+function sendCheckFailureStatus(message: string, userInitiated?: boolean): void {
+  if (isBenignCheckFailure(message)) {
+    console.warn('[updater] benign check failure:', message)
+    sendStatus({ state: 'idle' })
+    return
+  }
+  sendErrorStatus(message, userInitiated)
+}
+
 export function getUpdateStatus(): UpdateStatus {
   return currentStatus
 }
@@ -30,7 +54,7 @@ export function checkForUpdates(): void {
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
   autoUpdater.checkForUpdates().catch((err) => {
-    sendStatus({ state: 'error', message: String(err?.message ?? err) })
+    sendCheckFailureStatus(String(err?.message ?? err))
   })
 }
 
@@ -47,7 +71,7 @@ export function checkForUpdatesFromMenu(): void {
 
   autoUpdater.checkForUpdates().catch((err) => {
     userInitiatedCheck = false
-    sendStatus({ state: 'error', message: String(err?.message ?? err), userInitiated: true })
+    sendCheckFailureStatus(String(err?.message ?? err), true)
   })
 }
 
@@ -162,11 +186,12 @@ export function setupAutoUpdater(
   autoUpdater.on('error', (err) => {
     const wasUserInitiated = userInitiatedCheck
     userInitiatedCheck = false
-    sendStatus({
-      state: 'error',
-      message: err?.message ?? 'Unknown error',
-      userInitiated: wasUserInitiated || undefined
-    })
+    const message = err?.message ?? 'Unknown error'
+    if (currentStatus.state === 'checking') {
+      sendCheckFailureStatus(message, wasUserInitiated || undefined)
+      return
+    }
+    sendErrorStatus(message, wasUserInitiated || undefined)
   })
 
   autoUpdater.checkForUpdates().catch((err) => {
@@ -181,6 +206,6 @@ export function downloadUpdate(): void {
   }
   squirrelReady = false
   autoUpdater.downloadUpdate().catch((err) => {
-    sendStatus({ state: 'error', message: String(err?.message ?? err) })
+    sendErrorStatus(String(err?.message ?? err))
   })
 }

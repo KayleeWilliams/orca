@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, createElement } from 'react'
 import { toast } from 'sonner'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
@@ -44,6 +44,11 @@ export function useIpcEvents(): void {
         // Show toasts for user-initiated checks
         if (status.state === 'checking' && 'userInitiated' in status && status.userInitiated) {
           checkingToastId = toast.loading('Checking for updates...')
+        } else if (status.state === 'idle') {
+          if (checkingToastId) {
+            toast.dismiss(checkingToastId)
+            checkingToastId = undefined
+          }
         } else if (status.state === 'not-available') {
           if ('userInitiated' in status && status.userInitiated) {
             toast.success('You\u2019re on the latest version.', { id: checkingToastId })
@@ -87,7 +92,23 @@ export function useIpcEvents(): void {
           toast.dismiss(downloadToastId)
           if ('userInitiated' in status && status.userInitiated) {
             toast.error('Could not check for updates.', {
-              description: status.message,
+              description: createElement(
+                'span',
+                null,
+                status.message,
+                ' You can download the latest version manually from ',
+                createElement(
+                  'a',
+                  {
+                    href: 'https://github.com/stablyai/orca/releases/latest',
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                    style: { textDecoration: 'underline' }
+                  },
+                  'our GitHub releases page'
+                ),
+                '.'
+              ),
               id: checkingToastId
             })
             checkingToastId = undefined
