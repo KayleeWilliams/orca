@@ -14,7 +14,7 @@ asarUnpack:
 win:
   executableName: Orca
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: orca-windows-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -39,7 +39,7 @@ mac:
         - x64
         - arm64
 dmg:
-  artifactName: ${name}-${version}-${arch}.${ext}
+  artifactName: orca-macos-${arch}.${ext}
 linux:
   target:
     - AppImage
@@ -47,7 +47,7 @@ linux:
   maintainer: stablyai
   category: Utility
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: orca-linux.${ext}
 npmRebuild: false
 publish:
   provider: github
