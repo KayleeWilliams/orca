@@ -106,13 +106,15 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
       }
 
       const worktreeId = `${repo.id}::${worktreePath}`
-      const metaUpdates: Partial<WorktreeMeta> = shouldSetDisplayName(
-        requestedName,
-        branchName,
-        sanitizedName
-      )
-        ? { displayName: requestedName }
-        : {}
+      const metaUpdates: Partial<WorktreeMeta> = {
+        // Stamp activity so the worktree sorts into its final position
+        // immediately — prevents scroll-to-reveal racing with a later
+        // bumpWorktreeActivity that would re-sort the list.
+        lastActivityAt: Date.now(),
+        ...(shouldSetDisplayName(requestedName, branchName, sanitizedName)
+          ? { displayName: requestedName }
+          : {})
+      }
       const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
       const worktree = mergeWorktree(repo.id, created, meta)
 
