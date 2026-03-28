@@ -219,7 +219,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         }
 
         const branch = wt.branch.replace(/^refs\/heads\//, '')
-        if (!wt.isBare) {
+        if (!wt.isBare && branch) {
           const prKey = `${repo.path}::${branch}`
           const prEntry = state.prCache[prKey]
           if (!prEntry || now - prEntry.fetchedAt >= CACHE_TTL) {

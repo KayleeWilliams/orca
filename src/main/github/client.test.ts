@@ -97,6 +97,19 @@ describe('getPRForBranch', () => {
     expect(pr?.state).toBe('draft')
   })
 
+  it('returns null for empty branch (e.g. during rebase with detached HEAD)', async () => {
+    const pr = await getPRForBranch('/repo-root', '')
+    expect(pr).toBeNull()
+    // Should not call gh at all
+    expect(execFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('returns null for refs/heads/ only branch (detached after strip)', async () => {
+    const pr = await getPRForBranch('/repo-root', 'refs/heads/')
+    expect(pr).toBeNull()
+    expect(execFileAsyncMock).not.toHaveBeenCalled()
+  })
+
   it('returns null when pr list returns an empty array', async () => {
     execFileAsyncMock
       .mockResolvedValueOnce({ stdout: 'git@github.com:acme/widgets.git\n' })

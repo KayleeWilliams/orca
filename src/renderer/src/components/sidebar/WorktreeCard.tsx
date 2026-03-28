@@ -126,7 +126,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const tabs = useAppStore((s) => s.tabsByWorktree[worktree.id] ?? EMPTY_TABS)
 
   const branch = branchDisplayName(worktree.branch)
-  const prCacheKey = repo ? `${repo.path}::${branch}` : ''
+  const prCacheKey = repo && branch ? `${repo.path}::${branch}` : ''
   const issueCacheKey = repo && worktree.linkedIssue ? `${repo.path}::${worktree.linkedIssue}` : ''
 
   // Subscribe to ONLY the specific cache entry, not entire prCache/issueCache

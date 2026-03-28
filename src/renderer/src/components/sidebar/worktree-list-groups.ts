@@ -65,7 +65,7 @@ export function getPRGroupKey(
 ): PRGroupKey {
   const repo = repoMap.get(worktree.repoId)
   const branch = branchName(worktree.branch)
-  const cacheKey = repo ? `${repo.path}::${branch}` : ''
+  const cacheKey = repo && branch ? `${repo.path}::${branch}` : ''
   const prEntry =
     cacheKey && prCache
       ? (prCache[cacheKey] as { data?: { state?: string } } | undefined)

@@ -74,11 +74,18 @@ async function getOwnerRepo(repoPath: string): Promise<{ owner: string; repo: st
  * Returns null if gh is not installed, or no PR exists for the branch.
  */
 export async function getPRForBranch(repoPath: string, branch: string): Promise<PRInfo | null> {
+  // Strip refs/heads/ prefix if present
+  const branchName = branch.replace(/^refs\/heads\//, '')
+
+  // During a rebase the worktree is in detached HEAD and branch is empty.
+  // An empty --head filter causes gh to return an arbitrary PR — bail early.
+  if (!branchName) {
+    return null
+  }
+
   await acquire()
   try {
     const ownerRepo = await getOwnerRepo(repoPath)
-    // Strip refs/heads/ prefix if present
-    const branchName = branch.replace(/^refs\/heads\//, '')
     let data: {
       number: number
       title: string

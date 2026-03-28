@@ -57,7 +57,12 @@ function getActiveChecksStatus(state: ReturnType<typeof useAppStore.getState>): 
     return null
   }
 
-  const prCacheKey = `${activeRepo.path}::${branchDisplayName(activeWorktree.branch)}`
+  const branch = branchDisplayName(activeWorktree.branch)
+  if (!branch) {
+    return null
+  }
+
+  const prCacheKey = `${activeRepo.path}::${branch}`
   return state.prCache[prCacheKey]?.data?.checksStatus ?? null
 }
 
