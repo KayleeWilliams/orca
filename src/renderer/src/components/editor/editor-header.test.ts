@@ -25,6 +25,40 @@ describe('getEditorHeaderCopyState', () => {
     })
   })
 
+  it('adds a diff suffix to single-file diff headers', () => {
+    expect(
+      getEditorHeaderCopyState(
+        makeOpenFile({
+          id: '/repo/file.ts::unstaged',
+          mode: 'diff',
+          diffStaged: false
+        })
+      )
+    ).toEqual({
+      copyText: '/repo/file.ts',
+      copyToastLabel: 'File path copied',
+      pathLabel: '/repo/file.ts (diff)',
+      pathTitle: '/repo/file.ts (diff)'
+    })
+  })
+
+  it('adds a staged diff suffix to staged diff headers', () => {
+    expect(
+      getEditorHeaderCopyState(
+        makeOpenFile({
+          id: '/repo/file.ts::staged',
+          mode: 'diff',
+          diffStaged: true
+        })
+      )
+    ).toEqual({
+      copyText: '/repo/file.ts',
+      copyToastLabel: 'File path copied',
+      pathLabel: '/repo/file.ts (diff staged)',
+      pathTitle: '/repo/file.ts (diff staged)'
+    })
+  })
+
   it('shows All Changes while still copying the worktree path', () => {
     expect(
       getEditorHeaderCopyState(

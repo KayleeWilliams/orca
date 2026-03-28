@@ -9,7 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { basename, normalizeRelativePath } from '@/lib/path'
+import { normalizeRelativePath } from '@/lib/path'
+import { getEditorDisplayLabel } from '@/components/editor/editor-labels'
 import { STATUS_COLORS, STATUS_LABELS } from '../right-sidebar/status-display'
 import type { GitFileStatus } from '../../../../shared/types'
 import type { OpenFile } from '../../store/slices/editor'
@@ -47,7 +48,6 @@ export default function EditorFileTab({
     opacity: isDragging ? 0.8 : 1
   }
 
-  const fileName = basename(file.relativePath)
   const isDiff = file.mode === 'diff'
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 })
@@ -117,11 +117,7 @@ export default function EditorFileTab({
               className={`truncate max-w-[130px]${file.isPreview ? ' italic' : ''}`}
               style={tabStatusColor ? { color: tabStatusColor } : undefined}
             >
-              {isDiff
-                ? file.relativePath === 'All Changes'
-                  ? 'All Changes'
-                  : `${fileName} (diff${file.diffStaged ? ' staged' : ''})`
-                : fileName}
+              {getEditorDisplayLabel(file)}
             </span>
             {tabStatus && (
               <span

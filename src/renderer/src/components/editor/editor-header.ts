@@ -1,4 +1,5 @@
 import type { OpenFile } from '@/store/slices/editor'
+import { getEditorDisplayLabel } from './editor-labels'
 
 export type EditorHeaderCopyState = {
   copyText: string | null
@@ -19,10 +20,12 @@ export function getEditorHeaderCopyState(file: OpenFile): EditorHeaderCopyState 
     }
   }
 
+  const displayLabel = getEditorDisplayLabel(file, 'fullPath')
+
   return {
     copyText: file.filePath,
     copyToastLabel: 'File path copied',
-    pathLabel: file.filePath,
-    pathTitle: file.filePath
+    pathLabel: displayLabel,
+    pathTitle: displayLabel
   }
 }
