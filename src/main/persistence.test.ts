@@ -68,6 +68,7 @@ describe('Store', () => {
     expect(settings.branchPrefix).toBe('git-username')
     expect(settings.theme).toBe('system')
     expect(settings.terminalFontSize).toBe(14)
+    expect(settings.rightSidebarOpenByDefault).toBe(false)
   })
 
   it('returns default UI state when no data file exists', async () => {
@@ -128,8 +129,25 @@ describe('Store', () => {
     expect(ui.sidebarWidth).toBe(280)
     // settings should preserve the overridden value
     expect(store.getSettings().theme).toBe('dark')
+    // new fields get defaults when missing from persisted data
+    expect(store.getSettings().rightSidebarOpenByDefault).toBe(false)
     // repos should be loaded
     expect(store.getRepos()).toHaveLength(1)
+  })
+
+  it('preserves rightSidebarOpenByDefault when set to true in persisted data', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { rightSidebarOpenByDefault: true },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
   })
 
   // ── 5. addRepo and getRepo ──────────────────────────────────────────
@@ -220,6 +238,17 @@ describe('Store', () => {
     expect(updated.terminalFontSize).toBe(16)
     // Other fields preserved
     expect(updated.branchPrefix).toBe('git-username')
+  })
+
+  it('updateSettings toggles rightSidebarOpenByDefault', async () => {
+    const store = await createStore()
+    expect(store.getSettings().rightSidebarOpenByDefault).toBe(false)
+
+    store.updateSettings({ rightSidebarOpenByDefault: true })
+    expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
+
+    store.updateSettings({ rightSidebarOpenByDefault: false })
+    expect(store.getSettings().rightSidebarOpenByDefault).toBe(false)
   })
 
   // ── 10. flush writes synchronously ─────────────────────────────────

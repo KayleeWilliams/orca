@@ -41,6 +41,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
   const setFilterRepoIds = useAppStore((s) => s.setFilterRepoIds)
   const revealWorktreeInSidebar = useAppStore((s) => s.revealWorktreeInSidebar)
+  const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const settings = useAppStore((s) => s.settings)
 
@@ -137,6 +138,9 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
         }
         setActiveWorktree(wt.id)
         revealWorktreeInSidebar(wt.id)
+        if (settings?.rightSidebarOpenByDefault) {
+          setRightSidebarOpen(true)
+        }
       }
       handleOpenChange(false)
     } finally {
@@ -158,6 +162,8 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     setFilterRepoIds,
     setActiveWorktree,
     revealWorktreeInSidebar,
+    setRightSidebarOpen,
+    settings?.rightSidebarOpenByDefault,
     handleOpenChange
   ])
 

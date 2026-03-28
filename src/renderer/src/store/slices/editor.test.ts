@@ -12,6 +12,35 @@ function createEditorStore(): StoreApi<AppState> {
   })) as unknown as StoreApi<AppState>
 }
 
+describe('createEditorSlice right sidebar state', () => {
+  it('right sidebar is closed by default', () => {
+    const store = createEditorStore()
+    expect(store.getState().rightSidebarOpen).toBe(false)
+  })
+
+  it('setRightSidebarOpen opens the sidebar', () => {
+    const store = createEditorStore()
+    store.getState().setRightSidebarOpen(true)
+    expect(store.getState().rightSidebarOpen).toBe(true)
+  })
+
+  it('setRightSidebarOpen(false) after open closes it', () => {
+    const store = createEditorStore()
+    store.getState().setRightSidebarOpen(true)
+    store.getState().setRightSidebarOpen(false)
+    expect(store.getState().rightSidebarOpen).toBe(false)
+  })
+
+  it('toggleRightSidebar flips the state', () => {
+    const store = createEditorStore()
+    expect(store.getState().rightSidebarOpen).toBe(false)
+    store.getState().toggleRightSidebar()
+    expect(store.getState().rightSidebarOpen).toBe(true)
+    store.getState().toggleRightSidebar()
+    expect(store.getState().rightSidebarOpen).toBe(false)
+  })
+})
+
 describe('createEditorSlice openDiff', () => {
   it('keeps staged and unstaged diffs in separate tabs', () => {
     const store = createEditorStore()

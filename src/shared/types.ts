@@ -172,6 +172,7 @@ export type GlobalSettings = {
   terminalPaneOpacityTransitionMs: number
   terminalDividerThicknessPx: number
   terminalScrollbackBytes: number
+  rightSidebarOpenByDefault: boolean
 }
 
 export type PersistedUIState = {

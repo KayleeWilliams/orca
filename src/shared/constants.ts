@@ -39,7 +39,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalActivePaneOpacity: 1,
     terminalPaneOpacityTransitionMs: 140,
     terminalDividerThicknessPx: 1,
-    terminalScrollbackBytes: 10_000_000
+    terminalScrollbackBytes: 10_000_000,
+    rightSidebarOpenByDefault: false
   }
 }
 

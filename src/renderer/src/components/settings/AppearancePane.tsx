@@ -1,4 +1,5 @@
 import type { GlobalSettings } from '../../../../shared/types'
+import { Label } from '../ui/label'
 import { Separator } from '../ui/separator'
 import { UIZoomControl } from './UIZoomControl'
 
@@ -55,6 +56,44 @@ export function AppearancePane({
         </div>
 
         <UIZoomControl />
+      </section>
+
+      <Separator />
+
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold">Layout</h2>
+          <p className="text-xs text-muted-foreground">
+            Default layout when creating new worktrees.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 px-1 py-2">
+          <div className="space-y-0.5">
+            <Label>Open Right Sidebar by Default</Label>
+            <p className="text-xs text-muted-foreground">
+              Automatically expand the file explorer panel when creating a new worktree.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.rightSidebarOpenByDefault}
+            onClick={() =>
+              updateSettings({
+                rightSidebarOpenByDefault: !settings.rightSidebarOpenByDefault
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.rightSidebarOpenByDefault ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.rightSidebarOpenByDefault ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
       </section>
     </div>
   )
