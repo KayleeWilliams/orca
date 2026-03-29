@@ -193,3 +193,38 @@ describe('createGitHubSlice.fetchPRChecks', () => {
     })
   })
 })
+
+describe('createGitHubSlice.fetchPRForBranch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockApi.gh.prForBranch.mockResolvedValue(null)
+  })
+
+  it('lets a forced refresh bypass a non-forced inflight request and keeps the newer result', async () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const branch = 'feature/test'
+    const prCacheKey = `${repoPath}::${branch}`
+
+    let resolveInitial: ((value: null) => void) | undefined
+    const initialRequest = new Promise<null>((resolve) => {
+      resolveInitial = resolve
+    })
+
+    mockApi.gh.prForBranch
+      .mockReturnValueOnce(initialRequest)
+      .mockResolvedValueOnce(makePR({ number: 99, title: 'Forced refresh PR' }))
+
+    const initialFetch = store.getState().fetchPRForBranch(repoPath, branch)
+    const forcedFetch = store.getState().fetchPRForBranch(repoPath, branch, { force: true })
+
+    await expect(forcedFetch).resolves.toMatchObject({ number: 99, title: 'Forced refresh PR' })
+    expect(mockApi.gh.prForBranch).toHaveBeenCalledTimes(2)
+    expect(store.getState().prCache[prCacheKey]?.data).toMatchObject({ number: 99 })
+
+    resolveInitial?.(null)
+    await expect(initialFetch).resolves.toBeNull()
+
+    expect(store.getState().prCache[prCacheKey]?.data).toMatchObject({ number: 99 })
+  })
+})

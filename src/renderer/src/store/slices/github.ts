@@ -15,9 +15,13 @@ type FetchOptions = {
 const CACHE_TTL = 300_000 // 5 minutes (stale data shown instantly, then refreshed)
 const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
 
-const inflightPRRequests = new Map<string, Promise<PRInfo | null>>()
+const inflightPRRequests = new Map<
+  string,
+  { promise: Promise<PRInfo | null>; force: boolean; generation: number }
+>()
 const inflightIssueRequests = new Map<string, Promise<IssueInfo | null>>()
 const inflightChecksRequests = new Map<string, Promise<PRCheckDetail[]>>()
+const prRequestGenerations = new Map<string, number>()
 
 function isFresh<T>(entry: CacheEntry<T> | undefined, ttl = CACHE_TTL): entry is CacheEntry<T> {
   return entry !== undefined && Date.now() - entry.fetchedAt < ttl
@@ -88,31 +92,45 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     }
 
     const inflightRequest = inflightPRRequests.get(cacheKey)
-    if (inflightRequest) {
-      return inflightRequest
+    if (inflightRequest && (!options?.force || inflightRequest.force)) {
+      return inflightRequest.promise
     }
+
+    const generation = (prRequestGenerations.get(cacheKey) ?? 0) + 1
+    prRequestGenerations.set(cacheKey, generation)
 
     const request = (async () => {
       try {
         const pr = await window.api.gh.prForBranch({ repoPath, branch })
-        set((s) => ({
-          prCache: { ...s.prCache, [cacheKey]: { data: pr, fetchedAt: Date.now() } }
-        }))
-        debouncedSaveCache(get())
+        if (prRequestGenerations.get(cacheKey) === generation) {
+          set((s) => ({
+            prCache: { ...s.prCache, [cacheKey]: { data: pr, fetchedAt: Date.now() } }
+          }))
+          debouncedSaveCache(get())
+        }
         return pr
       } catch (err) {
         console.error('Failed to fetch PR:', err)
-        set((s) => ({
-          prCache: { ...s.prCache, [cacheKey]: { data: null, fetchedAt: Date.now() } }
-        }))
-        debouncedSaveCache(get())
+        if (prRequestGenerations.get(cacheKey) === generation) {
+          set((s) => ({
+            prCache: { ...s.prCache, [cacheKey]: { data: null, fetchedAt: Date.now() } }
+          }))
+          debouncedSaveCache(get())
+        }
         return null
       } finally {
-        inflightPRRequests.delete(cacheKey)
+        const activeRequest = inflightPRRequests.get(cacheKey)
+        if (activeRequest?.generation === generation) {
+          inflightPRRequests.delete(cacheKey)
+        }
       }
     })()
 
-    inflightPRRequests.set(cacheKey, request)
+    inflightPRRequests.set(cacheKey, {
+      promise: request,
+      force: Boolean(options?.force),
+      generation
+    })
     return request
   },
 
