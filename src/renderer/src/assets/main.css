@@ -182,15 +182,16 @@
   }
 }
 
-/* ── Sleek scrollbar (hover-only, thin) ─────────────── */
+/* ── Sleek scrollbar (VS Code-like) ─────────────────── */
 
 .scrollbar-sleek {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground, #737373) 34%, transparent) transparent;
 }
 
 .scrollbar-sleek::-webkit-scrollbar {
-  width: 6px;
+  width: 12px;
+  height: 12px;
 }
 
 .scrollbar-sleek::-webkit-scrollbar-track {
@@ -198,19 +199,24 @@
 }
 
 .scrollbar-sleek::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 3px;
+  background: color-mix(in srgb, var(--muted-foreground, #737373) 28%, transparent);
+  border: 3px solid transparent;
+  border-radius: 0;
+  background-clip: padding-box;
+  min-height: 28px;
 }
 
-.scrollbar-sleek-parent:hover .scrollbar-sleek::-webkit-scrollbar-thumb,
-.scrollbar-sleek:hover::-webkit-scrollbar-thumb {
-  background: var(--muted-foreground, #737373);
-  opacity: 0.4;
+.scrollbar-sleek::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted-foreground, #737373) 48%, transparent);
+}
+
+.scrollbar-sleek::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--foreground, #171717) 36%, transparent);
 }
 
 .scrollbar-sleek-parent:hover .scrollbar-sleek,
 .scrollbar-sleek:hover {
-  scrollbar-color: var(--muted-foreground, #737373) transparent;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground, #737373) 48%, transparent) transparent;
 }
 
 /* ── Editor-style scrollbar (matches Monaco) ────────── */

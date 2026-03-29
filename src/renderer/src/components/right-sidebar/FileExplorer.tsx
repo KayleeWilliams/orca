@@ -232,9 +232,28 @@ export default function FileExplorer(): React.JSX.Element {
     [activeWorktreeId, pinFile]
   )
 
+  const handleWheelCapture = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const container = scrollRef.current
+    if (!container || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) {
+      return
+    }
+
+    const target = e.target
+    if (!(target instanceof Element) || !target.closest('[data-explorer-draggable="true"]')) {
+      return
+    }
+
+    if (container.scrollHeight <= container.clientHeight) {
+      return
+    }
+
+    e.preventDefault()
+    container.scrollTop += e.deltaY
+  }, [])
+
   if (!worktreePath) {
     return (
-      <div className="flex items-center justify-center h-full text-[11px] text-muted-foreground px-4 text-center">
+      <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground px-4 text-center">
         Select a worktree to browse files
       </div>
     )
@@ -242,14 +261,18 @@ export default function FileExplorer(): React.JSX.Element {
 
   if (flatRows.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-[11px] text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
       </div>
     )
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto scrollbar-sleek py-2">
+    <div
+      ref={scrollRef}
+      className="h-full min-h-0 overflow-auto scrollbar-sleek py-2"
+      onWheelCapture={handleWheelCapture}
+    >
       <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
         {virtualizer.getVirtualItems().map((vItem) => {
           const node = flatRows[vItem.index]
@@ -271,13 +294,19 @@ export default function FileExplorer(): React.JSX.Element {
               style={{ transform: `translateY(${vItem.start}px)` }}
             >
               <button
+                type="button"
                 className={cn(
                   'flex items-center w-full py-1 px-2 gap-1 text-left text-xs transition-colors hover:bg-accent/60 rounded-sm',
                   isActive && !node.isDirectory && 'bg-accent text-accent-foreground'
                 )}
                 style={{ paddingLeft: `${node.depth * 16 + 8}px` }}
-                draggable
+                data-explorer-draggable={!node.isDirectory ? 'true' : undefined}
+                draggable={!node.isDirectory}
                 onDragStart={(e) => {
+                  if (node.isDirectory) {
+                    e.preventDefault()
+                    return
+                  }
                   e.dataTransfer.setData('text/x-orca-file-path', node.path)
                   e.dataTransfer.effectAllowed = 'copy'
                 }}
