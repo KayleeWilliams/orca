@@ -78,8 +78,9 @@ export default function PRActions({
         <div className="relative flex items-stretch" ref={mergeMenuRef}>
           <Button
             type="button"
+            size="xs"
             className={cn(
-              'flex-1 rounded-r-none px-3 py-1.5 text-[11px]',
+              'flex-1 rounded-r-none px-3 text-[11px]',
               'bg-green-600 text-white hover:bg-green-700',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
@@ -95,6 +96,7 @@ export default function PRActions({
           </Button>
           <Button
             type="button"
+            size="xs"
             className={cn(
               'rounded-l-none border-l border-green-700/50 px-1.5',
               'bg-green-600 text-white hover:bg-green-700',
@@ -112,7 +114,8 @@ export default function PRActions({
                   key={method}
                   type="button"
                   variant="ghost"
-                  className="h-auto w-full justify-start rounded-none px-3 py-1.5 text-left text-[11px]"
+                  size="xs"
+                  className="h-auto w-full justify-start rounded-none px-3 py-1 text-left text-[11px]"
                   onClick={() => void handleMerge(method)}
                 >
                   {MERGE_LABELS[method]}
@@ -131,7 +134,7 @@ export default function PRActions({
       <Button
         type="button"
         variant="secondary"
-        size="sm"
+        size="xs"
         className="w-full text-[11px]"
         onClick={handleDeleteWorktree}
       >
