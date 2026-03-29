@@ -219,6 +219,8 @@ const api = {
       ipcRenderer.invoke('fs:readFile', args),
     writeFile: (args: { filePath: string; content: string }): Promise<void> =>
       ipcRenderer.invoke('fs:writeFile', args),
+    deletePath: (args: { targetPath: string }): Promise<void> =>
+      ipcRenderer.invoke('fs:deletePath', args),
     stat: (args: {
       filePath: string
     }): Promise<{ size: number; isDirectory: boolean; mtime: number }> =>

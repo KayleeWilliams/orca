@@ -1,5 +1,6 @@
 import type { GitFileStatus, GitStatusEntry } from '../../../../shared/types'
-import { normalizeRelativePath } from '@/lib/path'
+import { joinPath, normalizeRelativePath } from '@/lib/path'
+import { splitPathSegments } from './path-tree'
 
 export const STATUS_LABELS: Record<GitFileStatus, string> = {
   modified: 'M',
@@ -56,6 +57,39 @@ export function buildStatusMap(entries: GitStatusEntry[]): Map<string, GitFileSt
   }
 
   return statusByPath
+}
+
+export function buildFolderStatusMap(entries: GitStatusEntry[]): Map<string, GitFileStatus | null> {
+  const folderStatuses = new Map<string, GitFileStatus[]>()
+
+  for (const entry of entries) {
+    if (!shouldPropagateStatus(entry.status)) {
+      continue
+    }
+
+    const segments = splitPathSegments(entry.path)
+    if (segments.length <= 1) {
+      continue
+    }
+
+    let currentPath = ''
+    for (const segment of segments.slice(0, -1)) {
+      currentPath = currentPath ? joinPath(currentPath, segment) : segment
+      const statuses = folderStatuses.get(currentPath)
+      if (statuses) {
+        statuses.push(entry.status)
+      } else {
+        folderStatuses.set(currentPath, [entry.status])
+      }
+    }
+  }
+
+  return new Map(
+    Array.from(folderStatuses.entries()).map(([folderPath, statuses]) => [
+      folderPath,
+      getDominantStatus(statuses)
+    ])
+  )
 }
 
 export function shouldPropagateStatus(status: GitFileStatus): boolean {

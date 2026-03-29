@@ -1,60 +1,63 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ChevronRight, File, Folder, FolderOpen, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { joinPath, normalizeRelativePath } from '@/lib/path'
-import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { GitFileStatus } from '../../../../shared/types'
+import { FileDeleteDialog } from './FileDeleteDialog'
+import { FileExplorerRow } from './FileExplorerRow'
+import type { DirCache, TreeNode } from './file-explorer-types'
 import { splitPathSegments } from './path-tree'
-import {
-  buildStatusMap,
-  getDominantStatus,
-  shouldPropagateStatus,
-  STATUS_COLORS,
-  STATUS_LABELS
-} from './status-display'
-
-type TreeNode = {
-  name: string
-  path: string // absolute path
-  relativePath: string
-  isDirectory: boolean
-  depth: number
-}
-
-type DirCache = {
-  children: TreeNode[]
-  loading: boolean
-}
+import { buildFolderStatusMap, buildStatusMap, STATUS_COLORS } from './status-display'
+import { useFileDeletion } from './useFileDeletion'
+import { useFileExplorerReveal } from './useFileExplorerReveal'
 
 export default function FileExplorer(): React.JSX.Element {
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const expandedDirs = useAppStore((s) => s.expandedDirs)
   const toggleDir = useAppStore((s) => s.toggleDir)
+  const pendingExplorerReveal = useAppStore((s) => s.pendingExplorerReveal)
+  const clearPendingExplorerReveal = useAppStore((s) => s.clearPendingExplorerReveal)
   const openFile = useAppStore((s) => s.openFile)
   const pinFile = useAppStore((s) => s.pinFile)
   const activeFileId = useAppStore((s) => s.activeFileId)
   const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
+  const openFiles = useAppStore((s) => s.openFiles)
+  const closeFile = useAppStore((s) => s.closeFile)
 
-  // Find active worktree path
   const worktreePath = useMemo(() => {
     if (!activeWorktreeId) {
       return null
     }
+
     for (const worktrees of Object.values(worktreesByRepo)) {
-      const wt = worktrees.find((w) => w.id === activeWorktreeId)
-      if (wt) {
-        return wt.path
+      const worktree = worktrees.find((candidate) => candidate.id === activeWorktreeId)
+      if (worktree) {
+        return worktree.path
       }
     }
+
     return null
   }, [activeWorktreeId, worktreesByRepo])
 
   const [dirCache, setDirCache] = useState<Record<string, DirCache>>({})
+  const dirCacheRef = useRef(dirCache)
+  dirCacheRef.current = dirCache
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [flashingPath, setFlashingPath] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const flashTimeoutRef = useRef<number | null>(null)
+  const isMac = useMemo(() => navigator.userAgent.includes('Mac'), [])
+  const isWindows = useMemo(() => navigator.userAgent.includes('Windows'), [])
+
+  const clearFlashTimeout = useCallback(() => {
+    if (flashTimeoutRef.current !== null) {
+      window.clearTimeout(flashTimeoutRef.current)
+      flashTimeoutRef.current = null
+    }
+  }, [])
 
   const entries = useMemo(
     () => (activeWorktreeId ? (gitStatusByWorktree[activeWorktreeId] ?? []) : []),
@@ -63,38 +66,7 @@ export default function FileExplorer(): React.JSX.Element {
 
   const statusByRelativePath = useMemo(() => buildStatusMap(entries), [entries])
 
-  const folderStatusByRelativePath = useMemo(() => {
-    const folderStatuses = new Map<string, GitFileStatus[]>()
-
-    for (const entry of entries) {
-      if (!shouldPropagateStatus(entry.status)) {
-        continue
-      }
-
-      const segments = splitPathSegments(entry.path)
-      if (segments.length <= 1) {
-        continue
-      }
-
-      let currentPath = ''
-      for (const segment of segments.slice(0, -1)) {
-        currentPath = currentPath ? joinPath(currentPath, segment) : segment
-        const statuses = folderStatuses.get(currentPath)
-        if (statuses) {
-          statuses.push(entry.status)
-        } else {
-          folderStatuses.set(currentPath, [entry.status])
-        }
-      }
-    }
-
-    return new Map(
-      Array.from(folderStatuses.entries()).map(([folderPath, statuses]) => [
-        folderPath,
-        getDominantStatus(statuses)
-      ])
-    )
-  }, [entries])
+  const folderStatusByRelativePath = useMemo(() => buildFolderStatusMap(entries), [entries])
 
   const expanded = useMemo(
     () =>
@@ -102,34 +74,33 @@ export default function FileExplorer(): React.JSX.Element {
     [activeWorktreeId, expandedDirs]
   )
 
-  // Load directory contents
   const loadDir = useCallback(
-    async (dirPath: string, depth: number) => {
-      if (dirCache[dirPath]?.children.length > 0 || dirCache[dirPath]?.loading) {
+    async (dirPath: string, depth: number, options?: { force?: boolean }) => {
+      const cache = dirCacheRef.current
+      if (!options?.force && (cache[dirPath]?.children.length > 0 || cache[dirPath]?.loading)) {
         return
       }
 
       setDirCache((prev) => ({
         ...prev,
-        [dirPath]: { children: prev[dirPath]?.children ?? [], loading: true }
+        [dirPath]: {
+          children: options?.force ? [] : (prev[dirPath]?.children ?? []),
+          loading: true
+        }
       }))
 
       try {
-        const entries = (await window.api.fs.readDir({ dirPath })) as {
-          name: string
-          isDirectory: boolean
-        }[]
-
+        const entries = await window.api.fs.readDir({ dirPath })
         const children: TreeNode[] = entries
-          .filter((e) => !e.name.startsWith('.') || e.name === '.github')
-          .filter((e) => e.name !== 'node_modules' && e.name !== '.git')
-          .map((e) => ({
-            name: e.name,
-            path: joinPath(dirPath, e.name),
+          .filter((entry) => !entry.name.startsWith('.') || entry.name === '.github')
+          .filter((entry) => entry.name !== 'node_modules' && entry.name !== '.git')
+          .map((entry) => ({
+            name: entry.name,
+            path: joinPath(dirPath, entry.name),
             relativePath: worktreePath
-              ? normalizeRelativePath(joinPath(dirPath, e.name).slice(worktreePath.length + 1))
-              : e.name,
-            isDirectory: e.isDirectory,
+              ? normalizeRelativePath(joinPath(dirPath, entry.name).slice(worktreePath.length + 1))
+              : entry.name,
+            isDirectory: entry.isDirectory,
             depth: depth + 1
           }))
 
@@ -144,19 +115,59 @@ export default function FileExplorer(): React.JSX.Element {
         }))
       }
     },
-    [dirCache, worktreePath]
+    [worktreePath]
   )
 
-  // Load root when worktree changes
+  const refreshTree = useCallback(async () => {
+    if (!worktreePath) {
+      return
+    }
+
+    setDirCache({})
+    await loadDir(worktreePath, -1, { force: true })
+
+    await Promise.all(
+      Array.from(expanded).map(async (dirPath) => {
+        const depth = splitPathSegments(dirPath.slice(worktreePath.length + 1)).length - 1
+        await loadDir(dirPath, depth, { force: true })
+      })
+    )
+  }, [expanded, loadDir, worktreePath])
+
+  const {
+    pendingDelete,
+    isDeleting,
+    deleteShortcutLabel,
+    deleteActionLabel,
+    deleteDescription,
+    requestDelete,
+    closeDeleteDialog,
+    confirmDelete
+  } = useFileDeletion({
+    activeWorktreeId,
+    openFiles,
+    closeFile,
+    refreshTree,
+    selectedPath,
+    setSelectedPath,
+    isMac,
+    isWindows
+  })
+
   useEffect(() => {
     if (!worktreePath) {
       return
     }
+
+    setSelectedPath(null)
     setDirCache({})
     void loadDir(worktreePath, -1)
   }, [worktreePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load expanded directories
+  useEffect(() => {
+    return clearFlashTimeout
+  }, [clearFlashTimeout])
+
   useEffect(() => {
     for (const dirPath of expanded) {
       if (!dirCache[dirPath]?.children.length && !dirCache[dirPath]?.loading) {
@@ -168,7 +179,6 @@ export default function FileExplorer(): React.JSX.Element {
     }
   }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flatten tree into visible rows
   const flatRows = useMemo(() => {
     if (!worktreePath) {
       return []
@@ -194,6 +204,9 @@ export default function FileExplorer(): React.JSX.Element {
     return result
   }, [worktreePath, dirCache, expanded])
 
+  const rowsByPath = useMemo(() => new Map(flatRows.map((row) => [row.path, row])), [flatRows])
+  const rootCache = worktreePath ? dirCache[worktreePath] : undefined
+
   const virtualizer = useVirtualizer({
     count: flatRows.length,
     getScrollElement: () => scrollRef.current,
@@ -202,25 +215,45 @@ export default function FileExplorer(): React.JSX.Element {
     getItemKey: (index) => flatRows[index].path
   })
 
+  useFileExplorerReveal({
+    activeWorktreeId,
+    worktreePath,
+    pendingExplorerReveal,
+    clearPendingExplorerReveal,
+    expanded,
+    dirCache,
+    rootCache,
+    rowsByPath,
+    flatRows,
+    loadDir,
+    setSelectedPath,
+    setFlashingPath,
+    flashTimeoutRef,
+    virtualizer
+  })
+
   const handleClick = useCallback(
     (node: TreeNode) => {
       if (!activeWorktreeId) {
         return
       }
 
+      setSelectedPath(node.path)
+
       if (node.isDirectory) {
         toggleDir(activeWorktreeId, node.path)
-      } else {
-        openFile({
-          filePath: node.path,
-          relativePath: node.relativePath,
-          worktreeId: activeWorktreeId,
-          language: detectLanguage(node.name),
-          mode: 'edit'
-        })
+        return
       }
+
+      openFile({
+        filePath: node.path,
+        relativePath: node.relativePath,
+        worktreeId: activeWorktreeId,
+        language: detectLanguage(node.name),
+        mode: 'edit'
+      })
     },
-    [activeWorktreeId, toggleDir, openFile]
+    [activeWorktreeId, openFile, toggleDir]
   )
 
   const handleDoubleClick = useCallback(
@@ -228,6 +261,7 @@ export default function FileExplorer(): React.JSX.Element {
       if (!activeWorktreeId || node.isDirectory) {
         return
       }
+
       pinFile(node.path)
     },
     [activeWorktreeId, pinFile]
@@ -252,6 +286,38 @@ export default function FileExplorer(): React.JSX.Element {
     container.scrollTop += e.deltaY
   }, [])
 
+  const handleExplorerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target
+      if (
+        !(target instanceof HTMLElement) ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable
+      ) {
+        return
+      }
+
+      const selectedNode =
+        (selectedPath ? rowsByPath.get(selectedPath) : undefined) ??
+        (activeFileId ? rowsByPath.get(activeFileId) : undefined)
+      if (!selectedNode) {
+        return
+      }
+
+      const isDeleteShortcut =
+        event.key === 'Delete' || (isMac && event.key === 'Backspace' && event.metaKey)
+
+      if (!isDeleteShortcut) {
+        return
+      }
+
+      event.preventDefault()
+      requestDelete(selectedNode)
+    },
+    [activeFileId, isMac, requestDelete, rowsByPath, selectedPath]
+  )
+
   if (!worktreePath) {
     return (
       <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground px-4 text-center">
@@ -261,101 +327,74 @@ export default function FileExplorer(): React.JSX.Element {
   }
 
   if (flatRows.length === 0) {
+    if (rootCache?.loading ?? true) {
+      return (
+        <div className="flex items-center justify-center h-full text-[11px] text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+        </div>
+      )
+    }
+
     return (
-      <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+      <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground px-4 text-center">
+        No files in this worktree
       </div>
     )
   }
 
   return (
-    <ScrollArea
-      className="h-full min-h-0"
-      viewportRef={scrollRef}
-      viewportClassName="h-full min-h-0 py-2"
-      onWheelCapture={handleWheelCapture}
-    >
-      <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-        {virtualizer.getVirtualItems().map((vItem) => {
-          const node = flatRows[vItem.index]
-          const isExpanded = expanded.has(node.path)
-          const isLoading = node.isDirectory && dirCache[node.path]?.loading
-          const isActive = activeFileId === node.path
-          const normalizedRelativePath = normalizeRelativePath(node.relativePath)
-          const nodeStatus = node.isDirectory
-            ? (folderStatusByRelativePath.get(normalizedRelativePath) ?? null)
-            : (statusByRelativePath.get(normalizedRelativePath) ?? null)
-          const statusColor = nodeStatus ? STATUS_COLORS[nodeStatus] : null
+    <>
+      <ScrollArea
+        className="h-full min-h-0"
+        viewportRef={scrollRef}
+        viewportClassName="h-full min-h-0 py-2"
+        onWheelCapture={handleWheelCapture}
+        onKeyDownCapture={handleExplorerKeyDown}
+      >
+        <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const node = flatRows[virtualItem.index]
+            const normalizedRelativePath = normalizeRelativePath(node.relativePath)
+            const nodeStatus = node.isDirectory
+              ? (folderStatusByRelativePath.get(normalizedRelativePath) ?? null)
+              : (statusByRelativePath.get(normalizedRelativePath) ?? null)
 
-          return (
-            <div
-              key={vItem.key}
-              data-index={vItem.index}
-              ref={virtualizer.measureElement}
-              className="absolute left-0 right-0"
-              style={{ transform: `translateY(${vItem.start}px)` }}
-            >
-              <button
-                type="button"
-                className={cn(
-                  'flex items-center w-full py-1 px-2 gap-1 text-left text-xs transition-colors hover:bg-accent/60 rounded-sm',
-                  isActive && !node.isDirectory && 'bg-accent text-accent-foreground'
-                )}
-                style={{ paddingLeft: `${node.depth * 16 + 8}px` }}
-                data-explorer-draggable={!node.isDirectory ? 'true' : undefined}
-                draggable={!node.isDirectory}
-                onDragStart={(e) => {
-                  if (node.isDirectory) {
-                    e.preventDefault()
-                    return
-                  }
-                  e.dataTransfer.setData('text/x-orca-file-path', node.path)
-                  e.dataTransfer.effectAllowed = 'copy'
-                }}
-                onClick={() => handleClick(node)}
-                onDoubleClick={() => handleDoubleClick(node)}
+            return (
+              <div
+                key={virtualItem.key}
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                className="absolute left-0 right-0"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
               >
-                {node.isDirectory ? (
-                  <>
-                    <ChevronRight
-                      className={cn(
-                        'size-3 shrink-0 text-muted-foreground transition-transform',
-                        isExpanded && 'rotate-90'
-                      )}
-                    />
-                    {isLoading ? (
-                      <Loader2 className="size-3 shrink-0 text-muted-foreground animate-spin" />
-                    ) : isExpanded ? (
-                      <FolderOpen className="size-3 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <Folder className="size-3 shrink-0 text-muted-foreground" />
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <span className="size-3 shrink-0" />
-                    <File className="size-3 shrink-0 text-muted-foreground" />
-                  </>
-                )}
-                <span
-                  className={cn('truncate', isActive && !nodeStatus && 'text-accent-foreground')}
-                  style={nodeStatus ? { color: statusColor ?? undefined } : undefined}
-                >
-                  {node.name}
-                </span>
-                {nodeStatus && (
-                  <span
-                    className="ml-auto shrink-0 text-[10px] font-semibold tracking-wide"
-                    style={{ color: statusColor ?? undefined }}
-                  >
-                    {STATUS_LABELS[nodeStatus]}
-                  </span>
-                )}
-              </button>
-            </div>
-          )
-        })}
-      </div>
-    </ScrollArea>
+                <FileExplorerRow
+                  node={node}
+                  isExpanded={expanded.has(node.path)}
+                  isLoading={node.isDirectory && Boolean(dirCache[node.path]?.loading)}
+                  isSelected={selectedPath === node.path || activeFileId === node.path}
+                  isFlashing={flashingPath === node.path}
+                  nodeStatus={nodeStatus}
+                  statusColor={nodeStatus ? STATUS_COLORS[nodeStatus] : null}
+                  deleteShortcutLabel={deleteShortcutLabel}
+                  onClick={() => handleClick(node)}
+                  onDoubleClick={() => handleDoubleClick(node)}
+                  onSelect={() => setSelectedPath(node.path)}
+                  onRequestDelete={() => requestDelete(node)}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </ScrollArea>
+
+      <FileDeleteDialog
+        pendingDelete={pendingDelete}
+        isDeleting={isDeleting}
+        deleteDescription={deleteDescription}
+        deleteActionLabel={deleteActionLabel}
+        onClose={closeDeleteDialog}
+        onConfirm={() => void confirmDelete()}
+      />
+    </>
   )
 }

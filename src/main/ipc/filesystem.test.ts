@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const handlers = new Map<string, (_event: unknown, args: unknown) => Promise<unknown> | unknown>()
 const {
   handleMock,
+  trashItemMock,
   readdirMock,
   readFileMock,
   writeFileMock,
@@ -19,6 +20,7 @@ const {
   listWorktreesMock
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
+  trashItemMock: vi.fn(),
   readdirMock: vi.fn(),
   readFileMock: vi.fn(),
   writeFileMock: vi.fn(),
@@ -38,6 +40,9 @@ const {
 vi.mock('electron', () => ({
   ipcMain: {
     handle: handleMock
+  },
+  shell: {
+    trashItem: trashItemMock
   }
 }))
 
@@ -85,6 +90,7 @@ describe('registerFilesystemHandlers', () => {
   beforeEach(() => {
     handlers.clear()
     handleMock.mockReset()
+    trashItemMock.mockReset()
     readdirMock.mockReset()
     readFileMock.mockReset()
     writeFileMock.mockReset()
@@ -108,6 +114,7 @@ describe('registerFilesystemHandlers', () => {
     listWorktreesMock.mockResolvedValue([
       { path: '/workspace/repo-feature', head: 'abc', branch: '', isBare: false }
     ])
+    trashItemMock.mockResolvedValue(undefined)
     statMock.mockResolvedValue({ size: 10, isDirectory: () => false, mtimeMs: 123 })
     lstatMock.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
   })
@@ -174,6 +181,14 @@ describe('registerFilesystemHandlers', () => {
       isImage: true,
       mimeType: 'image/svg+xml'
     })
+  })
+
+  it('moves files to trash', async () => {
+    registerFilesystemHandlers(store as never)
+
+    await handlers.get('fs:deletePath')!(null, { targetPath: '/workspace/repo/file.txt' })
+
+    expect(trashItemMock).toHaveBeenCalledWith('/workspace/repo/file.txt')
   })
 
   it('keeps non-image binaries hidden from the editor payload', async () => {

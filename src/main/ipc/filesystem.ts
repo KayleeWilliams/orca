@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { ipcMain } from 'electron'
+import { ipcMain, shell } from 'electron'
 import { readdir, readFile, writeFile, stat, lstat } from 'fs/promises'
 import { extname, relative } from 'path'
 import { spawn } from 'child_process'
@@ -131,6 +131,12 @@ export function registerFilesystemHandlers(store: Store): void {
       await writeFile(filePath, args.content, 'utf-8')
     }
   )
+
+  ipcMain.handle('fs:deletePath', async (_event, args: { targetPath: string }): Promise<void> => {
+    const targetPath = await resolveAuthorizedPath(args.targetPath, store)
+
+    await shell.trashItem(targetPath)
+  })
 
   ipcMain.handle(
     'fs:stat',

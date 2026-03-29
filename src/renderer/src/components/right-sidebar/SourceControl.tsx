@@ -12,7 +12,8 @@ import {
   FileMinus,
   FilePlus,
   FileQuestion,
-  ArrowRightLeft
+  ArrowRightLeft,
+  FolderOpen
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
@@ -20,6 +21,12 @@ import { basename, dirname, joinPath } from '@/lib/path'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 import {
   Dialog,
   DialogContent,
@@ -73,6 +80,7 @@ export default function SourceControl(): React.JSX.Element {
   const updateRepo = useAppStore((s) => s.updateRepo)
   const beginGitBranchCompareRequest = useAppStore((s) => s.beginGitBranchCompareRequest)
   const setGitBranchCompareResult = useAppStore((s) => s.setGitBranchCompareResult)
+  const revealInExplorer = useAppStore((s) => s.revealInExplorer)
   const openDiff = useAppStore((s) => s.openDiff)
   const openBranchDiff = useAppStore((s) => s.openBranchDiff)
   const openAllDiffs = useAppStore((s) => s.openAllDiffs)
@@ -326,6 +334,7 @@ export default function SourceControl(): React.JSX.Element {
 
   const showGenericEmptyState =
     !hasUncommittedEntries && branchSummary?.status === 'ready' && branchEntries.length === 0
+  const currentWorktreeId = activeWorktree.id
 
   return (
     <>
@@ -429,6 +438,9 @@ export default function SourceControl(): React.JSX.Element {
                           key={`${entry.area}:${entry.path}`}
                           entry={entry}
                           worktreePath={worktreePath}
+                          onRevealInExplorer={() =>
+                            revealInExplorer(currentWorktreeId, joinPath(worktreePath, entry.path))
+                          }
                           onOpen={() => openUncommittedDiff(entry)}
                           onStage={() => void handleStage(entry.path)}
                           onUnstage={() => void handleUnstage(entry.path)}
@@ -477,6 +489,10 @@ export default function SourceControl(): React.JSX.Element {
                   <BranchEntryRow
                     key={`branch:${entry.path}`}
                     entry={entry}
+                    worktreePath={worktreePath}
+                    onRevealInExplorer={() =>
+                      revealInExplorer(currentWorktreeId, joinPath(worktreePath, entry.path))
+                    }
                     onOpen={() => openCommittedDiff(entry)}
                   />
                 ))}
@@ -662,6 +678,7 @@ function SectionHeader({
 function UncommittedEntryRow({
   entry,
   worktreePath,
+  onRevealInExplorer,
   onOpen,
   onStage,
   onUnstage,
@@ -669,6 +686,7 @@ function UncommittedEntryRow({
 }: {
   entry: GitStatusEntry
   worktreePath: string
+  onRevealInExplorer: () => void
   onOpen: () => void
   onStage: () => void
   onUnstage: () => void
@@ -681,74 +699,83 @@ function UncommittedEntryRow({
   const actions = getSourceControlActions(entry.area)
 
   return (
-    <div
-      className="group flex cursor-pointer items-center gap-1 pl-5 pr-3 py-1 transition-colors hover:bg-accent/40"
-      draggable
-      onDragStart={(e) => {
-        const absolutePath = joinPath(worktreePath, entry.path)
-        e.dataTransfer.setData('text/x-orca-file-path', absolutePath)
-        e.dataTransfer.effectAllowed = 'copy'
-      }}
-      onClick={onOpen}
+    <SourceControlEntryContextMenu
+      absolutePath={joinPath(worktreePath, entry.path)}
+      onRevealInExplorer={onRevealInExplorer}
     >
-      <StatusIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
-      <span className="min-w-0 flex-1 truncate text-xs">
-        <span className="text-foreground">{fileName}</span>
-        {dirPath && <span className="ml-1.5 text-[11px] text-muted-foreground">{dirPath}</span>}
-      </span>
-      <span
-        className="w-4 shrink-0 text-center text-[10px] font-bold"
-        style={{ color: STATUS_COLORS[entry.status] }}
+      <div
+        className="group flex cursor-pointer items-center gap-1 pl-5 pr-3 py-1 transition-colors hover:bg-accent/40"
+        draggable
+        onDragStart={(e) => {
+          const absolutePath = joinPath(worktreePath, entry.path)
+          e.dataTransfer.setData('text/x-orca-file-path', absolutePath)
+          e.dataTransfer.effectAllowed = 'copy'
+        }}
+        onClick={onOpen}
       >
-        {STATUS_LABELS[entry.status]}
-      </span>
-      <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 flex items-center gap-0.5">
-        {actions.includes('discard') && (
-          <ActionButton
-            icon={Undo2}
-            title={entry.area === 'untracked' ? 'Revert untracked file' : 'Discard changes'}
-            onClick={(event) => {
-              event.stopPropagation()
-              if (
-                entry.area === 'untracked' &&
-                !window.confirm(`Delete untracked file "${entry.path}"? This cannot be undone.`)
-              ) {
-                return
-              }
-              void onDiscard()
-            }}
-          />
-        )}
-        {actions.includes('stage') && (
-          <ActionButton
-            icon={Plus}
-            title="Stage"
-            onClick={(event) => {
-              event.stopPropagation()
-              void onStage()
-            }}
-          />
-        )}
-        {actions.includes('unstage') && (
-          <ActionButton
-            icon={Minus}
-            title="Unstage"
-            onClick={(event) => {
-              event.stopPropagation()
-              void onUnstage()
-            }}
-          />
-        )}
+        <StatusIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
+        <span className="min-w-0 flex-1 truncate text-xs">
+          <span className="text-foreground">{fileName}</span>
+          {dirPath && <span className="ml-1.5 text-[11px] text-muted-foreground">{dirPath}</span>}
+        </span>
+        <span
+          className="w-4 shrink-0 text-center text-[10px] font-bold"
+          style={{ color: STATUS_COLORS[entry.status] }}
+        >
+          {STATUS_LABELS[entry.status]}
+        </span>
+        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 flex items-center gap-0.5">
+          {actions.includes('discard') && (
+            <ActionButton
+              icon={Undo2}
+              title={entry.area === 'untracked' ? 'Revert untracked file' : 'Discard changes'}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (
+                  entry.area === 'untracked' &&
+                  !window.confirm(`Delete untracked file "${entry.path}"? This cannot be undone.`)
+                ) {
+                  return
+                }
+                void onDiscard()
+              }}
+            />
+          )}
+          {actions.includes('stage') && (
+            <ActionButton
+              icon={Plus}
+              title="Stage"
+              onClick={(event) => {
+                event.stopPropagation()
+                void onStage()
+              }}
+            />
+          )}
+          {actions.includes('unstage') && (
+            <ActionButton
+              icon={Minus}
+              title="Unstage"
+              onClick={(event) => {
+                event.stopPropagation()
+                void onUnstage()
+              }}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </SourceControlEntryContextMenu>
   )
 }
 
 function BranchEntryRow({
   entry,
+  worktreePath,
+  onRevealInExplorer,
   onOpen
 }: {
   entry: GitBranchChangeEntry
+  worktreePath: string
+  onRevealInExplorer: () => void
   onOpen: () => void
 }): React.JSX.Element {
   const StatusIcon = STATUS_ICONS[entry.status] ?? FileQuestion
@@ -757,22 +784,56 @@ function BranchEntryRow({
   const dirPath = parentDir === '.' ? '' : parentDir
 
   return (
-    <div
-      className="group flex cursor-pointer items-center gap-1 pl-5 pr-3 py-1 transition-colors hover:bg-accent/40"
-      onClick={onOpen}
+    <SourceControlEntryContextMenu
+      absolutePath={joinPath(worktreePath, entry.path)}
+      onRevealInExplorer={onRevealInExplorer}
     >
-      <StatusIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
-      <span className="min-w-0 flex-1 truncate text-xs">
-        <span className="text-foreground">{fileName}</span>
-        {dirPath && <span className="ml-1.5 text-[11px] text-muted-foreground">{dirPath}</span>}
-      </span>
-      <span
-        className="w-4 shrink-0 text-center text-[10px] font-bold"
-        style={{ color: STATUS_COLORS[entry.status] }}
+      <div
+        className="group flex cursor-pointer items-center gap-1 pl-5 pr-3 py-1 transition-colors hover:bg-accent/40"
+        onClick={onOpen}
       >
-        {STATUS_LABELS[entry.status]}
-      </span>
-    </div>
+        <StatusIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
+        <span className="min-w-0 flex-1 truncate text-xs">
+          <span className="text-foreground">{fileName}</span>
+          {dirPath && <span className="ml-1.5 text-[11px] text-muted-foreground">{dirPath}</span>}
+        </span>
+        <span
+          className="w-4 shrink-0 text-center text-[10px] font-bold"
+          style={{ color: STATUS_COLORS[entry.status] }}
+        >
+          {STATUS_LABELS[entry.status]}
+        </span>
+      </div>
+    </SourceControlEntryContextMenu>
+  )
+}
+
+function SourceControlEntryContextMenu({
+  absolutePath,
+  onRevealInExplorer,
+  children
+}: {
+  absolutePath?: string
+  onRevealInExplorer: () => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  const handleOpenInFileExplorer = useCallback(() => {
+    if (!absolutePath) {
+      return
+    }
+    onRevealInExplorer()
+  }, [absolutePath, onRevealInExplorer])
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onSelect={handleOpenInFileExplorer} disabled={!absolutePath}>
+          <FolderOpen className="size-3.5" />
+          Open in File Explorer
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

@@ -67,6 +67,13 @@ export type EditorSlice = {
   // File explorer state
   expandedDirs: Record<string, Set<string>> // worktreeId -> set of expanded dir paths
   toggleDir: (worktreeId: string, dirPath: string) => void
+  pendingExplorerReveal: {
+    worktreeId: string
+    filePath: string
+    requestId: number
+  } | null
+  revealInExplorer: (worktreeId: string, filePath: string) => void
+  clearPendingExplorerReveal: () => void
 
   // Open files / editor tabs
   openFiles: OpenFile[]
@@ -190,6 +197,14 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
       return { expandedDirs: { ...s.expandedDirs, [worktreeId]: next } }
     }),
+  pendingExplorerReveal: null,
+  revealInExplorer: (worktreeId, filePath) =>
+    set({
+      rightSidebarOpen: true,
+      rightSidebarTab: 'explorer',
+      pendingExplorerReveal: { worktreeId, filePath, requestId: Date.now() }
+    }),
+  clearPendingExplorerReveal: () => set({ pendingExplorerReveal: null }),
 
   // Open files
   openFiles: [],

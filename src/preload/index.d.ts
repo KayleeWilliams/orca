@@ -132,6 +132,7 @@ type FsApi = {
     filePath: string
   }) => Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }>
   writeFile: (args: { filePath: string; content: string }) => Promise<void>
+  deletePath: (args: { targetPath: string }) => Promise<void>
   stat: (args: {
     filePath: string
   }) => Promise<{ size: number; isDirectory: boolean; mtime: number }>
