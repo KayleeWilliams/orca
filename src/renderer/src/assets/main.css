@@ -526,6 +526,25 @@
   padding-left: 1.5em;
 }
 
+/* Restore list markers inside markdown preview because the app-wide reset removes
+   them for navigation UI. Markdown content needs native list semantics to match
+   source documents, so this override should stay scoped to the preview surface. */
+.markdown-body ul {
+  list-style: disc;
+}
+
+.markdown-body ol {
+  list-style: decimal;
+}
+
+.markdown-body ul ul {
+  list-style: circle;
+}
+
+.markdown-body ul ul ul {
+  list-style: square;
+}
+
 .markdown-body li {
   margin: 0.25em 0;
 }
