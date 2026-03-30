@@ -39,27 +39,12 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
       'rg',
       [
         '--files',
-        '--hidden',
-        '--glob',
-        '!.git',
-        '--glob',
-        '!.git/**',
+        // Why: --hidden + positive re-inclusion globs (e.g. '.github') made
+        // ripgrep treat them as a whitelist, filtering out every non-dotfile.
+        // Without --hidden, rg skips dot-dirs by default and respects
+        // .gitignore, so normal files like CLAUDE.md are returned correctly.
         '--glob',
         '!**/node_modules',
-        '--glob',
-        '!**/node_modules/**',
-        '--glob',
-        '!.*',
-        '--glob',
-        '!.*/*',
-        '--glob',
-        '!**/.*',
-        '--glob',
-        '!**/.*/**',
-        '--glob',
-        '.github',
-        '--glob',
-        '.github/**',
         authorizedRootPath
       ],
       {
