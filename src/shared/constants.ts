@@ -50,7 +50,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalInactivePaneOpacity: 0.8,
     terminalActivePaneOpacity: 1,
     terminalPaneOpacityTransitionMs: 140,
-    terminalDividerThicknessPx: 1,
+    terminalDividerThicknessPx: 3,
     terminalScrollbackBytes: 10_000_000,
     rightSidebarOpenByDefault: true
   }
