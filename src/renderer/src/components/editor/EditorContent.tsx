@@ -44,7 +44,12 @@ export function EditorContent({
   isMarkdown: boolean
   mdViewMode: MarkdownViewMode
   sideBySide: boolean
-  pendingEditorReveal: { line?: number; column?: number; matchLength?: number } | null
+  pendingEditorReveal: {
+    filePath?: string
+    line?: number
+    column?: number
+    matchLength?: number
+  } | null
   handleContentChange: (content: string) => void
   handleSave: (content: string) => Promise<void>
 }): React.JSX.Element {
@@ -69,9 +74,19 @@ export function EditorContent({
       language={resolvedLanguage}
       onContentChange={handleContentChange}
       onSave={handleSave}
-      revealLine={pendingEditorReveal?.line}
-      revealColumn={pendingEditorReveal?.column}
-      revealMatchLength={pendingEditorReveal?.matchLength}
+      revealLine={
+        pendingEditorReveal?.filePath === activeFile.filePath ? pendingEditorReveal.line : undefined
+      }
+      revealColumn={
+        pendingEditorReveal?.filePath === activeFile.filePath
+          ? pendingEditorReveal.column
+          : undefined
+      }
+      revealMatchLength={
+        pendingEditorReveal?.filePath === activeFile.filePath
+          ? pendingEditorReveal.matchLength
+          : undefined
+      }
     />
   )
 

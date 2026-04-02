@@ -217,9 +217,14 @@ export type EditorSlice = {
   clearFileSearch: () => void
 
   // Editor navigation (for search result → go-to-line)
-  pendingEditorReveal: { line: number; column: number; matchLength: number } | null
+  pendingEditorReveal: {
+    filePath: string
+    line: number
+    column: number
+    matchLength: number
+  } | null
   setPendingEditorReveal: (
-    reveal: { line: number; column: number; matchLength: number } | null
+    reveal: { filePath: string; line: number; column: number; matchLength: number } | null
   ) => void
 
   // Quick open (Cmd+P)
@@ -454,7 +459,8 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           openFiles: [],
           activeFileId: null,
           activeTabType: 'terminal',
-          markdownViewMode: {}
+          markdownViewMode: {},
+          pendingEditorReveal: null
         }
       }
       // Only close files for the current worktree
@@ -473,7 +479,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         activeTabType: 'terminal',
         markdownViewMode: newMarkdownViewMode,
         activeFileIdByWorktree: newActiveFileIdByWorktree,
-        activeTabTypeByWorktree: newActiveTabTypeByWorktree
+        activeTabTypeByWorktree: newActiveTabTypeByWorktree,
+        // Why: search-result navigation queues a one-shot reveal for the next
+        // editor mount. If the worktree closes all editor tabs before that
+        // reveal is consumed, keeping it around would make a later reopen jump
+        // to an old match unexpectedly.
+        pendingEditorReveal: null
       }
     }),
 

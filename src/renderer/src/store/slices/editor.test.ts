@@ -125,6 +125,49 @@ describe('createEditorSlice markdown preview state', () => {
   })
 })
 
+describe('createEditorSlice pending editor reveal', () => {
+  it('stores the destination file path with the reveal payload', () => {
+    const store = createEditorStore()
+
+    store.getState().setPendingEditorReveal({
+      filePath: '/repo/src/file.ts',
+      line: 42,
+      column: 7,
+      matchLength: 5
+    })
+
+    expect(store.getState().pendingEditorReveal).toEqual({
+      filePath: '/repo/src/file.ts',
+      line: 42,
+      column: 7,
+      matchLength: 5
+    })
+  })
+
+  it('clears pending reveal when closing all files in the active worktree', () => {
+    const store = createEditorStore()
+
+    store.getState().openFile({
+      filePath: '/repo/src/file.ts',
+      relativePath: 'src/file.ts',
+      worktreeId: 'wt-1',
+      language: 'typescript',
+      mode: 'edit'
+    })
+    store.getState().setPendingEditorReveal({
+      filePath: '/repo/src/file.ts',
+      line: 42,
+      column: 7,
+      matchLength: 5
+    })
+
+    store.getState().closeAllFiles()
+
+    expect(store.getState().openFiles).toEqual([])
+    expect(store.getState().pendingEditorReveal).toBeNull()
+  })
+})
+
 describe('createEditorSlice conflict status reconciliation', () => {
   it('tracks unresolved conflicts when opened through the conflict-safe entry point', () => {
     const store = createEditorStore()

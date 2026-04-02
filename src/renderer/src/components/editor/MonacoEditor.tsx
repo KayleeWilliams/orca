@@ -85,7 +85,10 @@ export default function MonacoEditor({
 
       // If there's a pending reveal at mount time, execute it now
       const reveal = useAppStore.getState().pendingEditorReveal
-      if (reveal) {
+      // Why: search-result navigation sets the reveal before openFile switches
+      // the active tab. Without scoping consumption to the destination file,
+      // the previously mounted editor can clear the reveal on the first click.
+      if (reveal?.filePath === filePath) {
         performReveal(editorInstance, reveal.line, reveal.column, reveal.matchLength)
         useAppStore.getState().setPendingEditorReveal(null)
       } else {
