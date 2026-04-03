@@ -18,7 +18,7 @@ Learn more at <a align="center" href="https://onOrca.dev">onOrca.dev</a>
 ---
 
 ## Install
-Download from https://onOrca.dev or via the [GH release page](https://github.com/stablyai/orca/releases)
+Download from [onOrca.dev](https://onOrca.dev) or via the [GH release page](https://github.com/stablyai/orca/releases)
 
 ## Features
   * Manage multiple worktrees
