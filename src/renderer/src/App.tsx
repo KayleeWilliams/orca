@@ -20,6 +20,7 @@ import {
   setRuntimeGraphStoreStateGetter,
   setRuntimeGraphSyncEnabled
 } from './runtime/sync-runtime-graph'
+import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -84,6 +85,7 @@ function App(): React.JSX.Element {
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
   // until some unrelated view remount happens to refresh them.
   useGitStatusPolling()
+  useGlobalFileDrop()
 
   const settings = useAppStore((s) => s.settings)
 
