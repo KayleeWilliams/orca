@@ -96,9 +96,8 @@ The design reason is simple:
 
 ## Relationship To Other Docs
 
-- [orca-cli-command-surface.md](./orca-cli-command-surface.md) explains the broader evaluated command surface.
 - [orca-cli-v1-spec.md](./orca-cli-v1-spec.md) defines the stricter command contract and runtime assumptions.
 - [orca-runtime-layer-design.md](./orca-runtime-layer-design.md) explains the runtime architecture that makes the live terminal surface safe.
-- [orca-runtime-build-plan.md](./orca-runtime-build-plan.md) records the phased implementation plan for that runtime layer.
+- [orca-cli-bundled-distribution.md](./orca-cli-bundled-distribution.md) explains how the bundled desktop-app installation and PATH registration model works.
 
 This status file is the source of truth for the currently implemented focused v1 scope.
