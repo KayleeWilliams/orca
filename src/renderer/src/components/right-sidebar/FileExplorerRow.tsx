@@ -24,6 +24,8 @@ import type { GitFileStatus } from '../../../../shared/types'
 import { STATUS_LABELS } from './status-display'
 import type { TreeNode } from './file-explorer-types'
 
+const ORCA_PATH_MIME = 'text/x-orca-file-path'
+
 const isMac = navigator.userAgent.includes('Mac')
 
 export type InlineInput = {
@@ -189,7 +191,13 @@ type FileExplorerRowProps = {
   onStartNew: (type: 'file' | 'folder', dir: string, depth: number) => void
   onStartRename: (node: TreeNode) => void
   onRequestDelete: () => void
+  onMoveDrop: (sourcePath: string, destDir: string) => void
+  onDragTargetChange: (dir: string | null) => void
+  onDragSourceChange: (path: string | null) => void
+  onDragExpandDir: (dirPath: string) => void
 }
+
+const DRAG_EXPAND_DELAY_MS = 500
 
 export function FileExplorerRow({
   node,
@@ -207,8 +215,88 @@ export function FileExplorerRow({
   onSelect,
   onStartNew,
   onStartRename,
-  onRequestDelete
+  onRequestDelete,
+  onMoveDrop,
+  onDragTargetChange,
+  onDragSourceChange,
+  onDragExpandDir
 }: FileExplorerRowProps): React.JSX.Element {
+  // Drag and drop into directories. Directories expand on timer
+  const rowDropDir = node.isDirectory ? node.path : targetDir
+  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dragCounterRef = useRef(0)
+
+  const clearExpandTimer = useCallback(() => {
+    if (expandTimerRef.current !== null) {
+      clearTimeout(expandTimerRef.current)
+      expandTimerRef.current = null
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(ORCA_PATH_MIME)) {
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+  }, [])
+
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes(ORCA_PATH_MIME)) {
+        return
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      dragCounterRef.current += 1
+      onDragTargetChange(rowDropDir)
+      if (dragCounterRef.current === 1 && node.isDirectory && !isExpanded) {
+        clearExpandTimer()
+        expandTimerRef.current = setTimeout(() => {
+          expandTimerRef.current = null
+          onDragExpandDir(node.path)
+        }, DRAG_EXPAND_DELAY_MS)
+      }
+    },
+    [
+      rowDropDir,
+      onDragTargetChange,
+      clearExpandTimer,
+      node.isDirectory,
+      node.path,
+      isExpanded,
+      onDragExpandDir
+    ]
+  )
+
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      e.stopPropagation()
+      dragCounterRef.current -= 1
+      if (dragCounterRef.current <= 0) {
+        dragCounterRef.current = 0
+        clearExpandTimer()
+      }
+    },
+    [clearExpandTimer]
+  )
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragCounterRef.current = 0
+      clearExpandTimer()
+      onDragTargetChange(null)
+      const sourcePath = e.dataTransfer.getData(ORCA_PATH_MIME)
+      if (sourcePath) {
+        onMoveDrop(sourcePath, rowDropDir)
+      }
+    },
+    [rowDropDir, onMoveDrop, onDragTargetChange, clearExpandTimer]
+  )
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -221,9 +309,16 @@ export function FileExplorerRow({
           style={{ paddingLeft: `${node.depth * 16 + 8}px` }}
           draggable
           onDragStart={(event) => {
-            event.dataTransfer.setData('text/x-orca-file-path', node.path)
-            event.dataTransfer.effectAllowed = 'copy'
+            event.dataTransfer.setData(ORCA_PATH_MIME, node.path)
+            // Allow both file explorer moving and copying to terminal
+            event.dataTransfer.effectAllowed = 'copyMove'
+            onDragSourceChange(node.path)
           }}
+          onDragEnd={() => onDragSourceChange(null)}
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           onClick={onClick}
           onDoubleClick={onDoubleClick}
           onFocus={onSelect}

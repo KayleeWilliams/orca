@@ -5,6 +5,7 @@ import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { dirname, normalizeRelativePath } from '@/lib/path'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +21,8 @@ import { useFileDeletion } from './useFileDeletion'
 import { useFileExplorerReveal } from './useFileExplorerReveal'
 import { useFileExplorerInlineInput } from './useFileExplorerInlineInput'
 import { useFileExplorerKeys } from './useFileExplorerKeys'
+import { useActiveWorktreePath } from './useActiveWorktreePath'
+import { useFileExplorerDragDrop } from './useFileExplorerDragDrop'
 import { useFileExplorerTree } from './useFileExplorerTree'
 
 export default function FileExplorer(): React.JSX.Element {
@@ -36,18 +39,7 @@ export default function FileExplorer(): React.JSX.Element {
   const openFiles = useAppStore((s) => s.openFiles)
   const closeFile = useAppStore((s) => s.closeFile)
 
-  const worktreePath = useMemo(() => {
-    if (!activeWorktreeId) {
-      return null
-    }
-    for (const worktrees of Object.values(worktreesByRepo)) {
-      const wt = worktrees.find((w) => w.id === activeWorktreeId)
-      if (wt) {
-        return wt.path
-      }
-    }
-    return null
-  }, [activeWorktreeId, worktreesByRepo])
+  const worktreePath = useActiveWorktreePath(activeWorktreeId, worktreesByRepo)
 
   const expanded = useMemo(
     () =>
@@ -107,6 +99,23 @@ export default function FileExplorer(): React.JSX.Element {
     setSelectedPath,
     isMac,
     isWindows
+  })
+
+  const {
+    handleMoveDrop,
+    handleDragExpandDir,
+    dropTargetDir,
+    setDropTargetDir,
+    dragSourcePath,
+    setDragSourcePath,
+    isRootDragOver,
+    rootDragHandlers
+  } = useFileExplorerDragDrop({
+    worktreePath,
+    activeWorktreeId,
+    expanded,
+    toggleDir,
+    refreshDir
   })
 
   useEffect(() => {
@@ -275,10 +284,20 @@ export default function FileExplorer(): React.JSX.Element {
   return (
     <>
       <ScrollArea
-        className="h-full min-h-0"
+        className={cn(
+          'h-full min-h-0',
+          isRootDragOver &&
+            !(dragSourcePath && dirname(dragSourcePath) === worktreePath) &&
+            'bg-border'
+        )}
         viewportRef={scrollRef}
         viewportClassName="h-full min-h-0 py-2"
         onWheelCapture={handleWheelCapture}
+        onDragOver={rootDragHandlers.onDragOver}
+        onDragEnter={rootDragHandlers.onDragEnter}
+        onDragLeave={rootDragHandlers.onDragLeave}
+        onDrop={rootDragHandlers.onDrop}
+        onDragEnd={() => setDropTargetDir(null)}
         onContextMenu={(e) => {
           const target = e.target as HTMLElement
           if (target.closest('[data-slot="context-menu-trigger"]')) {
@@ -332,12 +351,18 @@ export default function FileExplorer(): React.JSX.Element {
               ? (folderStatusByRelativePath.get(normalizedRelativePath) ?? null)
               : (statusByRelativePath.get(normalizedRelativePath) ?? null)
 
+            const rowParentDir = n.isDirectory ? n.path : dirname(n.path)
+            const sourceParentDir = dragSourcePath ? dirname(dragSourcePath) : null
+            const isInDropTarget =
+              dropTargetDir != null &&
+              dropTargetDir === rowParentDir &&
+              dropTargetDir !== sourceParentDir
             return (
               <div
                 key={vItem.key}
                 data-index={vItem.index}
                 ref={virtualizer.measureElement}
-                className="absolute left-0 right-0"
+                className={cn('absolute left-0 right-0', isInDropTarget && 'bg-border')}
                 style={{ transform: `translateY(${vItem.start}px)` }}
               >
                 <FileExplorerRow
@@ -357,6 +382,10 @@ export default function FileExplorer(): React.JSX.Element {
                   onStartNew={startNew}
                   onStartRename={startRename}
                   onRequestDelete={() => requestDelete(n)}
+                  onMoveDrop={handleMoveDrop}
+                  onDragTargetChange={setDropTargetDir}
+                  onDragSourceChange={setDragSourcePath}
+                  onDragExpandDir={handleDragExpandDir}
                 />
               </div>
             )

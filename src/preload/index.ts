@@ -30,6 +30,11 @@ function getNativeFileDropTarget(event: DragEvent): NativeFileDropTarget | null 
 document.addEventListener(
   'dragover',
   (e) => {
+    // Let in-app drags (e.g. file explorer drag-to-move) through to React handlers
+    // so they can set their own dropEffect. Only override for native OS file drops.
+    if (e.dataTransfer?.types.includes('text/x-orca-file-path')) {
+      return
+    }
     e.preventDefault()
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy'
