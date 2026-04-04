@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { toast } from 'sonner'
 import type { UpdateStatus } from '../../../shared/types'
+import { useAppStore } from '../store'
 
 type ReleaseToastStatus = Extract<UpdateStatus, { state: 'available' | 'downloaded' }>
 
@@ -11,6 +12,11 @@ type UpdaterApi = {
   quitAndInstall: () => Promise<unknown>
 }
 
+type StoreApi = {
+  getDismissedVersion: () => string | null
+  dismissUpdate: () => void
+}
+
 function getReleaseUrl(status: ReleaseToastStatus): string {
   return status.releaseUrl ?? `https://github.com/stablyai/orca/releases/tag/v${status.version}`
 }
@@ -18,11 +24,16 @@ function getReleaseUrl(status: ReleaseToastStatus): string {
 export function createUpdateToastController(deps?: {
   toastApi?: ToastApi
   updaterApi?: UpdaterApi
+  storeApi?: StoreApi
 }): {
   handleStatus: (status: UpdateStatus) => void
 } {
   const toastApi = deps?.toastApi ?? toast
   const updaterApi = deps?.updaterApi ?? window.api.updater
+  const storeApi: StoreApi = deps?.storeApi ?? {
+    getDismissedVersion: () => useAppStore.getState().dismissedUpdateVersion,
+    dismissUpdate: () => useAppStore.getState().dismissUpdate()
+  }
 
   let checkingToastId: string | number | undefined
   let availableToastId: string | number | undefined
@@ -50,7 +61,7 @@ export function createUpdateToastController(deps?: {
         }
       } else if (status.state === 'not-available') {
         if ('userInitiated' in status && status.userInitiated) {
-          toastApi.success('You’re on the latest version.', { id: checkingToastId })
+          toastApi.success("You're on the latest version.", { id: checkingToastId })
           checkingToastId = undefined
         }
       } else if (status.state === 'available') {
@@ -58,6 +69,12 @@ export function createUpdateToastController(deps?: {
           toastApi.dismiss(checkingToastId)
         }
         checkingToastId = undefined
+        // Why: if the user previously dismissed this exact version, don't
+        // re-show the toast. This preserves the old UpdateReminder behavior
+        // where dismissedUpdateVersion was checked before rendering.
+        if (storeApi.getDismissedVersion() === status.version) {
+          return
+        }
         const releaseUrl = getReleaseUrl(status)
         availableToastId = toastApi.info(`Version ${status.version} is available.`, {
           description: createElement(
@@ -71,6 +88,10 @@ export function createUpdateToastController(deps?: {
             'Release notes'
           ),
           duration: Infinity,
+          // Why: when the user closes the toast without clicking Update,
+          // persist the dismissed version so the same release doesn't
+          // re-appear on the next check or app restart.
+          onDismiss: () => storeApi.dismissUpdate(),
           action: {
             label: 'Update',
             onClick: () => {

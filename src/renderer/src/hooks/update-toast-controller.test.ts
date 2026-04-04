@@ -18,6 +18,13 @@ function createUpdaterApi() {
   }
 }
 
+function createStoreApi(dismissedVersion: string | null = null) {
+  return {
+    getDismissedVersion: vi.fn().mockReturnValue(dismissedVersion),
+    dismissUpdate: vi.fn()
+  }
+}
+
 function getInfoOptions(toastApi: ReturnType<typeof createToastApi>) {
   const lastCall = toastApi.info.mock.calls.at(-1) as [string, Record<string, unknown>]
   const [, options] = lastCall
@@ -34,7 +41,8 @@ describe('createUpdateToastController', () => {
     toastApi.loading.mockReturnValue('checking-toast')
     toastApi.info.mockReturnValue('available-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({ state: 'checking', userInitiated: true })
     controller.handleStatus({
@@ -60,7 +68,8 @@ describe('createUpdateToastController', () => {
     const toastApi = createToastApi()
     toastApi.info.mockReturnValue('available-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({ state: 'available', version: '1.2.3' })
     controller.handleStatus({ state: 'downloading', version: '1.2.3', percent: 42 })
@@ -76,7 +85,8 @@ describe('createUpdateToastController', () => {
     const toastApi = createToastApi()
     toastApi.info.mockReturnValue('available-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({ state: 'available', version: '1.2.3' })
     const infoOptions = getInfoOptions(toastApi)
@@ -94,7 +104,8 @@ describe('createUpdateToastController', () => {
     const toastApi = createToastApi()
     toastApi.info.mockReturnValue('available-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({
       state: 'available',
@@ -118,7 +129,8 @@ describe('createUpdateToastController', () => {
     const toastApi = createToastApi()
     toastApi.info.mockReturnValue('available-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({ state: 'available', version: '1.2.3' })
     const infoOptions = getInfoOptions(toastApi)
@@ -139,13 +151,50 @@ describe('createUpdateToastController', () => {
     const toastApi = createToastApi()
     toastApi.loading.mockReturnValue('checking-toast')
     const updaterApi = createUpdaterApi()
-    const controller = createUpdateToastController({ toastApi, updaterApi })
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
 
     controller.handleStatus({ state: 'checking', userInitiated: true })
     controller.handleStatus({ state: 'not-available', userInitiated: true })
 
-    expect(toastApi.success).toHaveBeenCalledWith('You’re on the latest version.', {
+    expect(toastApi.success).toHaveBeenCalledWith("You're on the latest version.", {
       id: 'checking-toast'
     })
+  })
+
+  it('suppresses the available toast when the version matches the dismissed version', () => {
+    const toastApi = createToastApi()
+    const updaterApi = createUpdaterApi()
+    const storeApi = createStoreApi('1.2.3')
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
+
+    controller.handleStatus({ state: 'available', version: '1.2.3' })
+
+    expect(toastApi.info).not.toHaveBeenCalled()
+  })
+
+  it('shows the available toast when a newer version supersedes the dismissed one', () => {
+    const toastApi = createToastApi()
+    const updaterApi = createUpdaterApi()
+    const storeApi = createStoreApi('1.2.3')
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
+
+    controller.handleStatus({ state: 'available', version: '1.3.0' })
+
+    expect(toastApi.info).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls dismissUpdate when the user closes the available toast without updating', () => {
+    const toastApi = createToastApi()
+    toastApi.info.mockReturnValue('available-toast')
+    const updaterApi = createUpdaterApi()
+    const storeApi = createStoreApi()
+    const controller = createUpdateToastController({ toastApi, updaterApi, storeApi })
+
+    controller.handleStatus({ state: 'available', version: '1.2.3' })
+    const options = getInfoOptions(toastApi)
+    ;(options.onDismiss as () => void)()
+
+    expect(storeApi.dismissUpdate).toHaveBeenCalledTimes(1)
   })
 })
