@@ -146,6 +146,11 @@ type RuntimeApi = {
   getStatus: () => Promise<RuntimeStatus>
 }
 
+type RuntimeApi = {
+  syncWindowGraph: (graph: RuntimeSyncWindowGraph) => Promise<RuntimeStatus>
+  getStatus: () => Promise<RuntimeStatus>
+}
+
 type FsApi = {
   readDir: (args: { dirPath: string }) => Promise<DirEntry[]>
   readFile: (args: {
