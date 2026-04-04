@@ -179,6 +179,26 @@ describe('OrcaRuntimeService', () => {
     expect(shown.ptyId).toBe('pty-1')
   })
 
+  it('resolves branch selectors when worktrees store refs/heads-prefixed branches', async () => {
+    vi.mocked(listWorktrees).mockResolvedValueOnce([
+      {
+        path: '/tmp/worktree-a',
+        head: 'abc',
+        branch: 'refs/heads/Jinwoo-H/test-3a',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    const runtime = new OrcaRuntimeService(store)
+
+    const worktree = await runtime.showManagedWorktree('branch:Jinwoo-H/test-3a')
+    expect(worktree).toMatchObject({
+      branch: 'refs/heads/Jinwoo-H/test-3a',
+      path: '/tmp/worktree-a'
+    })
+  })
+
   it('reads bounded terminal output and writes through the PTY controller', async () => {
     const writes: string[] = []
     const runtime = new OrcaRuntimeService(store)

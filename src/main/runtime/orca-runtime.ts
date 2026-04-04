@@ -781,7 +781,10 @@ export class OrcaRuntimeService {
     } else if (selector.startsWith('path:')) {
       candidates = worktrees.filter((worktree) => worktree.path === selector.slice(5))
     } else if (selector.startsWith('branch:')) {
-      candidates = worktrees.filter((worktree) => worktree.branch === selector.slice(7))
+      const branchSelector = selector.slice(7)
+      candidates = worktrees.filter((worktree) =>
+        branchSelectorMatches(worktree.branch, branchSelector)
+      )
     } else if (selector.startsWith('issue:')) {
       candidates = worktrees.filter(
         (worktree) =>
@@ -790,7 +793,9 @@ export class OrcaRuntimeService {
     } else {
       candidates = worktrees.filter(
         (worktree) =>
-          worktree.id === selector || worktree.path === selector || worktree.branch === selector
+          worktree.id === selector ||
+          worktree.path === selector ||
+          branchSelectorMatches(worktree.branch, selector)
       )
     }
 
@@ -1127,6 +1132,18 @@ function buildTerminalWaitResult(handle: string, leaf: RuntimeLeafRecord): Runti
     status: getTerminalState(leaf),
     exitCode: leaf.lastExitCode
   }
+}
+
+function branchSelectorMatches(branch: string, selector: string): boolean {
+  // Why: Git worktree data can report local branches as either `refs/heads/foo`
+  // or `foo` depending on which plumbing path produced the record. Orca's
+  // branch selectors should accept either form so newly created worktrees stay
+  // discoverable without exposing internal ref-shape differences to users.
+  return normalizeBranchRef(branch) === normalizeBranchRef(selector)
+}
+
+function normalizeBranchRef(branch: string): string {
+  return branch.startsWith('refs/heads/') ? branch.slice('refs/heads/'.length) : branch
 }
 
 function normalizeTerminalChunk(chunk: string): string {
