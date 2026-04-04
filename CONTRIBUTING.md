@@ -54,6 +54,7 @@ Each pull request should:
 - include high-quality tests when behavior changes or bug fixes warrant them
 - include a brief code review summary from your AI coding agent that explicitly checks cross-platform compatibility, plus a basic security audit summary
 - mention any platform-specific behavior or testing notes
+- **Include your X (Twitter) handle!** We love giving shoutouts to our contributors when we merge features on [@orca_build](https://x.com/orca_build).
 
 If there is no visual change, say that explicitly in the PR description.
 

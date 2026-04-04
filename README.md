@@ -1,15 +1,25 @@
 <p align="center">
-  <img src="build/icon.png" alt="Orca" width="128" />
+  <a href="https://onOrca.dev"><img src="build/icon.png" alt="Orca" width="128" /></a>
 </p>
-
 
 <h1 align="center">Orca</h1>
 
-<strong>A cross-platform AI Orchestrator for 100x engineers.</strong><br/>
-Seamlessly manage multiple worktrees and open multiple terminals running anything — Claude Code, Codex, OpenCode, and more.<br/>
-Built-in status tracking, notifications, and unread markers. Makes coding multiple features across multiple repos a breeze.
+<p align="center">
+  <a href="https://github.com/stablyai/orca/stargazers"><img src="https://img.shields.io/github/stars/stablyai/orca?style=flat-square&color=black" alt="GitHub stars" /></a>
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-black?style=flat-square" alt="Supported Platforms" />
+  <a href="https://x.com/orca_build"><img src="https://img.shields.io/twitter/follow/orca_build?style=social" alt="Follow on X" /></a>
+</p>
 
-Learn more at <a align="center" href="https://onOrca.dev">onOrca.dev</a>
+<p align="center">
+  <strong>The cross-platform AI Orchestrator for 100x builders.</strong><br/>
+  Available for <strong>macOS, Windows, and Linux</strong>.<br/>
+  Seamlessly manage multiple worktrees, run multiple AI agents concurrently, and track their progress.<br/>
+  Whether it's Claude Code, Codex, or OpenCode, Orca makes coordinating multiple features across multiple repos effortless.
+</p>
+
+<p align="center">
+  <a href="https://onOrca.dev"><strong>Download at onOrca.dev</strong></a>
+</p>
 
 <p align="center">
   <img src="file-drag.gif" alt="Orca Screenshot" width="800" />
@@ -17,21 +27,60 @@ Learn more at <a align="center" href="https://onOrca.dev">onOrca.dev</a>
 
 ---
 
+## Introducing the Orca CLI
+
+**Agent orchestration from your terminal.**
+
+Let your AI agent control your IDE. Programmatically add repos, spin up worktrees, and update status directly from the terminal. Ships with the Orca IDE (install under Settings).
+
+```bash
+npx skills add https://github.com/stablyai/orca --skill orca-cli
+```
+
+---
+
+## Quick Start: The First 60 Seconds
+
+1. **Connect:** Open Orca and connect your local Git repository.
+2. **Isolate:** Spin up a new worktree in one click (no more `git stash`).
+3. **Automate:** Open the built-in terminal, fire up your AI agent (like Claude Code), and let it work autonomously while you switch to another task.
+
+---
+
+## Why Orca?
+
+- **Zero-Friction Context Switching:** Need to review an urgent PR while your agent builds a new feature? Spin up an isolated worktree instantly without messing up your local dev environment.
+- **Agent Supervision:** Stop babysitting terminals. Let multiple agents work autonomously across different repos while you monitor their status, logs, and unread notifications from a single dashboard.
+- **Purpose-Built for AI Devs:** Traditional IDEs aren't built for autonomous agents. Orca gives your AI the isolated environments, terminals, and programmatic control it needs to thrive.
+
+---
+
+## Features that Supercharge your Workflow
+
+- **Worktree Management**: Spin up, manage, and switch between multiple Git worktrees instantly. Keep your context clean.
+- **Agent-Ready Terminals**: Robust support for multiple terminals, tabs, and panes. Run Claude Code, Codex, OpenCode, or your own agents side-by-side.
+- **Smart Notifications & Status Tracking**: See exactly which worktrees have active agents. Get worktree notifications and manually mark threads as unread (like Gmail ⭐).
+- **Deep GitHub Integration**: Automatically track PRs, link GitHub issues (via the `gh` CLI), and view GitHub Actions checks right from your workspace.
+- **Integrated Dev Tools**: Built-in file editor, lightning-fast search, and a comprehensive source control tab to review diffs, make quick edits, and commit effortlessly.
+
+---
+
 ## Install
-Download from [onOrca.dev](https://onOrca.dev) or via the [GH release page](https://github.com/stablyai/orca/releases)
 
-## Features
-  * Manage multiple worktrees
-  * Multiple terminals, tabs and panes
-  * Get worktree notifications (plus ability to manually mark threads as unread -- similar to Gmail ⭐)
-  * See which worktrees have working agents
-  * GitHub integrations for GH PRs (automatic), ability to link GH issues (via `gh` cli), and a GH checks viewer
-  * File editor, search, source control tab (see worktree changes, make edits, easily commit)
+Get started today:
+- **[Download from onOrca.dev](https://onOrca.dev)**
+- Or download the latest binaries via the **[GitHub Releases page](https://github.com/stablyai/orca/releases)**.
 
-## Shipping daily
+---
 
-Missing something? It's probably landing tomorrow. **[Request a feature](https://github.com/stablyai/orca/issues)** · **Star** to follow along.
+## Community & Support
+
+- **Twitter / X:** Follow [**@orca_build**](https://x.com/orca_build) for updates and announcements.
+- **Feedback & Ideas:** We ship fast. Missing something? [Request a new feature](https://github.com/stablyai/orca/issues).
+- **Show Support:** Star this repo to follow along with our daily ships.
+
+---
 
 ## Developing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md)
+Want to contribute or run locally? See our [CONTRIBUTING.md](CONTRIBUTING.md) guide.
