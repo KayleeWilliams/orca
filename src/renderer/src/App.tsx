@@ -67,6 +67,7 @@ function App(): React.JSX.Element {
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const groupBy = useAppStore((s) => s.groupBy)
   const sortBy = useAppStore((s) => s.sortBy)
+  const showActiveOnly = useAppStore((s) => s.showActiveOnly)
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
   const persistedUIReady = useAppStore((s) => s.persistedUIReady)
 
@@ -114,6 +115,7 @@ function App(): React.JSX.Element {
             rightSidebarWidth: 350,
             groupBy: 'none',
             sortBy: 'name',
+            showActiveOnly: false,
             filterRepoIds: [],
             uiZoomLevel: 0,
             worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
@@ -221,12 +223,21 @@ function App(): React.JSX.Element {
         rightSidebarWidth,
         groupBy,
         sortBy,
+        showActiveOnly,
         filterRepoIds
       })
     }, 150)
 
     return () => window.clearTimeout(timer)
-  }, [persistedUIReady, sidebarWidth, rightSidebarWidth, groupBy, sortBy, filterRepoIds])
+  }, [
+    persistedUIReady,
+    sidebarWidth,
+    rightSidebarWidth,
+    groupBy,
+    sortBy,
+    showActiveOnly,
+    filterRepoIds
+  ])
 
   // Apply theme to document
   useEffect(() => {

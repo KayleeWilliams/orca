@@ -87,6 +87,7 @@ export function getDefaultUIState(): PersistedUIState {
     rightSidebarWidth: 350,
     groupBy: 'none',
     sortBy: 'name',
+    showActiveOnly: false,
     filterRepoIds: [],
     uiZoomLevel: 0,
     worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],

@@ -66,4 +66,16 @@ describe('createUISlice hydratePersistedUI', () => {
     expect(store.getState().sidebarWidth).toBe(320)
     expect(store.getState().rightSidebarWidth).toBe(360)
   })
+
+  it('restores the active-only filter from persisted UI state', () => {
+    const store = createUIStore()
+
+    store.getState().hydratePersistedUI(
+      makePersistedUI({
+        showActiveOnly: true
+      })
+    )
+
+    expect(store.getState().showActiveOnly).toBe(true)
+  })
 })

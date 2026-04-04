@@ -232,6 +232,7 @@ export type PersistedUIState = {
   rightSidebarWidth: number
   groupBy: 'none' | 'repo' | 'pr-status'
   sortBy: 'name' | 'recent' | 'repo'
+  showActiveOnly: boolean
   filterRepoIds: string[]
   uiZoomLevel: number
   worktreeCardProperties: WorktreeCardProperty[]
