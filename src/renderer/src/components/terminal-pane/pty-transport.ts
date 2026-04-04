@@ -27,6 +27,7 @@ export type PtyTransport = {
     meta?: { widthPx?: number; heightPx?: number; cellW?: number; cellH?: number }
   ) => boolean
   isConnected: () => boolean
+  getPtyId: () => string | null
   destroy?: () => void | Promise<void>
 }
 
@@ -218,6 +219,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
 
     isConnected() {
       return connected
+    },
+
+    getPtyId() {
+      return ptyId
     },
 
     destroy() {

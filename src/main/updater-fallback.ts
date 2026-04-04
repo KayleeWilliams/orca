@@ -1,4 +1,41 @@
 import { app } from 'electron'
+import type { UpdateStatus } from '../shared/types'
+
+export function statusesEqual(left: UpdateStatus, right: UpdateStatus): boolean {
+  switch (left.state) {
+    case 'idle':
+      return right.state === 'idle'
+    case 'checking':
+      return right.state === 'checking' && left.userInitiated === right.userInitiated
+    case 'not-available':
+      return right.state === 'not-available' && left.userInitiated === right.userInitiated
+    case 'available':
+      return (
+        right.state === 'available' &&
+        left.version === right.version &&
+        left.releaseUrl === right.releaseUrl &&
+        left.manualDownloadUrl === right.manualDownloadUrl
+      )
+    case 'downloading':
+      return (
+        right.state === 'downloading' &&
+        left.version === right.version &&
+        left.percent === right.percent
+      )
+    case 'downloaded':
+      return (
+        right.state === 'downloaded' &&
+        left.version === right.version &&
+        left.releaseUrl === right.releaseUrl
+      )
+    case 'error':
+      return (
+        right.state === 'error' &&
+        left.message === right.message &&
+        left.userInitiated === right.userInitiated
+      )
+  }
+}
 
 const RELEASES_API_URL = 'https://api.github.com/repos/stablyai/orca/releases'
 
@@ -27,6 +64,26 @@ export function isGitHubReleaseTransitionFailure(normalizedMessage: string): boo
     normalizedMessage.includes('cannot find channel') ||
     normalizedMessage.includes('latest.yml') ||
     normalizedMessage.includes('latest-mac.yml') ||
+    normalizedMessage.includes('no published versions on github')
+  )
+}
+
+/** Identifies update-check failures that are transient or infrastructure-related
+ *  (e.g. network blips, GitHub release transitions) and should NOT be surfaced
+ *  to the user as errors. */
+export function isBenignCheckFailure(message: string): boolean {
+  const normalizedMessage = message.toLowerCase()
+
+  if (normalizedMessage.includes('net::err_failed')) {
+    return true
+  }
+
+  // GitHub releases can briefly be in a half-published state while the
+  // release workflow is creating a draft and uploading update metadata.
+  // During that window electron-updater may fail the check even though
+  // nothing is wrong on the client side.
+  return (
+    isGitHubReleaseTransitionFailure(normalizedMessage) ||
     normalizedMessage.includes('no published versions on github')
   )
 }

@@ -160,7 +160,6 @@ export default function TerminalPane({
     managerRef,
     containerRef,
     pendingWritesRef,
-    paneTransportsRef,
     isActiveRef,
     toggleExpandPane
   })

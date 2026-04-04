@@ -6,6 +6,12 @@ import { listWorktrees } from '../git/worktree'
 export const PATH_ACCESS_DENIED_MESSAGE =
   'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.'
 
+const authorizedExternalPaths = new Set<string>()
+
+export function authorizeExternalPath(targetPath: string): void {
+  authorizedExternalPaths.add(resolve(targetPath))
+}
+
 /**
  * Check whether resolvedTarget is equal to or a descendant of resolvedBase.
  * Uses relative() so it works with both `/` (Unix) and `\` (Windows) separators.
@@ -37,6 +43,9 @@ export function getAllowedRoots(store: Store): string[] {
 
 export function isPathAllowed(targetPath: string, store: Store): boolean {
   const resolvedTarget = resolve(targetPath)
+  if (authorizedExternalPaths.has(resolvedTarget)) {
+    return true
+  }
   return getAllowedRoots(store).some((root) => isDescendantOrEqual(resolvedTarget, root))
 }
 

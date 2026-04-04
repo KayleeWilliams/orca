@@ -6,6 +6,7 @@ import { Label } from '../ui/label'
 import { Separator } from '../ui/separator'
 import { Download, FolderOpen, Loader2, RefreshCw } from 'lucide-react'
 import { useAppStore } from '../../store'
+import { CliSection } from './CliSection'
 
 type GeneralPaneProps = {
   settings: GlobalSettings
@@ -92,6 +93,10 @@ export function GeneralPane({
           </button>
         </div>
       </section>
+
+      <Separator />
+
+      <CliSection currentPlatform={navigator.userAgent.includes('Mac') ? 'darwin' : 'other'} />
 
       <Separator />
 

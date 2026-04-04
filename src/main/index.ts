@@ -4,6 +4,9 @@ import devIcon from '../../resources/icon-dev.png?asset'
 import { Store } from './persistence'
 import { killAllPty } from './ipc/pty'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
+import { OrcaRuntimeService } from './runtime/orca-runtime'
+import { writeRuntimeMetadata } from './runtime/runtime-metadata'
+import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
 import { registerAppMenu } from './menu/register-app-menu'
 import { checkForUpdatesFromMenu, isQuittingForUpdate } from './updater'
 import {
@@ -16,6 +19,8 @@ import { createMainWindow } from './window/createMainWindow'
 
 let mainWindow: BrowserWindow | null = null
 let store: Store | null = null
+let runtime: OrcaRuntimeService | null = null
+let runtimeRpc: OrcaRuntimeRpcServer | null = null
 
 installUncaughtPipeErrorGuard()
 patchPackagedProcessPath()
@@ -25,9 +30,12 @@ function openMainWindow(): BrowserWindow {
   if (!store) {
     throw new Error('Store must be initialized before opening the main window')
   }
+  if (!runtime) {
+    throw new Error('Runtime must be initialized before opening the main window')
+  }
 
   const window = createMainWindow(store)
-  attachMainWindowServices(window, store)
+  attachMainWindowServices(window, store, runtime)
   window.on('closed', () => {
     if (mainWindow === window) {
       mainWindow = null
@@ -37,7 +45,7 @@ function openMainWindow(): BrowserWindow {
   return window
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.stablyai.orca')
   app.setName('Orca')
 
@@ -51,6 +59,14 @@ app.whenReady().then(() => {
   })
 
   store = new Store()
+  runtime = new OrcaRuntimeService(store)
+  writeRuntimeMetadata(app.getPath('userData'), {
+    runtimeId: runtime.getRuntimeId(),
+    pid: process.pid,
+    transport: null,
+    authToken: null,
+    startedAt: runtime.getStartedAt()
+  })
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
 
   registerAppMenu({
@@ -59,7 +75,18 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('ui:openSettings')
     }
   })
-  registerCoreHandlers(store)
+  registerCoreHandlers(store, runtime)
+  runtimeRpc = new OrcaRuntimeRpcServer({
+    runtime,
+    userDataPath: app.getPath('userData')
+  })
+  try {
+    await runtimeRpc.start()
+  } catch (error) {
+    // Why: the local RPC transport enables the future CLI, but Orca should
+    // still boot as an editor if the socket cannot be opened on this launch.
+    console.error('[runtime] Failed to start local RPC transport:', error)
+  }
   openMainWindow()
 
   app.on('activate', () => {
@@ -74,6 +101,11 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   killAllPty()
+  if (runtimeRpc) {
+    void runtimeRpc.stop().catch((error) => {
+      console.error('[runtime] Failed to stop local RPC transport:', error)
+    })
+  }
   store?.flush()
 })
 

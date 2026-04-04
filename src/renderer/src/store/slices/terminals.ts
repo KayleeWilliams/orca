@@ -6,6 +6,7 @@ import type {
   TerminalTab,
   WorkspaceSessionState
 } from '../../../../shared/types'
+import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-helpers'
 
 export type TerminalSlice = {
@@ -166,6 +167,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       if (!changed) {
         return s
       }
+      scheduleRuntimeGraphSync()
       // Agent status is derived from terminal titles and affects sort scoring,
       // so a title change is a meaningful event that should allow re-sort —
       // but only for background worktrees. Title changes in the active
@@ -186,6 +188,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       for (const wId of Object.keys(next)) {
         next[wId] = next[wId].map((t) => (t.id === tabId ? { ...t, customTitle: title } : t))
       }
+      scheduleRuntimeGraphSync()
       return { tabsByWorktree: next }
     })
   },

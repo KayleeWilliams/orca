@@ -43,7 +43,7 @@ const {
     appOn.mockClear()
     eventHandlers.clear()
     on.mockClear()
-    autoUpdaterMock.checkForUpdates.mockReset()
+    autoUpdaterMock.checkForUpdates.mockReset().mockResolvedValue(null)
     autoUpdaterMock.downloadUpdate.mockReset()
     autoUpdaterMock.quitAndInstall.mockReset()
   }
@@ -183,5 +183,76 @@ describe('updater', () => {
     expect(statuses).not.toContainEqual(
       expect.objectContaining({ state: 'error', message: 'net::ERR_FAILED' })
     )
+  })
+
+  it('runs a startup check immediately when the last background check is stale', async () => {
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const setLastUpdateCheckAt = vi.fn()
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, {
+      getLastUpdateCheckAt: () => Date.now() - 37 * 60 * 60 * 1000,
+      setLastUpdateCheckAt
+    })
+
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(setLastUpdateCheckAt).not.toHaveBeenCalled()
+  })
+
+  it('waits until the remaining interval before the next background check', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-03T12:00:00Z'))
+
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const setLastUpdateCheckAt = vi.fn()
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, {
+      getLastUpdateCheckAt: () => Date.now() - 35 * 60 * 60 * 1000,
+      setLastUpdateCheckAt
+    })
+
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(59 * 60 * 1000)
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(60 * 1000)
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(setLastUpdateCheckAt).not.toHaveBeenCalled()
+  })
+
+  it('retries background checks sooner after a failed automatic check', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-03T12:00:00Z'))
+
+    autoUpdaterMock.checkForUpdates.mockImplementation(() => {
+      autoUpdaterMock.emit('checking-for-update')
+      queueMicrotask(() => {
+        autoUpdaterMock.emit('error', new Error('boom'))
+      })
+      return Promise.reject(new Error('boom'))
+    })
+
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, {
+      getLastUpdateCheckAt: () => null,
+      setLastUpdateCheckAt: vi.fn()
+    })
+
+    await vi.runAllTicks()
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(59 * 60 * 1000)
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(60 * 1000)
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(2)
   })
 })

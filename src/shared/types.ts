@@ -209,6 +209,8 @@ export type PersistedUIState = {
   filterRepoIds: string[]
   uiZoomLevel: number
   worktreeCardProperties: WorktreeCardProperty[]
+  dismissedUpdateVersion: string | null
+  lastUpdateCheckAt: number | null
 }
 
 // ─── Persistence shape ──────────────────────────────────────────────

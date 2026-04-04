@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
-import type { PtyTransport } from './pty-transport'
-import { fitAndFocusPanes, fitPanes, shellEscapePath } from './pane-helpers'
+import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 
 type UseTerminalPaneGlobalEffectsArgs = {
   tabId: string
@@ -10,7 +9,6 @@ type UseTerminalPaneGlobalEffectsArgs = {
   managerRef: React.RefObject<PaneManager | null>
   containerRef: React.RefObject<HTMLDivElement | null>
   pendingWritesRef: React.RefObject<Map<number, string>>
-  paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   isActiveRef: React.RefObject<boolean>
   toggleExpandPane: (paneId: number) => void
 }
@@ -21,7 +19,6 @@ export function useTerminalPaneGlobalEffects({
   managerRef,
   containerRef,
   pendingWritesRef,
-  paneTransportsRef,
   isActiveRef,
   toggleExpandPane
 }: UseTerminalPaneGlobalEffectsArgs): void {
@@ -94,28 +91,6 @@ export function useTerminalPaneGlobalEffects({
     })
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive])
-
-  useEffect(() => {
-    if (!isActive) {
-      return
-    }
-    return window.api.ui.onFileDrop(({ path: filePath }) => {
-      const manager = managerRef.current
-      if (!manager) {
-        return
-      }
-      const pane = manager.getActivePane() ?? manager.getPanes()[0]
-      if (!pane) {
-        return
-      }
-      const transport = paneTransportsRef.current.get(pane.id)
-      if (!transport) {
-        return
-      }
-      transport.sendInput(shellEscapePath(filePath))
-    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive])
 }

@@ -19,9 +19,11 @@ type UpdaterHandlerContext = {
   getUserInitiatedCheck: () => boolean
   hasNewerDownloadedVersion: () => boolean
   performQuitAndInstall: () => void
+  recordCompletedUpdateCheck: () => void
   sendCheckFailureStatus: (message: string, userInitiated?: boolean) => Promise<void>
   sendErrorStatus: (message: string, userInitiated?: boolean) => void
   sendStatus: (status: UpdateStatus) => void
+  scheduleAutomaticUpdateCheck: (delayMs: number) => void
   setAvailableReleaseUrl: (releaseUrl: string | null) => void
   setAvailableVersion: (version: string | null) => void
   setUserInitiatedCheck: (value: boolean) => void
@@ -35,9 +37,11 @@ export function registerAutoUpdaterHandlers({
   getUserInitiatedCheck,
   hasNewerDownloadedVersion,
   performQuitAndInstall,
+  recordCompletedUpdateCheck,
   sendCheckFailureStatus,
   sendErrorStatus,
   sendStatus,
+  scheduleAutomaticUpdateCheck,
   setAvailableReleaseUrl,
   setAvailableVersion,
   setUserInitiatedCheck
@@ -102,6 +106,10 @@ export function registerAutoUpdaterHandlers({
     }
     setAvailableVersion(info.version)
     setAvailableReleaseUrl(null)
+    recordCompletedUpdateCheck()
+    if (!wasUserInitiated) {
+      scheduleAutomaticUpdateCheck(36 * 60 * 60 * 1000)
+    }
     sendStatus({ state: 'available', version: info.version })
   })
 
@@ -110,6 +118,10 @@ export function registerAutoUpdaterHandlers({
     const wasUserInitiated = getUserInitiatedCheck()
     setUserInitiatedCheck(false)
     clearAvailableUpdateContext()
+    recordCompletedUpdateCheck()
+    if (!wasUserInitiated) {
+      scheduleAutomaticUpdateCheck(36 * 60 * 60 * 1000)
+    }
     sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
   })
 

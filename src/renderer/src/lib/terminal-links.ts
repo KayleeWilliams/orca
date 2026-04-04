@@ -67,8 +67,14 @@ function parsePathWithOptionalLineColumn(value: string): {
   return { pathText, line, column }
 }
 
-function normalizeAbsolutePosixPath(pathValue: string): string {
-  const segments = pathValue.split('/')
+type NormalizedAbsolutePath = {
+  normalized: string
+  comparisonKey: string
+  rootKind: 'posix' | 'windows' | 'unc'
+}
+
+function normalizeSegments(pathValue: string): string[] {
+  const segments = pathValue.split(/[\\/]+/)
   const stack: string[] = []
   for (const segment of segments) {
     if (!segment || segment === '.') {
@@ -82,7 +88,74 @@ function normalizeAbsolutePosixPath(pathValue: string): string {
     }
     stack.push(segment)
   }
-  return `/${stack.join('/')}`
+
+  return stack
+}
+
+function normalizeAbsolutePath(pathValue: string): NormalizedAbsolutePath | null {
+  const windowsDriveMatch = /^([A-Za-z]):[\\/]*(.*)$/.exec(pathValue)
+  if (windowsDriveMatch) {
+    const driveLetter = windowsDriveMatch[1].toUpperCase()
+    const suffix = normalizeSegments(windowsDriveMatch[2]).join('/')
+    const normalized = suffix ? `${driveLetter}:/${suffix}` : `${driveLetter}:/`
+    return {
+      normalized,
+      comparisonKey: normalized.toLowerCase(),
+      rootKind: 'windows'
+    }
+  }
+
+  const uncMatch = /^\\\\([^\\/]+)[\\/]+([^\\/]+)(?:[\\/]*(.*))?$/.exec(pathValue)
+  if (uncMatch) {
+    const server = uncMatch[1]
+    const share = uncMatch[2]
+    const suffix = normalizeSegments(uncMatch[3] ?? '').join('/')
+    const normalizedRoot = `//${server}/${share}`
+    const normalized = suffix ? `${normalizedRoot}/${suffix}` : normalizedRoot
+    return {
+      normalized,
+      comparisonKey: normalized.toLowerCase(),
+      rootKind: 'unc'
+    }
+  }
+
+  if (pathValue.startsWith('/')) {
+    const normalized = `/${normalizeSegments(pathValue).join('/')}`.replace(/\/+$/, '') || '/'
+    return {
+      normalized,
+      comparisonKey: normalized,
+      rootKind: 'posix'
+    }
+  }
+
+  return null
+}
+
+function joinAbsolutePath(basePath: string, relativePath: string): string | null {
+  const normalizedBase = normalizeAbsolutePath(basePath)
+  if (!normalizedBase) {
+    return null
+  }
+
+  return normalizeJoinedPath(normalizedBase, relativePath)
+}
+
+function normalizeJoinedPath(basePath: NormalizedAbsolutePath, relativePath: string): string {
+  const normalizedBaseSegments = normalizeSegments(basePath.normalized)
+  const relativeSegments = normalizeSegments(relativePath)
+  const joinedSegments = [...normalizedBaseSegments, ...relativeSegments]
+
+  if (basePath.rootKind === 'unc') {
+    const [server, share, ...rest] = joinedSegments
+    return rest.length > 0 ? `//${server}/${share}/${rest.join('/')}` : `//${server}/${share}`
+  }
+
+  if (basePath.rootKind === 'windows') {
+    const [drive, ...rest] = joinedSegments
+    return rest.length > 0 ? `${drive}/${rest.join('/')}` : drive
+  }
+
+  return `/${joinedSegments.join('/')}`.replace(/\/+$/, '') || '/'
 }
 
 export function extractTerminalFileLinks(lineText: string): ParsedTerminalFileLink[] {
@@ -131,13 +204,11 @@ export function resolveTerminalFileLink(
   parsed: ParsedTerminalFileLink,
   cwd: string
 ): ResolvedTerminalFileLink | null {
-  if (!cwd.startsWith('/')) {
+  const absolutePath =
+    normalizeAbsolutePath(parsed.pathText)?.normalized ?? joinAbsolutePath(cwd, parsed.pathText)
+  if (!absolutePath) {
     return null
   }
-
-  const absolutePath = parsed.pathText.startsWith('/')
-    ? normalizeAbsolutePosixPath(parsed.pathText)
-    : normalizeAbsolutePosixPath(`${cwd.replace(/\/+$/, '')}/${parsed.pathText}`)
 
   return {
     absolutePath,
@@ -147,22 +218,36 @@ export function resolveTerminalFileLink(
 }
 
 export function isPathInsideWorktree(filePath: string, worktreePath: string): boolean {
-  const normalizedFile = normalizeAbsolutePosixPath(filePath)
-  const normalizedWorktree = normalizeAbsolutePosixPath(worktreePath)
-  if (normalizedFile === normalizedWorktree) {
+  const normalizedFile = normalizeAbsolutePath(filePath)
+  const normalizedWorktree = normalizeAbsolutePath(worktreePath)
+  if (
+    !normalizedFile ||
+    !normalizedWorktree ||
+    normalizedFile.rootKind !== normalizedWorktree.rootKind
+  ) {
+    return false
+  }
+  if (normalizedFile.comparisonKey === normalizedWorktree.comparisonKey) {
     return true
   }
-  return normalizedFile.startsWith(`${normalizedWorktree}/`)
+  return normalizedFile.comparisonKey.startsWith(`${normalizedWorktree.comparisonKey}/`)
 }
 
 export function toWorktreeRelativePath(filePath: string, worktreePath: string): string | null {
-  const normalizedFile = normalizeAbsolutePosixPath(filePath)
-  const normalizedWorktree = normalizeAbsolutePosixPath(worktreePath)
-  if (normalizedFile === normalizedWorktree) {
-    return ''
-  }
-  if (!normalizedFile.startsWith(`${normalizedWorktree}/`)) {
+  const normalizedFile = normalizeAbsolutePath(filePath)
+  const normalizedWorktree = normalizeAbsolutePath(worktreePath)
+  if (
+    !normalizedFile ||
+    !normalizedWorktree ||
+    normalizedFile.rootKind !== normalizedWorktree.rootKind
+  ) {
     return null
   }
-  return normalizedFile.slice(normalizedWorktree.length + 1)
+  if (normalizedFile.comparisonKey === normalizedWorktree.comparisonKey) {
+    return ''
+  }
+  if (!normalizedFile.comparisonKey.startsWith(`${normalizedWorktree.comparisonKey}/`)) {
+    return null
+  }
+  return normalizedFile.normalized.slice(normalizedWorktree.normalized.length + 1)
 }

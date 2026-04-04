@@ -63,15 +63,23 @@ describe('attachMainWindowServices', () => {
 
   it('only allows the explicit permission allowlist', () => {
     const mainWindow = {
+      on: vi.fn(),
       webContents: {
+        on: vi.fn(),
         session: {
           setPermissionRequestHandler: setPermissionRequestHandlerMock
         }
       }
     }
     const store = { flush: vi.fn() }
+    const runtime = {
+      attachWindow: vi.fn(),
+      setNotifier: vi.fn(),
+      markRendererReloading: vi.fn(),
+      markGraphUnavailable: vi.fn()
+    }
 
-    attachMainWindowServices(mainWindow as never, store as never)
+    attachMainWindowServices(mainWindow as never, store as never, runtime as never)
 
     expect(setPermissionRequestHandlerMock).toHaveBeenCalledTimes(1)
     const permissionHandler = setPermissionRequestHandlerMock.mock.calls[0][0]
@@ -83,5 +91,48 @@ describe('attachMainWindowServices', () => {
     permissionHandler(null, 'clipboard-read', callback)
 
     expect(callback.mock.calls).toEqual([[true], [true], [true], [false]])
+  })
+
+  it('forwards runtime notifier events to the renderer', () => {
+    const sendMock = vi.fn()
+    const webContentsOnMock = vi.fn()
+    const mainWindowOnMock = vi.fn()
+    const mainWindow = {
+      isDestroyed: vi.fn(() => false),
+      on: mainWindowOnMock,
+      webContents: {
+        on: webContentsOnMock,
+        send: sendMock,
+        session: {
+          setPermissionRequestHandler: setPermissionRequestHandlerMock
+        }
+      }
+    }
+    const store = { flush: vi.fn() }
+    const runtime = {
+      attachWindow: vi.fn(),
+      setNotifier: vi.fn(),
+      markRendererReloading: vi.fn(),
+      markGraphUnavailable: vi.fn()
+    }
+
+    attachMainWindowServices(mainWindow as never, store as never, runtime as never)
+
+    expect(runtime.setNotifier).toHaveBeenCalledTimes(1)
+    const notifier = runtime.setNotifier.mock.calls[0][0] as {
+      worktreesChanged: (repoId: string) => void
+      reposChanged: () => void
+      activateWorktree: (repoId: string, worktreeId: string) => void
+    }
+
+    notifier.worktreesChanged('repo-1')
+    notifier.reposChanged()
+    notifier.activateWorktree('repo-1', 'wt-1')
+
+    expect(sendMock.mock.calls).toEqual([
+      ['worktrees:changed', { repoId: 'repo-1' }],
+      ['repos:changed'],
+      ['ui:activateWorktree', { repoId: 'repo-1', worktreeId: 'wt-1' }]
+    ])
   })
 })

@@ -1,4 +1,5 @@
 import type { ElectronAPI } from '@electron-toolkit/preload'
+import type { CliInstallStatus } from '../../shared/cli-install-types'
 import type {
   Repo,
   Worktree,
@@ -19,6 +20,7 @@ import type {
   SearchOptions,
   SearchResult
 } from '../../shared/types'
+import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../../shared/runtime-types'
 
 type ReposApi = {
   list: () => Promise<Repo[]>
@@ -76,6 +78,12 @@ type SettingsApi = {
   listFonts: () => Promise<string[]>
 }
 
+type CliApi = {
+  getInstallStatus: () => Promise<CliInstallStatus>
+  install: () => Promise<CliInstallStatus>
+  remove: () => Promise<CliInstallStatus>
+}
+
 type ShellApi = {
   openPath: (path: string) => Promise<void>
   openUrl: (url: string) => Promise<void>
@@ -121,6 +129,9 @@ type UIApi = {
   get: () => Promise<PersistedUIState>
   set: (args: Partial<PersistedUIState>) => Promise<void>
   onOpenSettings: (callback: () => void) => () => void
+  onActivateWorktree: (
+    callback: (data: { repoId: string; worktreeId: string }) => void
+  ) => () => void
   onTerminalZoom: (callback: (direction: 'in' | 'out' | 'reset') => void) => () => void
   readClipboardText: () => Promise<string>
   writeClipboardText: (text: string) => Promise<void>
@@ -128,6 +139,11 @@ type UIApi = {
   getZoomLevel: () => number
   setZoomLevel: (level: number) => void
   onFullscreenChanged: (callback: (isFullScreen: boolean) => void) => () => void
+}
+
+type RuntimeApi = {
+  syncWindowGraph: (graph: RuntimeSyncWindowGraph) => Promise<RuntimeStatus>
+  getStatus: () => Promise<RuntimeStatus>
 }
 
 type FsApi = {
@@ -140,6 +156,7 @@ type FsApi = {
   createDir: (args: { dirPath: string }) => Promise<void>
   rename: (args: { oldPath: string; newPath: string }) => Promise<void>
   deletePath: (args: { targetPath: string }) => Promise<void>
+  authorizeExternalPath: (args: { targetPath: string }) => Promise<void>
   stat: (args: {
     filePath: string
   }) => Promise<{ size: number; isDirectory: boolean; mtime: number }>
@@ -186,6 +203,7 @@ type Api = {
   pty: PtyApi
   gh: GhApi
   settings: SettingsApi
+  cli: CliApi
   shell: ShellApi
   hooks: HooksApi
   cache: CacheApi
@@ -194,6 +212,7 @@ type Api = {
   fs: FsApi
   git: GitApi
   ui: UIApi
+  runtime: RuntimeApi
 }
 
 declare global {

@@ -27,42 +27,51 @@ export function openDetectedFilePath(
   const { worktreeId, worktreePath } = deps
 
   void (async () => {
-    const pathExists = await window.api.shell.pathExists(filePath)
-    if (!pathExists) {
+    let statResult
+    try {
+      await window.api.fs.authorizeExternalPath({ targetPath: filePath })
+      statResult = await window.api.fs.stat({ filePath })
+    } catch {
       return
     }
 
+    if (statResult.isDirectory) {
+      await window.api.shell.openFilePath(filePath)
+      return
+    }
+
+    let relativePath = filePath
     if (worktreePath && isPathInsideWorktree(filePath, worktreePath)) {
-      const relativePath = toWorktreeRelativePath(filePath, worktreePath)
-      if (relativePath === null || relativePath.length === 0) {
-        return
+      const maybeRelative = toWorktreeRelativePath(filePath, worktreePath)
+      if (maybeRelative !== null && maybeRelative.length > 0) {
+        relativePath = maybeRelative
       }
-
-      const store = useAppStore.getState()
-      store.setActiveWorktree(worktreeId)
-      store.openFile({
-        filePath,
-        relativePath,
-        worktreeId,
-        language: detectLanguage(filePath),
-        mode: 'edit'
-      })
-
-      if (line !== null) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            window.dispatchEvent(
-              new CustomEvent('orca:editor-reveal-location', {
-                detail: { filePath, line, column }
-              })
-            )
-          })
-        })
-      }
-      return
     }
 
-    await window.api.shell.openFilePath(filePath)
+    const store = useAppStore.getState()
+    if (worktreeId) {
+      store.setActiveWorktree(worktreeId)
+    }
+
+    store.openFile({
+      filePath,
+      relativePath,
+      worktreeId: worktreeId || '',
+      language: detectLanguage(filePath),
+      mode: 'edit'
+    })
+
+    if (line !== null) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.dispatchEvent(
+            new CustomEvent('orca:editor-reveal-location', {
+              detail: { filePath, line, column }
+            })
+          )
+        })
+      })
+    }
   })()
 }
 

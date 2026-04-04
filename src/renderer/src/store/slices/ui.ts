@@ -5,6 +5,16 @@ import { DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../../../shared/constants'
 
 type LegacyPersistedSortBy = PersistedUIState['sortBy'] | 'smart'
 
+const MIN_SIDEBAR_WIDTH = 220
+const MAX_SIDEBAR_WIDTH = 500
+
+function sanitizePersistedSidebarWidth(width: unknown, fallback: number): number {
+  if (typeof width !== 'number' || !Number.isFinite(width)) {
+    return fallback
+  }
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
+}
+
 export type UISlice = {
   sidebarOpen: boolean
   sidebarWidth: number
@@ -93,12 +103,17 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
       const validRepoIds = new Set(s.repos.map((repo) => repo.id))
       const sortBy = (ui.sortBy as LegacyPersistedSortBy) === 'smart' ? 'recent' : ui.sortBy
       return {
-        sidebarWidth: ui.sidebarWidth,
-        rightSidebarWidth: ui.rightSidebarWidth ?? 280,
+        // Why: persisted UI data comes from disk and may be stale, corrupted,
+        // or manually edited. Clamp widths during hydration so invalid values
+        // cannot push the renderer into broken layouts before the user drags a
+        // sidebar again.
+        sidebarWidth: sanitizePersistedSidebarWidth(ui.sidebarWidth, s.sidebarWidth),
+        rightSidebarWidth: sanitizePersistedSidebarWidth(ui.rightSidebarWidth, s.rightSidebarWidth),
         groupBy: ui.groupBy,
         sortBy,
         filterRepoIds: (ui.filterRepoIds ?? []).filter((repoId) => validRepoIds.has(repoId)),
         worktreeCardProperties: ui.worktreeCardProperties ?? [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+        dismissedUpdateVersion: ui.dismissedUpdateVersion ?? null,
         persistedUIReady: true
       }
     }),
@@ -107,9 +122,15 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
   setUpdateStatus: (status) => set({ updateStatus: status }),
   dismissedUpdateVersion: null,
   dismissUpdate: () =>
-    set((s) => ({
-      dismissedUpdateVersion: 'version' in s.updateStatus ? (s.updateStatus.version ?? null) : null
-    })),
+    set((s) => {
+      const dismissedUpdateVersion =
+        'version' in s.updateStatus ? (s.updateStatus.version ?? null) : null
+      // Why: dismissing an update is user intent, not transient view state. Persist
+      // the dismissed version so relaunching the app does not immediately re-show
+      // the same reminder card until a newer release appears.
+      void window.api.ui.set({ dismissedUpdateVersion }).catch(console.error)
+      return { dismissedUpdateVersion }
+    }),
   isFullScreen: false,
   setIsFullScreen: (v) => set({ isFullScreen: v })
 })

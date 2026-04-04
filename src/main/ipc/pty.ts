@@ -1,5 +1,6 @@
 import { type BrowserWindow, ipcMain } from 'electron'
 import * as pty from 'node-pty'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 
 let ptyCounter = 0
 const ptyProcesses = new Map<string, pty.IPty>()
@@ -12,7 +13,7 @@ const ptyProcesses = new Map<string, pty.IPty>()
 let loadGeneration = 0
 const ptyLoadGeneration = new Map<string, number>()
 
-export function registerPtyHandlers(mainWindow: BrowserWindow): void {
+export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRuntimeService): void {
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
   ipcMain.removeHandler('pty:spawn')
@@ -38,6 +39,32 @@ export function registerPtyHandlers(mainWindow: BrowserWindow): void {
     }
     // Advance generation for the next page load
     loadGeneration++
+  })
+
+  runtime?.setPtyController({
+    write: (ptyId, data) => {
+      const proc = ptyProcesses.get(ptyId)
+      if (!proc) {
+        return false
+      }
+      proc.write(data)
+      return true
+    },
+    kill: (ptyId) => {
+      const proc = ptyProcesses.get(ptyId)
+      if (!proc) {
+        return false
+      }
+      try {
+        proc.kill()
+      } catch {
+        return false
+      }
+      ptyProcesses.delete(ptyId)
+      ptyLoadGeneration.delete(ptyId)
+      runtime?.onPtyExit(ptyId, -1)
+      return true
+    }
   })
 
   ipcMain.handle('pty:spawn', (_event, args: { cols: number; rows: number; cwd?: string }) => {
@@ -74,8 +101,10 @@ export function registerPtyHandlers(mainWindow: BrowserWindow): void {
 
     ptyProcesses.set(id, ptyProcess)
     ptyLoadGeneration.set(id, loadGeneration)
+    runtime?.onPtySpawned(id)
 
     ptyProcess.onData((data) => {
+      runtime?.onPtyData(id, data, Date.now())
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('pty:data', { id, data })
       }
@@ -84,6 +113,7 @@ export function registerPtyHandlers(mainWindow: BrowserWindow): void {
     ptyProcess.onExit(({ exitCode }) => {
       ptyProcesses.delete(id)
       ptyLoadGeneration.delete(id)
+      runtime?.onPtyExit(id, exitCode)
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('pty:exit', { id, code: exitCode })
       }
@@ -116,6 +146,7 @@ export function registerPtyHandlers(mainWindow: BrowserWindow): void {
       }
       ptyProcesses.delete(args.id)
       ptyLoadGeneration.delete(args.id)
+      runtime?.onPtyExit(args.id, -1)
     }
   })
 }

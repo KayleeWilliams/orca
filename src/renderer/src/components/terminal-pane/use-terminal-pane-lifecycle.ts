@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: terminal pane lifecycle wiring is intentionally co-located so PTY attach, theme sync, and runtime graph publication remain consistent for live terminals. */
 import { useEffect, useRef } from 'react'
 import type { IDisposable } from '@xterm/xterm'
 import { PaneManager } from '@/lib/pane-manager/pane-manager'
@@ -16,6 +17,7 @@ import { applyTerminalAppearance } from './terminal-appearance'
 import { connectPanePty } from './pty-connection'
 import type { PtyTransport } from './pty-transport'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
+import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 
 type UseTerminalPaneLifecycleDeps = {
   tabId: string
@@ -159,6 +161,14 @@ export function useTerminalPaneLifecycle({
       markWorktreeUnread
     }
 
+    const unregisterRuntimeTab = registerRuntimeTerminalTab({
+      tabId,
+      worktreeId,
+      getManager: () => managerRef.current,
+      getContainer: () => containerRef.current,
+      getPtyIdForPane: (paneId) => paneTransportsRef.current.get(paneId)?.getPtyId() ?? null
+    })
+
     const isMac = navigator.userAgent.includes('Mac')
     const openLinkHint = isMac ? '⌘+click to open' : 'Ctrl+click to open'
 
@@ -184,6 +194,7 @@ export function useTerminalPaneLifecycle({
         }
         applyAppearance(manager)
         connectPanePty(pane, manager, ptyDeps)
+        scheduleRuntimeGraphSync()
         queueResizeAll(true)
       },
       onPaneClosed: (paneId) => {
@@ -199,13 +210,16 @@ export function useTerminalPaneLifecycle({
         }
         paneFontSizesRef.current.delete(paneId)
         pendingWritesRef.current.delete(paneId)
+        scheduleRuntimeGraphSync()
       },
       onActivePaneChange: () => {
+        scheduleRuntimeGraphSync()
         if (shouldPersistLayout) {
           persistLayoutSnapshot()
         }
       },
       onLayoutChanged: () => {
+        scheduleRuntimeGraphSync()
         syncExpandedLayout()
         syncCanExpandState()
         queueResizeAll(false)
@@ -259,7 +273,6 @@ export function useTerminalPaneLifecycle({
     if (restoredActivePaneId !== null) {
       manager.setActivePane(restoredActivePaneId, { focus: isActive })
     }
-
     const restoredExpandedPaneId = initialLayoutRef.current.expandedLeafId
       ? (restoredPaneByLeafId.get(initialLayoutRef.current.expandedLeafId) ?? null)
       : null
@@ -278,8 +291,10 @@ export function useTerminalPaneLifecycle({
     applyAppearance(manager)
     queueResizeAll(isActive)
     persistLayoutSnapshot()
+    scheduleRuntimeGraphSync()
 
     return () => {
+      unregisterRuntimeTab()
       if (resizeRaf !== null) {
         cancelAnimationFrame(resizeRaf)
       }

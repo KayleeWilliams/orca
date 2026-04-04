@@ -4,6 +4,7 @@ import type { Store } from '../persistence'
 import { registerRepoHandlers } from '../ipc/repos'
 import { registerWorktreeHandlers } from '../ipc/worktrees'
 import { registerPtyHandlers } from '../ipc/pty'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import {
   checkForUpdatesFromMenu,
   downloadUpdate,
@@ -12,12 +13,23 @@ import {
   setupAutoUpdater
 } from '../updater'
 
-export function attachMainWindowServices(mainWindow: BrowserWindow, store: Store): void {
+export function attachMainWindowServices(
+  mainWindow: BrowserWindow,
+  store: Store,
+  runtime: OrcaRuntimeService
+): void {
   registerRepoHandlers(mainWindow, store)
   registerWorktreeHandlers(mainWindow, store)
-  registerPtyHandlers(mainWindow)
+  registerPtyHandlers(mainWindow, runtime)
   registerFileDropRelay(mainWindow)
-  setupAutoUpdater(mainWindow, { onBeforeQuit: () => store.flush() })
+  setupAutoUpdater(mainWindow, {
+    getLastUpdateCheckAt: () => store.getUI().lastUpdateCheckAt,
+    onBeforeQuit: () => store.flush(),
+    setLastUpdateCheckAt: (timestamp) => {
+      store.updateUI({ lastUpdateCheckAt: timestamp })
+    }
+  })
+  registerRuntimeWindowLifecycle(mainWindow, runtime)
 
   const allowedPermissions = new Set(['media', 'fullscreen', 'pointerLock'])
   mainWindow.webContents.session.setPermissionRequestHandler(
@@ -25,6 +37,39 @@ export function attachMainWindowServices(mainWindow: BrowserWindow, store: Store
       callback(allowedPermissions.has(permission))
     }
   )
+}
+
+function registerRuntimeWindowLifecycle(
+  mainWindow: BrowserWindow,
+  runtime: OrcaRuntimeService
+): void {
+  runtime.attachWindow(mainWindow.id)
+  runtime.setNotifier({
+    worktreesChanged: (repoId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('worktrees:changed', { repoId })
+      }
+    },
+    reposChanged: () => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('repos:changed')
+      }
+    },
+    activateWorktree: (repoId, worktreeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId })
+      }
+    }
+  })
+  // Why: the runtime must fail closed while the renderer graph is being torn
+  // down or rebuilt, otherwise future CLI calls could act on stale terminal
+  // mappings during reload transitions.
+  mainWindow.webContents.on('did-start-loading', () => {
+    runtime.markRendererReloading(mainWindow.id)
+  })
+  mainWindow.on('closed', () => {
+    runtime.markGraphUnavailable(mainWindow.id)
+  })
 }
 
 function registerFileDropRelay(mainWindow: BrowserWindow): void {
@@ -48,7 +93,7 @@ export function registerClipboardHandlers(): void {
   ipcMain.handle('clipboard:writeText', (_event, text: string) => clipboard.writeText(text))
 }
 
-export function registerUpdaterHandlers(): void {
+export function registerUpdaterHandlers(_store: Store): void {
   ipcMain.removeHandler('updater:getStatus')
   ipcMain.removeHandler('updater:getVersion')
   ipcMain.removeHandler('updater:check')

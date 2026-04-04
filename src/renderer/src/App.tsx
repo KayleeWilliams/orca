@@ -14,7 +14,13 @@ import Landing from './components/Landing'
 import Settings from './components/settings/Settings'
 import RightSidebar from './components/right-sidebar'
 import QuickOpen from './components/QuickOpen'
+import UpdateReminder from './components/UpdateReminder'
 import { useGitStatusPolling } from './components/right-sidebar/useGitStatusPolling'
+import {
+  setRuntimeGraphStoreStateGetter,
+  setRuntimeGraphSyncEnabled
+} from './runtime/sync-runtime-graph'
+import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
 
 const isMac = navigator.userAgent.includes('Mac')
 
@@ -82,6 +88,7 @@ function App(): React.JSX.Element {
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
   // until some unrelated view remount happens to refresh them.
   useGitStatusPolling()
+  useGlobalFileDrop()
 
   const settings = useAppStore((s) => s.settings)
 
@@ -112,7 +119,9 @@ function App(): React.JSX.Element {
             sortBy: 'name',
             filterRepoIds: [],
             uiZoomLevel: 0,
-            worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES]
+            worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+            dismissedUpdateVersion: null,
+            lastUpdateCheckAt: null
           })
           hydrateWorkspaceSession({
             activeRepoId: null,
@@ -140,10 +149,23 @@ function App(): React.JSX.Element {
   ])
 
   useEffect(() => {
+    setRuntimeGraphStoreStateGetter(useAppStore.getState)
+    return () => {
+      setRuntimeGraphStoreStateGetter(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    setRuntimeGraphSyncEnabled(workspaceSessionReady)
+    return () => {
+      setRuntimeGraphSyncEnabled(false)
+    }
+  }, [workspaceSessionReady])
+
+  useEffect(() => {
     if (!workspaceSessionReady) {
       return
     }
-
     const timer = window.setTimeout(() => {
       void window.api.session.set({
         activeRepoId,
@@ -278,17 +300,15 @@ function App(): React.JSX.Element {
       if (e.repeat) {
         return
       }
-      if (isEditableTarget(e.target)) {
-        return
-      }
       // Accept Cmd on macOS, Ctrl on other platforms
       const mod = isMac ? e.metaKey : e.ctrlKey
-      if (!mod) {
-        return
-      }
 
-      // Cmd/Ctrl+P — quick open (go to file)
+      // Why: Cmd/Ctrl+P must be handled before the isEditableTarget guard
+      // because contentEditable elements (e.g. the Tiptap rich markdown
+      // editor) would otherwise swallow the event, making quick-open
+      // unreachable while the rich editor has focus.
       if (
+        mod &&
         !e.altKey &&
         !e.shiftKey &&
         e.key.toLowerCase() === 'p' &&
@@ -297,6 +317,13 @@ function App(): React.JSX.Element {
       ) {
         e.preventDefault()
         setQuickOpenVisible(true)
+        return
+      }
+
+      if (isEditableTarget(e.target)) {
+        return
+      }
+      if (!mod) {
         return
       }
 
@@ -385,20 +412,23 @@ function App(): React.JSX.Element {
       <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
         {showSidebar ? <Sidebar /> : null}
         <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
-          <div
-            className={
-              activeView === 'settings' || !activeWorktreeId
-                ? 'hidden flex-1 min-w-0 min-h-0'
-                : 'flex flex-1 min-w-0 min-h-0'
-            }
-          >
-            <Terminal />
+          <div className="flex flex-1 min-w-0 min-h-0 flex-col">
+            <div
+              className={
+                activeView === 'settings' || !activeWorktreeId
+                  ? 'hidden flex-1 min-w-0 min-h-0'
+                  : 'flex flex-1 min-w-0 min-h-0'
+              }
+            >
+              <Terminal />
+            </div>
+            {activeView === 'settings' ? <Settings /> : !activeWorktreeId ? <Landing /> : null}
           </div>
-          {activeView === 'settings' ? <Settings /> : !activeWorktreeId ? <Landing /> : null}
         </div>
         {showSidebar && rightSidebarOpen ? <RightSidebar /> : null}
       </div>
       <QuickOpen />
+      <UpdateReminder />
       <Toaster closeButton toastOptions={{ className: 'font-sans text-sm' }} />
     </div>
   )

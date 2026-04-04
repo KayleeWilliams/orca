@@ -88,7 +88,9 @@ export function getDefaultUIState(): PersistedUIState {
     sortBy: 'name',
     filterRepoIds: [],
     uiZoomLevel: 0,
-    worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES]
+    worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+    dismissedUpdateVersion: null,
+    lastUpdateCheckAt: null
   }
 }
 

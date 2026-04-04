@@ -33,27 +33,36 @@ export function useIpcEvents(): void {
       })
     )
 
+    unsubs.push(
+      window.api.ui.onActivateWorktree(({ repoId, worktreeId }) => {
+        void (async () => {
+          const store = useAppStore.getState()
+          await store.fetchWorktrees(repoId)
+          // Why: CLI-created worktrees should feel identical to UI-created
+          // worktrees. The renderer owns the "active worktree -> first tab"
+          // behavior today, so we explicitly replay that activation sequence
+          // after the runtime creates a worktree outside the renderer.
+          store.setActiveRepo(repoId)
+          store.setActiveView('terminal')
+          store.setActiveWorktree(worktreeId)
+          store.revealWorktreeInSidebar(worktreeId)
+        })().catch((error) => {
+          console.error('Failed to activate CLI-created worktree:', error)
+        })
+      })
+    )
+
     // Hydrate initial update status then subscribe to changes
     window.api.updater.getStatus().then((status) => {
       useAppStore.getState().setUpdateStatus(status as UpdateStatus)
     })
 
     let checkingToastId: string | number | undefined
-    let availableToastId: string | number | undefined
     const downloadToastId = 'update-download-progress'
-    // When the user clicks "Update" in the toast we download and then
-    // auto-restart once the download finishes, avoiding a second confirmation.
-    let autoRestartAfterDownload = false
     unsubs.push(
       window.api.updater.onStatus((raw) => {
         const status = raw as UpdateStatus
         useAppStore.getState().setUpdateStatus(status)
-
-        // A new check cycle or error invalidates any previous one-click
-        // "Update" intent so we don't auto-restart from a stale flag.
-        if (status.state === 'checking' || status.state === 'error') {
-          autoRestartAfterDownload = false
-        }
 
         // Show toasts for user-initiated checks
         if (status.state === 'checking' && 'userInitiated' in status && status.userInitiated) {
@@ -73,53 +82,13 @@ export function useIpcEvents(): void {
             toast.dismiss(checkingToastId)
           }
           checkingToastId = undefined
-          const releaseUrl = getReleaseUrl(status)
-          availableToastId = toast.info(`Version ${status.version} is available.`, {
-            description: createElement(
-              'a',
-              {
-                href: releaseUrl,
-                target: '_blank',
-                rel: 'noopener noreferrer',
-                style: { textDecoration: 'underline' }
-              },
-              'Release notes'
-            ),
-            duration: Infinity,
-            action: {
-              label: 'Update',
-              onClick: () => {
-                // For auto-download updates, download and then auto-restart
-                // once finished so the user only clicks one button.
-                if (!status.manualDownloadUrl) {
-                  autoRestartAfterDownload = true
-                }
-                window.api.updater.download()
-              }
-            }
-          })
         } else if (status.state === 'downloading') {
-          if (availableToastId) {
-            toast.dismiss(availableToastId)
-            availableToastId = undefined
-          }
           toast.loading(`Downloading v${status.version}… ${status.percent}%`, {
             id: downloadToastId,
             duration: Infinity
           })
         } else if (status.state === 'downloaded') {
-          if (availableToastId) {
-            toast.dismiss(availableToastId)
-            availableToastId = undefined
-          }
           toast.dismiss(downloadToastId)
-          // If the user clicked "Update" in the available toast, skip the
-          // second confirmation and restart immediately.
-          if (autoRestartAfterDownload) {
-            autoRestartAfterDownload = false
-            window.api.updater.quitAndInstall()
-            return
-          }
           const releaseUrl = getReleaseUrl(status)
           toast.success(`Version ${status.version} is ready to install.`, {
             description: createElement(

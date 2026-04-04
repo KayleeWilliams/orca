@@ -1,5 +1,6 @@
 import type { PaneManager, ManagedPane } from '@/lib/pane-manager/pane-manager'
 import { isGeminiTerminalTitle } from '@/lib/agent-status'
+import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import type { PtyTransport } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 
@@ -24,6 +25,10 @@ export function connectPanePty(
 ): void {
   const onExit = (ptyId: string): void => {
     deps.clearTabPtyId(deps.tabId, ptyId)
+    // The runtime graph is the CLI's source for live terminal bindings, so
+    // we must republish when a pane loses its PTY instead of waiting for a
+    // broader layout change that may never happen.
+    scheduleRuntimeGraphSync()
     manager.setPaneGpuRendering(pane.id, true)
     const panes = manager.getPanes()
     if (panes.length <= 1) {
@@ -38,7 +43,12 @@ export function connectPanePty(
     deps.updateTabTitle(deps.tabId, title)
   }
 
-  const onPtySpawn = (ptyId: string): void => deps.updateTabPtyId(deps.tabId, ptyId)
+  const onPtySpawn = (ptyId: string): void => {
+    deps.updateTabPtyId(deps.tabId, ptyId)
+    // Spawn completion is when a pane gains a concrete PTY ID. The initial
+    // frame-level sync often runs before that async result arrives.
+    scheduleRuntimeGraphSync()
+  }
   const onBell = (): void => deps.markWorktreeUnread(deps.worktreeId)
   const onAgentBecameIdle = (): void => deps.markWorktreeUnread(deps.worktreeId)
 
@@ -86,5 +96,6 @@ export function connectPanePty(
         }
       }
     })
+    scheduleRuntimeGraphSync()
   })
 }
