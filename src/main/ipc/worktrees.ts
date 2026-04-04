@@ -129,7 +129,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
         throw new Error('Worktree created but not found in listing')
       }
 
-      const worktreeId = `${repo.id}::${worktreePath}`
+      const worktreeId = `${repo.id}::${created.path}`
       const metaUpdates: Partial<WorktreeMeta> = {
         // Stamp activity so the worktree sorts into its final position
         // immediately — prevents scroll-to-reveal racing with a later

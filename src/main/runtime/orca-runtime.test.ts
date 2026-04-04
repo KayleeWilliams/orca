@@ -1,9 +1,10 @@
 /* eslint-disable max-lines -- Why: runtime behavior is stateful and cross-cutting, so these tests stay in one file to preserve the end-to-end invariants around handles, waits, and graph sync. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listWorktrees } from '../git/worktree'
+import type { WorktreeMeta } from '../../shared/types'
+import { addWorktree, listWorktrees } from '../git/worktree'
 import { OrcaRuntimeService } from './orca-runtime'
 
-const { MOCK_GIT_WORKTREES } = vi.hoisted(() => ({
+const { MOCK_GIT_WORKTREES, addWorktreeMock } = vi.hoisted(() => ({
   MOCK_GIT_WORKTREES: [
     {
       path: '/tmp/worktree-a',
@@ -12,15 +13,18 @@ const { MOCK_GIT_WORKTREES } = vi.hoisted(() => ({
       isBare: false,
       isMainWorktree: false
     }
-  ]
+  ],
+  addWorktreeMock: vi.fn()
 }))
 
 vi.mock('../git/worktree', () => ({
-  listWorktrees: vi.fn().mockResolvedValue(MOCK_GIT_WORKTREES)
+  listWorktrees: vi.fn().mockResolvedValue(MOCK_GIT_WORKTREES),
+  addWorktree: addWorktreeMock
 }))
 
 afterEach(() => {
   vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+  vi.mocked(addWorktree).mockReset()
 })
 
 const store = {
@@ -487,5 +491,90 @@ describe('OrcaRuntimeService', () => {
     await expect(runtime.getWorktreePs(-1)).rejects.toThrow('invalid_limit')
     await expect(runtime.listManagedWorktrees(undefined, 0)).rejects.toThrow('invalid_limit')
     await expect(runtime.searchRepoRefs('id:repo-1', 'main', -5)).rejects.toThrow('invalid_limit')
+  })
+
+  it('preserves create-time metadata on later runtime listings when Windows path formatting differs', async () => {
+    const originalPlatform = process.platform
+    try {
+      Object.defineProperty(process, 'platform', {
+        value: 'win32'
+      })
+      const metaById: Record<string, WorktreeMeta> = {}
+      const runtimeStore = {
+        getRepo: (id: string) => runtimeStore.getRepos().find((repo) => repo.id === id),
+        getRepos: () => [
+          {
+            id: 'repo-1',
+            path: 'C:\\repo',
+            displayName: 'repo',
+            badgeColor: 'blue',
+            addedAt: 1
+          }
+        ],
+        addRepo: () => {},
+        updateRepo: () => undefined as never,
+        getAllWorktreeMeta: () => metaById,
+        getWorktreeMeta: (worktreeId: string) => metaById[worktreeId],
+        setWorktreeMeta: (worktreeId: string, meta: Partial<WorktreeMeta>) => {
+          const existingMeta = metaById[worktreeId]
+          const nextMeta: WorktreeMeta = {
+            displayName: meta.displayName ?? existingMeta?.displayName ?? '',
+            comment: meta.comment ?? existingMeta?.comment ?? '',
+            linkedIssue: meta.linkedIssue ?? existingMeta?.linkedIssue ?? null,
+            linkedPR: meta.linkedPR ?? existingMeta?.linkedPR ?? null,
+            isArchived: meta.isArchived ?? existingMeta?.isArchived ?? false,
+            isUnread: meta.isUnread ?? existingMeta?.isUnread ?? false,
+            sortOrder: meta.sortOrder ?? existingMeta?.sortOrder ?? 0,
+            lastActivityAt: meta.lastActivityAt ?? existingMeta?.lastActivityAt ?? 0
+          }
+          metaById[worktreeId] = nextMeta
+          return nextMeta
+        },
+        removeWorktreeMeta: () => {},
+        getSettings: () => ({
+          workspaceDir: 'C:\\workspaces',
+          nestWorkspaces: false,
+          branchPrefix: 'none',
+          branchPrefixCustom: ''
+        })
+      }
+      vi.mocked(listWorktrees)
+        .mockResolvedValueOnce([
+          {
+            path: 'C:/workspaces/improve-dashboard',
+            head: 'abc',
+            branch: 'refs/heads/improve-dashboard',
+            isBare: false,
+            isMainWorktree: false
+          }
+        ])
+        .mockResolvedValueOnce([
+          {
+            path: 'C:/workspaces/improve-dashboard',
+            head: 'abc',
+            branch: 'refs/heads/improve-dashboard',
+            isBare: false,
+            isMainWorktree: false
+          }
+        ])
+
+      const runtime = new OrcaRuntimeService(runtimeStore)
+      await runtime.createManagedWorktree({
+        repoSelector: 'id:repo-1',
+        name: 'Improve Dashboard'
+      })
+      const listed = await runtime.listManagedWorktrees('id:repo-1')
+
+      expect(listed.worktrees).toMatchObject([
+        {
+          id: 'repo-1::C:/workspaces/improve-dashboard',
+          displayName: 'Improve Dashboard'
+        }
+      ])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        value: originalPlatform
+      })
+    }
   })
 })

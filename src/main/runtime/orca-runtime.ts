@@ -596,7 +596,7 @@ export class OrcaRuntimeService {
       throw new Error('Worktree created but not found in listing')
     }
 
-    const worktreeId = `${repo.id}::${worktreePath}`
+    const worktreeId = `${repo.id}::${created.path}`
     const meta = this.store.setWorktreeMeta(worktreeId, {
       lastActivityAt: Date.now(),
       ...(shouldSetDisplayName(requestedName, branchName, sanitizedName)
