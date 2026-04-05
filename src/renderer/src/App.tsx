@@ -381,6 +381,7 @@ function App(): React.JSX.Element {
     activeWorktreeId,
     openModal,
     repos.length,
+    toggleSidebar,
     setRightSidebarTab,
     setRightSidebarOpen,
     setQuickOpenVisible

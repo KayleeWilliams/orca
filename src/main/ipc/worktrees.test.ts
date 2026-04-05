@@ -229,16 +229,18 @@ describe('registerWorktreeHandlers', () => {
     expect(addWorktreeMock).not.toHaveBeenCalled()
   })
 
+  const createdWorktreeList = [
+    {
+      path: '/workspace/improve-dashboard',
+      head: 'abc123',
+      branch: 'improve-dashboard',
+      isBare: false,
+      isMainWorktree: false
+    }
+  ]
+
   it('returns a setup launch payload when setup should run', async () => {
-    listWorktreesMock.mockResolvedValue([
-      {
-        path: '/workspace/improve-dashboard',
-        head: 'abc123',
-        branch: 'improve-dashboard',
-        isBare: false,
-        isMainWorktree: false
-      }
-    ])
+    listWorktreesMock.mockResolvedValue(createdWorktreeList)
     getEffectiveHooksMock.mockReturnValue({
       scripts: {
         setup: 'pnpm worktree:setup'
@@ -274,15 +276,7 @@ describe('registerWorktreeHandlers', () => {
   })
 
   it('still returns the created worktree when setup runner generation fails', async () => {
-    listWorktreesMock.mockResolvedValue([
-      {
-        path: '/workspace/improve-dashboard',
-        head: 'abc123',
-        branch: 'improve-dashboard',
-        isBare: false,
-        isMainWorktree: false
-      }
-    ])
+    listWorktreesMock.mockResolvedValue(createdWorktreeList)
     getEffectiveHooksMock.mockReturnValue({
       scripts: {
         setup: 'pnpm worktree:setup'
