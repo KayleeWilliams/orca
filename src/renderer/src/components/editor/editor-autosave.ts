@@ -9,6 +9,7 @@ import { clampNumber } from '@/lib/terminal-theme'
 
 export const ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT = 'orca:editor-quiesce-file-saves'
 export const ORCA_EDITOR_EXTERNAL_FILE_CHANGE_EVENT = 'orca:editor-external-file-change'
+export const ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT = 'orca:editor-discard-file-changes'
 
 export type EditorPathMutationTarget = {
   worktreeId: string
@@ -19,6 +20,12 @@ export type EditorPathMutationTarget = {
 export type EditorSaveQuiesceTarget = { fileId: string } | EditorPathMutationTarget
 
 export type EditorSaveQuiesceDetail = EditorSaveQuiesceTarget & {
+  claim: () => void
+  resolve: () => void
+}
+
+export type EditorDiscardDetail = {
+  fileId: string
   claim: () => void
   resolve: () => void
 }
@@ -63,27 +70,44 @@ export function getOpenFilesForExternalFileChange(
   })
 }
 
-export async function requestEditorSaveQuiesce(target: EditorSaveQuiesceTarget): Promise<void> {
+async function dispatchClaimableEditorRequest<
+  Detail extends { claim: () => void; resolve: () => void }
+>(eventName: string, detail: Omit<Detail, 'claim' | 'resolve'>): Promise<void> {
   await new Promise<void>((resolve) => {
     let claimed = false
     window.dispatchEvent(
-      new CustomEvent<EditorSaveQuiesceDetail>(ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT, {
+      new CustomEvent<Detail>(eventName, {
         detail: {
-          ...target,
+          ...detail,
           claim: () => {
             claimed = true
           },
           resolve
-        }
+        } as Detail
       })
     )
     // Why: discard/delete flows also run when no editor tab is mounted. Let
-    // those external mutations proceed immediately instead of hanging forever
-    // waiting on a quiesce listener that does not exist in that UI state.
+    // those external mutations and close actions proceed immediately instead
+    // of hanging forever waiting on a listener that does not exist in that UI
+    // state.
     if (!claimed) {
       resolve()
     }
   })
+}
+
+export async function requestEditorSaveQuiesce(target: EditorSaveQuiesceTarget): Promise<void> {
+  await dispatchClaimableEditorRequest<EditorSaveQuiesceDetail>(
+    ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT,
+    target
+  )
+}
+
+export async function requestEditorDiscardChanges(fileId: string): Promise<void> {
+  await dispatchClaimableEditorRequest<EditorDiscardDetail>(
+    ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT,
+    { fileId }
+  )
 }
 
 export function notifyEditorExternalFileChange(target: EditorPathMutationTarget): void {

@@ -40,7 +40,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     branchPrefix: 'git-username',
     branchPrefixCustom: '',
     theme: 'system',
-    editorAutoSave: false,
+    editorAutoSaveMode: 'off',
     editorAutoSaveDelayMs: DEFAULT_EDITOR_AUTO_SAVE_DELAY_MS,
     terminalFontSize: 14,
     terminalFontFamily: 'SF Mono',

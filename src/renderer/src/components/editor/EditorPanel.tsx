@@ -16,8 +16,10 @@ import {
   canAutoSaveOpenFile,
   getOpenFilesForExternalFileChange,
   normalizeAutoSaveDelayMs,
+  ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT,
   ORCA_EDITOR_EXTERNAL_FILE_CHANGE_EVENT,
   ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT,
+  type EditorDiscardDetail,
   type EditorPathMutationTarget,
   type EditorSaveQuiesceDetail
 } from './editor-autosave'
@@ -58,9 +60,14 @@ export default function EditorPanel(): React.JSX.Element | null {
   const saveGenerationRef = React.useRef<Map<string, number>>(new Map())
   const openFilesRef = React.useRef(openFiles)
   const editBuffersRef = React.useRef(editBuffers)
+  const fileContentsRef = React.useRef(fileContents)
+  const diffContentsRef = React.useRef(diffContents)
   const autoSaveDelayMs = normalizeAutoSaveDelayMs(settings?.editorAutoSaveDelayMs)
+  const autoSaveEnabled = settings?.editorAutoSaveMode === 'afterDelay'
   openFilesRef.current = openFiles
   editBuffersRef.current = editBuffers
+  fileContentsRef.current = fileContents
+  diffContentsRef.current = diffContents
 
   const clearAutoSaveTimer = useCallback((fileId: string): void => {
     const timerId = autoSaveTimersRef.current.get(fileId)
@@ -257,6 +264,59 @@ export default function EditorPanel(): React.JSX.Element | null {
     [bumpSaveGeneration, clearAutoSaveTimer]
   )
 
+  const discardFileChanges = useCallback(
+    async (fileId: string): Promise<void> => {
+      const file = openFilesRef.current.find((openFile) => openFile.id === fileId)
+      if (!file) {
+        return
+      }
+
+      await quiesceFileSave(fileId)
+
+      const baselineContent =
+        file.mode === 'edit'
+          ? (fileContentsRef.current[fileId]?.content ?? null)
+          : diffContentsRef.current[fileId]?.kind === 'text'
+            ? diffContentsRef.current[fileId].modifiedContent
+            : null
+
+      if (baselineContent === null) {
+        return
+      }
+
+      // Why: "Don't Save" is a discard action, not just "stop future writes".
+      // If autosave already flushed the dirty buffer before the dialog won the
+      // race, restore the last known saved baseline so closing the tab does not
+      // silently keep edits the user explicitly rejected.
+      await window.api.fs.writeFile({ filePath: file.filePath, content: baselineContent })
+      setEditBuffers((prev) => {
+        const next = { ...prev }
+        delete next[fileId]
+        editBuffersRef.current = next
+        return next
+      })
+      if (file.mode === 'edit') {
+        setFileContents((prev) => ({
+          ...prev,
+          [fileId]: { content: baselineContent, isBinary: false }
+        }))
+      } else {
+        setDiffContents((prev) => {
+          const existing = prev[fileId]
+          if (!existing || existing.kind !== 'text') {
+            return prev
+          }
+          return {
+            ...prev,
+            [fileId]: { ...existing, modifiedContent: baselineContent }
+          }
+        })
+      }
+      markFileDirty(fileId, false)
+    },
+    [markFileDirty, quiesceFileSave]
+  )
+
   const handleContentChange = useCallback(
     (content: string) => {
       if (!activeFile) {
@@ -276,18 +336,11 @@ export default function EditorPanel(): React.JSX.Element | null {
         markFileDirty(activeFile.id, content !== original)
       }
 
-      if (!settings?.editorAutoSave) {
+      if (!autoSaveEnabled) {
         clearAutoSaveTimer(activeFile.id)
       }
     },
-    [
-      activeFile,
-      clearAutoSaveTimer,
-      diffContents,
-      fileContents,
-      markFileDirty,
-      settings?.editorAutoSave
-    ]
+    [activeFile, autoSaveEnabled, clearAutoSaveTimer, diffContents, fileContents, markFileDirty]
   )
 
   const handleSave = useCallback(
@@ -345,6 +398,22 @@ export default function EditorPanel(): React.JSX.Element | null {
     return () =>
       window.removeEventListener(ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT, handler as EventListener)
   }, [quiesceFileSave])
+
+  useEffect(() => {
+    const handler = async (event: Event): Promise<void> => {
+      const detail = (event as CustomEvent<EditorDiscardDetail>).detail
+      if (!detail) {
+        return
+      }
+      detail.claim()
+      await discardFileChanges(detail.fileId)
+      detail.resolve()
+    }
+
+    window.addEventListener(ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT, handler as EventListener)
+    return () =>
+      window.removeEventListener(ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT, handler as EventListener)
+  }, [discardFileChanges])
 
   useEffect(() => {
     const handler = (event: Event): void => {
@@ -419,17 +488,13 @@ export default function EditorPanel(): React.JSX.Element | null {
       const file = openFilesById.get(fileId)
       const buffer = editBuffers[fileId]
       const shouldKeepTimer =
-        settings?.editorAutoSave &&
-        file &&
-        file.isDirty &&
-        canAutoSaveOpenFile(file) &&
-        buffer !== undefined
+        autoSaveEnabled && file && file.isDirty && canAutoSaveOpenFile(file) && buffer !== undefined
       if (!shouldKeepTimer) {
         clearAutoSaveTimer(fileId)
       }
     }
 
-    if (!settings?.editorAutoSave) {
+    if (!autoSaveEnabled) {
       return
     }
 
@@ -456,14 +521,7 @@ export default function EditorPanel(): React.JSX.Element | null {
       }, autoSaveDelayMs)
       autoSaveTimersRef.current.set(file.id, timerId)
     }
-  }, [
-    autoSaveDelayMs,
-    clearAutoSaveTimer,
-    editBuffers,
-    openFiles,
-    queueSave,
-    settings?.editorAutoSave
-  ])
+  }, [autoSaveDelayMs, autoSaveEnabled, clearAutoSaveTimer, editBuffers, openFiles, queueSave])
 
   useEffect(
     () => () => {

@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import TabBar from './tab-bar/TabBar'
 import TerminalPane from './terminal-pane/TerminalPane'
-import { requestEditorSaveQuiesce } from './editor/editor-autosave'
+import { requestEditorDiscardChanges } from './editor/editor-autosave'
 
 const EditorPanel = lazy(() => import('./editor/EditorPanel'))
 
@@ -40,8 +40,6 @@ export default function Terminal(): React.JSX.Element | null {
   const closeFile = useAppStore((s) => s.closeFile)
   const closeAllFiles = useAppStore((s) => s.closeAllFiles)
   const pinFile = useAppStore((s) => s.pinFile)
-
-  const markFileDirty = useAppStore((s) => s.markFileDirty)
 
   const tabs = activeWorktreeId ? (tabsByWorktree[activeWorktreeId] ?? []) : []
   const allWorktrees = Object.values(worktreesByRepo).flat()
@@ -91,14 +89,13 @@ export default function Terminal(): React.JSX.Element | null {
     if (!saveDialogFileId) {
       return
     }
-    // Why: autosave runs on a background timer. Wait for any pending/in-flight
-    // write to settle before honoring "Don't Save", otherwise the file can be
-    // written after the user explicitly chose to discard their edits.
-    await requestEditorSaveQuiesce({ fileId: saveDialogFileId })
-    markFileDirty(saveDialogFileId, false)
+    // Why: "Don't Save" must restore the last saved contents, not merely stop
+    // future autosave work. Otherwise an autosave that already started can
+    // still persist edits the user explicitly chose to discard.
+    await requestEditorDiscardChanges(saveDialogFileId)
     closeFile(saveDialogFileId)
     setSaveDialogFileId(null)
-  }, [saveDialogFileId, closeFile, markFileDirty])
+  }, [saveDialogFileId, closeFile])
 
   const handleSaveDialogCancel = useCallback(() => {
     setSaveDialogFileId(null)

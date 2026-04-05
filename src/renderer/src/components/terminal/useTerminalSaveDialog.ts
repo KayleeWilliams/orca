@@ -1,11 +1,10 @@
 import { useCallback, useState } from 'react'
 import type { OpenFile } from '@/store/slices/editor'
-import { requestEditorSaveQuiesce } from '@/components/editor/editor-autosave'
+import { requestEditorDiscardChanges } from '@/components/editor/editor-autosave'
 
 type UseTerminalSaveDialogParams = {
   openFiles: OpenFile[]
   closeFile: (fileId: string) => void
-  markFileDirty: (fileId: string, dirty: boolean) => void
 }
 
 type UseTerminalSaveDialogResult = {
@@ -19,8 +18,7 @@ type UseTerminalSaveDialogResult = {
 
 export function useTerminalSaveDialog({
   openFiles,
-  closeFile,
-  markFileDirty
+  closeFile
 }: UseTerminalSaveDialogParams): UseTerminalSaveDialogResult {
   const [saveDialogFileId, setSaveDialogFileId] = useState<string | null>(null)
 
@@ -56,13 +54,13 @@ export function useTerminalSaveDialog({
       return
     }
 
-    // Why: "Don't Save" must win over any pending autosave write for the same
-    // tab, even if the editor is currently waiting on a background debounce.
-    await requestEditorSaveQuiesce({ fileId: saveDialogFileId })
-    markFileDirty(saveDialogFileId, false)
+    // Why: this action discards editor changes. Waiting for autosave alone is
+    // not enough once a write has already started, so delegate the full revert
+    // to the editor surface before closing the tab.
+    await requestEditorDiscardChanges(saveDialogFileId)
     closeFile(saveDialogFileId)
     setSaveDialogFileId(null)
-  }, [closeFile, markFileDirty, saveDialogFileId])
+  }, [closeFile, saveDialogFileId])
 
   const handleSaveDialogCancel = useCallback(() => {
     setSaveDialogFileId(null)

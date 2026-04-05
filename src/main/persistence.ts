@@ -2,7 +2,13 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import type { PersistedState, Repo, WorktreeMeta, GlobalSettings } from '../shared/types'
+import type {
+  PersistedState,
+  Repo,
+  WorktreeMeta,
+  GlobalSettings,
+  EditorAutoSaveMode
+} from '../shared/types'
 import { getGitUsername } from './git/repo'
 import {
   getDefaultPersistedState,
@@ -21,6 +27,18 @@ function normalizeSortBy(sortBy: unknown): 'name' | 'recent' | 'repo' {
     return 'recent'
   }
   return getDefaultUIState().sortBy
+}
+
+function normalizeEditorAutoSaveMode(
+  settings: Partial<GlobalSettings> & { editorAutoSave?: unknown }
+): EditorAutoSaveMode {
+  if (settings.editorAutoSaveMode === 'afterDelay' || settings.editorAutoSaveMode === 'off') {
+    return settings.editorAutoSaveMode
+  }
+  // Why: this PR replaces the first autosave boolean with a mode enum so we
+  // can grow beyond on/off without another storage migration later. Existing
+  // local state may still have the old boolean, so normalize it on load.
+  return settings.editorAutoSave === true ? 'afterDelay' : 'off'
 }
 
 export class Store {
@@ -42,7 +60,11 @@ export class Store {
         return {
           ...defaults,
           ...parsed,
-          settings: { ...defaults.settings, ...parsed.settings },
+          settings: {
+            ...defaults.settings,
+            ...parsed.settings,
+            editorAutoSaveMode: normalizeEditorAutoSaveMode(parsed.settings ?? {})
+          },
           ui: {
             ...defaults.ui,
             ...parsed.ui,

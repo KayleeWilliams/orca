@@ -70,7 +70,7 @@ describe('Store', () => {
     const settings = store.getSettings()
     expect(settings.branchPrefix).toBe('git-username')
     expect(settings.theme).toBe('system')
-    expect(settings.editorAutoSave).toBe(false)
+    expect(settings.editorAutoSaveMode).toBe('off')
     expect(settings.editorAutoSaveDelayMs).toBe(1000)
     expect(settings.terminalFontSize).toBe(14)
     expect(settings.terminalFontWeight).toBe(500)
@@ -138,7 +138,7 @@ describe('Store', () => {
     // settings should preserve the overridden value
     expect(store.getSettings().theme).toBe('dark')
     // new fields get defaults when missing from persisted data
-    expect(store.getSettings().editorAutoSave).toBe(false)
+    expect(store.getSettings().editorAutoSaveMode).toBe('off')
     expect(store.getSettings().editorAutoSaveDelayMs).toBe(1000)
     expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
     // repos should be loaded
@@ -160,7 +160,22 @@ describe('Store', () => {
     expect(store.getSettings().editorAutoSaveDelayMs).toBe(2500)
   })
 
-  it('preserves editorAutoSave when set to true in persisted data', async () => {
+  it('preserves editorAutoSaveMode when set in persisted data', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { editorAutoSaveMode: 'afterDelay' },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().editorAutoSaveMode).toBe('afterDelay')
+  })
+
+  it('migrates legacy editorAutoSave boolean data to editorAutoSaveMode', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -172,7 +187,7 @@ describe('Store', () => {
     })
 
     const store = await createStore()
-    expect(store.getSettings().editorAutoSave).toBe(true)
+    expect(store.getSettings().editorAutoSaveMode).toBe('afterDelay')
   })
 
   it('preserves rightSidebarOpenByDefault when set to true in persisted data', async () => {
@@ -275,13 +290,13 @@ describe('Store', () => {
 
     const updated = store.updateSettings({
       theme: 'dark',
-      editorAutoSave: true,
+      editorAutoSaveMode: 'afterDelay',
       editorAutoSaveDelayMs: 1500,
       terminalFontSize: 16,
       terminalFontWeight: 600
     })
     expect(updated.theme).toBe('dark')
-    expect(updated.editorAutoSave).toBe(true)
+    expect(updated.editorAutoSaveMode).toBe('afterDelay')
     expect(updated.editorAutoSaveDelayMs).toBe(1500)
     expect(updated.terminalFontSize).toBe(16)
     expect(updated.terminalFontWeight).toBe(600)
@@ -289,15 +304,15 @@ describe('Store', () => {
     expect(updated.branchPrefix).toBe('git-username')
   })
 
-  it('updateSettings toggles editorAutoSave', async () => {
+  it('updateSettings changes editorAutoSaveMode', async () => {
     const store = await createStore()
-    expect(store.getSettings().editorAutoSave).toBe(false)
+    expect(store.getSettings().editorAutoSaveMode).toBe('off')
 
-    store.updateSettings({ editorAutoSave: true })
-    expect(store.getSettings().editorAutoSave).toBe(true)
+    store.updateSettings({ editorAutoSaveMode: 'afterDelay' })
+    expect(store.getSettings().editorAutoSaveMode).toBe('afterDelay')
 
-    store.updateSettings({ editorAutoSave: false })
-    expect(store.getSettings().editorAutoSave).toBe(false)
+    store.updateSettings({ editorAutoSaveMode: 'off' })
+    expect(store.getSettings().editorAutoSaveMode).toBe('off')
   })
 
   it('updateSettings toggles rightSidebarOpenByDefault', async () => {

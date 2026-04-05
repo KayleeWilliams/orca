@@ -27,6 +27,7 @@ export function GeneralPane({
 }: GeneralPaneProps): React.JSX.Element {
   const updateStatus = useAppStore((s) => s.updateStatus)
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const autoSaveEnabled = settings.editorAutoSaveMode === 'afterDelay'
   const [autoSaveDelayDraft, setAutoSaveDelayDraft] = useState(
     String(settings.editorAutoSaveDelayMs)
   )
@@ -139,29 +140,36 @@ export function GeneralPane({
 
         <div className="flex items-center justify-between gap-4 px-1 py-2">
           <div className="space-y-0.5">
-            <Label>Auto Save Files</Label>
+            <Label>Auto Save</Label>
             <p className="text-xs text-muted-foreground">
-              Save editor and editable diff changes automatically after a short pause.
+              Choose whether Orca saves file tabs and editable unstaged diffs automatically.
             </p>
           </div>
-          <button
-            role="switch"
-            aria-checked={settings.editorAutoSave}
-            onClick={() =>
-              updateSettings({
-                editorAutoSave: !settings.editorAutoSave
-              })
-            }
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-              settings.editorAutoSave ? 'bg-foreground' : 'bg-muted-foreground/30'
-            }`}
-          >
-            <span
-              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                settings.editorAutoSave ? 'translate-x-4' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
+          <div className="flex w-fit gap-1 rounded-md border border-border/50 p-1">
+            {(
+              [
+                ['off', 'Off'],
+                ['afterDelay', 'After Delay']
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() =>
+                  updateSettings({
+                    editorAutoSaveMode: value
+                  })
+                }
+                className={`rounded-sm px-3 py-1 text-sm transition-colors ${
+                  settings.editorAutoSaveMode === value
+                    ? 'bg-accent font-medium text-accent-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center justify-between gap-4 px-1 py-2">
@@ -179,6 +187,7 @@ export function GeneralPane({
               max={MAX_EDITOR_AUTO_SAVE_DELAY_MS}
               step={250}
               value={autoSaveDelayDraft}
+              disabled={!autoSaveEnabled}
               onChange={(e) => setAutoSaveDelayDraft(e.target.value)}
               onBlur={commitAutoSaveDelay}
               onKeyDown={(e) => {

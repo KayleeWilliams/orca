@@ -4,7 +4,9 @@ import {
   canAutoSaveOpenFile,
   getOpenFilesForExternalFileChange,
   normalizeAutoSaveDelayMs,
+  ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT,
   ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT,
+  requestEditorDiscardChanges,
   requestEditorSaveQuiesce
 } from './editor-autosave'
 
@@ -127,6 +129,37 @@ describe('requestEditorSaveQuiesce', () => {
       expect(resolved).toBe(true)
     } finally {
       window.removeEventListener(ORCA_EDITOR_QUIESCE_FILE_SAVES_EVENT, handler as EventListener)
+    }
+  })
+})
+
+describe('requestEditorDiscardChanges', () => {
+  it('resolves immediately when no editor listener claims the request', async () => {
+    await expect(requestEditorDiscardChanges('file-1')).resolves.toBeUndefined()
+  })
+
+  it('waits for a claiming listener to finish discarding', async () => {
+    const events: string[] = []
+    const handler = (event: Event): void => {
+      const detail = (event as CustomEvent).detail as {
+        fileId: string
+        claim: () => void
+        resolve: () => void
+      }
+      events.push(`claim:${detail.fileId}`)
+      detail.claim()
+      window.setTimeout(() => {
+        events.push(`resolve:${detail.fileId}`)
+        detail.resolve()
+      }, 0)
+    }
+
+    window.addEventListener(ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT, handler as EventListener)
+    try {
+      await requestEditorDiscardChanges('file-1')
+      expect(events).toEqual(['claim:file-1', 'resolve:file-1'])
+    } finally {
+      window.removeEventListener(ORCA_EDITOR_DISCARD_FILE_CHANGES_EVENT, handler as EventListener)
     }
   })
 })

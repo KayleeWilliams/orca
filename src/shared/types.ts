@@ -199,13 +199,15 @@ export type UpdateStatus =
   | { state: 'error'; message: string; userInitiated?: boolean }
 
 // ─── Settings ────────────────────────────────────────────────────────
+export type EditorAutoSaveMode = 'off' | 'afterDelay'
+
 export type GlobalSettings = {
   workspaceDir: string
   nestWorkspaces: boolean
   branchPrefix: 'git-username' | 'custom' | 'none'
   branchPrefixCustom: string
   theme: 'system' | 'dark' | 'light'
-  editorAutoSave: boolean
+  editorAutoSaveMode: EditorAutoSaveMode
   editorAutoSaveDelayMs: number
   terminalFontSize: number
   terminalFontFamily: string
