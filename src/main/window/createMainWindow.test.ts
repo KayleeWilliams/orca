@@ -96,4 +96,87 @@ describe('createMainWindow', () => {
     expect(fileNavigationPreventDefault).toHaveBeenCalledTimes(1)
     expect(openExternalMock).toHaveBeenCalledTimes(4)
   })
+
+  it('supports all minus key variants for terminal zoom out', () => {
+    const windowHandlers: Record<string, (...args: any[]) => void> = {}
+    const webContents = {
+      on: vi.fn((event, handler) => {
+        windowHandlers[event] = handler
+      }),
+      setZoomLevel: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn(),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    createMainWindow(null)
+
+    const beforeInputEvent = windowHandlers['before-input-event']
+
+    for (const input of [
+      { type: 'keyDown', control: true, meta: false, alt: false, key: '-' },
+      { type: 'keyDown', control: true, meta: false, alt: false, key: '_' },
+      { type: 'keyDown', control: true, meta: false, alt: false, key: 'Minus' },
+      { type: 'keyDown', control: true, meta: false, alt: false, key: 'Subtract' },
+      { type: 'keyDown', control: true, meta: false, alt: false, key: '', code: 'Minus' },
+      { type: 'keyDown', control: true, meta: false, alt: false, key: '', code: 'NumpadSubtract' }
+    ]) {
+      const preventDefault = vi.fn()
+      beforeInputEvent({ preventDefault } as never, input as never)
+      expect(preventDefault).toHaveBeenCalledTimes(1)
+    }
+
+    expect(webContents.send).toHaveBeenCalledTimes(6)
+    expect(webContents.send).toHaveBeenNthCalledWith(1, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(2, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(3, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(4, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(5, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(6, 'terminal:zoom', 'out')
+  })
+
+  it('routes Electron zoom command events to terminal zoom', () => {
+    const windowHandlers: Record<string, (...args: any[]) => void> = {}
+    const webContents = {
+      on: vi.fn((event, handler) => {
+        windowHandlers[event] = handler
+      }),
+      setZoomLevel: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn(),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    createMainWindow(null)
+
+    const onZoomChanged = windowHandlers['zoom-changed']
+    const preventDefault = vi.fn()
+    onZoomChanged({ preventDefault } as never, 'out')
+    onZoomChanged({ preventDefault } as never, 'in')
+
+    expect(preventDefault).toHaveBeenCalledTimes(2)
+    expect(webContents.send).toHaveBeenCalledTimes(2)
+    expect(webContents.send).toHaveBeenNthCalledWith(1, 'terminal:zoom', 'out')
+    expect(webContents.send).toHaveBeenNthCalledWith(2, 'terminal:zoom', 'in')
+  })
 })

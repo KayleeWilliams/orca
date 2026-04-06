@@ -67,6 +67,15 @@ app.whenReady().then(async () => {
     onCheckForUpdates: () => checkForUpdatesFromMenu(),
     onOpenSettings: () => {
       mainWindow?.webContents.send('ui:openSettings')
+    },
+    onZoomIn: () => {
+      mainWindow?.webContents.send('terminal:zoom', 'in')
+    },
+    onZoomOut: () => {
+      mainWindow?.webContents.send('terminal:zoom', 'out')
+    },
+    onZoomReset: () => {
+      mainWindow?.webContents.send('terminal:zoom', 'reset')
     }
   })
   registerCoreHandlers(store, runtime)

@@ -3,11 +3,17 @@ import { Menu, app } from 'electron'
 type RegisterAppMenuOptions = {
   onOpenSettings: () => void
   onCheckForUpdates: () => void
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onZoomReset: () => void
 }
 
 export function registerAppMenu({
   onOpenSettings,
-  onCheckForUpdates
+  onCheckForUpdates,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset
 }: RegisterAppMenuOptions): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -53,19 +59,31 @@ export function registerAppMenu({
         { role: 'toggleDevTools' },
         { type: 'separator' },
         {
-          label: 'Actual Size',
+          label: 'Reset Size',
           accelerator: 'CmdOrCtrl+0',
-          registerAccelerator: false
+          // Why: Some keyboard layouts/platforms intercept Cmd/Ctrl+zoom chords
+          // before before-input-event fires. Binding the menu accelerator gives
+          // us a reliable cross-platform fallback path.
+          click: () => onZoomReset()
         },
         {
           label: 'Zoom In',
           accelerator: 'CmdOrCtrl+=',
-          registerAccelerator: false
+          click: () => onZoomIn()
         },
         {
           label: 'Zoom Out',
           accelerator: 'CmdOrCtrl+-',
-          registerAccelerator: false
+          click: () => onZoomOut()
+        },
+        {
+          label: 'Zoom Out (Shift Alias)',
+          // Why: Some Linux keyboard layouts report the top-row minus chord as
+          // an underscore accelerator. Keep this hidden alias so Ctrl+- and
+          // Ctrl+_ can both route to terminal zoom out.
+          accelerator: 'CmdOrCtrl+_',
+          visible: false,
+          click: () => onZoomOut()
         },
         { type: 'separator' },
         { role: 'togglefullscreen' }

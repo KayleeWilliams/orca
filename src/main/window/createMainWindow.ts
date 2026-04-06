@@ -25,6 +25,27 @@ function normalizeExternalUrl(rawUrl: string): string | null {
   }
 }
 
+function isZoomInShortcut(input: Electron.Input): boolean {
+  return input.key === '=' || input.key === '+' || input.code === 'NumpadAdd'
+}
+
+function isZoomOutShortcut(input: Electron.Input): boolean {
+  // Why: Electron reports Cmd/Ctrl+Minus differently across layouts and devices:
+  // some emit '-' while shifted layouts emit '_', and other layouts/devices
+  // report symbolic names like "Minus"/"Subtract" in either key or code.
+  // We accept all known variants so zoom out remains reachable everywhere.
+  const key = (input.key ?? '').toLowerCase()
+  const code = (input.code ?? '').toLowerCase()
+  return (
+    key === '-' ||
+    key === '_' ||
+    key.includes('minus') ||
+    key.includes('subtract') ||
+    code.includes('minus') ||
+    code.includes('subtract')
+  )
+}
+
 export function createMainWindow(store: Store | null): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -103,15 +124,27 @@ export function createMainWindow(store: Store | null): BrowserWindow {
       return
     }
 
-    if (input.key === '=' || input.key === '+') {
+    if (isZoomInShortcut(input)) {
       event.preventDefault()
       mainWindow.webContents.send('terminal:zoom', 'in')
-    } else if (input.key === '-') {
+    } else if (isZoomOutShortcut(input)) {
       event.preventDefault()
       mainWindow.webContents.send('terminal:zoom', 'out')
     } else if (input.key === '0' && !input.shift) {
       event.preventDefault()
       mainWindow.webContents.send('terminal:zoom', 'reset')
+    }
+  })
+
+  mainWindow.webContents.on('zoom-changed', (event, zoomDirection) => {
+    // Why: Some keyboard layouts/platforms consume Ctrl/Cmd+Minus before
+    // before-input-event fires, but still emit Electron's zoom command. We
+    // reroute that command to terminal zoom so zoom-out remains reachable.
+    event.preventDefault()
+    if (zoomDirection === 'in') {
+      mainWindow.webContents.send('terminal:zoom', 'in')
+    } else if (zoomDirection === 'out') {
+      mainWindow.webContents.send('terminal:zoom', 'out')
     }
   })
 

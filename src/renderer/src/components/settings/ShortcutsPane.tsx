@@ -72,6 +72,21 @@ const SHORTCUT_GROUP_DEFINITIONS: ShortcutGroupDefinition[] = [
         action: 'Toggle Source Control',
         searchKeywords: ['shortcut', 'source control'],
         keys: ({ mod, shift }) => [mod, shift, 'G']
+      },
+      {
+        action: 'Zoom In',
+        searchKeywords: ['shortcut', 'zoom', 'in', 'scale'],
+        keys: ({ mod, shift }) => (mod === 'Ctrl' ? [mod, shift, '+'] : [mod, '+'])
+      },
+      {
+        action: 'Zoom Out',
+        searchKeywords: ['shortcut', 'zoom', 'out', 'scale'],
+        keys: ({ mod, shift }) => (mod === 'Ctrl' ? [mod, shift, '-'] : [mod, '-'])
+      },
+      {
+        action: 'Reset Size',
+        searchKeywords: ['shortcut', 'zoom', 'reset', 'size', 'actual'],
+        keys: ({ mod }) => [mod, '0']
       }
     ]
   },
