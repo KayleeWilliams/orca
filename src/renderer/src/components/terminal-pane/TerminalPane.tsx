@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+/* eslint-disable max-lines -- Why: terminal pane component co-locates title state, layout serialization, and portal rendering to keep pane lifecycle consistent. */
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties } from 'react'
 import { useAppStore } from '../../store'
@@ -9,8 +10,18 @@ import {
 } from '@/lib/terminal-theme'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import TerminalSearch from '@/components/TerminalSearch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import type { PtyTransport } from './pty-transport'
-import { shellEscapePath } from './pane-helpers'
+import { fitPanes, shellEscapePath } from './pane-helpers'
 import { EMPTY_LAYOUT, paneLeafId, serializeTerminalLayout } from './layout-serialization'
 import { createExpandCollapseActions } from './expand-collapse'
 import { useTerminalKeyboardShortcuts, useTerminalFontZoom } from './keyboard-handlers'
@@ -63,6 +74,15 @@ export default function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false)
   const [closeConfirmPaneId, setCloseConfirmPaneId] = useState<number | null>(null)
   const [terminalError, setTerminalError] = useState<string | null>(null)
+
+  // Pane title state — keyed by ephemeral paneId, persisted via titlesByLeafId
+  // in the layout snapshot. Ref keeps persistLayoutSnapshot closures fresh.
+  const [paneTitles, setPaneTitles] = useState<Record<number, string>>({})
+  const paneTitlesRef = useRef<Record<number, string>>({})
+  paneTitlesRef.current = paneTitles
+  const [renamingPaneId, setRenamingPaneId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
   const onPtyErrorRef = useRef((_paneId: number, message: string) => {
     setTerminalError((prev) => (prev ? `${prev}\n${message}` : message))
   })
@@ -110,6 +130,17 @@ export default function TerminalPane({
       layout.buffersByLeafId = Object.fromEntries(
         Object.entries(existing.buffersByLeafId).filter(([id]) => currentLeafIds.has(id))
       )
+    }
+    // Preserve pane titles — uses the live React state (via ref) rather than
+    // the stale Zustand value because React state reflects in-flight title
+    // edits that haven't been persisted yet.
+    const currentPanes = manager.getPanes()
+    const titles = paneTitlesRef.current
+    const titleEntries = currentPanes
+      .filter((p) => titles[p.id])
+      .map((p) => [paneLeafId(p.id), titles[p.id]] as const)
+    if (titleEntries.length > 0) {
+      layout.titlesByLeafId = Object.fromEntries(titleEntries)
     }
     setTabLayout(tabId, layout)
   }
@@ -205,7 +236,9 @@ export default function TerminalPane({
     setTabCanExpandPane,
     setExpandedPane,
     syncExpandedLayout,
-    persistLayoutSnapshot
+    persistLayoutSnapshot,
+    setPaneTitles,
+    setRenamingPaneId
   })
 
   useTerminalFontZoom({ isActive, managerRef, paneFontSizesRef, settingsRef })
@@ -278,6 +311,34 @@ export default function TerminalPane({
     return () => container.removeEventListener('paste', onPaste, { capture: true })
   }, [isActive])
 
+  // Sync the data-has-title attribute on pane containers when titles change,
+  // and reflow terminals so safeFit() sees the correct available height.
+  // useLayoutEffect (not useEffect) ensures the attribute and refit happen
+  // synchronously after React commits but before the browser paints, so the
+  // title bar offset is applied before the first visible frame and before
+  // any pending requestAnimationFrame (e.g. queueResizeAll) measures dims.
+  useLayoutEffect(() => {
+    const manager = managerRef.current
+    if (!manager) {
+      return
+    }
+    let needsFit = false
+    for (const pane of manager.getPanes()) {
+      const hasTitle = !!paneTitles[pane.id]
+      const hadTitle = pane.container.hasAttribute('data-has-title')
+      if (hasTitle && !hadTitle) {
+        pane.container.setAttribute('data-has-title', '')
+        needsFit = true
+      } else if (!hasTitle && hadTitle) {
+        pane.container.removeAttribute('data-has-title')
+        needsFit = true
+      }
+    }
+    if (needsFit) {
+      fitPanes(manager)
+    }
+  }, [paneTitles])
+
   // Register a capture callback for shutdown. The beforeunload handler in
   // App.tsx calls all registered callbacks to serialize terminal buffers.
   useEffect(() => {
@@ -335,7 +396,15 @@ export default function TerminalPane({
       }
       const activePaneId = manager.getActivePane()?.id ?? panes[0]?.id ?? null
       const layout = serializeTerminalLayout(container, activePaneId, expandedPaneIdRef.current)
-      setTabLayout(tabId, { ...layout, buffersByLeafId: buffers })
+      // Merge pane titles so the shutdown snapshot doesn't silently drop them.
+      const titleEntries = panes
+        .filter((p) => paneTitlesRef.current[p.id])
+        .map((p) => [paneLeafId(p.id), paneTitlesRef.current[p.id]] as const)
+      setTabLayout(tabId, {
+        ...layout,
+        buffersByLeafId: buffers,
+        ...(titleEntries.length > 0 && { titlesByLeafId: Object.fromEntries(titleEntries) })
+      })
     }
     shutdownBufferCaptures.add(captureBuffers)
     return () => {
@@ -343,9 +412,61 @@ export default function TerminalPane({
     }
   }, [tabId, setTabLayout])
 
+  const handleOpenRenameDialog = useCallback((paneId: number) => {
+    setRenameValue(paneTitlesRef.current[paneId] ?? '')
+    setRenamingPaneId(paneId)
+  }, [])
+
+  const handleRenameSubmit = useCallback(() => {
+    if (renamingPaneId === null) {
+      return
+    }
+    const trimmed = renameValue.trim()
+    if (trimmed.length > 0) {
+      setPaneTitles((prev) => ({ ...prev, [renamingPaneId]: trimmed }))
+      // Eagerly update the ref so persistLayoutSnapshot (which reads
+      // paneTitlesRef.current) sees the new title immediately, without
+      // waiting for React to re-render and assign it during the next
+      // render pass.
+      paneTitlesRef.current = { ...paneTitlesRef.current, [renamingPaneId]: trimmed }
+    } else {
+      // Empty input removes the title.
+      setPaneTitles((prev) => {
+        if (!(renamingPaneId in prev)) {
+          return prev
+        }
+        const next = { ...prev }
+        delete next[renamingPaneId]
+        return next
+      })
+      // Eagerly remove from the ref for the same reason as above.
+      if (renamingPaneId in paneTitlesRef.current) {
+        const next = { ...paneTitlesRef.current }
+        delete next[renamingPaneId]
+        paneTitlesRef.current = next
+      }
+    }
+    setRenamingPaneId(null)
+    // Persist immediately so the title survives restarts.
+    persistLayoutSnapshot()
+  }, [renamingPaneId, renameValue, persistLayoutSnapshot])
+
+  // Auto-focus and select-all in the rename input when the dialog opens.
+  useEffect(() => {
+    if (renamingPaneId === null) {
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [renamingPaneId])
+
   const contextMenu = useTerminalPaneContextMenu({
     managerRef,
-    toggleExpandPane
+    toggleExpandPane,
+    onSetTitle: handleOpenRenameDialog
   })
 
   const effectiveAppearance = settings
@@ -429,12 +550,70 @@ export default function TerminalPane({
         onClosePane={contextMenu.onClosePane}
         onClearScreen={contextMenu.onClearScreen}
         onToggleExpand={contextMenu.onToggleExpand}
+        onSetTitle={contextMenu.onSetTitle}
       />
+      {/* Title bar overlays — portaled into each pane container that has a title */}
+      {managerRef.current?.getPanes().map((pane) => {
+        const title = paneTitles[pane.id]
+        if (!title) {
+          return null
+        }
+        return createPortal(
+          <div className="pane-title-bar">{title}</div>,
+          pane.container,
+          `pane-title-${pane.id}`
+        )
+      })}
       <CloseTerminalDialog
         open={closeConfirmPaneId !== null}
         onCancel={() => setCloseConfirmPaneId(null)}
         onConfirm={handleConfirmClose}
       />
+      <Dialog
+        open={renamingPaneId !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setRenamingPaneId(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Set Pane Title</DialogTitle>
+            <DialogDescription className="text-xs">
+              Leave empty to remove the title.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault()
+              handleRenameSubmit()
+            }}
+          >
+            <Input
+              ref={renameInputRef}
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              className="h-8 text-xs"
+              autoFocus
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRenamingPaneId(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="sm">
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
