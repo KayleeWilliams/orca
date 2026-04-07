@@ -277,7 +277,7 @@ export async function getPRComments(
       const cacheArgs = options?.noCache ? [] : ['--cache', '60s']
       const base = `repos/${ownerRepo.owner}/${ownerRepo.repo}`
 
-      const [issueOut, threadsOut] = await Promise.all([
+      const [issueOut, threadsOut, reviewsOut] = await Promise.all([
         execFileAsync(
           'gh',
           ['api', ...cacheArgs, `${base}/issues/${prNumber}/comments?per_page=100`],
@@ -297,6 +297,15 @@ export async function getPRComments(
             '-F',
             `pr=${prNumber}`
           ],
+          { cwd: repoPath, encoding: 'utf-8' }
+        ),
+        // Why: review summaries (approve, request changes, general comments) live
+        // under pulls/{n}/reviews, not under issue comments or review threads.
+        // Without this, a reviewer who submits "LGTM" without inline threads
+        // would have their comment silently dropped from the panel.
+        execFileAsync(
+          'gh',
+          ['api', ...cacheArgs, `${base}/pulls/${prNumber}/reviews?per_page=100`],
           { cwd: repoPath, encoding: 'utf-8' }
         )
       ])
@@ -365,7 +374,30 @@ export async function getPRComments(
         }
       }
 
-      const all = [...issueComments, ...reviewComments]
+      // Parse review summaries (REST) — only include reviews with a body,
+      // since empty-body reviews (e.g. approvals with no comment) add noise.
+      type RESTReview = {
+        id: number
+        user: { login: string; avatar_url: string } | null
+        body: string
+        state: string
+        submitted_at: string
+        html_url: string
+      }
+      const reviewSummaries = (JSON.parse(reviewsOut.stdout) as RESTReview[])
+        .filter((r) => r.body?.trim())
+        .map(
+          (r): PRComment => ({
+            id: r.id,
+            author: r.user?.login ?? 'ghost',
+            authorAvatarUrl: r.user?.avatar_url ?? '',
+            body: r.body,
+            createdAt: r.submitted_at,
+            url: r.html_url
+          })
+        )
+
+      const all = [...issueComments, ...reviewComments, ...reviewSummaries]
       all.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
       return all
     }
