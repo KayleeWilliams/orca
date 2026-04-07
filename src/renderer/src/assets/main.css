@@ -564,7 +564,7 @@
 .rich-markdown-editor {
   min-height: 100%;
   padding: 24px 32px 96px;
-  font-size: 14px;
+  font-size: calc(14px + (var(--editor-font-zoom-level, 0) * 1px));
   line-height: 1.7;
   outline: none;
 }
@@ -742,7 +742,7 @@
 .markdown-preview {
   position: relative;
   padding: 24px 32px;
-  font-size: 14px;
+  font-size: inherit;
   line-height: 1.7;
 }
 

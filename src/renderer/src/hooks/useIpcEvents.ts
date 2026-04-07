@@ -2,10 +2,57 @@ import { useEffect } from 'react'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
 import { ensureWorktreeHasInitialTerminal } from '@/lib/worktree-activation'
+import { nextEditorFontZoomLevel } from '@/lib/editor-font-zoom'
 import type { UpdateStatus } from '../../../shared/types'
 import { createUpdateToastController } from './update-toast-controller'
 
 const ZOOM_STEP = 0.5
+
+export function resolveZoomTarget(args: {
+  activeView: 'terminal' | 'settings'
+  activeTabType: 'terminal' | 'editor'
+  activeElement: unknown
+}): 'terminal' | 'editor' | 'ui' {
+  const { activeView, activeTabType, activeElement } = args
+  const terminalInputFocused =
+    typeof activeElement === 'object' &&
+    activeElement !== null &&
+    'classList' in activeElement &&
+    typeof (activeElement as { classList?: { contains?: unknown } }).classList?.contains ===
+      'function' &&
+    (activeElement as { classList: { contains: (token: string) => boolean } }).classList.contains(
+      'xterm-helper-textarea'
+    )
+  const editorFocused =
+    typeof activeElement === 'object' &&
+    activeElement !== null &&
+    'closest' in activeElement &&
+    typeof (activeElement as { closest?: unknown }).closest === 'function' &&
+    Boolean(
+      (
+        activeElement as {
+          closest: (selector: string) => Element | null
+        }
+      ).closest(
+        '.monaco-editor, .diff-editor, .markdown-preview, .rich-markdown-editor, .rich-markdown-editor-shell'
+      )
+    )
+
+  if (activeView !== 'terminal') {
+    return 'ui'
+  }
+  if (activeTabType === 'editor' || editorFocused) {
+    return 'editor'
+  }
+  // Why: terminal tabs should keep using per-pane terminal font zoom even when
+  // focus leaves the xterm textarea (e.g. clicking tab bar/sidebar controls).
+  // Falling back to UI zoom here would resize the whole app for a terminal-only
+  // action and break parity with terminal zoom behavior.
+  if (activeTabType === 'terminal' || terminalInputFocused) {
+    return 'terminal'
+  }
+  return 'ui'
+}
 
 export function useIpcEvents(): void {
   useEffect(() => {
@@ -70,24 +117,31 @@ export function useIpcEvents(): void {
       })
     )
 
-    // Browser zoom fallback when no terminal is active
+    // Zoom handling for menu accelerators and keyboard fallback paths.
     unsubs.push(
       window.api.ui.onTerminalZoom((direction) => {
-        const { activeView } = useAppStore.getState()
-        if (activeView === 'terminal') {
+        const { activeView, activeTabType, editorFontZoomLevel, setEditorFontZoomLevel } =
+          useAppStore.getState()
+        const target = resolveZoomTarget({
+          activeView,
+          activeTabType,
+          activeElement: document.activeElement
+        })
+        if (target === 'terminal') {
           return
         }
-        const current = window.api.ui.getZoomLevel()
-        let next: number
-        if (direction === 'in') {
-          next = current + ZOOM_STEP
-        } else if (direction === 'out') {
-          next = current - ZOOM_STEP
-        } else {
-          next = 0
+        if (target === 'editor') {
+          const next = nextEditorFontZoomLevel(editorFontZoomLevel, direction)
+          setEditorFontZoomLevel(next)
+          void window.api.ui.set({ editorFontZoomLevel: next })
+          return
         }
+
+        const current = window.api.ui.getZoomLevel()
+        const next =
+          direction === 'in' ? current + ZOOM_STEP : direction === 'out' ? current - ZOOM_STEP : 0
         applyUIZoom(next)
-        window.api.ui.set({ uiZoomLevel: next })
+        void window.api.ui.set({ uiZoomLevel: next })
       })
     )
 

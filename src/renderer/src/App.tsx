@@ -128,6 +128,7 @@ function App(): React.JSX.Element {
             showActiveOnly: false,
             filterRepoIds: [],
             uiZoomLevel: 0,
+            editorFontZoomLevel: 0,
             worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
             dismissedUpdateVersion: null,
             lastUpdateCheckAt: null

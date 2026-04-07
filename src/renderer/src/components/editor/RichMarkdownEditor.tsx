@@ -4,6 +4,7 @@ import type { Editor } from '@tiptap/react'
 import { ImageIcon, List, ListOrdered, Quote } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store'
 import { RichMarkdownToolbarButton } from './RichMarkdownToolbarButton'
 import { isMarkdownPreviewFindShortcut } from './markdown-preview-search'
 import { extractIpcErrorMessage, getImageCopyDestination } from './rich-markdown-image-utils'
@@ -40,6 +41,7 @@ export default function RichMarkdownEditor({
   onSave
 }: RichMarkdownEditorProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const isMac = navigator.userAgent.includes('Mac')
@@ -273,7 +275,11 @@ export default function RichMarkdownEditor({
   }, [content, editor])
 
   return (
-    <div ref={rootRef} className="rich-markdown-editor-shell">
+    <div
+      ref={rootRef}
+      className="rich-markdown-editor-shell"
+      style={{ '--editor-font-zoom-level': editorFontZoomLevel } as React.CSSProperties}
+    >
       <div className="rich-markdown-editor-toolbar">
         <RichMarkdownToolbarButton
           active={editor?.isActive('bold') ?? false}

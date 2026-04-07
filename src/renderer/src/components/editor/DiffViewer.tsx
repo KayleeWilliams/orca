@@ -2,6 +2,7 @@ import React, { useCallback, useRef } from 'react'
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react'
 import { useAppStore } from '@/store'
 import '@/lib/monaco-setup'
+import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 
 type DiffViewerProps = {
   originalContent: string
@@ -23,6 +24,11 @@ export default function DiffViewer({
   onSave
 }: DiffViewerProps): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
+  const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
+  const editorFontSize = computeEditorFontSize(
+    settings?.terminalFontSize ?? 13,
+    editorFontZoomLevel
+  )
   const isDark =
     settings?.theme === 'dark' ||
     (settings?.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -72,7 +78,7 @@ export default function DiffViewer({
             renderSideBySide: sideBySide,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            fontSize: settings?.terminalFontSize ?? 13,
+            fontSize: editorFontSize,
             fontFamily: settings?.terminalFontFamily || 'monospace',
             lineNumbers: 'on',
             automaticLayout: true,

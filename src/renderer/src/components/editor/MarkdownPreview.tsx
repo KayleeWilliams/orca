@@ -8,6 +8,7 @@ import type { Components } from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAppStore } from '@/store'
+import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { getMarkdownPreviewLinkTarget } from './markdown-preview-links'
 import { useLocalImageSrc } from './useLocalImageSrc'
 import {
@@ -35,6 +36,8 @@ export default function MarkdownPreview({
   const [matchCount, setMatchCount] = useState(0)
   const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
   const settings = useAppStore((s) => s.settings)
+  const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
+  const editorFontSize = computeEditorFontSize(14, editorFontZoomLevel)
   const isDark =
     settings?.theme === 'dark' ||
     (settings?.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -189,6 +192,7 @@ export default function MarkdownPreview({
     <div
       ref={rootRef}
       tabIndex={0}
+      style={{ fontSize: `${editorFontSize}px` }}
       className={`markdown-preview h-full min-h-0 overflow-auto scrollbar-editor ${isDark ? 'markdown-dark' : 'markdown-light'}`}
     >
       {isSearchOpen ? (

@@ -6,6 +6,7 @@ import type { editor as monacoEditor } from 'monaco-editor'
 import { joinPath } from '@/lib/path'
 import { detectLanguage } from '@/lib/language-detect'
 import { useAppStore } from '@/store'
+import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import type { GitDiffResult } from '../../../../shared/types'
 
 const ImageDiffViewer = lazy(() => import('./ImageDiffViewer'))
@@ -105,8 +106,13 @@ export function DiffSectionItem({
   handleSectionSaveRef: MutableRefObject<(index: number) => Promise<void>>
 }): React.JSX.Element {
   const openFile = useAppStore((s) => s.openFile)
+  const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const language = detectLanguage(section.path)
   const isEditable = section.area === 'unstaged'
+  const editorFontSize = computeEditorFontSize(
+    settings?.terminalFontSize ?? 13,
+    editorFontZoomLevel
+  )
 
   const lineStats = useMemo(
     () =>
@@ -280,7 +286,7 @@ export function DiffSectionItem({
                 renderSideBySide: sideBySide,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
-                fontSize: settings?.terminalFontSize ?? 13,
+                fontSize: editorFontSize,
                 fontFamily: settings?.terminalFontFamily || 'monospace',
                 lineNumbers: 'on',
                 automaticLayout: true,

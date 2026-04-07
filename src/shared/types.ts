@@ -246,6 +246,7 @@ export type PersistedUIState = {
   showActiveOnly: boolean
   filterRepoIds: string[]
   uiZoomLevel: number
+  editorFontZoomLevel: number
   worktreeCardProperties: WorktreeCardProperty[]
   dismissedUpdateVersion: string | null
   lastUpdateCheckAt: number | null

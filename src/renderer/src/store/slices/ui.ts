@@ -49,6 +49,10 @@ export type UISlice = {
   revealWorktreeInSidebar: (worktreeId: string) => void
   clearPendingRevealWorktreeId: () => void
   persistedUIReady: boolean
+  uiZoomLevel: number
+  setUIZoomLevel: (level: number) => void
+  editorFontZoomLevel: number
+  setEditorFontZoomLevel: (level: number) => void
   hydratePersistedUI: (ui: PersistedUIState) => void
   updateStatus: UpdateStatus
   setUpdateStatus: (status: UpdateStatus) => void
@@ -106,6 +110,10 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
   revealWorktreeInSidebar: (worktreeId) => set({ pendingRevealWorktreeId: worktreeId }),
   clearPendingRevealWorktreeId: () => set({ pendingRevealWorktreeId: null }),
   persistedUIReady: false,
+  uiZoomLevel: 0,
+  setUIZoomLevel: (level) => set({ uiZoomLevel: level }),
+  editorFontZoomLevel: 0,
+  setEditorFontZoomLevel: (level) => set({ editorFontZoomLevel: level }),
 
   hydratePersistedUI: (ui) =>
     set((s) => {
@@ -125,6 +133,8 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set) => (
         // worktree list stable across restarts instead of silently widening it.
         showActiveOnly: ui.showActiveOnly,
         filterRepoIds: (ui.filterRepoIds ?? []).filter((repoId) => validRepoIds.has(repoId)),
+        uiZoomLevel: ui.uiZoomLevel ?? 0,
+        editorFontZoomLevel: ui.editorFontZoomLevel ?? 0,
         worktreeCardProperties: ui.worktreeCardProperties ?? [...DEFAULT_WORKTREE_CARD_PROPERTIES],
         dismissedUpdateVersion: ui.dismissedUpdateVersion ?? null,
         persistedUIReady: true

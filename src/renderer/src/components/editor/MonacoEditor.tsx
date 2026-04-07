@@ -11,6 +11,7 @@ import {
 import { useAppStore } from '@/store'
 import '@/lib/monaco-setup'
 import { setupContextualCopy } from './setup-contextual-copy'
+import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 
 type MonacoEditorProps = {
   filePath: string
@@ -45,8 +46,13 @@ export default function MonacoEditor({
   }, [relativePath, language, onSave])
 
   const settings = useAppStore((s) => s.settings)
+  const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const setPendingEditorReveal = useAppStore((s) => s.setPendingEditorReveal)
   const setEditorCursorLine = useAppStore((s) => s.setEditorCursorLine)
+  const editorFontSize = computeEditorFontSize(
+    settings?.terminalFontSize ?? 13,
+    editorFontZoomLevel
+  )
 
   // Gutter context menu state
   const [gutterMenuOpen, setGutterMenuOpen] = useState(false)
@@ -137,10 +143,10 @@ export default function MonacoEditor({
       return
     }
     editorRef.current.updateOptions({
-      fontSize: settings.terminalFontSize,
+      fontSize: editorFontSize,
       fontFamily: settings.terminalFontFamily || 'monospace'
     })
-  }, [settings])
+  }, [editorFontSize, settings])
 
   useEffect(() => {
     const toastRef = copyToastTimeoutRef
@@ -201,7 +207,7 @@ export default function MonacoEditor({
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
           wordWrap: 'on',
-          fontSize: settings?.terminalFontSize ?? 13,
+          fontSize: editorFontSize,
           fontFamily: settings?.terminalFontFamily || 'monospace',
           lineNumbers: 'on',
           renderLineHighlight: 'line',

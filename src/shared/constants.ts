@@ -110,6 +110,7 @@ export function getDefaultUIState(): PersistedUIState {
     showActiveOnly: false,
     filterRepoIds: [],
     uiZoomLevel: 0,
+    editorFontZoomLevel: 0,
     worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
     dismissedUpdateVersion: null,
     lastUpdateCheckAt: null
