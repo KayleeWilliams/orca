@@ -185,9 +185,14 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           sortEpoch: s.sortEpoch + 1,
           // Why: removing the last repo while in settings leaves activeView as
           // 'settings', which renders an empty settings pane instead of Landing.
-          // Switch back so the user sees the "Add a repository" screen.
-          ...(nextRepos.length === 0 && s.activeView === 'settings'
-            ? { activeView: 'terminal' as const }
+          // Also clear activeWorktreeId so App renders Landing (it checks
+          // !activeWorktreeId). Without this, the terminal surface shows instead.
+          ...(nextRepos.length === 0
+            ? {
+                activeView: 'terminal' as const,
+                activeWorktreeId: null,
+                activeRepoId: null
+              }
             : {})
         }
       })

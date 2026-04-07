@@ -1,4 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+/* eslint-disable max-lines -- Why: AddRepoDialog owns a multi-step flow (add/clone/setup) with
+   clone progress, abort handling, and worktree setup — splitting further would scatter
+   tightly coupled step transitions across files. */
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { FolderOpen, GitBranchPlus, Settings, ArrowLeft, Globe, Folder } from 'lucide-react'
 import { useAppStore } from '@/store'
@@ -12,35 +16,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ensureWorktreeHasInitialTerminal } from '@/lib/worktree-activation'
+import { LinkedWorktreeItem } from './LinkedWorktreeItem'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import type { Repo, Worktree } from '../../../../shared/types'
-
-function LinkedWorktreeItem({
-  worktree,
-  onOpen
-}: {
-  worktree: Worktree
-  onOpen: () => void
-}): React.JSX.Element {
-  const branchLabel = worktree.branch.replace(/^refs\/heads\//, '')
-
-  return (
-    <button
-      className="group flex items-center justify-between gap-3 w-full rounded-md border border-border/60 bg-secondary/30 px-3 py-2 text-left transition-colors hover:bg-accent cursor-pointer"
-      onClick={onOpen}
-    >
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{worktree.displayName}</p>
-        {branchLabel !== worktree.displayName && (
-          <p className="text-xs text-muted-foreground truncate mt-0.5">{branchLabel}</p>
-        )}
-      </div>
-      <span className="shrink-0 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-        Open
-      </span>
-    </button>
-  )
-}
 
 const AddRepoDialog = React.memo(function AddRepoDialog() {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -66,6 +44,10 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   const [cloneProgress, setCloneProgress] = useState<{ phase: string; percent: number } | null>(
     null
   )
+  // Why: track a monotonically increasing ID so that when the user closes the
+  // dialog or navigates away during a clone, the stale completion callback can
+  // detect it was superseded and bail out instead of corrupting dialog state.
+  const cloneGenRef = useRef(0)
 
   // Subscribe to clone progress events while cloning is active
   useEffect(() => {
@@ -96,6 +78,10 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   const hasWorktrees = worktrees.length > 0
 
   const resetState = useCallback(() => {
+    cloneGenRef.current++
+    // Why: kill the git clone process if one is running, so backing out
+    // or closing the dialog doesn't leave a clone running on disk.
+    void window.api.repos.cloneAbort()
     setStep('add')
     setAddedRepo(null)
     setIsAdding(false)
@@ -105,6 +91,16 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
     setCloneError(null)
     setCloneProgress(null)
   }, [])
+
+  // Why: reset all local state when the dialog closes for any reason —
+  // whether via onOpenChange, closeModal() from code, or activeModal
+  // being replaced by another modal. Without this, reopening the dialog
+  // can show a stale step/repo from the previous session.
+  useEffect(() => {
+    if (!isOpen) {
+      resetState()
+    }
+  }, [isOpen, resetState])
 
   const isInputStep = step === 'add' || step === 'clone'
 
@@ -141,6 +137,7 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
     if (!trimmedUrl || !cloneDestination.trim()) {
       return
     }
+    const gen = ++cloneGenRef.current
     setIsCloning(true)
     setCloneError(null)
     setCloneProgress(null)
@@ -149,30 +146,55 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
         url: trimmedUrl,
         destination: cloneDestination.trim()
       })) as Repo
+      // Why: if the user closed the dialog or clicked Back during the clone,
+      // cloneGenRef will have been bumped by resetState. Ignore this stale result.
+      if (gen !== cloneGenRef.current) {
+        return
+      }
       toast.success('Repository cloned', { description: repo.displayName })
+      // Why: eagerly upsert the cloned repo in the store so that step 2's
+      // "Create worktree" button finds it in eligibleRepos immediately,
+      // without waiting for the async repos:changed IPC event. This also
+      // handles the case where a folder repo was upgraded to git by the
+      // clone handler — the existing entry needs its kind updated.
+      const state = useAppStore.getState()
+      const existingIdx = state.repos.findIndex((r) => r.id === repo.id)
+      if (existingIdx === -1) {
+        useAppStore.setState({ repos: [...state.repos, repo] })
+      } else {
+        const updated = [...state.repos]
+        updated[existingIdx] = repo
+        useAppStore.setState({ repos: updated })
+      }
       setAddedRepo(repo)
       await fetchWorktrees(repo.id)
       setStep('setup')
     } catch (err) {
+      if (gen !== cloneGenRef.current) {
+        return
+      }
       const message = err instanceof Error ? err.message : String(err)
       setCloneError(message)
     } finally {
-      setIsCloning(false)
+      if (gen === cloneGenRef.current) {
+        setIsCloning(false)
+      }
     }
   }, [cloneUrl, cloneDestination, fetchWorktrees])
 
   const handleOpenWorktree = useCallback(
     (worktree: Worktree) => {
       setActiveRepo(repoId)
+      // Why: if the dialog was opened from the settings view, we must switch
+      // back to terminal — otherwise App.tsx keeps rendering Settings and the
+      // worktree appears stuck. AddWorktreeDialog does the same thing.
+      setActiveView('terminal')
       setActiveWorktree(worktree.id)
-      // Why: opening an existing worktree from onboarding should create an initial
-      // terminal tab using the same activation path as post-create. This is a
-      // visibility/activation improvement — no git worktree add, no disk changes.
       ensureWorktreeHasInitialTerminal(useAppStore.getState(), worktree.id)
       revealWorktreeInSidebar(worktree.id)
       closeModal()
     },
-    [repoId, setActiveRepo, setActiveWorktree, revealWorktreeInSidebar, closeModal]
+    [repoId, setActiveRepo, setActiveView, setActiveWorktree, revealWorktreeInSidebar, closeModal]
   )
 
   const handleCreateWorktree = useCallback(() => {
@@ -190,10 +212,13 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   }, [closeModal, openSettingsTarget, setActiveView, repoId])
 
   const handleBack = useCallback(() => {
+    cloneGenRef.current++
+    void window.api.repos.cloneAbort()
     setStep('add')
     setAddedRepo(null)
     setCloneUrl('')
     setCloneDestination('')
+    setIsCloning(false)
     setCloneError(null)
     setCloneProgress(null)
   }, [])
@@ -216,7 +241,7 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
           {step === 'clone' && (
             <button
               className="absolute left-6 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              onClick={() => setStep('add')}
+              onClick={handleBack}
             >
               <ArrowLeft className="size-3" />
               Back

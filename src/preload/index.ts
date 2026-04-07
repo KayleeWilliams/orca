@@ -112,6 +112,8 @@ const api = {
     clone: (args: { url: string; destination: string }): Promise<unknown> =>
       ipcRenderer.invoke('repos:clone', args),
 
+    cloneAbort: (): Promise<void> => ipcRenderer.invoke('repos:cloneAbort'),
+
     onCloneProgress: (
       callback: (data: { phase: string; percent: number }) => void
     ): (() => void) => {

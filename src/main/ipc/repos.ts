@@ -7,6 +7,7 @@ import { isFolderRepo } from '../../shared/repo-kind'
 import { REPO_COLORS } from '../../shared/constants'
 import { rebuildAuthorizedRootsCache } from './filesystem-auth'
 import { spawn } from 'child_process'
+import { rm } from 'fs/promises'
 import { join, basename } from 'path'
 import {
   isGitRepo,
@@ -15,6 +16,12 @@ import {
   getBaseRefDefault,
   searchBaseRefs
 } from '../git/repo'
+
+// Why: module-scoped so the abort handle survives window re-creation on macOS.
+// registerRepoHandlers is called again when a new BrowserWindow is created,
+// and a function-scoped variable would lose the reference to an in-flight clone.
+let activeCloneProc: ReturnType<typeof spawn> | null = null
+let activeClonePath: string | null = null
 
 export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): void {
   // Remove any previously registered handlers so we can re-register them
@@ -26,6 +33,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:pickFolder')
   ipcMain.removeHandler('repos:pickDirectory')
   ipcMain.removeHandler('repos:clone')
+  ipcMain.removeHandler('repos:cloneAbort')
   ipcMain.removeHandler('repos:getGitUsername')
   ipcMain.removeHandler('repos:getBaseRefDefault')
   ipcMain.removeHandler('repos:searchBaseRefs')
@@ -109,6 +117,23 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     return result.filePaths[0]
   })
 
+  ipcMain.handle('repos:cloneAbort', async () => {
+    if (activeCloneProc) {
+      const pathToClean = activeClonePath
+      activeCloneProc.kill()
+      activeCloneProc = null
+      activeClonePath = null
+      // Why: git clone creates the target directory before it finishes.
+      // Without cleanup, retrying the same URL/destination fails with
+      // "destination path already exists and is not an empty directory".
+      if (pathToClean) {
+        await rm(pathToClean, { recursive: true, force: true }).catch(() => {
+          // Best-effort cleanup — don't fail the abort if removal fails
+        })
+      }
+    }
+  })
+
   ipcMain.handle(
     'repos:clone',
     async (_event, args: { url: string; destination: string }): Promise<Repo> => {
@@ -132,6 +157,8 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         const proc = spawn('git', ['clone', '--progress', args.url, clonePath], {
           stdio: ['ignore', 'ignore', 'pipe']
         })
+        activeCloneProc = proc
+        activeClonePath = clonePath
 
         let stderrTail = ''
         proc.stderr.on('data', (chunk: Buffer) => {
@@ -155,8 +182,18 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
 
         proc.on('error', (err) => reject(new Error(`Clone failed: ${err.message}`)))
 
-        proc.on('close', (code) => {
-          if (code === 0) {
+        proc.on('close', (code, signal) => {
+          // Why: only clear the ref if it still points to this process.
+          // A quick abort-and-retry can reassign activeCloneProc to a new
+          // spawn before this handler fires, and nulling it would make the
+          // new clone unabortable.
+          if (activeCloneProc === proc) {
+            activeCloneProc = null
+            activeClonePath = null
+          }
+          if (signal === 'SIGTERM') {
+            reject(new Error('Clone aborted'))
+          } else if (code === 0) {
             resolve()
           } else {
             const lastLine = stderrTail.trim().split('\n').pop() ?? 'unknown error'
@@ -165,9 +202,19 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         })
       })
 
-      // After cloning, add the repo the same way repos:add does
+      // Why: check after clone (not before) because the path didn't exist
+      // before cloning. But if the user somehow had a folder repo at this path
+      // that git clone succeeded into (empty dir), reuse that entry and upgrade
+      // its kind to 'git' instead of creating a duplicate.
       const existing = store.getRepos().find((r) => r.path === clonePath)
       if (existing) {
+        if (isFolderRepo(existing)) {
+          const updated = store.updateRepo(existing.id, { kind: 'git' })
+          if (updated) {
+            notifyReposChanged(mainWindow)
+            return updated
+          }
+        }
         return existing
       }
 
