@@ -1,4 +1,6 @@
-import type { PRInfo, PRMergeableState, PRCheckDetail } from '../../shared/types'
+/* eslint-disable max-lines -- Why: co-locating all GitHub client functions keeps the
+concurrency acquire/release pattern and error handling consistent across operations. */
+import type { PRInfo, PRMergeableState, PRCheckDetail, PRComment } from '../../shared/types'
 import { getPRConflictSummary } from './conflict-summary'
 import { execFileAsync, acquire, release, getOwnerRepo } from './gh-utils'
 export { _resetOwnerRepoCache } from './gh-utils'
@@ -220,6 +222,205 @@ export async function getPRChecks(
   } catch (err) {
     console.warn('getPRChecks failed:', err)
     return []
+  } finally {
+    release()
+  }
+}
+
+// Why: review thread resolution status and thread IDs are only available via
+// GraphQL. The REST pulls/{n}/comments endpoint does not expose them, so we
+// use GraphQL for review threads and REST for issue-level comments.
+const REVIEW_THREADS_QUERY = `
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          line
+          startLine
+          originalLine
+          originalStartLine
+          comments(first: 100) {
+            nodes {
+              databaseId
+              author { login avatarUrl(size: 48) }
+              body
+              createdAt
+              url
+              path
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+/**
+ * Get all comments on a PR — both top-level conversation comments and inline
+ * review comments (including suggestions). Uses GraphQL for review threads
+ * to get resolution status, REST for issue-level comments.
+ */
+export async function getPRComments(
+  repoPath: string,
+  prNumber: number,
+  options?: { noCache?: boolean }
+): Promise<PRComment[]> {
+  const ownerRepo = await getOwnerRepo(repoPath)
+  await acquire()
+  try {
+    if (ownerRepo) {
+      // Why: --cache 60s saves rate-limit budget during normal loads, but when the
+      // user explicitly clicks refresh we must skip it so gh fetches fresh data.
+      const cacheArgs = options?.noCache ? [] : ['--cache', '60s']
+      const base = `repos/${ownerRepo.owner}/${ownerRepo.repo}`
+
+      const [issueOut, threadsOut] = await Promise.all([
+        execFileAsync(
+          'gh',
+          ['api', ...cacheArgs, `${base}/issues/${prNumber}/comments?per_page=100`],
+          { cwd: repoPath, encoding: 'utf-8' }
+        ),
+        execFileAsync(
+          'gh',
+          [
+            'api',
+            'graphql',
+            '-f',
+            `query=${REVIEW_THREADS_QUERY}`,
+            '-f',
+            `owner=${ownerRepo.owner}`,
+            '-f',
+            `repo=${ownerRepo.repo}`,
+            '-F',
+            `pr=${prNumber}`
+          ],
+          { cwd: repoPath, encoding: 'utf-8' }
+        )
+      ])
+
+      // Parse issue comments (REST)
+      type RESTComment = {
+        id: number
+        user: { login: string; avatar_url: string } | null
+        body: string
+        created_at: string
+        html_url: string
+      }
+      const issueComments = (JSON.parse(issueOut.stdout) as RESTComment[]).map(
+        (c): PRComment => ({
+          id: c.id,
+          author: c.user?.login ?? 'ghost',
+          authorAvatarUrl: c.user?.avatar_url ?? '',
+          body: c.body ?? '',
+          createdAt: c.created_at,
+          url: c.html_url
+        })
+      )
+
+      // Parse review threads (GraphQL)
+      type GQLThread = {
+        id: string
+        isResolved: boolean
+        line: number | null
+        startLine: number | null
+        originalLine: number | null
+        originalStartLine: number | null
+        comments: {
+          nodes: {
+            databaseId: number
+            author: { login: string; avatarUrl: string } | null
+            body: string
+            createdAt: string
+            url: string
+            path: string
+          }[]
+        }
+      }
+      const threadsData = JSON.parse(threadsOut.stdout) as {
+        data: { repository: { pullRequest: { reviewThreads: { nodes: GQLThread[] } } } }
+      }
+      const threads = threadsData.data.repository.pullRequest.reviewThreads.nodes
+      const reviewComments: PRComment[] = []
+      for (const thread of threads) {
+        for (const c of thread.comments.nodes) {
+          reviewComments.push({
+            id: c.databaseId,
+            author: c.author?.login ?? 'ghost',
+            authorAvatarUrl: c.author?.avatarUrl ?? '',
+            body: c.body ?? '',
+            createdAt: c.createdAt,
+            url: c.url,
+            path: c.path,
+            threadId: thread.id,
+            isResolved: thread.isResolved,
+            // Why: GitHub nulls out line/startLine when the commented code is
+            // outdated (e.g. after a force-push). Fall back to originalLine which
+            // always preserves the line numbers from when the comment was created.
+            line: thread.line ?? thread.originalLine ?? undefined,
+            startLine: thread.startLine ?? thread.originalStartLine ?? undefined
+          })
+        }
+      }
+
+      const all = [...issueComments, ...reviewComments]
+      all.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      return all
+    }
+
+    // Fallback: non-GitHub remote — use gh pr view (only returns issue-level comments)
+    const { stdout } = await execFileAsync(
+      'gh',
+      ['pr', 'view', String(prNumber), '--json', 'comments'],
+      { cwd: repoPath, encoding: 'utf-8' }
+    )
+    const data = JSON.parse(stdout) as {
+      comments: {
+        author: { login: string }
+        body: string
+        createdAt: string
+        url: string
+      }[]
+    }
+    return (data.comments ?? []).map((c, i) => ({
+      id: i,
+      author: c.author?.login ?? 'ghost',
+      authorAvatarUrl: '',
+      body: c.body ?? '',
+      createdAt: c.createdAt,
+      url: c.url ?? ''
+    }))
+  } catch (err) {
+    console.warn('getPRComments failed:', err)
+    return []
+  } finally {
+    release()
+  }
+}
+
+/**
+ * Resolve or unresolve a PR review thread via GraphQL.
+ */
+export async function resolveReviewThread(
+  repoPath: string,
+  threadId: string,
+  resolve: boolean
+): Promise<boolean> {
+  const mutation = resolve ? 'resolveReviewThread' : 'unresolveReviewThread'
+  const query = `mutation($threadId: ID!) { ${mutation}(input: { threadId: $threadId }) { thread { isResolved } } }`
+  await acquire()
+  try {
+    await execFileAsync(
+      'gh',
+      ['api', 'graphql', '-f', `query=${query}`, '-f', `threadId=${threadId}`],
+      { cwd: repoPath, encoding: 'utf-8' }
+    )
+    return true
+  } catch (err) {
+    console.warn(`${mutation} failed:`, err)
+    return false
   } finally {
     release()
   }

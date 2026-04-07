@@ -197,6 +197,26 @@ export type PRCheckDetail = {
   url: string | null
 }
 
+export type PRComment = {
+  id: number
+  author: string
+  authorAvatarUrl: string
+  body: string
+  createdAt: string
+  url: string
+  /** File path for inline review comments (absent for top-level conversation comments). */
+  path?: string
+  /** GraphQL node ID of the review thread — present only for inline review comments.
+   *  Used to resolve/unresolve the thread via GitHub's GraphQL API. */
+  threadId?: string
+  /** Whether the review thread has been resolved. Only meaningful when threadId is set. */
+  isResolved?: boolean
+  /** End line of the review annotation (1-based). */
+  line?: number
+  /** Start line of the review annotation range (1-based). Absent for single-line comments. */
+  startLine?: number
+}
+
 export type IssueInfo = {
   number: number
   title: string
