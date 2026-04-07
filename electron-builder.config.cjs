@@ -90,7 +90,12 @@ module.exports = {
   appImage: {
     artifactName: 'orca-linux.${ext}'
   },
-  npmRebuild: false,
+  // Why: must be true so that electron-builder rebuilds native modules
+  // (node-pty) for each target architecture when producing dual-arch macOS
+  // builds (x64 + arm64). With npmRebuild disabled, CI on an arm64 runner
+  // packages arm64 binaries into the x64 DMG, causing "posix_spawnp failed"
+  // on Intel Macs.
+  npmRebuild: true,
   publish: {
     provider: 'github',
     owner: 'stablyai',

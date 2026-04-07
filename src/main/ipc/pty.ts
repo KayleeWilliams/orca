@@ -1,4 +1,5 @@
 import { basename } from 'path'
+import { existsSync, accessSync, statSync, constants as fsConstants } from 'fs'
 import { type BrowserWindow, ipcMain } from 'electron'
 import * as pty from 'node-pty'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -93,43 +94,128 @@ export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRun
           ? process.env.USERPROFILE || process.env.HOMEPATH || 'C:\\'
           : process.env.HOME || '/'
 
-      let ptyProcess: pty.IPty
+      const cwd = args.cwd || defaultCwd
+
+      // Why: node-pty's posix_spawnp error is opaque (no errno). Pre-validate
+      // the shell binary and cwd so we can surface actionable diagnostics
+      // instead of a bare "posix_spawnp failed" message.
+      if (process.platform !== 'win32') {
+        if (!existsSync(shellPath)) {
+          throw new Error(
+            `Shell "${shellPath}" does not exist. ` +
+              `Set a valid SHELL environment variable or install zsh/bash.`
+          )
+        }
+        try {
+          accessSync(shellPath, fsConstants.X_OK)
+        } catch {
+          throw new Error(
+            `Shell "${shellPath}" is not executable. Check file permissions.`
+          )
+        }
+      }
+
+      if (!existsSync(cwd)) {
+        throw new Error(
+          `Working directory "${cwd}" does not exist. ` +
+            `It may have been deleted or is on an unmounted volume.`
+        )
+      }
+      try {
+        if (!statSync(cwd).isDirectory()) {
+          throw new Error(`Working directory "${cwd}" is not a directory.`)
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('is not a directory')) {
+          throw err
+        }
+        throw new Error(
+          `Cannot access working directory "${cwd}": ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+
+      const spawnEnv = {
+        ...process.env,
+        ...args.env,
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        TERM_PROGRAM: 'Orca',
+        FORCE_HYPERLINK: '1'
+      } as Record<string, string>
+
+      let ptyProcess: pty.IPty | undefined
       try {
         ptyProcess = pty.spawn(shellPath, shellArgs, {
           name: 'xterm-256color',
           cols: args.cols,
           rows: args.rows,
-          cwd: args.cwd || defaultCwd,
-          env: {
-            ...process.env,
-            ...args.env,
-            TERM: 'xterm-256color',
-            COLORTERM: 'truecolor',
-            TERM_PROGRAM: 'Orca',
-            FORCE_HYPERLINK: '1'
-          } as Record<string, string>
+          cwd,
+          env: spawnEnv
         })
       } catch (err) {
-        // Why: node-pty.spawn can throw if the shell binary doesn't exist,
-        // permissions are denied, or the cwd is invalid. Surface the error
-        // to the renderer so it can show a diagnostic instead of a blank pane.
-        const message = err instanceof Error ? err.message : String(err)
-        throw new Error(`Failed to spawn shell "${shellPath}": ${message}`)
+        // Why: node-pty.spawn can throw if posix_spawnp fails for reasons
+        // not caught by the pre-validation above (e.g. architecture mismatch
+        // of the native addon, PTY allocation failure, or resource limits).
+        // Try common fallback shells before giving up — the user's SHELL
+        // env may point to a broken or incompatible binary.
+        const primaryError = err instanceof Error ? err.message : String(err)
+
+        if (process.platform !== 'win32') {
+          const fallbackShells = ['/bin/zsh', '/bin/bash', '/bin/sh'].filter(
+            (s) => s !== shellPath
+          )
+          for (const fallback of fallbackShells) {
+            try {
+              accessSync(fallback, fsConstants.X_OK)
+            } catch {
+              continue
+            }
+            try {
+              ptyProcess = pty.spawn(fallback, ['-l'], {
+                name: 'xterm-256color',
+                cols: args.cols,
+                rows: args.rows,
+                cwd,
+                env: spawnEnv
+              })
+              // Fallback succeeded — update shellPath for the basename tracking below.
+              shellPath = fallback
+              break
+            } catch {
+              // Fallback also failed — try next.
+            }
+          }
+        }
+
+        if (!ptyProcess) {
+          const diag = [
+            `shell: ${shellPath}`,
+            `cwd: ${cwd}`,
+            `arch: ${process.arch}`,
+            `platform: ${process.platform} ${process.getSystemVersion?.() ?? ''}`
+          ].join(', ')
+          throw new Error(
+            `Failed to spawn shell "${shellPath}": ${primaryError} (${diag}). ` +
+              `If this persists, please file an issue.`
+          )
+        }
       }
 
-      ptyProcesses.set(id, ptyProcess)
+      // Guaranteed non-null: the catch block throws if no fallback succeeds.
+      const proc = ptyProcess!
+      ptyProcesses.set(id, proc)
       ptyShellName.set(id, basename(shellPath))
       ptyLoadGeneration.set(id, loadGeneration)
       runtime?.onPtySpawned(id)
 
-      ptyProcess.onData((data) => {
+      proc.onData((data) => {
         runtime?.onPtyData(id, data, Date.now())
         if (!mainWindow.isDestroyed()) {
           mainWindow.webContents.send('pty:data', { id, data })
         }
       })
 
-      ptyProcess.onExit(({ exitCode }) => {
+      proc.onExit(({ exitCode }) => {
         ptyProcesses.delete(id)
         ptyShellName.delete(id)
         ptyLoadGeneration.delete(id)
