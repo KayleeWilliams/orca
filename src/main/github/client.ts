@@ -2,7 +2,7 @@
 concurrency acquire/release pattern and error handling consistent across operations. */
 import type { PRInfo, PRMergeableState, PRCheckDetail, PRComment } from '../../shared/types'
 import { getPRConflictSummary } from './conflict-summary'
-import { execFileAsync, acquire, release, getOwnerRepo } from './gh-utils'
+import { execFileAsync, ghExecFileAsync, acquire, release, getOwnerRepo } from './gh-utils'
 export { _resetOwnerRepoCache } from './gh-utils'
 export { getIssue, listIssues } from './issues'
 import {
@@ -88,8 +88,7 @@ export async function getPRForBranch(repoPath: string, branch: string): Promise<
     } | null = null
 
     if (ownerRepo) {
-      const { stdout } = await execFileAsync(
-        'gh',
+      const { stdout } = await ghExecFileAsync(
         [
           'pr',
           'list',
@@ -104,16 +103,12 @@ export async function getPRForBranch(repoPath: string, branch: string): Promise<
           '--json',
           'number,title,state,url,statusCheckRollup,updatedAt,isDraft,mergeable,baseRefName,headRefName,baseRefOid,headRefOid'
         ],
-        {
-          cwd: repoPath,
-          encoding: 'utf-8'
-        }
+        { cwd: repoPath }
       )
       const list = JSON.parse(stdout) as NonNullable<typeof data>[]
       data = list[0] ?? null
     } else {
-      const { stdout } = await execFileAsync(
-        'gh',
+      const { stdout } = await ghExecFileAsync(
         [
           'pr',
           'view',
@@ -121,10 +116,7 @@ export async function getPRForBranch(repoPath: string, branch: string): Promise<
           '--json',
           'number,title,state,url,statusCheckRollup,updatedAt,isDraft,mergeable,baseRefName,headRefName,baseRefOid,headRefOid'
         ],
-        {
-          cwd: repoPath,
-          encoding: 'utf-8'
-        }
+        { cwd: repoPath }
       )
       data = JSON.parse(stdout)
     }
@@ -175,14 +167,13 @@ export async function getPRChecks(
       // user explicitly clicks refresh we must skip it so gh fetches fresh data.
       const cacheArgs = options?.noCache ? [] : ['--cache', '60s']
       try {
-        const { stdout } = await execFileAsync(
-          'gh',
+        const { stdout } = await ghExecFileAsync(
           [
             'api',
             ...cacheArgs,
             `repos/${ownerRepo.owner}/${ownerRepo.repo}/commits/${encodeURIComponent(headSha)}/check-runs?per_page=100`
           ],
-          { cwd: repoPath, encoding: 'utf-8' }
+          { cwd: repoPath }
         )
         const data = JSON.parse(stdout) as {
           check_runs: {
@@ -207,10 +198,9 @@ export async function getPRChecks(
       }
     }
     // Fallback: no branch provided or non-GitHub remote
-    const { stdout } = await execFileAsync(
-      'gh',
+    const { stdout } = await ghExecFileAsync(
       ['pr', 'checks', String(prNumber), '--json', 'name,state,link'],
-      { cwd: repoPath, encoding: 'utf-8' }
+      { cwd: repoPath }
     )
     const data = JSON.parse(stdout) as { name: string; state: string; link: string }[]
     return data.map((d) => ({
@@ -490,9 +480,8 @@ export async function mergePR(
     // Don't use --delete-branch: it tries to delete the local branch which
     // fails when the user's worktree is checked out on it. Branch cleanup
     // is handled by worktree deletion (local) and GitHub's auto-delete setting (remote).
-    await execFileAsync('gh', ['pr', 'merge', String(prNumber), `--${method}`], {
+    await ghExecFileAsync(['pr', 'merge', String(prNumber), `--${method}`], {
       cwd: repoPath,
-      encoding: 'utf-8',
       env: { ...process.env, GH_PROMPT_DISABLED: '1' }
     })
     return { ok: true }
@@ -515,9 +504,8 @@ export async function updatePRTitle(
 ): Promise<boolean> {
   await acquire()
   try {
-    await execFileAsync('gh', ['pr', 'edit', String(prNumber), '--title', title], {
-      cwd: repoPath,
-      encoding: 'utf-8'
+    await ghExecFileAsync(['pr', 'edit', String(prNumber), '--title', title], {
+      cwd: repoPath
     })
     return true
   } catch (err) {
