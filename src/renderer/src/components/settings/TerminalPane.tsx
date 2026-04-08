@@ -294,7 +294,7 @@ export function TerminalPane({
 
         <SearchableSetting
           title="Focus Follows Mouse"
-          description="Hovering a terminal pane activates it without needing to click. Mirrors Ghostty's focus-follows-mouse setting."
+          description="Hovering a terminal pane activates it without needing to click. Mirrors Ghostty's focus-follows-mouse setting. Selections and window switching stay safe."
           keywords={['focus', 'follows', 'mouse', 'hover', 'pane', 'ghostty', 'active']}
           className="flex items-center justify-between gap-4 px-1 py-2"
         >
