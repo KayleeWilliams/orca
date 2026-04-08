@@ -10,16 +10,6 @@ import {
 } from '@/lib/terminal-theme'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import TerminalSearch from '@/components/TerminalSearch'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import type { PtyTransport } from './pty-transport'
 import { fitPanes, shellEscapePath } from './pane-helpers'
 import { EMPTY_LAYOUT, paneLeafId, serializeTerminalLayout } from './layout-serialization'
@@ -324,12 +314,14 @@ export default function TerminalPane({
     }
     let needsFit = false
     for (const pane of manager.getPanes()) {
-      const hasTitle = !!paneTitles[pane.id]
+      // Show the title bar space when the pane has a title OR is being
+      // inline-edited (so the input appears even for untitled panes).
+      const shouldShow = !!paneTitles[pane.id] || renamingPaneId === pane.id
       const hadTitle = pane.container.hasAttribute('data-has-title')
-      if (hasTitle && !hadTitle) {
+      if (shouldShow && !hadTitle) {
         pane.container.setAttribute('data-has-title', '')
         needsFit = true
-      } else if (!hasTitle && hadTitle) {
+      } else if (!shouldShow && hadTitle) {
         pane.container.removeAttribute('data-has-title')
         needsFit = true
       }
@@ -337,7 +329,7 @@ export default function TerminalPane({
     if (needsFit) {
       fitPanes(manager)
     }
-  }, [paneTitles])
+  }, [paneTitles, renamingPaneId])
 
   // Register a capture callback for shutdown. The beforeunload handler in
   // App.tsx calls all registered callbacks to serialize terminal buffers.
@@ -412,7 +404,7 @@ export default function TerminalPane({
     }
   }, [tabId, setTabLayout])
 
-  const handleOpenRenameDialog = useCallback((paneId: number) => {
+  const handleStartRename = useCallback((paneId: number) => {
     setRenameValue(paneTitlesRef.current[paneId] ?? '')
     setRenamingPaneId(paneId)
   }, [])
@@ -422,34 +414,46 @@ export default function TerminalPane({
       return
     }
     const trimmed = renameValue.trim()
-    if (trimmed.length > 0) {
-      setPaneTitles((prev) => ({ ...prev, [renamingPaneId]: trimmed }))
-      // Eagerly update the ref so persistLayoutSnapshot (which reads
-      // paneTitlesRef.current) sees the new title immediately, without
-      // waiting for React to re-render and assign it during the next
-      // render pass.
-      paneTitlesRef.current = { ...paneTitlesRef.current, [renamingPaneId]: trimmed }
-    } else {
-      // Empty input removes the title.
-      setPaneTitles((prev) => {
-        if (!(renamingPaneId in prev)) {
-          return prev
-        }
-        const next = { ...prev }
-        delete next[renamingPaneId]
-        return next
-      })
-      // Eagerly remove from the ref for the same reason as above.
-      if (renamingPaneId in paneTitlesRef.current) {
-        const next = { ...paneTitlesRef.current }
-        delete next[renamingPaneId]
-        paneTitlesRef.current = next
-      }
+    if (trimmed.length === 0) {
+      // Empty input — just cancel, don't change anything.
+      setRenamingPaneId(null)
+      return
     }
+    setPaneTitles((prev) => ({ ...prev, [renamingPaneId]: trimmed }))
+    // Eagerly update the ref so persistLayoutSnapshot (which reads
+    // paneTitlesRef.current) sees the new title immediately, without
+    // waiting for React to re-render and assign it during the next
+    // render pass.
+    paneTitlesRef.current = { ...paneTitlesRef.current, [renamingPaneId]: trimmed }
     setRenamingPaneId(null)
     // Persist immediately so the title survives restarts.
     persistLayoutSnapshot()
   }, [renamingPaneId, renameValue, persistLayoutSnapshot])
+
+  const handleRenameCancel = useCallback(() => {
+    setRenamingPaneId(null)
+  }, [])
+
+  const handleRemoveTitle = useCallback(
+    (paneId: number) => {
+      setPaneTitles((prev) => {
+        if (!(paneId in prev)) {
+          return prev
+        }
+        const next = { ...prev }
+        delete next[paneId]
+        return next
+      })
+      // Eagerly remove from the ref so persistLayoutSnapshot sees the change.
+      if (paneId in paneTitlesRef.current) {
+        const next = { ...paneTitlesRef.current }
+        delete next[paneId]
+        paneTitlesRef.current = next
+      }
+      persistLayoutSnapshot()
+    },
+    [persistLayoutSnapshot]
+  )
 
   // Auto-focus and select-all in the rename input when the dialog opens.
   useEffect(() => {
@@ -466,7 +470,7 @@ export default function TerminalPane({
   const contextMenu = useTerminalPaneContextMenu({
     managerRef,
     toggleExpandPane,
-    onSetTitle: handleOpenRenameDialog
+    onSetTitle: handleStartRename
   })
 
   const effectiveAppearance = settings
@@ -552,14 +556,50 @@ export default function TerminalPane({
         onToggleExpand={contextMenu.onToggleExpand}
         onSetTitle={contextMenu.onSetTitle}
       />
-      {/* Title bar overlays — portaled into each pane container that has a title */}
+      {/* Title bar overlays — portaled into each pane container that has a title
+          or is currently being renamed (so the inline input appears even for
+          untitled panes when "Set Title..." is triggered). */}
       {managerRef.current?.getPanes().map((pane) => {
         const title = paneTitles[pane.id]
-        if (!title) {
+        const isEditing = renamingPaneId === pane.id
+        if (!title && !isEditing) {
           return null
         }
         return createPortal(
-          <div className="pane-title-bar">{title}</div>,
+          <div className="pane-title-bar" {...(isEditing ? { 'data-editing': '' } : {})}>
+            {isEditing ? (
+              <input
+                ref={renameInputRef}
+                className="pane-title-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleRenameSubmit()
+                  } else if (e.key === 'Escape') {
+                    handleRenameCancel()
+                  }
+                }}
+                onBlur={handleRenameSubmit}
+              />
+            ) : (
+              <>
+                <span className="pane-title-text" onClick={() => handleStartRename(pane.id)}>
+                  {title}
+                </span>
+                <button
+                  className="pane-title-close"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleRemoveTitle(pane.id)
+                  }}
+                  aria-label="Remove title"
+                >
+                  ×
+                </button>
+              </>
+            )}
+          </div>,
           pane.container,
           `pane-title-${pane.id}`
         )
@@ -569,51 +609,6 @@ export default function TerminalPane({
         onCancel={() => setCloseConfirmPaneId(null)}
         onConfirm={handleConfirmClose}
       />
-      <Dialog
-        open={renamingPaneId !== null}
-        onOpenChange={(isOpen) => {
-          if (!isOpen) {
-            setRenamingPaneId(null)
-          }
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Set Pane Title</DialogTitle>
-            <DialogDescription className="text-xs">
-              Leave empty to remove the title.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              handleRenameSubmit()
-            }}
-          >
-            <Input
-              ref={renameInputRef}
-              value={renameValue}
-              onChange={(event) => setRenameValue(event.target.value)}
-              className="h-8 text-xs"
-              autoFocus
-            />
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setRenamingPaneId(null)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" size="sm">
-                Save
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </>
   )
 }

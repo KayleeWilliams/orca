@@ -91,6 +91,9 @@ export type TerminalLayoutSnapshot = {
   expandedLeafId: string | null
   /** Serialized terminal buffers per leaf for scrollback restoration on restart. */
   buffersByLeafId?: Record<string, string>
+  /** User-assigned pane titles, keyed by leafId (e.g. "pane:3").
+   *  Persisted alongside buffers via the existing session:set flow. */
+  titlesByLeafId?: Record<string, string>
 }
 
 /** Minimal subset of OpenFile persisted across restarts.
