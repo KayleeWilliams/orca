@@ -101,7 +101,7 @@ export class OrcaTerminal {
     let parsed
     try {
       parsed = JSON.parse(bufferResult.replace(/^"|"$/g, '').replace(/\\"/g, '"'))
-    } catch (e) {
+    } catch {
       throw new Error(`discoverActivePtyId: failed to parse buffer result: ${bufferResult}`)
     }
     if (parsed.error) {
