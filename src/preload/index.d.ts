@@ -259,7 +259,7 @@ type PreflightStatus = {
 }
 
 type PreflightApi = {
-  check: () => Promise<PreflightStatus>
+  check: (args?: { force?: boolean }) => Promise<PreflightStatus>
 }
 
 type StatsApi = {
