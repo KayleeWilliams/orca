@@ -1,6 +1,10 @@
-import { detectAgentStatusFromTitle } from '@/lib/agent-status'
+import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import { branchName } from '@/lib/git-utils'
 import type { Worktree, Repo, TerminalTab } from '../../../../shared/types'
+import {
+  AGENT_STATUS_STALE_AFTER_MS,
+  type AgentStatusEntry
+} from '../../../../shared/agent-status-types'
 
 type SortBy = 'name' | 'smart' | 'recent' | 'repo'
 
@@ -35,18 +39,72 @@ function computeSmartScoreFromSignals(
   worktree: Worktree,
   tabs: TerminalTab[],
   hasRecentPR: boolean,
-  now: number
+  now: number,
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
 ): number {
   const liveTabs = tabs.filter((t) => t.ptyId)
 
   let score = 0
 
-  const isRunning = liveTabs.some((t) => detectAgentStatusFromTitle(t.title) === 'working')
+  // Why: explicit agent status (OSC 9999) is authoritative over heuristic title
+  // parsing. Check explicit status first; fall through to heuristics for tabs
+  // that have no explicit status entry.
+  const explicitEntries = agentStatusByPaneKey
+    ? Object.values(agentStatusByPaneKey).filter((e) =>
+        tabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
+      )
+    : []
+  const explicitByTabId = new Map<string, AgentStatusEntry[]>()
+  for (const entry of explicitEntries) {
+    const colonIndex = entry.paneKey.indexOf(':')
+    const tabId = colonIndex === -1 ? entry.paneKey : entry.paneKey.slice(0, colonIndex)
+    const existing = explicitByTabId.get(tabId)
+    if (existing) {
+      existing.push(entry)
+    } else {
+      explicitByTabId.set(tabId, [entry])
+    }
+  }
+
+  let hasExplicitWorking = false
+  let hasExplicitBlocked = false
+  let hasHeuristicWorking = false
+  let hasHeuristicBlocked = false
+
+  for (const tab of liveTabs) {
+    const tabExplicitEntries = explicitByTabId.get(tab.id) ?? []
+    const hasFreshExplicit = tabExplicitEntries.some((entry) =>
+      isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)
+    )
+
+    if (hasFreshExplicit) {
+      hasExplicitWorking ||= tabExplicitEntries.some(
+        (entry) =>
+          isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
+          entry.state === 'working'
+      )
+      hasExplicitBlocked ||= tabExplicitEntries.some(
+        (entry) =>
+          isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
+          (entry.state === 'blocked' || entry.state === 'waiting')
+      )
+      continue
+    }
+
+    const heuristicState = detectAgentStatusFromTitle(tab.title)
+    hasHeuristicWorking ||= heuristicState === 'working'
+    hasHeuristicBlocked ||= heuristicState === 'permission'
+  }
+
+  // Explicit working → +60, same weight as heuristic working
+  // Explicit blocked/waiting → +35, same weight as heuristic permission
+  // Explicit done → no bonus (task complete, no attention needed)
+  const isRunning = hasExplicitWorking || hasHeuristicWorking
   if (isRunning) {
     score += 60
   }
 
-  const needsAttention = liveTabs.some((t) => detectAgentStatusFromTitle(t.title) === 'permission')
+  const needsAttention = hasExplicitBlocked || hasHeuristicBlocked
   if (needsAttention) {
     score += 35
   }
@@ -106,7 +164,8 @@ export function buildWorktreeComparator(
   repoMap: Map<string, Repo>,
   prCache: Record<string, PRCacheEntry> | null,
   now: number = Date.now(),
-  smartSortOverrides: Record<string, SmartSortOverride> | null = null
+  smartSortOverrides: Record<string, SmartSortOverride> | null = null,
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
 ): (a: Worktree, b: Worktree) => number {
   return (a, b) => {
     switch (sortBy) {
@@ -132,13 +191,15 @@ export function buildWorktreeComparator(
             smartB.worktree,
             smartB.tabs,
             smartB.hasRecentPRSignal,
-            now
+            now,
+            agentStatusByPaneKey
           ) -
             computeSmartScoreFromSignals(
               smartA.worktree,
               smartA.tabs,
               smartA.hasRecentPRSignal,
-              now
+              now,
+              agentStatusByPaneKey
             ) ||
           smartB.worktree.lastActivityAt - smartA.worktree.lastActivityAt ||
           a.displayName.localeCompare(b.displayName)
@@ -179,7 +240,8 @@ export function sortWorktreesSmart(
   worktrees: Worktree[],
   tabsByWorktree: Record<string, TerminalTab[]>,
   repoMap: Map<string, Repo>,
-  prCache: Record<string, PRCacheEntry> | null
+  prCache: Record<string, PRCacheEntry> | null,
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
 ): Worktree[] {
   const hasAnyLivePty = Object.values(tabsByWorktree)
     .flat()
@@ -192,8 +254,18 @@ export function sortWorktreesSmart(
     )
   }
 
+  // Why: agentStatusByPaneKey is forwarded so the smart-score comparator can
+  // use explicit agent status (OSC 9999) when ranking worktrees by recency.
   return [...worktrees].sort(
-    buildWorktreeComparator('smart', tabsByWorktree, repoMap, prCache, Date.now())
+    buildWorktreeComparator(
+      'smart',
+      tabsByWorktree,
+      repoMap,
+      prCache,
+      Date.now(),
+      null,
+      agentStatusByPaneKey
+    )
   )
 }
 
@@ -215,7 +287,8 @@ export function computeSmartScore(
   tabsByWorktree: Record<string, TerminalTab[]> | null,
   repoMap: Map<string, Repo> | null,
   prCache: Record<string, PRCacheEntry> | null,
-  now: number = Date.now()
+  now: number = Date.now(),
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
 ): number {
   return computeSmartScoreFromSignals(
     worktree,
@@ -225,6 +298,7 @@ export function computeSmartScore(
     // only while that branch cache entry is still cold so smart sorting stays
     // stable on launch without reviving stale PRs after a cache miss resolves.
     repoMap ? hasRecentPRSignal(worktree, repoMap, prCache) : worktree.linkedPR !== null,
-    now
+    now,
+    agentStatusByPaneKey
   )
 }

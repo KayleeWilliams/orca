@@ -17,6 +17,8 @@ import {
 } from './pty-dispatcher'
 import type { PtyTransport, IpcPtyTransportOptions, PtyConnectResult } from './pty-dispatcher'
 import { createBellDetector } from './bell-detector'
+import type { AgentStatusOscPayload } from '../../../../shared/agent-status-types'
+import { parseAgentStatusPayload } from '../../../../shared/agent-status-types'
 
 // Re-export public API so existing consumers keep working.
 export {
@@ -33,6 +35,113 @@ export type {
 } from './pty-dispatcher'
 export { extractLastOscTitle } from '../../../../shared/agent-detection'
 
+// ─── OSC 9999: agent status reporting ──────────────────────────────────────
+// Why OSC 9999: avoids known-used codes (7=cwd, 133=VS Code, 777=Superset,
+// 1337=iTerm2, 9001=Warp). Agents report structured status by printing
+// printf '\x1b]9999;{"state":"working","summary":"...","next":"..."}\x07'
+// eslint-disable-next-line no-control-regex -- intentional terminal escape sequence matching
+const OSC_AGENT_STATUS_RE = /\x1b\]9999;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g
+const OSC_AGENT_STATUS_PREFIX = '\x1b]9999;'
+
+export type ProcessedAgentStatusChunk = {
+  cleanData: string
+  payloads: AgentStatusOscPayload[]
+}
+
+/**
+ * Extract all OSC 9999 payloads from a data chunk and return the last valid one.
+ * Returns null if no valid agent status sequence is found.
+ */
+export function extractAgentStatusOsc(data: string): AgentStatusOscPayload | null {
+  let last: AgentStatusOscPayload | null = null
+  let m: RegExpExecArray | null
+  OSC_AGENT_STATUS_RE.lastIndex = 0
+  while ((m = OSC_AGENT_STATUS_RE.exec(data)) !== null) {
+    const parsed = parseAgentStatusPayload(m[1])
+    if (parsed) {
+      last = parsed
+    }
+  }
+  return last
+}
+
+/**
+ * Strip all OSC 9999 sequences from data before it reaches the terminal emulator.
+ * Why: OSC 9999 is a custom Orca protocol — xterm.js would display it as garbage
+ * or silently ignore it, but stripping is safer and avoids any emulator-specific
+ * behavior with unknown OSC codes.
+ */
+export function stripAgentStatusOsc(data: string): string {
+  OSC_AGENT_STATUS_RE.lastIndex = 0
+  return data.replace(OSC_AGENT_STATUS_RE, '')
+}
+
+function findAgentStatusTerminator(
+  data: string,
+  searchFrom: number
+): { index: number; length: 1 | 2 } | null {
+  const belIndex = data.indexOf('\x07', searchFrom)
+  const stIndex = data.indexOf('\x1b\\', searchFrom)
+  if (belIndex === -1 && stIndex === -1) {
+    return null
+  }
+  if (belIndex === -1) {
+    return { index: stIndex, length: 2 }
+  }
+  if (stIndex === -1 || belIndex < stIndex) {
+    return { index: belIndex, length: 1 }
+  }
+  return { index: stIndex, length: 2 }
+}
+
+/**
+ * Stateful OSC 9999 parser for PTY streams.
+ * Why: the design doc explicitly calls out partial reads across chunks. Regexing
+ * each chunk independently drops valid status updates when the PTY splits the
+ * escape sequence mid-payload and can leak raw control bytes into xterm.
+ */
+export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgentStatusChunk {
+  let pending = ''
+
+  return (data: string): ProcessedAgentStatusChunk => {
+    const combined = pending + data
+    pending = ''
+
+    const payloads: AgentStatusOscPayload[] = []
+    let cleanData = ''
+    let cursor = 0
+
+    while (cursor < combined.length) {
+      const start = combined.indexOf(OSC_AGENT_STATUS_PREFIX, cursor)
+      if (start === -1) {
+        cleanData += combined.slice(cursor)
+        break
+      }
+
+      cleanData += combined.slice(cursor, start)
+      const payloadStart = start + OSC_AGENT_STATUS_PREFIX.length
+      const terminator = findAgentStatusTerminator(combined, payloadStart)
+
+      if (terminator === null) {
+        pending = combined.slice(start)
+        break
+      }
+
+      const parsed = parseAgentStatusPayload(combined.slice(payloadStart, terminator.index))
+      if (parsed) {
+        payloads.push(parsed)
+      }
+      cursor = terminator.index + terminator.length
+    }
+
+    return { cleanData, payloads }
+  }
+}
+
+// TODO: onAgentStatus field needs to be added to IpcPtyTransportOptions in pty-dispatcher.
+// Why: main refactored IpcPtyTransportOptions to live in pty-dispatcher; the branch's
+// onAgentStatus callback must be added there rather than redefining the type here.
+
 export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTransport {
   const {
     cwd,
@@ -46,13 +155,15 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     onBell,
     onAgentBecameIdle,
     onAgentBecameWorking,
-    onAgentExited
+    onAgentExited,
+    onAgentStatus
   } = opts
   let connected = false
   let destroyed = false
   let ptyId: string | null = null
   const chunkContainsBell = createBellDetector()
   let suppressAttentionEvents = false
+  const processAgentStatusChunk = createAgentStatusOscProcessor()
   let lastEmittedTitle: string | null = null
   let lastObservedTerminalTitle: string | null = null
   let openCodeStatus: OpenCodeStatusEvent['status'] | null = null
@@ -131,6 +242,16 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   // Why: shared by connect() and attach() to avoid duplicating title/bell/exit logic.
   function registerPtyDataHandler(id: string): void {
     ptyDataHandlers.set(id, (data) => {
+      // Why: OSC 9999 is a renderer-only control protocol. Parse it before
+      // xterm sees the bytes, and keep parser state across chunks so partial
+      // PTY reads do not drop valid status updates or print escape garbage.
+      const processed = processAgentStatusChunk(data)
+      data = processed.cleanData
+      if (onAgentStatus) {
+        for (const payload of processed.payloads) {
+          onAgentStatus(payload)
+        }
+      }
       storedCallbacks.onData?.(data)
       if (onTitleChange) {
         const title = extractLastOscTitle(data)
@@ -274,6 +395,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       registerPtyDataHandler(id)
       registerPtyExitHandler(id)
 
+      // Why: replay buffered data through the real handler so title/bell/agent
+      // tracking (including OSC 9999 agent status) processes the output —
+      // otherwise restored tabs keep a default title.
       const bufferHandle = getEagerPtyBufferHandle(id)
       if (bufferHandle) {
         const buffered = bufferHandle.flush()

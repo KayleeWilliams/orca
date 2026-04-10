@@ -7,8 +7,11 @@ import StatusIndicator from './StatusIndicator'
 import CacheTimer from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
 import { SshDisconnectedDialog } from './SshDisconnectedDialog'
+import AgentStatusHover from './AgentStatusHover'
 import { cn } from '@/lib/utils'
-import { getWorktreeStatus, type WorktreeStatus } from '@/lib/worktree-status'
+import { type WorktreeStatus } from '@/lib/worktree-status'
+import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
+import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
 import {
@@ -103,6 +106,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
   // ── GRANULAR selectors: only subscribe to THIS worktree's data ──
   const tabs = useAppStore((s) => s.tabsByWorktree[worktree.id] ?? EMPTY_TABS)
   const browserTabs = useAppStore((s) => s.browserTabsByWorktree[worktree.id] ?? EMPTY_BROWSER_TABS)
+  const agentStatusByPaneKey = useAppStore((s) => s.agentStatusByPaneKey)
+  const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   const branch = branchDisplayName(worktree.branch)
   const isFolder = repo ? isFolderRepo(repo) : false
@@ -122,11 +127,49 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
   const isDeleting = deleteState?.isDeleting ?? false
 
-  // Derive status
-  const status: WorktreeStatus = useMemo(
-    () => getWorktreeStatus(tabs, browserTabs),
-    [tabs, browserTabs]
-  )
+  // Derive status — explicit agent status (OSC 9999) takes precedence over
+  // heuristic title parsing, per the design doc's precedence rule.
+  const status: WorktreeStatus = useMemo(() => {
+    const liveTabs = tabs.filter((tab) => tab.ptyId)
+    // Why: browser-only worktrees are still active from the user's point of
+    // view even when they have no PTY-backed terminal. The sidebar filter
+    // already treats them as active, so every navigation surface must reuse
+    // that rule instead of showing a misleading inactive dot.
+    const hasTerminals = liveTabs.length > 0 || browserTabs.length > 0
+    if (!hasTerminals) {
+      return 'inactive'
+    }
+
+    // Why: explicit status only wins while it is fresh. Once it gets stale, the
+    // design doc says the coarse icon should fall back to live title heuristics
+    // so an old "done" report does not mask a new permission prompt.
+    const explicitEntries = Object.values(agentStatusByPaneKey).filter((e) =>
+      liveTabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
+    )
+    const freshEntries = explicitEntries.filter((entry) =>
+      isExplicitAgentStatusFresh(entry, Date.now(), AGENT_STATUS_STALE_AFTER_MS)
+    )
+    if (freshEntries.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
+      return 'permission'
+    }
+    if (freshEntries.some((e) => e.state === 'working')) {
+      return 'working'
+    }
+    // Why done maps to 'active': a completed agent still has a live terminal —
+    // 'inactive' (gray dot) would incorrectly suggest nothing is there.
+    if (freshEntries.some((e) => e.state === 'done')) {
+      return 'active'
+    }
+
+    // Fall through to heuristic title-based detection
+    if (liveTabs.some((tab) => detectAgentStatusFromTitle(tab.title) === 'permission')) {
+      return 'permission'
+    }
+    if (liveTabs.some((tab) => detectAgentStatusFromTitle(tab.title) === 'working')) {
+      return 'working'
+    }
+    return liveTabs.length > 0 ? 'active' : 'inactive'
+  }, [tabs, browserTabs, agentStatusByPaneKey, agentStatusEpoch])
 
   const showPR = cardProps.includes('pr')
   const showCI = cardProps.includes('ci')
@@ -245,7 +288,13 @@ const WorktreeCard = React.memo(function WorktreeCard({
           {/* Status indicator on the left */}
           {(cardProps.includes('status') || cardProps.includes('unread')) && (
             <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
-              {cardProps.includes('status') && <StatusIndicator status={status} />}
+              {cardProps.includes('status') && (
+                <AgentStatusHover worktreeId={worktree.id}>
+                  <span>
+                    <StatusIndicator status={status} />
+                  </span>
+                </AgentStatusHover>
+              )}
 
               {cardProps.includes('unread') && (
                 <Tooltip>

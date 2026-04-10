@@ -8,6 +8,7 @@ import {
   clearWorkingIndicators,
   createAgentStatusTracker,
   getAgentLabel,
+  inferAgentTypeFromTitle,
   isGeminiTerminalTitle,
   normalizeTerminalTitle
 } from './agent-status'
@@ -244,6 +245,21 @@ describe('getAgentLabel', () => {
     expect(getAgentLabel('✦ Gemini CLI')).toBe('Gemini CLI')
     expect(getAgentLabel('⠂ Claude Code')).toBe('Claude Code')
     expect(getAgentLabel('⠋ Codex is thinking')).toBe('Codex')
+  })
+})
+
+describe('inferAgentTypeFromTitle', () => {
+  it('detects known agent types from terminal titles', () => {
+    expect(inferAgentTypeFromTitle('✦ Gemini CLI')).toBe('gemini')
+    expect(inferAgentTypeFromTitle('⠂ Claude Code')).toBe('claude')
+    expect(inferAgentTypeFromTitle('codex - permission needed')).toBe('codex')
+    expect(inferAgentTypeFromTitle('opencode running tests')).toBe('opencode')
+    expect(inferAgentTypeFromTitle('aider done')).toBe('aider')
+  })
+
+  it('returns unknown for plain shell titles', () => {
+    expect(inferAgentTypeFromTitle('bash')).toBe('unknown')
+    expect(inferAgentTypeFromTitle('')).toBe('unknown')
   })
 })
 

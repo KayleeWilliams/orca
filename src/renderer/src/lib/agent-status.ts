@@ -1,4 +1,5 @@
 import type { TerminalTab, Worktree } from '../../../shared/types'
+import type { AgentStatusEntry, AgentType } from '../../../shared/agent-status-types'
 
 // Re-export from shared module so existing renderer imports continue to work.
 // Why: the main process now needs the same agent detection logic for stat
@@ -16,6 +17,8 @@ export {
 import {
   type AgentStatus,
   detectAgentStatusFromTitle,
+  isGeminiTerminalTitle,
+  isClaudeAgent,
   getAgentLabel
 } from '../../../shared/agent-detection'
 
@@ -84,6 +87,64 @@ export function getWorkingAgentsPerWorktree({
   }
 
   return result
+}
+
+function includesAgentName(title: string, name: string): boolean {
+  return title.toLowerCase().includes(name)
+}
+
+// Why: inferAgentTypeFromTitle classifies a terminal title into a known agent
+// family so the dashboard can display the correct agent icon/label without
+// relying on the explicit hook-based status report (which may not be available
+// for all agent types).
+export function inferAgentTypeFromTitle(title: string | null | undefined): AgentType {
+  if (!title) {
+    return 'unknown'
+  }
+  if (isGeminiTerminalTitle(title)) {
+    return 'gemini'
+  }
+  if (isClaudeAgent(title)) {
+    return 'claude'
+  }
+  if (includesAgentName(title, 'codex')) {
+    return 'codex'
+  }
+  if (includesAgentName(title, 'opencode')) {
+    return 'opencode'
+  }
+  if (includesAgentName(title, 'aider')) {
+    return 'aider'
+  }
+  return 'unknown'
+}
+
+export function formatAgentTypeLabel(agentType: AgentType | null | undefined): string {
+  switch (agentType) {
+    case 'claude':
+      return 'Claude'
+    case 'codex':
+      return 'Codex'
+    case 'gemini':
+      return 'Gemini'
+    case 'opencode':
+      return 'OpenCode'
+    case 'aider':
+      return 'Aider'
+    default:
+      return 'Unknown agent'
+  }
+}
+
+// Why: explicit agent status entries (from hook-based reports) can go stale if
+// the agent process exits without sending a final update. This helper lets
+// callers decide whether to trust the entry based on a configurable TTL.
+export function isExplicitAgentStatusFresh(
+  entry: Pick<AgentStatusEntry, 'updatedAt'>,
+  now: number,
+  staleAfterMs: number
+): boolean {
+  return now - entry.updatedAt <= staleAfterMs
 }
 
 export function countWorkingAgents({
