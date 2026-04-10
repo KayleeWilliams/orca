@@ -9,12 +9,17 @@ type WorktreeActivationStore = {
     tabId: string,
     startup: { command: string; env?: Record<string, string> }
   ) => void
+  queueTabIssueCommandSplit: (
+    tabId: string,
+    startup: { command: string; env?: Record<string, string> }
+  ) => void
 }
 
 export function ensureWorktreeHasInitialTerminal(
   store: WorktreeActivationStore,
   worktreeId: string,
-  setup?: WorktreeSetupLaunch
+  setup?: WorktreeSetupLaunch,
+  issueCommand?: { command: string; env?: Record<string, string> }
 ): void {
   const existingTabs = store.tabsByWorktree[worktreeId] ?? []
   if (existingTabs.length > 0) {
@@ -33,5 +38,14 @@ export function ensureWorktreeHasInitialTerminal(
       command: buildSetupRunnerCommand(setup.runnerScriptPath),
       env: setup.envVars
     })
+  }
+
+  // Why: when the user links a GitHub issue and opts into that repo's
+  // per-user issue automation, spawn a separate split pane to run the
+  // agent command. Queued independently from setup so both can start in
+  // parallel; repo bootstrap and personal issue workflows are separate
+  // concerns, so Orca should not invent a dependency between them.
+  if (issueCommand) {
+    store.queueTabIssueCommandSplit(terminalTab.id, issueCommand)
   }
 }

@@ -72,6 +72,20 @@ export function getRepositoryPaneSearchEntries(repo: Repo): SettingsSearchEntry[
               'run by default',
               'skip by default'
             ]
+          },
+          {
+            title: 'GitHub Issue Command',
+            description:
+              'File-based linked-issue command configured via orca.yaml and optional local override.',
+            keywords: [
+              repo.displayName,
+              'github issue command',
+              'issue command',
+              'workflow',
+              'github',
+              'orca.yaml',
+              '.orca/issue-command'
+            ]
           }
         ])
   ]
@@ -149,7 +163,12 @@ export function RepositoryPane({
     ['Display Name', 'Badge Color', 'Default Worktree Base', 'Remove Repo'].includes(entry.title)
   )
   const hooksEntries = allEntries.filter((entry) =>
-    ['orca.yaml hooks', 'Legacy Repo-Local Hooks', 'When to Run Setup'].includes(entry.title)
+    [
+      'orca.yaml hooks',
+      'Legacy Repo-Local Hooks',
+      'When to Run Setup',
+      'GitHub Issue Command'
+    ].includes(entry.title)
   )
 
   const visibleSections = [

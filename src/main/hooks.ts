@@ -1,4 +1,5 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync, chmodSync } from 'fs'
+/* eslint-disable max-lines -- Why: hook parsing, layered issue-command resolution, and cross-platform runner setup share one execution surface, so keeping them together avoids subtle drift across create/read/write paths. */
+import { readFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'fs'
 import { dirname, join } from 'path'
 import { exec, execFile } from 'child_process'
 import { getDefaultRepoHookSettings } from '../shared/constants'
@@ -23,56 +24,84 @@ function getHookShell(): string | undefined {
 }
 
 /**
- * Parse a simple orca.yaml file. Handles only the `scripts:` block with
- * multiline string values (YAML block scalar `|`).
+ * Parse a simple orca.yaml file. Handles only the supported `scripts:` and
+ * `issueCommand:` keys with multiline string values (YAML block scalar `|`).
  */
 export function parseOrcaYaml(content: string): OrcaHooks | null {
   const hooks: OrcaHooks = { scripts: {} }
+  const lines = content.split(/\r?\n/)
 
-  // Match top-level "scripts:" block
-  const scriptsMatch = content.match(/^scripts:\s*$/m)
-  if (!scriptsMatch) {
-    return null
-  }
-
-  const afterScripts = content.slice(scriptsMatch.index! + scriptsMatch[0].length)
-  // [Fix]: Split using /\r?\n/ instead of '\n'. Otherwise, on Windows, trailing \r characters
-  // stay attached to script commands, which causes fatal '\r command not found' errors in WSL/bash.
-  const lines = afterScripts.split(/\r?\n/)
-
+  let currentSection: 'scripts' | 'issueCommand' | null = null
   let currentKey: 'setup' | 'archive' | null = null
-  let currentValue = ''
+  let issueCommandValue = ''
 
   for (const line of lines) {
-    // Another top-level key (not indented) — stop parsing scripts block
-    if (/^\S/.test(line) && line.trim().length > 0) {
-      break
-    }
-
-    // Indented key like "  setup: |" or "  archive: |" or "  setup: echo hello"
-    const keyMatch = line.match(/^  (setup|archive):\s*(\|)?\s*(.*)$/)
-    if (keyMatch) {
-      // Save previous key
-      if (currentKey) {
-        hooks.scripts[currentKey] = currentValue.trimEnd()
+    const topLevelKeyMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(\|)?\s*(.*)$/)
+    if (topLevelKeyMatch) {
+      if (currentSection === 'scripts' && currentKey) {
+        hooks.scripts[currentKey] = issueCommandValue.trimEnd()
+      } else if (currentSection === 'issueCommand') {
+        hooks.issueCommand = issueCommandValue.trimEnd() || undefined
       }
-      currentKey = keyMatch[1] as 'setup' | 'archive'
-      currentValue = keyMatch[3] ? `${keyMatch[3]}\n` : ''
+
+      const [, key, blockScalar, rest] = topLevelKeyMatch
+      currentKey = null
+      issueCommandValue = ''
+
+      if (key === 'scripts') {
+        currentSection = 'scripts'
+        continue
+      }
+
+      if (key === 'issueCommand') {
+        currentSection = 'issueCommand'
+        if (blockScalar) {
+          continue
+        }
+        hooks.issueCommand = rest.trim() || undefined
+        currentSection = null
+        continue
+      }
+
+      currentSection = null
       continue
     }
 
-    // Content line (indented by 4+ spaces under a key)
-    if (currentKey && line.startsWith('    ')) {
-      currentValue += `${line.slice(4)}\n`
+    if (currentSection === 'scripts') {
+      // Indented key like "  setup: |" or "  archive: |" or "  setup: echo hello"
+      const keyMatch = line.match(/^  (setup|archive):\s*(\|)?\s*(.*)$/)
+      if (keyMatch) {
+        // Save previous key
+        if (currentKey) {
+          hooks.scripts[currentKey] = issueCommandValue.trimEnd()
+        }
+        currentKey = keyMatch[1] as 'setup' | 'archive'
+        issueCommandValue = keyMatch[3] ? `${keyMatch[3]}\n` : ''
+        continue
+      }
+
+      // Content line (indented by 4+ spaces under a key)
+      if (currentKey && line.startsWith('    ')) {
+        issueCommandValue += `${line.slice(4)}\n`
+      }
+      continue
+    }
+
+    if (currentSection === 'issueCommand' && line.startsWith('  ')) {
+      // Why: `issueCommand` is a top-level scalar in `orca.yaml`, so its block
+      // content must stay separate from the `scripts:` parser rather than being
+      // shoehorned into that section's indentation rules.
+      issueCommandValue += `${line.slice(2)}\n`
     }
   }
 
-  // Save last key
-  if (currentKey) {
-    hooks.scripts[currentKey] = currentValue.trimEnd()
+  if (currentSection === 'scripts' && currentKey) {
+    hooks.scripts[currentKey] = issueCommandValue.trimEnd()
+  } else if (currentSection === 'issueCommand') {
+    hooks.issueCommand = issueCommandValue.trimEnd() || undefined
   }
 
-  if (!hooks.scripts.setup && !hooks.scripts.archive) {
+  if (!hooks.scripts.setup && !hooks.scripts.archive && !hooks.issueCommand) {
     return null
   }
   return hooks
@@ -100,6 +129,110 @@ export function loadHooks(repoPath: string): OrcaHooks | null {
  */
 export function hasHooksFile(repoPath: string): boolean {
   return existsSync(join(repoPath, 'orca.yaml'))
+}
+
+// ─── Issue command files ────────────────────────────────────────────────
+// Why: `orca.yaml` is the tracked, project-wide defaults surface, while
+// `.orca/issue-command` remains the per-user override. Keeping the local file in
+// `.orca/` lets users customize agent automation without editing committed config.
+
+const ORCA_DIR = '.orca'
+const ISSUE_COMMAND_FILENAME = 'issue-command'
+
+export function getIssueCommandFilePath(repoPath: string): string {
+  return join(repoPath, ORCA_DIR, ISSUE_COMMAND_FILENAME)
+}
+
+export function getSharedIssueCommand(repoPath: string): string | null {
+  return loadHooks(repoPath)?.issueCommand?.trim() || null
+}
+
+export type ResolvedIssueCommand = {
+  localContent: string | null
+  sharedContent: string | null
+  effectiveContent: string | null
+  localFilePath: string
+  source: 'local' | 'shared' | 'none'
+}
+
+/**
+ * Resolve the GitHub issue command using local override first, then tracked repo config.
+ */
+export function readIssueCommand(repoPath: string): ResolvedIssueCommand {
+  const filePath = getIssueCommandFilePath(repoPath)
+  let localContent: string | null = null
+
+  if (existsSync(filePath)) {
+    try {
+      const content = readFileSync(filePath, 'utf-8').trim()
+      localContent = content || null
+    } catch {
+      localContent = null
+    }
+  }
+
+  const sharedContent = getSharedIssueCommand(repoPath)
+  const effectiveContent = localContent ?? sharedContent
+
+  return {
+    localContent,
+    sharedContent,
+    effectiveContent,
+    localFilePath: filePath,
+    source: localContent ? 'local' : sharedContent ? 'shared' : 'none'
+  }
+}
+
+/**
+ * Write the per-user issue command override to `{repoRoot}/.orca/issue-command`.
+ * Creates `.orca/` and ensures it is in `.gitignore` on first write.
+ * If content is empty, deletes only the override so the shared `orca.yaml`
+ * command becomes effective again.
+ */
+export function writeIssueCommand(repoPath: string, content: string): void {
+  const filePath = getIssueCommandFilePath(repoPath)
+  const trimmed = content.trim()
+
+  try {
+    if (!trimmed) {
+      rmSync(filePath, { force: true })
+      return
+    }
+
+    const orcaDir = join(repoPath, ORCA_DIR)
+    if (!existsSync(orcaDir)) {
+      mkdirSync(orcaDir, { recursive: true })
+    }
+    ensureOrcaDirIgnored(repoPath)
+    writeFileSync(filePath, `${trimmed}\n`, 'utf-8')
+  } catch (err) {
+    console.error('[hooks] Failed to write issue command:', err)
+    // Why: re-throw so the error propagates through the IPC handler to the
+    // renderer, which already has .catch() ready to surface write failures.
+    throw err
+  }
+}
+
+/**
+ * Ensure `.orca` is listed in the repo's `.gitignore` so the per-user
+ * directory is never accidentally committed.
+ */
+function ensureOrcaDirIgnored(repoPath: string): void {
+  const gitignorePath = join(repoPath, '.gitignore')
+  try {
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, 'utf-8')
+      if (/^\.orca\/?$/m.test(content)) {
+        return
+      }
+      const separator = content.endsWith('\n') ? '' : '\n'
+      writeFileSync(gitignorePath, `${content}${separator}.orca\n`, 'utf-8')
+    } else {
+      writeFileSync(gitignorePath, '.orca\n', 'utf-8')
+    }
+  } catch {
+    console.warn('[hooks] Could not update .gitignore to exclude .orca')
+  }
 }
 
 export function getEffectiveHooks(repo: Repo): OrcaHooks | null {

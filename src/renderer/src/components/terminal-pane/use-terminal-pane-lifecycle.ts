@@ -27,6 +27,9 @@ type UseTerminalPaneLifecycleDeps = {
   /** When present, the initial pane boots clean and a right-side split pane is
    *  created to run the setup command — keeping the main terminal interactive. */
   setupSplit?: { command: string; env?: Record<string, string> } | null
+  /** When present, a split pane is created to run the repo's configured
+   *  issue-automation command with the linked issue number interpolated. */
+  issueCommandSplit?: { command: string; env?: Record<string, string> } | null
   isActive: boolean
   systemPrefersDark: boolean
   settings: GlobalSettings | null | undefined
@@ -68,6 +71,7 @@ export function useTerminalPaneLifecycle({
   cwd,
   startup,
   setupSplit,
+  issueCommandSplit,
   isActive,
   systemPrefersDark,
   settings,
@@ -143,7 +147,6 @@ export function useTerminalPaneLifecycle({
       pathExistsCache
     }
     let resizeRaf: number | null = null
-
     const queueResizeAll = (focusActive: boolean): void => {
       if (resizeRaf !== null) {
         cancelAnimationFrame(resizeRaf)
@@ -358,14 +361,46 @@ export function useTerminalPaneLifecycle({
     // into ptyDeps.startup right before splitting — connectPanePty (called from
     // onPaneCreated) reads it synchronously and clears it, so only the new pane
     // gets the command. The initial pane already consumed startup=null above.
+    let issueAutomationAnchorPaneId: number | null = null
+    // Why: capture the main shell pane *before* any splits mutate the pane list.
+    // Both the setup and issue-command paths need to restore focus back to this
+    // pane after creating their splits, so we save the reference once rather
+    // than relying on getPanes()[0] which returns insertion order, not visual order.
+    const initialPane = manager.getActivePane() ?? manager.getPanes()[0]
+
     if (setupSplit) {
-      const initialPane = manager.getActivePane() ?? manager.getPanes()[0]
       if (initialPane) {
         ptyDeps.startup = { command: setupSplit.command, env: setupSplit.env }
-        manager.splitPane(initialPane.id, 'vertical')
+        const setupPane = manager.splitPane(initialPane.id, 'vertical')
+        issueAutomationAnchorPaneId = setupPane?.id ?? null
         // Restore focus to the main (left) pane so the user's terminal
         // receives keyboard input — the setup pane runs unattended.
         manager.setActivePane(initialPane.id, { focus: isActive })
+      }
+    }
+
+    // Why: when the user links a GitHub issue during worktree creation and has
+    // enabled that repo's issue automation, spawn a separate split pane to run
+    // the agent command. This runs independently from setup: the issue command
+    // is a per-user prompt/template rather than repo bootstrap, so Orca should
+    // not guess at ordering requirements that vary by user workflow.
+    if (issueCommandSplit) {
+      const targetPane =
+        (issueAutomationAnchorPaneId !== null
+          ? (manager.getPanes().find((pane) => pane.id === issueAutomationAnchorPaneId) ?? null)
+          : null) ??
+        manager.getActivePane() ??
+        manager.getPanes()[0]
+      if (targetPane) {
+        ptyDeps.startup = { command: issueCommandSplit.command, env: issueCommandSplit.env }
+        manager.splitPane(targetPane.id, 'vertical')
+        // Why: if setup already claimed the right half, nest issue automation
+        // inside that automation area instead of splitting the main shell again.
+        // This preserves the primary terminal as the dominant pane while setup
+        // and issue panes share the secondary column.
+        const focusPaneId =
+          issueAutomationAnchorPaneId !== null ? (initialPane?.id ?? targetPane.id) : targetPane.id
+        manager.setActivePane(focusPaneId, { focus: isActive })
       }
     }
 

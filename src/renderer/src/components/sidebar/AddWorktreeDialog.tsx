@@ -62,6 +62,9 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   const [yamlHooks, setYamlHooks] = useState<OrcaHooks | null>(null)
   const [checkedHooksRepoId, setCheckedHooksRepoId] = useState<string | null>(null)
   const [setupDecision, setSetupDecision] = useState<'run' | 'skip' | null>(null)
+  const [runIssueAutomation, setRunIssueAutomation] = useState(false)
+  const [issueCommandTemplate, setIssueCommandTemplate] = useState('')
+  const [hasLoadedIssueCommand, setHasLoadedIssueCommand] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -69,6 +72,13 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   const resetTimeoutRef = useRef<number | null>(null)
   const prevIsOpenRef = useRef(false)
   const prevSuggestedNameRef = useRef('')
+  // Why: tracks whether the user has explicitly toggled the "Run GitHub issue
+  // command" checkbox. The auto-enable useEffect should only pre-check the box
+  // on the first opportunity; once the user makes a deliberate choice we must
+  // not override it when canOfferIssueAutomation re-fires (e.g. because the
+  // user clears and re-enters the linked issue number).
+  const userToggledIssueAutomationRef = useRef(false)
+  const issueAutomationUserChoiceRef = useRef<boolean | null>(null)
 
   const isOpen = activeModal === 'create-worktree'
   const preselectedRepoId =
@@ -78,11 +88,23 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     [activeWorktreeId, worktreesByRepo]
   )
   const selectedRepo = eligibleRepos.find((r) => r.id === repoId)
+  const parsedLinkedIssueNumber = useMemo(
+    () => (linkedIssue.trim() ? parseGitHubIssueOrPRNumber(linkedIssue) : null),
+    [linkedIssue]
+  )
   const setupConfig = useMemo(
     () => getSetupConfig(selectedRepo, yamlHooks),
     [selectedRepo, yamlHooks]
   )
   const setupPolicy: SetupRunPolicy = selectedRepo?.hookSettings?.setupRunPolicy ?? 'run-by-default'
+  const hasIssueAutomationConfig = issueCommandTemplate.length > 0
+  const canOfferIssueAutomation = parsedLinkedIssueNumber !== null && hasIssueAutomationConfig
+  const shouldRunIssueAutomation = canOfferIssueAutomation && runIssueAutomation
+  // Why: the GitHub issue command changes the create result, so once the
+  // user has entered a valid linked issue we must not let create race ahead of
+  // the async repo-local template read and silently skip the command split.
+  const shouldWaitForIssueAutomationCheck =
+    parsedLinkedIssueNumber !== null && !hasLoadedIssueCommand
   const requiresExplicitSetupChoice = Boolean(setupConfig) && setupPolicy === 'ask'
   const resolvedSetupDecision =
     setupDecision ??
@@ -144,7 +166,13 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   )
 
   const handleCreate = useCallback(async () => {
-    if (!repoId || !name.trim() || shouldWaitForSetupCheck || !selectedRepo) {
+    if (
+      !repoId ||
+      !name.trim() ||
+      shouldWaitForSetupCheck ||
+      shouldWaitForIssueAutomationCheck ||
+      !selectedRepo
+    ) {
       return
     }
     setCreateError(null)
@@ -165,11 +193,8 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
       // block the success path if only the metadata write fails.
       try {
         const metaUpdates: Record<string, unknown> = {}
-        if (linkedIssue.trim()) {
-          const linkedIssueNumber = parseGitHubIssueOrPRNumber(linkedIssue)
-          if (linkedIssueNumber !== null) {
-            ;(metaUpdates as { linkedIssue: number }).linkedIssue = linkedIssueNumber
-          }
+        if (parsedLinkedIssueNumber !== null) {
+          ;(metaUpdates as { linkedIssue: number }).linkedIssue = parsedLinkedIssueNumber
         }
         if (comment.trim()) {
           ;(metaUpdates as { comment: string }).comment = comment.trim()
@@ -181,6 +206,16 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
         console.error('Failed to update worktree meta after creation')
       }
 
+      // Why: build the issue command payload before ensureWorktreeHasInitialTerminal
+      // so it can queue the split before TerminalPane mounts. The command template
+      // supports {{issue}} interpolation so the launched command gets the linked
+      // issue number without requiring a second, less-visible templating surface.
+      const issueCommand = shouldRunIssueAutomation
+        ? {
+            command: issueCommandTemplate.replace(/\{\{issue\}\}/g, String(parsedLinkedIssueNumber))
+          }
+        : undefined
+
       setActiveRepo(repoId)
       setActiveView('terminal')
       setSidebarOpen(true)
@@ -191,7 +226,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
         setFilterRepoIds([])
       }
       setActiveWorktree(wt.id)
-      ensureWorktreeHasInitialTerminal(useAppStore.getState(), wt.id, result.setup)
+      ensureWorktreeHasInitialTerminal(useAppStore.getState(), wt.id, result.setup, issueCommand)
       revealWorktreeInSidebar(wt.id)
       if (settings?.rightSidebarOpenByDefault) {
         setRightSidebarTab('explorer')
@@ -208,7 +243,6 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   }, [
     repoId,
     name,
-    linkedIssue,
     comment,
     createWorktree,
     updateWorktreeMeta,
@@ -225,8 +259,12 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     setRightSidebarTab,
     settings?.rightSidebarOpenByDefault,
     handleOpenChange,
+    issueCommandTemplate,
     resolvedSetupDecision,
+    parsedLinkedIssueNumber,
     selectedRepo,
+    shouldRunIssueAutomation,
+    shouldWaitForIssueAutomationCheck,
     shouldWaitForSetupCheck
   ])
 
@@ -246,6 +284,11 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
       setYamlHooks(null)
       setCheckedHooksRepoId(null)
       setSetupDecision(null)
+      setRunIssueAutomation(false)
+      setIssueCommandTemplate('')
+      setHasLoadedIssueCommand(false)
+      userToggledIssueAutomationRef.current = false
+      issueAutomationUserChoiceRef.current = null
       if (createError) {
         setCreateError(null)
       }
@@ -285,8 +328,13 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
       setYamlHooks(null)
       setCheckedHooksRepoId(null)
       setSetupDecision(null)
+      setRunIssueAutomation(false)
+      setIssueCommandTemplate('')
+      setHasLoadedIssueCommand(false)
       setCreateError(null)
       lastSuggestedNameRef.current = ''
+      userToggledIssueAutomationRef.current = false
+      issueAutomationUserChoiceRef.current = null
       resetTimeoutRef.current = null
     }, DIALOG_CLOSE_RESET_DELAY_MS)
 
@@ -326,6 +374,15 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     }
 
     let cancelled = false
+    // Why: when the dialog reopens quickly (before DIALOG_CLOSE_RESET_DELAY_MS
+    // fires) or when repoId changes via a path other than handleRepoChange,
+    // issue-automation state from the previous session could persist. Reset all
+    // three fields here for consistency with handleRepoChange and the close timeout.
+    setHasLoadedIssueCommand(false)
+    setIssueCommandTemplate('')
+    setRunIssueAutomation(false)
+    userToggledIssueAutomationRef.current = false
+    issueAutomationUserChoiceRef.current = null
 
     void window.api.hooks
       .check({ repoId })
@@ -339,6 +396,25 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
         if (!cancelled) {
           setYamlHooks(null)
           setCheckedHooksRepoId(repoId)
+        }
+      })
+
+    // Why: issue automation now resolves from layered config: tracked
+    // `orca.yaml` first, then optional `.orca/issue-command` override. Fetch the
+    // effective command alongside hooks so the create dialog can offer the
+    // checkbox as soon as the user links a valid GitHub issue.
+    void window.api.hooks
+      .readIssueCommand({ repoId })
+      .then((result) => {
+        if (!cancelled) {
+          setIssueCommandTemplate(result.effectiveContent ?? '')
+          setHasLoadedIssueCommand(true)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIssueCommandTemplate('')
+          setHasLoadedIssueCommand(true)
         }
       })
 
@@ -366,10 +442,35 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     setSetupDecision(setupPolicy === 'run-by-default' ? 'run' : 'skip')
   }, [setupConfig, setupPolicy, shouldWaitForSetupCheck])
 
+  React.useEffect(() => {
+    if (!canOfferIssueAutomation) {
+      setRunIssueAutomation(issueAutomationUserChoiceRef.current ?? false)
+      return
+    }
+
+    // Why: when a repo defines `{repoRoot}/.orca/issue-command`, the create
+    // dialog should surface it automatically and start checked so the common
+    // path is "link issue, create worktree, start work" with one click.
+    // However, if the user has explicitly toggled the checkbox we must respect
+    // their choice instead of re-enabling it every time canOfferIssueAutomation
+    // re-fires (e.g. after clearing and re-entering the linked issue number).
+    if (!userToggledIssueAutomationRef.current) {
+      setRunIssueAutomation(true)
+      issueAutomationUserChoiceRef.current = true
+      return
+    }
+
+    setRunIssueAutomation(issueAutomationUserChoiceRef.current ?? false)
+  }, [canOfferIssueAutomation])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && repoId && name.trim() && !creating) {
-        if (shouldWaitForSetupCheck || (requiresExplicitSetupChoice && !setupDecision)) {
+        if (
+          shouldWaitForSetupCheck ||
+          shouldWaitForIssueAutomationCheck ||
+          (requiresExplicitSetupChoice && !setupDecision)
+        ) {
           return
         }
         e.preventDefault()
@@ -383,6 +484,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
       handleCreate,
       requiresExplicitSetupChoice,
       setupDecision,
+      shouldWaitForIssueAutomationCheck,
       shouldWaitForSetupCheck
     ]
   )
@@ -437,6 +539,9 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
             {createError && <p className="text-[10px] text-destructive">{createError}</p>}
             {shouldWaitForSetupCheck ? (
               <p className="text-[10px] text-muted-foreground">Checking setup configuration...</p>
+            ) : null}
+            {shouldWaitForIssueAutomationCheck ? (
+              <p className="text-[10px] text-muted-foreground">Checking GitHub issue command...</p>
             ) : null}
           </div>
 
@@ -545,7 +650,30 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
             <p className="text-[10px] text-muted-foreground">
               Paste an issue URL, or enter a number.
             </p>
+            {linkedIssue.trim() && parsedLinkedIssueNumber === null ? (
+              <p className="text-[10px] text-muted-foreground">
+                Enter a valid GitHub issue number or URL to enable the GitHub issue command.
+              </p>
+            ) : null}
           </div>
+
+          {canOfferIssueAutomation ? (
+            <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
+              <p className="text-[11px] font-medium text-foreground">GitHub Issue Command</p>
+              <label className="flex items-center gap-2 text-[11px] text-foreground">
+                <input
+                  type="checkbox"
+                  checked={runIssueAutomation}
+                  onChange={(e) => {
+                    userToggledIssueAutomationRef.current = true
+                    issueAutomationUserChoiceRef.current = e.target.checked
+                    setRunIssueAutomation(e.target.checked)
+                  }}
+                />
+                Run the repository&apos;s GitHub issue command after creating this worktree.
+              </label>
+            </div>
+          ) : null}
 
           {/* Comment */}
           <div className="space-y-1">
@@ -579,6 +707,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
               !name.trim() ||
               creating ||
               shouldWaitForSetupCheck ||
+              shouldWaitForIssueAutomationCheck ||
               !selectedRepo ||
               (requiresExplicitSetupChoice && !setupDecision)
             }

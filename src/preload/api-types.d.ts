@@ -224,6 +224,14 @@ export type PreloadApi = {
   browser: BrowserApi
   hooks: {
     check: (args: { repoId: string }) => Promise<{ hasHooks: boolean; hooks: OrcaHooks | null }>
+    readIssueCommand: (args: { repoId: string }) => Promise<{
+      localContent: string | null
+      sharedContent: string | null
+      effectiveContent: string | null
+      localFilePath: string
+      source: 'local' | 'shared' | 'none'
+    }>
+    writeIssueCommand: (args: { repoId: string; content: string }) => Promise<void>
   }
   cache: {
     getGitHub: () => Promise<{

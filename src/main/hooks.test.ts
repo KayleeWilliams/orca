@@ -7,7 +7,11 @@ import { parseOrcaYaml } from './hooks'
 // Mock fs and path used by loadHooks
 vi.mock('fs', () => ({
   readFileSync: vi.fn(),
-  existsSync: vi.fn()
+  existsSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  rmSync: vi.fn(),
+  chmodSync: vi.fn()
 }))
 
 const { execMock, execFileMock } = vi.hoisted(() => ({
@@ -106,6 +110,123 @@ describe('parseOrcaYaml', () => {
 
   it('returns null for empty string', () => {
     expect(parseOrcaYaml('')).toBeNull()
+  })
+
+  it('parses a top-level issueCommand block scalar', () => {
+    const yaml = [
+      'issueCommand: |',
+      '  claude -p "Read issue #{{issue}}"',
+      '  codex exec "Review docs/design-{{issue}}.md"'
+    ].join('\n')
+    const result = parseOrcaYaml(yaml)
+    expect(result).toEqual({
+      scripts: {},
+      issueCommand:
+        'claude -p "Read issue #{{issue}}"\ncodex exec "Review docs/design-{{issue}}.md"'
+    })
+  })
+
+  it('parses issueCommand alongside scripts', () => {
+    const yaml = [
+      'scripts:',
+      '  setup: |',
+      '    pnpm install',
+      'issueCommand: |',
+      '  claude -p "Read issue #{{issue}}"'
+    ].join('\n')
+    const result = parseOrcaYaml(yaml)
+    expect(result).toEqual({
+      scripts: {
+        setup: 'pnpm install'
+      },
+      issueCommand: 'claude -p "Read issue #{{issue}}"'
+    })
+  })
+})
+
+describe('readIssueCommand', () => {
+  it('prefers the local override over the shared orca.yaml command', async () => {
+    const fs = await import('fs')
+    vi.mocked(fs.existsSync).mockImplementation(
+      (path) => path === '/test/repo/.orca/issue-command' || path === '/test/repo/orca.yaml'
+    )
+    vi.mocked(fs.readFileSync).mockImplementation((path) => {
+      if (path === '/test/repo/.orca/issue-command') {
+        return 'local command\n'
+      }
+      if (path === '/test/repo/orca.yaml') {
+        return 'issueCommand: |\n  shared command\n'
+      }
+      return ''
+    })
+
+    const { readIssueCommand } = await import('./hooks')
+    expect(readIssueCommand('/test/repo')).toEqual({
+      localContent: 'local command',
+      sharedContent: 'shared command',
+      effectiveContent: 'local command',
+      localFilePath: '/test/repo/.orca/issue-command',
+      source: 'local'
+    })
+  })
+
+  it('falls back to the shared orca.yaml command when no local override exists', async () => {
+    const fs = await import('fs')
+    vi.mocked(fs.existsSync).mockImplementation((path) => path === '/test/repo/orca.yaml')
+    vi.mocked(fs.readFileSync).mockImplementation((path) => {
+      if (path === '/test/repo/orca.yaml') {
+        return 'issueCommand: |\n  shared command\n'
+      }
+      return ''
+    })
+
+    const { readIssueCommand } = await import('./hooks')
+    expect(readIssueCommand('/test/repo')).toEqual({
+      localContent: null,
+      sharedContent: 'shared command',
+      effectiveContent: 'shared command',
+      localFilePath: '/test/repo/.orca/issue-command',
+      source: 'shared'
+    })
+  })
+})
+
+describe('writeIssueCommand', () => {
+  it('writes only the local override file and keeps .orca ignored locally', async () => {
+    const fs = await import('fs')
+    vi.mocked(fs.existsSync).mockImplementation(
+      (path) => path === '/test/repo/.gitignore' || path === '/test/repo/.orca'
+    )
+    vi.mocked(fs.readFileSync).mockImplementation((path) => {
+      if (path === '/test/repo/.gitignore') {
+        return 'node_modules/\n'
+      }
+      return ''
+    })
+
+    const { writeIssueCommand } = await import('./hooks')
+    writeIssueCommand('/test/repo', 'local command')
+
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      '/test/repo/.gitignore',
+      'node_modules/\n.orca\n',
+      'utf-8'
+    )
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      '/test/repo/.orca/issue-command',
+      'local command\n',
+      'utf-8'
+    )
+  })
+
+  it('deletes the local override when the override is cleared', async () => {
+    const fs = await import('fs')
+    const { writeIssueCommand } = await import('./hooks')
+    writeIssueCommand('/test/repo', '   ')
+
+    expect(vi.mocked(fs.rmSync)).toHaveBeenCalledWith('/test/repo/.orca/issue-command', {
+      force: true
+    })
   })
 })
 
@@ -347,26 +468,15 @@ describe('runHook', () => {
 
     try {
       const { runHook } = await import('./hooks')
-      const result = await runHook(
-        'setup',
-        '\\\\wsl.localhost\\Ubuntu\\home\\jin\\feature',
-        {
-          ...makeRepo(),
-          path: 'C:\\Users\\jinwo\\git\\orca'
-        }
-      )
+      const result = await runHook('setup', '\\\\wsl.localhost\\Ubuntu\\home\\jin\\feature', {
+        ...makeRepo(),
+        path: 'C:\\Users\\jinwo\\git\\orca'
+      })
 
       expect(result).toEqual({ success: true, output: '' })
       expect(execFileMock).toHaveBeenCalledWith(
         'wsl.exe',
-        [
-          '-d',
-          'Ubuntu',
-          '--',
-          'bash',
-          '-c',
-          "cd '/home/jin/feature' && echo hello"
-        ],
+        ['-d', 'Ubuntu', '--', 'bash', '-c', "cd '/home/jin/feature' && echo hello"],
         expect.any(Object),
         expect.any(Function)
       )

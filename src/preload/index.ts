@@ -335,7 +335,20 @@ const api = {
 
   hooks: {
     check: (args: { repoId: string }): Promise<{ hasHooks: boolean; hooks: unknown }> =>
-      ipcRenderer.invoke('hooks:check', args)
+      ipcRenderer.invoke('hooks:check', args),
+
+    readIssueCommand: (args: {
+      repoId: string
+    }): Promise<{
+      localContent: string | null
+      sharedContent: string | null
+      effectiveContent: string | null
+      localFilePath: string
+      source: 'local' | 'shared' | 'none'
+    }> => ipcRenderer.invoke('hooks:readIssueCommand', args),
+
+    writeIssueCommand: (args: { repoId: string; content: string }): Promise<void> =>
+      ipcRenderer.invoke('hooks:writeIssueCommand', args)
   },
 
   cache: {

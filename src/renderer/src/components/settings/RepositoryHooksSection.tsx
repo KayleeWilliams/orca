@@ -1,7 +1,8 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OrcaHooks, Repo, SetupRunPolicy } from '../../../../shared/types'
 import { AlertTriangle } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '../ui/button'
-import { DEFAULT_REPO_HOOK_SETTINGS } from './SettingsConstants'
 import { SearchableSetting } from './SearchableSetting'
 
 type RepositoryHooksSectionProps = {
@@ -14,21 +15,11 @@ type RepositoryHooksSectionProps = {
   onUpdateSetupRunPolicy: (policy: SetupRunPolicy) => void
 }
 
-const SETUP_RUN_POLICY_OPTIONS: {
-  policy: SetupRunPolicy
-  label: string
-  description: string
-}[] = [
-  {
-    policy: 'ask',
-    label: 'Ask every time',
-    description: 'Prompt before running setup.'
-  },
-  {
-    policy: 'run-by-default',
-    label: 'Run by default',
-    description: 'Run setup automatically.'
-  },
+type PolicyOption<P> = { policy: P; label: string; description: string }
+
+const SETUP_RUN_POLICY_OPTIONS: PolicyOption<SetupRunPolicy>[] = [
+  { policy: 'ask', label: 'Ask every time', description: 'Prompt before running setup.' },
+  { policy: 'run-by-default', label: 'Run by default', description: 'Run setup automatically.' },
   {
     policy: 'skip-by-default',
     label: 'Skip by default',
@@ -40,7 +31,50 @@ const EXAMPLE_TEMPLATE = `scripts:
   setup: |
     pnpm worktree:setup
   archive: |
-    echo "Cleaning up before archive"`
+    echo "Cleaning up before archive"
+issueCommand: |
+  claude -p "Read issue #{{issue}} and write a design doc to docs/design-{{issue}}.md"`
+
+/** Shared button grid for setup run-policy selectors. */
+function PolicyOptionGrid<P extends string>({
+  options,
+  selected,
+  onSelect,
+  columns
+}: {
+  options: PolicyOption<P>[]
+  selected: P
+  onSelect: (p: P) => void
+  columns: string
+}): React.JSX.Element {
+  return (
+    <div className={`grid gap-2 ${columns}`}>
+      {options.map(({ policy, label, description }) => {
+        const active = selected === policy
+        return (
+          <button
+            key={policy}
+            onClick={() => onSelect(policy)}
+            className={`rounded-xl border px-3 py-2.5 text-center transition-colors ${
+              active
+                ? 'border-foreground/15 bg-accent text-accent-foreground'
+                : 'border-border/60 bg-background text-foreground hover:border-border hover:bg-muted/40'
+            }`}
+          >
+            <span className={`block text-sm ${active ? 'font-semibold' : 'font-medium'}`}>
+              {label}
+            </span>
+            <p
+              className={`mt-1 text-[11px] leading-4 ${active ? 'text-accent-foreground/80' : 'text-muted-foreground'}`}
+            >
+              {description}
+            </p>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 function ExampleTemplateCard({
   copiedTemplate,
@@ -84,11 +118,77 @@ export function RepositoryHooksSection({
   onUpdateSetupRunPolicy
 }: RepositoryHooksSectionProps): React.JSX.Element {
   const yamlState = yamlHooks ? 'loaded' : hasHooksFile ? 'invalid' : 'missing'
+  const hs = repo.hookSettings
   const legacyHookEntries = (['setup', 'archive'] as const)
-    .map((hookName) => [hookName, repo.hookSettings?.scripts[hookName]?.trim() ?? ''] as const)
+    .map((hookName) => [hookName, hs?.scripts[hookName]?.trim() ?? ''] as const)
     .filter(([, script]) => Boolean(script))
-  const selectedSetupRunPolicy =
-    repo.hookSettings?.setupRunPolicy ?? DEFAULT_REPO_HOOK_SETTINGS.setupRunPolicy
+  // Why: the type allows `undefined` in persisted settings for backward compatibility,
+  // but the UI always needs a concrete value so the policy grid has an active selection.
+  const selectedSetupRunPolicy: SetupRunPolicy = hs?.setupRunPolicy ?? 'run-by-default'
+  const [issueCommandDraft, setIssueCommandDraft] = useState('')
+  const [hasSharedIssueCommand, setHasSharedIssueCommand] = useState(false)
+  const [issueCommandSaveError, setIssueCommandSaveError] = useState<string | null>(null)
+  // Why: track the latest draft across blur/unmount so repo switches still
+  // persist the user's local override without racing the next repo's state load.
+  const issueCommandDraftRef = useRef(issueCommandDraft)
+  issueCommandDraftRef.current = issueCommandDraft
+  const lastCommittedIssueCommandRef = useRef('')
+
+  useEffect(() => {
+    let cancelled = false
+    const repoId = repo.id
+
+    setIssueCommandDraft('')
+    setHasSharedIssueCommand(false)
+    setIssueCommandSaveError(null)
+
+    // Why: settings only edit the local override, but we still need to know
+    // whether `orca.yaml` defines a shared default so the helper copy can
+    // explain what happens when the override is blank.
+    void window.api.hooks
+      .readIssueCommand({ repoId })
+      .then((result) => {
+        if (cancelled) {
+          return
+        }
+        const localContent = result.localContent ?? ''
+        setIssueCommandDraft(localContent)
+        setHasSharedIssueCommand(Boolean(result.sharedContent))
+        lastCommittedIssueCommandRef.current = localContent
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIssueCommandDraft('')
+          setHasSharedIssueCommand(false)
+          lastCommittedIssueCommandRef.current = ''
+        }
+      })
+
+    return () => {
+      cancelled = true
+      const draft = issueCommandDraftRef.current.trim()
+      if (draft !== lastCommittedIssueCommandRef.current) {
+        void window.api.hooks.writeIssueCommand({ repoId, content: draft }).catch((err) => {
+          console.error('[RepositoryHooksSection] Failed to save issue command on unmount:', err)
+        })
+      }
+    }
+  }, [repo.id])
+
+  const commitIssueCommand = useCallback(async (): Promise<void> => {
+    const trimmed = issueCommandDraft.trim()
+    setIssueCommandDraft(trimmed)
+    try {
+      await window.api.hooks.writeIssueCommand({ repoId: repo.id, content: trimmed })
+      lastCommittedIssueCommandRef.current = trimmed
+      setIssueCommandSaveError(null)
+    } catch (err) {
+      console.error('[RepositoryHooksSection] Failed to write issue command:', err)
+      const message = err instanceof Error ? err.message : 'Failed to save GitHub issue command.'
+      setIssueCommandSaveError(message)
+      toast.error(message)
+    }
+  }, [issueCommandDraft, repo.id])
 
   return (
     <section className="space-y-6">
@@ -102,7 +202,7 @@ export function RepositoryHooksSection({
 
       <SearchableSetting
         title="orca.yaml hooks"
-        description="Shared setup and archive hook commands for this repository."
+        description="Shared setup, archive, and issue automation commands for this repository."
         keywords={['hooks', 'setup', 'archive', 'yaml']}
       >
         <div
@@ -132,10 +232,10 @@ export function RepositoryHooksSection({
             </p>
             <p className="text-xs text-muted-foreground">
               {yamlState === 'loaded'
-                ? 'Hook commands are defined in the repo and shared with everyone who uses it.'
+                ? 'Shared hook and issue-automation defaults are defined in the repo and available to everyone who uses it.'
                 : yamlState === 'invalid'
                   ? 'The core configuration file exists in the repo root, but Orca could not parse the supported hook definitions yet.'
-                  : 'Add an `orca.yaml` file to enable setup or archive hooks for this repo. Example template:'}
+                  : 'Add an `orca.yaml` file to enable shared setup, archive, or issue-automation defaults for this repo. Example template:'}
             </p>
           </div>
 
@@ -147,7 +247,7 @@ export function RepositoryHooksSection({
                 </pre>
               </div>
               <p className="text-xs text-muted-foreground">
-                Edit `orca.yaml` in the repository if you need to change these commands.
+                Edit `orca.yaml` in the repository if you need to change these shared commands.
               </p>
             </div>
           ) : yamlState === 'invalid' ? (
@@ -165,7 +265,7 @@ export function RepositoryHooksSection({
                       {/* Why: once a repo has an `orca.yaml`, the failure mode is usually bad shape
                       rather than a missing concept. Showing a repair-oriented explanation and
                       template here lets maintainers fix the committed file without needing the doc. */}
-                      The file is present, but Orca could not find valid `setup` or `archive` hook
+                      The file is present, but Orca could not find valid `scripts` or `issueCommand`
                       definitions in the expected format.
                     </p>
                   </div>
@@ -252,33 +352,45 @@ export function RepositoryHooksSection({
             </p>
           </div>
 
-          <div className="grid gap-2 md:grid-cols-3">
-            {SETUP_RUN_POLICY_OPTIONS.map(({ policy, label, description }) => {
-              const selected = selectedSetupRunPolicy === policy
+          <PolicyOptionGrid
+            options={SETUP_RUN_POLICY_OPTIONS}
+            selected={selectedSetupRunPolicy}
+            onSelect={onUpdateSetupRunPolicy}
+            columns="md:grid-cols-3"
+          />
+        </div>
+      </SearchableSetting>
 
-              return (
-                <button
-                  key={policy}
-                  onClick={() => onUpdateSetupRunPolicy(policy)}
-                  className={`rounded-xl border px-3 py-2.5 text-center transition-colors ${
-                    selected
-                      ? 'border-foreground/15 bg-accent text-accent-foreground'
-                      : 'border-border/60 bg-background text-foreground hover:border-border hover:bg-muted/40'
-                  }`}
-                >
-                  <span className={`block text-sm ${selected ? 'font-semibold' : 'font-medium'}`}>
-                    {label}
-                  </span>
-                  <p
-                    className={`mt-1 text-[11px] leading-4 ${
-                      selected ? 'text-accent-foreground/80' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {description}
-                  </p>
-                </button>
-              )
-            })}
+      <SearchableSetting
+        title="GitHub Issue Command"
+        description="Optional per-user override for the linked-issue command."
+        keywords={['github issue command', 'issue command', 'workflow', 'agent', 'github']}
+      >
+        <div className="space-y-3 rounded-2xl border border-border/50 bg-background/80 p-4 shadow-sm">
+          <div className="space-y-1">
+            <h5 className="text-sm font-semibold">GitHub Issue Command</h5>
+          </div>
+          <div className="space-y-2">
+            <textarea
+              value={issueCommandDraft}
+              onChange={(e) => setIssueCommandDraft(e.target.value)}
+              onBlur={commitIssueCommand}
+              placeholder='claude -p "Read issue #{{issue}} and write a design doc to docs/design-{{issue}}.md covering the approach, edge cases, and test plan." && codex exec "Review docs/design-{{issue}}.md for gaps, missing edge cases, or unclear requirements. Add feedback at the bottom."'
+              rows={5}
+              className="w-full min-w-0 resize-y rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use <code className="rounded bg-muted px-1 py-0.5">{'{{issue}}'}</code> for the issue
+              number.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Leave blank to use the repo default from{' '}
+              <code className="rounded bg-muted px-1 py-0.5">orca.yaml</code>
+              {hasSharedIssueCommand ? '.' : ' when one exists.'}
+            </p>
+            {issueCommandSaveError ? (
+              <p className="text-xs text-destructive">{issueCommandSaveError}</p>
+            ) : null}
           </div>
         </div>
       </SearchableSetting>
@@ -288,22 +400,14 @@ export function RepositoryHooksSection({
 
 const PARSE_ERROR_FIXES = [
   'Check the indentation under `scripts:`. Hook keys should use two spaces, and command lines should use four.',
-  'Define only the supported hook keys: `setup` and `archive`.',
+  'Define only the supported keys: `scripts`, `setup`, `archive`, and `issueCommand`.',
   'Compare your file against the working template below and copy that shape if needed.'
 ]
-
-function renderYamlScriptPreview(yamlHooks: OrcaHooks | null): string {
-  return `scripts:${
-    yamlHooks?.scripts.setup
-      ? `
-  setup: |
-${yamlHooks.scripts.setup.replace(/^/gm, '    ')}`
-      : ''
-  }${
-    yamlHooks?.scripts.archive
-      ? `
-  archive: |
-${yamlHooks.scripts.archive.replace(/^/gm, '    ')}`
-      : ''
-  }`
+function renderYamlScriptPreview(hooks: OrcaHooks | null): string {
+  const fmt = (key: string, cmd?: string): string =>
+    cmd ? `\n  ${key}: |\n${cmd.replace(/^/gm, '    ')}` : ''
+  const issueCommand = hooks?.issueCommand
+    ? `\nissueCommand: |\n${hooks.issueCommand.replace(/^/gm, '  ')}`
+    : ''
+  return `scripts:${fmt('setup', hooks?.scripts.setup)}${fmt('archive', hooks?.scripts.archive)}${issueCommand}`
 }

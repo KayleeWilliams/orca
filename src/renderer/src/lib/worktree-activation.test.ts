@@ -7,6 +7,7 @@ function createMockStore(overrides: Record<string, unknown> = {}) {
     createTab: vi.fn(() => ({ id: 'tab-1' })),
     setActiveTab: vi.fn(),
     queueTabSetupSplit: vi.fn(),
+    queueTabIssueCommandSplit: vi.fn(),
     ...overrides
   }
 }
@@ -57,5 +58,53 @@ describe('ensureWorktreeHasInitialTerminal', () => {
     expect(store.createTab).not.toHaveBeenCalled()
     expect(store.setActiveTab).not.toHaveBeenCalled()
     expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
+    expect(store.queueTabIssueCommandSplit).not.toHaveBeenCalled()
+  })
+
+  it('queues an issue command split when issueCommand is provided', () => {
+    const store = createMockStore()
+
+    ensureWorktreeHasInitialTerminal(store, 'wt-1', undefined, {
+      command: 'claude "Fix issue #42"'
+    })
+
+    expect(store.createTab).toHaveBeenCalledWith('wt-1')
+    expect(store.setActiveTab).toHaveBeenCalledWith('tab-1')
+    expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
+    expect(store.queueTabIssueCommandSplit).toHaveBeenCalledWith('tab-1', {
+      command: 'claude "Fix issue #42"'
+    })
+  })
+
+  it('queues both setup split and issue command split when both are provided', () => {
+    const store = createMockStore()
+
+    ensureWorktreeHasInitialTerminal(
+      store,
+      'wt-1',
+      {
+        runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+        envVars: { ORCA_ROOT_PATH: '/tmp/repo' }
+      },
+      {
+        command: 'claude "Fix issue #42"'
+      }
+    )
+
+    expect(store.queueTabSetupSplit).toHaveBeenCalledWith('tab-1', {
+      command: 'bash /tmp/repo/.git/orca/setup-runner.sh',
+      env: { ORCA_ROOT_PATH: '/tmp/repo' }
+    })
+    expect(store.queueTabIssueCommandSplit).toHaveBeenCalledWith('tab-1', {
+      command: 'claude "Fix issue #42"'
+    })
+  })
+
+  it('does not queue issue command split when issueCommand is not provided', () => {
+    const store = createMockStore()
+
+    ensureWorktreeHasInitialTerminal(store, 'wt-1')
+
+    expect(store.queueTabIssueCommandSplit).not.toHaveBeenCalled()
   })
 })

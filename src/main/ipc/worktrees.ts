@@ -20,9 +20,11 @@ import {
   createSetupRunnerScript,
   getEffectiveHooks,
   loadHooks,
+  readIssueCommand,
   runHook,
   hasHooksFile,
-  shouldRunSetupForCreate
+  shouldRunSetupForCreate,
+  writeIssueCommand
 } from '../hooks'
 import {
   sanitizeWorktreeName,
@@ -48,6 +50,8 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
   ipcMain.removeHandler('worktrees:updateMeta')
   ipcMain.removeHandler('worktrees:persistSortOrder')
   ipcMain.removeHandler('hooks:check')
+  ipcMain.removeHandler('hooks:readIssueCommand')
+  ipcMain.removeHandler('hooks:writeIssueCommand')
 
   ipcMain.handle('worktrees:listAll', async () => {
     // Why: use ensureAuthorizedRootsCache (not rebuild) to avoid redundantly
@@ -306,6 +310,28 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
       hasHooks: has,
       hooks
     }
+  })
+
+  ipcMain.handle('hooks:readIssueCommand', (_event, args: { repoId: string }) => {
+    const repo = store.getRepo(args.repoId)
+    if (!repo || isFolderRepo(repo)) {
+      return {
+        localContent: null,
+        sharedContent: null,
+        effectiveContent: null,
+        localFilePath: '',
+        source: 'none' as const
+      }
+    }
+    return readIssueCommand(repo.path)
+  })
+
+  ipcMain.handle('hooks:writeIssueCommand', (_event, args: { repoId: string; content: string }) => {
+    const repo = store.getRepo(args.repoId)
+    if (!repo || isFolderRepo(repo)) {
+      return
+    }
+    writeIssueCommand(repo.path, args.content)
   })
 }
 
