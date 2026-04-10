@@ -32,14 +32,13 @@ async function isGhAuthenticated(): Promise<boolean> {
     await execFileAsync('gh', ['auth', 'status'], {
       encoding: 'utf-8'
     })
-    // Why: newer gh versions can change the human-readable wording, but a zero
-    // exit from `gh auth status` still means the CLI has a usable login.
+    // Why: for plain-text `gh auth status`, exit 0 means gh did not detect any
+    // authentication issues for the checked hosts/accounts.
     return true
   } catch (error) {
-    // Why: older gh builds wrote successful auth details to stderr, and some
-    // environments surface partial output on the thrown error object. Keep a
-    // compatibility fallback so we do not show a false "not authenticated"
-    // banner just because the text landed on an unexpected stream.
+    // Why: some environments may surface partial command output on the thrown
+    // error object. Keep a compatibility fallback so we avoid a false auth
+    // warning if success markers are present despite a non-zero result.
     const stdout = (error as { stdout?: string }).stdout ?? ''
     const stderr = (error as { stderr?: string }).stderr ?? ''
     const output = `${stdout}\n${stderr}`
