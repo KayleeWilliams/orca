@@ -1,6 +1,6 @@
 /* eslint-disable max-lines */
 
-import React, { useState, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 import { ChevronRight } from 'lucide-react'
 import { useAppStore } from '@/store'
@@ -310,7 +310,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   }, [handleOpenChange, openSettingsTarget, selectedRepo, setActiveView])
 
   // Auto-select repo when opening.
-  React.useEffect(() => {
+  useEffect(() => {
     if (resetTimeoutRef.current !== null) {
       window.clearTimeout(resetTimeoutRef.current)
       resetTimeoutRef.current = null
@@ -347,7 +347,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   }, [isOpen])
 
   // Focus and select name input when suggestion is applied
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isOpen || !repoId || !suggestedName) {
       return
     }
@@ -362,14 +362,14 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   }, [isOpen, repoId, suggestedName])
 
   // Safety guard: creating a worktree requires at least one repo.
-  React.useEffect(() => {
+  useEffect(() => {
     if (isOpen && repos.length === 0) {
       handleOpenChange(false)
     }
   }, [eligibleRepos.length, handleOpenChange, isOpen, repos.length])
 
   // Load hook state and the effective issue-command template for the selected repo.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isOpen || !repoId) {
       return
     }
@@ -424,7 +424,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
     }
   }, [isOpen, repoId])
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (shouldWaitForSetupCheck) {
       setSetupDecision(null)
       return
@@ -444,7 +444,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
   }, [setupConfig, setupPolicy, shouldWaitForSetupCheck])
 
   // Auto-enable issue automation when a valid linked issue can use the repo template.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!canOfferIssueAutomation) {
       setRunIssueAutomation(issueAutomationUserChoiceRef.current ?? false)
       return
