@@ -324,7 +324,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
                   <TooltipTrigger asChild>
                     <Badge
                       variant="outline"
-                      className="h-[16px] px-1.5 text-[10px] font-medium rounded shrink-0 leading-none text-blue-600 border-blue-500/30 bg-blue-500/5 dark:text-blue-400 dark:border-blue-400/30 dark:bg-blue-400/5"
+                      className="h-[16px] px-1.5 text-[10px] font-medium rounded shrink-0 leading-none text-muted-foreground border-muted-foreground/30 bg-muted-foreground/5"
                     >
                       primary
                     </Badge>
@@ -475,7 +475,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
                       <PullRequestIcon
                         className={cn(
                           'size-3 shrink-0',
-                          pr.state === 'merged' && 'text-purple-500/80',
+                          pr.state === 'merged' && 'text-purple-600/70 dark:text-purple-400/70',
                           pr.state === 'open' && 'text-emerald-500/80',
                           pr.state === 'closed' && 'text-muted-foreground/60',
                           pr.state === 'draft' && 'text-muted-foreground/50',
