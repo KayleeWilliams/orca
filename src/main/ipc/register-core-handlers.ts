@@ -9,6 +9,7 @@ import { registerClaudeUsageHandlers } from './claude-usage'
 import { registerCodexUsageHandlers } from './codex-usage'
 import { registerGitHubHandlers } from './github'
 import { registerStatsHandlers } from './stats'
+import { registerRateLimitHandlers } from './rate-limits'
 import { registerRuntimeHandlers } from './runtime'
 import { registerNotificationHandlers } from './notifications'
 import { setTrustedBrowserRendererWebContentsId } from './browser'
@@ -17,6 +18,7 @@ import { registerSettingsHandlers } from './settings'
 import { registerBrowserHandlers } from './browser'
 import { registerShellHandlers } from './shell'
 import { registerUIHandlers } from './ui'
+import { registerCodexAccountHandlers } from './codex-accounts'
 import { warmSystemFontFamilies } from '../system-fonts'
 import {
   registerClipboardHandlers,
@@ -24,6 +26,8 @@ import {
 } from '../window/attach-main-window-services'
 import type { ClaudeUsageStore } from '../claude-usage/store'
 import type { CodexUsageStore } from '../codex-usage/store'
+import type { RateLimitService } from '../rate-limits/service'
+import type { CodexAccountService } from '../codex-accounts/service'
 
 export function registerCoreHandlers(
   store: Store,
@@ -31,6 +35,8 @@ export function registerCoreHandlers(
   stats: StatsCollector,
   claudeUsage: ClaudeUsageStore,
   codexUsage: CodexUsageStore,
+  codexAccounts: CodexAccountService,
+  rateLimits: RateLimitService,
   mainWindowWebContentsId: number | null = null
 ): void {
   setTrustedBrowserRendererWebContentsId(mainWindowWebContentsId)
@@ -38,6 +44,8 @@ export function registerCoreHandlers(
   registerPreflightHandlers()
   registerClaudeUsageHandlers(claudeUsage)
   registerCodexUsageHandlers(codexUsage)
+  registerCodexAccountHandlers(codexAccounts)
+  registerRateLimitHandlers(rateLimits)
   registerGitHubHandlers(store, stats)
   registerStatsHandlers(stats)
   registerNotificationHandlers(store)

@@ -22,6 +22,11 @@ export type TerminalSlice = {
   activeTabIdByWorktree: Record<string, string | null>
   ptyIdsByTabId: Record<string, string[]>
   suppressedPtyExitIds: Record<string, true>
+  pendingCodexPaneRestartIds: Record<string, true>
+  codexRestartNoticeByPtyId: Record<
+    string,
+    { previousAccountLabel: string; nextAccountLabel: string }
+  >
   expandedPaneByTabId: Record<string, boolean>
   canExpandPaneByTabId: Record<string, boolean>
   terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot>
@@ -49,7 +54,14 @@ export type TerminalSlice = {
   updateTabPtyId: (tabId: string, ptyId: string) => void
   clearTabPtyId: (tabId: string, ptyId?: string) => void
   shutdownWorktreeTerminals: (worktreeId: string) => Promise<void>
+  suppressPtyExit: (ptyId: string) => void
   consumeSuppressedPtyExit: (ptyId: string) => boolean
+  queueCodexPaneRestarts: (ptyIds: string[]) => void
+  consumePendingCodexPaneRestart: (ptyId: string) => boolean
+  markCodexRestartNotices: (
+    notices: { ptyId: string; previousAccountLabel: string; nextAccountLabel: string }[]
+  ) => void
+  clearCodexRestartNotice: (ptyId: string) => void
   setTabPaneExpanded: (tabId: string, expanded: boolean) => void
   setTabCanExpandPane: (tabId: string, canExpand: boolean) => void
   setTabLayout: (tabId: string, layout: TerminalLayoutSnapshot | null) => void
@@ -90,6 +102,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   activeTabIdByWorktree: {},
   ptyIdsByTabId: {},
   suppressedPtyExitIds: {},
+  pendingCodexPaneRestartIds: {},
+  codexRestartNoticeByPtyId: {},
   expandedPaneByTabId: {},
   canExpandPaneByTabId: {},
   terminalLayoutsByTabId: {},
@@ -412,7 +426,23 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       nextPtyIdsByTabId[tabId] = ptyId
         ? (nextPtyIdsByTabId[tabId] ?? []).filter((id) => id !== ptyId)
         : []
-      return { tabsByWorktree: next, ptyIdsByTabId: nextPtyIdsByTabId }
+      const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
+      const nextCodexRestartNoticeByPtyId = { ...s.codexRestartNoticeByPtyId }
+      if (ptyId) {
+        delete nextPendingCodexPaneRestartIds[ptyId]
+        delete nextCodexRestartNoticeByPtyId[ptyId]
+      } else {
+        for (const currentPtyId of s.ptyIdsByTabId[tabId] ?? []) {
+          delete nextPendingCodexPaneRestartIds[currentPtyId]
+          delete nextCodexRestartNoticeByPtyId[currentPtyId]
+        }
+      }
+      return {
+        tabsByWorktree: next,
+        ptyIdsByTabId: nextPtyIdsByTabId,
+        pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
+        codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId
+      }
     })
 
     // Bump meaningful activity when a PTY exits, but skip if this exit
@@ -440,6 +470,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const nextSuppressedPtyExitIds = {
         ...s.suppressedPtyExitIds,
         ...Object.fromEntries(ptyIds.map((ptyId) => [ptyId, true] as const))
+      }
+      const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
+      const nextCodexRestartNoticeByPtyId = { ...s.codexRestartNoticeByPtyId }
+      for (const ptyId of ptyIds) {
+        delete nextPendingCodexPaneRestartIds[ptyId]
+        delete nextCodexRestartNoticeByPtyId[ptyId]
       }
       // Why: clear any queued setup and issue-command splits for the affected
       // tabs so stale commands do not fire unintended splits when the worktree
@@ -473,6 +509,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         tabsByWorktree: nextTabsByWorktree,
         ptyIdsByTabId: nextPtyIdsByTabId,
         suppressedPtyExitIds: nextSuppressedPtyExitIds,
+        pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
+        codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId,
         pendingSetupSplitByTabId: nextPendingSetupSplitByTabId,
         pendingIssueCommandSplitByTabId: nextPendingIssueCommandSplitByTabId,
         browserTabsByWorktree: nextBrowserTabsByWorktree,
@@ -502,6 +540,88 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       return { suppressedPtyExitIds: next }
     })
     return wasSuppressed
+  },
+
+  suppressPtyExit: (ptyId) => {
+    set((s) => ({
+      suppressedPtyExitIds: { ...s.suppressedPtyExitIds, [ptyId]: true }
+    }))
+  },
+
+  queueCodexPaneRestarts: (ptyIds) => {
+    if (ptyIds.length === 0) {
+      return
+    }
+    set((s) => ({
+      pendingCodexPaneRestartIds: {
+        ...s.pendingCodexPaneRestartIds,
+        ...Object.fromEntries(ptyIds.map((ptyId) => [ptyId, true] as const))
+      }
+    }))
+  },
+
+  consumePendingCodexPaneRestart: (ptyId) => {
+    let wasQueued = false
+    set((s) => {
+      if (!s.pendingCodexPaneRestartIds[ptyId]) {
+        return {}
+      }
+      wasQueued = true
+      const next = { ...s.pendingCodexPaneRestartIds }
+      delete next[ptyId]
+      return { pendingCodexPaneRestartIds: next }
+    })
+    return wasQueued
+  },
+
+  markCodexRestartNotices: (notices) => {
+    if (notices.length === 0) {
+      return
+    }
+    set((s) => {
+      const next = { ...s.codexRestartNoticeByPtyId }
+      const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
+      for (const notice of notices) {
+        const existing = next[notice.ptyId]
+        const previousAccountLabel = existing?.previousAccountLabel ?? notice.previousAccountLabel
+
+        // Why: a live Codex pane stays on the account it originally launched
+        // with until that pane actually restarts. Repeated account switches
+        // must preserve that original pane account; otherwise A -> B -> A
+        // keeps showing a stale restart notice even though the pane never left
+        // account A and no longer needs a restart.
+        if (previousAccountLabel === notice.nextAccountLabel) {
+          delete next[notice.ptyId]
+          delete nextPendingCodexPaneRestartIds[notice.ptyId]
+          continue
+        }
+
+        next[notice.ptyId] = {
+          previousAccountLabel,
+          nextAccountLabel: notice.nextAccountLabel
+        }
+      }
+      return {
+        codexRestartNoticeByPtyId: next,
+        pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds
+      }
+    })
+  },
+
+  clearCodexRestartNotice: (ptyId) => {
+    set((s) => {
+      if (!s.codexRestartNoticeByPtyId[ptyId]) {
+        return {}
+      }
+      const next = { ...s.codexRestartNoticeByPtyId }
+      const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
+      delete next[ptyId]
+      delete nextPendingCodexPaneRestartIds[ptyId]
+      return {
+        codexRestartNoticeByPtyId: next,
+        pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds
+      }
+    })
   },
 
   setTabPaneExpanded: (tabId, expanded) => {

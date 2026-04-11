@@ -14,8 +14,10 @@ const {
   registerUIHandlersMock,
   registerFilesystemHandlersMock,
   registerRuntimeHandlersMock,
+  registerCodexAccountHandlersMock,
   registerClipboardHandlersMock,
   registerUpdaterHandlersMock,
+  registerRateLimitHandlersMock,
   registerBrowserHandlersMock,
   setTrustedBrowserRendererWebContentsIdMock,
   registerFilesystemWatcherHandlersMock
@@ -33,8 +35,10 @@ const {
   registerUIHandlersMock: vi.fn(),
   registerFilesystemHandlersMock: vi.fn(),
   registerRuntimeHandlersMock: vi.fn(),
+  registerCodexAccountHandlersMock: vi.fn(),
   registerClipboardHandlersMock: vi.fn(),
   registerUpdaterHandlersMock: vi.fn(),
+  registerRateLimitHandlersMock: vi.fn(),
   registerBrowserHandlersMock: vi.fn(),
   setTrustedBrowserRendererWebContentsIdMock: vi.fn(),
   registerFilesystemWatcherHandlersMock: vi.fn()
@@ -92,8 +96,16 @@ vi.mock('./filesystem-watcher', () => ({
   registerFilesystemWatcherHandlers: registerFilesystemWatcherHandlersMock
 }))
 
+vi.mock('./rate-limits', () => ({
+  registerRateLimitHandlers: registerRateLimitHandlersMock
+}))
+
 vi.mock('./runtime', () => ({
   registerRuntimeHandlers: registerRuntimeHandlersMock
+}))
+
+vi.mock('./codex-accounts', () => ({
+  registerCodexAccountHandlers: registerCodexAccountHandlersMock
 }))
 
 vi.mock('../window/attach-main-window-services', () => ({
@@ -123,8 +135,10 @@ describe('registerCoreHandlers', () => {
     registerUIHandlersMock.mockReset()
     registerFilesystemHandlersMock.mockReset()
     registerRuntimeHandlersMock.mockReset()
+    registerCodexAccountHandlersMock.mockReset()
     registerClipboardHandlersMock.mockReset()
     registerUpdaterHandlersMock.mockReset()
+    registerRateLimitHandlersMock.mockReset()
     registerBrowserHandlersMock.mockReset()
     setTrustedBrowserRendererWebContentsIdMock.mockReset()
     registerFilesystemWatcherHandlersMock.mockReset()
@@ -136,17 +150,23 @@ describe('registerCoreHandlers', () => {
     const stats = { marker: 'stats' }
     const claudeUsage = { marker: 'claudeUsage' }
     const codexUsage = { marker: 'codexUsage' }
+    const codexAccounts = { marker: 'codexAccounts' }
+    const rateLimits = { marker: 'rateLimits' }
 
     registerCoreHandlers(
       store as never,
       runtime as never,
       stats as never,
       claudeUsage as never,
-      codexUsage as never
+      codexUsage as never,
+      codexAccounts as never,
+      rateLimits as never
     )
 
     expect(registerClaudeUsageHandlersMock).toHaveBeenCalledWith(claudeUsage)
     expect(registerCodexUsageHandlersMock).toHaveBeenCalledWith(codexUsage)
+    expect(registerCodexAccountHandlersMock).toHaveBeenCalledWith(codexAccounts)
+    expect(registerRateLimitHandlersMock).toHaveBeenCalledWith(rateLimits)
     expect(registerGitHubHandlersMock).toHaveBeenCalledWith(store, stats)
     expect(registerStatsHandlersMock).toHaveBeenCalledWith(stats)
     expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store)

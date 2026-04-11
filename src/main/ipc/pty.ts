@@ -1,3 +1,8 @@
+/* eslint-disable max-lines -- Why: PTY IPC is intentionally centralized in one
+main-process module so spawn-time environment scoping, lifecycle cleanup,
+foreground-process inspection, and renderer IPC stay behind a single audited
+boundary. Splitting it by line count would scatter tightly coupled terminal
+process behavior across files without a cleaner ownership seam. */
 import { basename } from 'path'
 import { existsSync, accessSync, statSync, chmodSync, constants as fsConstants } from 'fs'
 import { type BrowserWindow, ipcMain } from 'electron'
@@ -22,7 +27,8 @@ let didEnsureSpawnHelperExecutable = false
 function getShellValidationError(shellPath: string): string | null {
   if (!existsSync(shellPath)) {
     return (
-      `Shell "${shellPath}" does not exist. ` + `Set a valid SHELL environment variable or install zsh/bash.`
+      `Shell "${shellPath}" does not exist. ` +
+      `Set a valid SHELL environment variable or install zsh/bash.`
     )
   }
   try {
@@ -41,15 +47,18 @@ function ensureNodePtySpawnHelperExecutable(): void {
 
   try {
     const unixTerminalPath = require.resolve('node-pty/lib/unixTerminal.js')
-    const packageRoot = basename(unixTerminalPath) === 'unixTerminal.js'
-      ? unixTerminalPath.replace(/[/\\]lib[/\\]unixTerminal\.js$/, '')
-      : unixTerminalPath
+    const packageRoot =
+      basename(unixTerminalPath) === 'unixTerminal.js'
+        ? unixTerminalPath.replace(/[/\\]lib[/\\]unixTerminal\.js$/, '')
+        : unixTerminalPath
     const candidates = [
       `${packageRoot}/build/Release/spawn-helper`,
       `${packageRoot}/build/Debug/spawn-helper`,
       `${packageRoot}/prebuilds/${process.platform}-${process.arch}/spawn-helper`
     ].map((candidate) =>
-      candidate.replace('app.asar/', 'app.asar.unpacked/').replace('node_modules.asar/', 'node_modules.asar.unpacked/')
+      candidate
+        .replace('app.asar/', 'app.asar.unpacked/')
+        .replace('node_modules.asar/', 'node_modules.asar.unpacked/')
     )
 
     for (const candidate of candidates) {
@@ -74,13 +83,18 @@ function ensureNodePtySpawnHelperExecutable(): void {
   }
 }
 
-export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRuntimeService): void {
+export function registerPtyHandlers(
+  mainWindow: BrowserWindow,
+  runtime?: OrcaRuntimeService,
+  getSelectedCodexHomePath?: () => string | null
+): void {
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
   ipcMain.removeHandler('pty:spawn')
   ipcMain.removeHandler('pty:resize')
   ipcMain.removeHandler('pty:kill')
   ipcMain.removeHandler('pty:hasChildProcesses')
+  ipcMain.removeHandler('pty:getForegroundProcess')
   ipcMain.removeAllListeners('pty:write')
 
   // Kill orphaned PTY processes from previous page loads when the renderer reloads.
@@ -200,6 +214,7 @@ export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRun
         throw new Error(`Working directory "${validationCwd}" is not a directory.`)
       }
 
+      const selectedCodexHomePath = getSelectedCodexHomePath?.() ?? null
       const spawnEnv = {
         ...process.env,
         ...args.env,
@@ -208,6 +223,15 @@ export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRun
         TERM_PROGRAM: 'Orca',
         FORCE_HYPERLINK: '1'
       } as Record<string, string>
+
+      // Why: the selected Codex account should affect Codex launched inside
+      // Orca terminals too, not just Orca's background quota fetches. Inject
+      // the managed CODEX_HOME only into this PTY environment so the override
+      // stays scoped to Orca terminals instead of mutating the app process or
+      // the user's external shells.
+      if (selectedCodexHomePath) {
+        spawnEnv.CODEX_HOME = selectedCodexHomePath
+      }
 
       // Why: When Electron is launched from Finder (not a terminal), the process
       // does not inherit the user's shell locale settings. Without an explicit
@@ -245,7 +269,9 @@ export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRun
         // should not brick Orca terminals. Fall back to system shells so the
         // user still gets a working terminal while the bad SHELL config remains.
         const configuredShellPath = shellPath
-        const fallbackShells = ['/bin/zsh', '/bin/bash', '/bin/sh'].filter((s) => s !== configuredShellPath)
+        const fallbackShells = ['/bin/zsh', '/bin/bash', '/bin/sh'].filter(
+          (s) => s !== configuredShellPath
+        )
         for (const fallback of fallbackShells) {
           if (getShellValidationError(fallback)) {
             continue
@@ -371,6 +397,23 @@ export function registerPtyHandlers(mainWindow: BrowserWindow, runtime?: OrcaRun
     } catch {
       // .process can throw if the PTY fd is already closed.
       return false
+    }
+  })
+
+  ipcMain.handle('pty:getForegroundProcess', (_event, args: { id: string }): string | null => {
+    const proc = ptyProcesses.get(args.id)
+    if (!proc) {
+      return null
+    }
+    try {
+      // Why: live Codex-session actions must key off the PTY foreground process,
+      // not the tab title. Agent CLIs do not reliably emit stable OSC titles,
+      // so title-based detection misses real Codex sessions that still need a
+      // restart after account switching.
+      return proc.process || null
+    } catch {
+      // .process can throw if the PTY fd is already closed.
+      return null
     }
   })
 }

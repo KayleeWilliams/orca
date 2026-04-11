@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties } from 'react'
+import type { IDisposable } from '@xterm/xterm'
 import { useAppStore } from '../../store'
 import {
   DEFAULT_TERMINAL_DIVIDER_DARK,
@@ -24,6 +25,7 @@ import { useTerminalPaneGlobalEffects } from './use-terminal-pane-global-effects
 import { useTerminalPaneLifecycle } from './use-terminal-pane-lifecycle'
 import { useTerminalPaneContextMenu } from './use-terminal-pane-context-menu'
 import { useNotificationDispatch } from './use-notification-dispatch'
+import { connectPanePty } from './pty-connection'
 
 /** Global set of buffer-capture callbacks, one per mounted TerminalPane.
  *  The beforeunload handler in App.tsx invokes every callback to populate
@@ -57,6 +59,7 @@ export default function TerminalPane({
     new Map()
   )
   const paneTransportsRef = useRef<Map<number, PtyTransport>>(new Map())
+  const panePtyBindingsRef = useRef<Map<number, IDisposable>>(new Map())
   const pendingWritesRef = useRef<Map<number, string>>(new Map())
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
@@ -85,6 +88,12 @@ export default function TerminalPane({
 
   const setTabPaneExpanded = useAppStore((store) => store.setTabPaneExpanded)
   const setTabCanExpandPane = useAppStore((store) => store.setTabCanExpandPane)
+  const suppressPtyExit = useAppStore((store) => store.suppressPtyExit)
+  const pendingCodexPaneRestartIds = useAppStore((store) => store.pendingCodexPaneRestartIds)
+  const consumePendingCodexPaneRestart = useAppStore(
+    (store) => store.consumePendingCodexPaneRestart
+  )
+  const clearCodexRestartNotice = useAppStore((store) => store.clearCodexRestartNotice)
   const savedLayout = useAppStore((store) => store.terminalLayoutsByTabId[tabId] ?? EMPTY_LAYOUT)
   const setTabLayout = useAppStore((store) => store.setTabLayout)
   const initialLayoutRef = useRef(savedLayout)
@@ -128,6 +137,7 @@ export default function TerminalPane({
 
   const systemPrefersDark = useSystemPrefersDark()
   const dispatchNotification = useNotificationDispatch(worktreeId)
+  const setCacheTimerStartedAt = useAppStore((store) => store.setCacheTimerStartedAt)
 
   // Memoized with useCallback so downstream hooks (useTerminalKeyboardShortcuts,
   // useTerminalPaneLifecycle, createExpandCollapseActions) don't tear down and
@@ -250,16 +260,18 @@ export default function TerminalPane({
     expandedStyleSnapshotRef,
     paneFontSizesRef,
     paneTransportsRef,
+    panePtyBindingsRef,
     pendingWritesRef,
     isActiveRef,
     onPtyExitRef,
     onPtyErrorRef,
     clearTabPtyId,
+    consumeSuppressedPtyExit: useAppStore((store) => store.consumeSuppressedPtyExit),
     updateTabTitle,
     updateTabPtyId,
     markWorktreeUnread,
     dispatchNotification,
-    setCacheTimerStartedAt: useAppStore((store) => store.setCacheTimerStartedAt),
+    setCacheTimerStartedAt,
     setTabPaneExpanded,
     setTabCanExpandPane,
     setExpandedPane,
@@ -269,6 +281,91 @@ export default function TerminalPane({
     paneTitlesRef,
     setRenamingPaneId
   })
+
+  const handleRestartCodexPane = useCallback(
+    (paneId: number) => {
+      const manager = managerRef.current
+      const pane = manager?.getPanes().find((candidate) => candidate.id === paneId)
+      if (!manager || !pane) {
+        return
+      }
+
+      const transport = paneTransportsRef.current.get(paneId)
+      const panePtyBinding = panePtyBindingsRef.current.get(paneId)
+      const existingPtyId = transport?.getPtyId()
+
+      if (existingPtyId) {
+        suppressPtyExit(existingPtyId)
+        clearCodexRestartNotice(existingPtyId)
+        // Why: pane-scoped Codex restarts should preserve the split layout and
+        // replace only the stale session in place. Clearing the PTY binding and
+        // consuming the upcoming suppressed exit keeps the pane mounted while a
+        // fresh PTY reconnects under the newly selected Codex account.
+        clearTabPtyId(tabId, existingPtyId)
+      }
+
+      panePtyBinding?.dispose()
+      panePtyBindingsRef.current.delete(paneId)
+      transport?.destroy?.()
+      paneTransportsRef.current.delete(paneId)
+      setCacheTimerStartedAt(`${tabId}:${paneId}`, null)
+
+      const newPaneBinding = connectPanePty(pane, manager, {
+        tabId,
+        worktreeId,
+        cwd,
+        startup: { command: 'codex' },
+        paneTransportsRef,
+        pendingWritesRef,
+        isActiveRef,
+        onPtyExitRef,
+        onPtyErrorRef,
+        clearTabPtyId,
+        consumeSuppressedPtyExit: useAppStore.getState().consumeSuppressedPtyExit,
+        updateTabTitle,
+        updateTabPtyId,
+        markWorktreeUnread,
+        dispatchNotification,
+        setCacheTimerStartedAt
+      })
+      panePtyBindingsRef.current.set(paneId, newPaneBinding)
+      manager.setActivePane(paneId, { focus: true })
+    },
+    [
+      clearCodexRestartNotice,
+      clearTabPtyId,
+      cwd,
+      dispatchNotification,
+      markWorktreeUnread,
+      onPtyExitRef,
+      setCacheTimerStartedAt,
+      suppressPtyExit,
+      tabId,
+      updateTabPtyId,
+      updateTabTitle,
+      worktreeId
+    ]
+  )
+
+  useEffect(() => {
+    const manager = managerRef.current
+    if (!manager) {
+      return
+    }
+
+    for (const pane of manager.getPanes()) {
+      const ptyId = paneTransportsRef.current.get(pane.id)?.getPtyId()
+      if (!ptyId || !pendingCodexPaneRestartIds[ptyId]) {
+        continue
+      }
+      // Why: the status-bar switcher can request a global restart for stale
+      // Codex sessions, but the actual execution must stay pane scoped so a
+      // split tab does not lose unrelated non-Codex panes.
+      if (consumePendingCodexPaneRestart(ptyId)) {
+        handleRestartCodexPane(pane.id)
+      }
+    }
+  }, [consumePendingCodexPaneRestart, handleRestartCodexPane, pendingCodexPaneRestartIds])
 
   useTerminalFontZoom({ isActive, managerRef, paneFontSizesRef, settingsRef })
 
@@ -534,7 +631,6 @@ export default function TerminalPane({
   }
 
   const activePane = managerRef.current?.getActivePane()
-
   return (
     <>
       <div

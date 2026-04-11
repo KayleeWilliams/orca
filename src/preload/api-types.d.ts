@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: the preload contract is intentionally centralized in one declaration file so renderer and preload stay in lockstep when IPC surfaces change. */
 import type {
   BrowserLoadError,
+  CodexRateLimitAccountsState,
   CreateWorktreeResult,
   DirEntry,
   FsChangedPayload,
@@ -51,6 +52,7 @@ import type {
   ClaudeUsageSessionRow,
   ClaudeUsageSummary
 } from '../../shared/claude-usage-types'
+import type { RateLimitState } from '../../shared/rate-limit-types'
 import type {
   CodexUsageBreakdownKind,
   CodexUsageBreakdownRow,
@@ -186,6 +188,7 @@ export type PreloadApi = {
     resize: (id: string, cols: number, rows: number) => void
     kill: (id: string) => Promise<void>
     hasChildProcesses: (id: string) => Promise<boolean>
+    getForegroundProcess: (id: string) => Promise<string | null>
     onData: (callback: (data: { id: string; data: string }) => void) => () => void
     onExit: (callback: (data: { id: string; code: number }) => void) => () => void
   }
@@ -223,6 +226,13 @@ export type PreloadApi = {
     get: () => Promise<GlobalSettings>
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
     listFonts: () => Promise<string[]>
+  }
+  codexAccounts: {
+    list: () => Promise<CodexRateLimitAccountsState>
+    add: () => Promise<CodexRateLimitAccountsState>
+    reauthenticate: (args: { accountId: string }) => Promise<CodexRateLimitAccountsState>
+    remove: (args: { accountId: string }) => Promise<CodexRateLimitAccountsState>
+    select: (args: { accountId: string | null }) => Promise<CodexRateLimitAccountsState>
   }
   cli: {
     getInstallStatus: () => Promise<CliInstallStatus>
@@ -350,6 +360,7 @@ export type PreloadApi = {
     onNewTerminalTab: (callback: () => void) => () => void
     onCloseActiveTab: (callback: () => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
+    onToggleStatusBar: (callback: () => void) => () => void
     onActivateWorktree: (
       callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
     ) => () => void
@@ -369,5 +380,11 @@ export type PreloadApi = {
   runtime: {
     syncWindowGraph: (graph: RuntimeSyncWindowGraph) => Promise<RuntimeStatus>
     getStatus: () => Promise<RuntimeStatus>
+  }
+  rateLimits: {
+    get: () => Promise<RateLimitState>
+    refresh: () => Promise<RateLimitState>
+    setPollingInterval: (ms: number) => Promise<void>
+    onUpdate: (callback: (state: RateLimitState) => void) => () => void
   }
 }
