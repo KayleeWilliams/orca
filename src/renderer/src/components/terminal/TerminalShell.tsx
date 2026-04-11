@@ -163,7 +163,7 @@ export function TerminalShell({
                 : 'This file has unsaved changes.'}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button type="button" variant="outline" size="sm" onClick={onSaveDialogCancel}>
               Cancel
             </Button>

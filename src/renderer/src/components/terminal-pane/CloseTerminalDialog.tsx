@@ -34,7 +34,7 @@ export default function CloseTerminalDialog({
             killed.
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter className="gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onCancel}>
             Cancel
           </Button>

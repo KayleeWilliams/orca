@@ -60,8 +60,17 @@ export const GENERAL_CACHE_TIMER_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const GENERAL_BROWSER_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Open Links In Orca',
+    description: 'Open terminal http(s) links in Orca browser tabs instead of the system browser.',
+    keywords: ['browser', 'preview', 'links', 'localhost', 'webview']
+  }
+]
+
 export const GENERAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ...GENERAL_WORKSPACE_SEARCH_ENTRIES,
+  ...GENERAL_BROWSER_SEARCH_ENTRIES,
   ...GENERAL_EDITOR_SEARCH_ENTRIES,
   ...GENERAL_CLI_SEARCH_ENTRIES,
   ...GENERAL_CACHE_TIMER_SEARCH_ENTRIES,

@@ -18,6 +18,7 @@ import {
 } from '../../../../shared/constants'
 import { clampNumber } from '@/lib/terminal-theme'
 import {
+  GENERAL_BROWSER_SEARCH_ENTRIES,
   GENERAL_CACHE_TIMER_SEARCH_ENTRIES,
   GENERAL_CLI_SEARCH_ENTRIES,
   GENERAL_EDITOR_SEARCH_ENTRIES,
@@ -158,6 +159,17 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
             />
           </button>
         </SearchableSetting>
+
+      </section>
+    ) : null,
+    matchesSettingsSearch(searchQuery, GENERAL_BROWSER_SEARCH_ENTRIES) ? (
+      <section key="browser" className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Browser</h3>
+          <p className="text-xs text-muted-foreground">
+            Control how Orca handles links from the terminal.
+          </p>
+        </div>
 
         <SearchableSetting
           title="Open Links In Orca"

@@ -840,7 +840,7 @@ export default function Terminal(): React.JSX.Element | null {
                 : 'This file has unsaved changes.'}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button type="button" variant="outline" size="sm" onClick={handleSaveDialogCancel}>
               Cancel
             </Button>
@@ -872,7 +872,7 @@ export default function Terminal(): React.JSX.Element | null {
               will be killed.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
