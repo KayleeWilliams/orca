@@ -1,42 +1,29 @@
 <p align="center">
-
   <a href="https://onOrca.dev"><img src="resources/build/icon.png" alt="Orca" width="128" /></a>
-
 </p>
 
 <h1 align="center">Orca</h1>
 
 <p align="center">
-
   <a href="https://github.com/stablyai/orca/stargazers"><img src="https://img.shields.io/github/stars/stablyai/orca?style=flat-square&color=black" alt="GitHub stars" /></a>
-
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-black?style=flat-square" alt="Supported Platforms" />
-
   <img src="https://img.shields.io/badge/ships-150+-black?style=flat-square" alt="Ships" />
-
   <a href="https://discord.gg/fzjDKHxv8Q"><img src="https://img.shields.io/badge/Discord-Join-black?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/orca_build"><img src="https://img.shields.io/twitter/follow/orca_build?style=social" alt="Follow on X" /></a>
-
 </p>
 
 <p align="center">
-
   <strong>The AI Orchestrator for 100x builders.</strong><br/>
   Run Claude Code, Codex, or OpenCode side-by-side across repos — each in its own worktree, tracked in one place.<br/>
   Available for <strong>macOS, Windows, and Linux</strong>.
-
 </p>
 
 <p align="center">
-
   <a href="https://onOrca.dev"><strong>Download at onOrca.dev</strong></a>
-
 </p>
 
 <p align="center">
-
   <img src="docs/assets/file-drag.gif" alt="Orca Screenshot" width="800" />
-
 </p>
 
 ## Features
@@ -64,9 +51,7 @@
 If you run multiple Codex accounts to get the best token deal, Orca lets you hot-swap between them instantly — no re-login, no config files. Just pick an account and keep building.
 
 <p align="center">
-
   <img src="docs/assets/codex-account-switcher.gif" alt="Orca Codex Account Switcher — hot swap between multiple Codex accounts" width="800" />
-
 </p>
 
 ---
@@ -78,9 +63,7 @@ If you run multiple Codex accounts to get the best token deal, Orca lets you hot
 Orca ships with a built-in browser right inside your worktree. Preview your app as you build, then switch to Design Mode — click any UI element and it lands directly in your AI chat as context. No screenshots, no copy-pasting selectors. Just point at what you want to change and tell the agent what to do.
 
 <p align="center">
-
   <img src="docs/assets/orca-design-mode.gif" alt="Orca Design Mode — click any UI element and drop it into the chat" width="800" />
-
 </p>
 
 ---
