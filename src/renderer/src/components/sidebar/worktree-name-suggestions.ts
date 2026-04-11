@@ -1,17 +1,17 @@
-import { FISH_NAMES } from '@/constants/fish-names'
+import { MARINE_CREATURES } from '@/constants/marine-creatures'
 import { basename } from '@/lib/path'
 
 type WorktreePathLike = {
   path: string
 }
 
-export function getSuggestedFishName(
+export function getSuggestedCreatureName(
   repoId: string,
   worktreesByRepo: Record<string, WorktreePathLike[]>,
   nestWorkspaces: boolean
 ): string {
   if (!repoId) {
-    return FISH_NAMES[0]
+    return MARINE_CREATURES[0]
   }
 
   const usedNames = new Set<string>()
@@ -25,7 +25,7 @@ export function getSuggestedFishName(
     }
   }
 
-  for (const candidate of FISH_NAMES) {
+  for (const candidate of MARINE_CREATURES) {
     if (!usedNames.has(normalizeSuggestedName(candidate))) {
       return candidate
     }
@@ -33,7 +33,7 @@ export function getSuggestedFishName(
 
   let suffix = 2
   while (true) {
-    for (const candidate of FISH_NAMES) {
+    for (const candidate of MARINE_CREATURES) {
       const numberedCandidate = `${candidate}-${suffix}`
       if (!usedNames.has(normalizeSuggestedName(numberedCandidate))) {
         return numberedCandidate

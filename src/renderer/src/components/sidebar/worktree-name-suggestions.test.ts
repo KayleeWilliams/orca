@@ -1,130 +1,130 @@
 import { describe, expect, it } from 'vitest'
 import { sanitizeWorktreeName } from '../../../../main/ipc/worktree-logic'
-import { FISH_NAMES } from '@/constants/fish-names'
+import { MARINE_CREATURES } from '@/constants/marine-creatures'
 import {
-  getSuggestedFishName,
+  getSuggestedCreatureName,
   normalizeSuggestedName,
   shouldApplySuggestedName
 } from './worktree-name-suggestions'
 
-describe('getSuggestedFishName', () => {
-  it('returns the first fish name when no repo is selected', () => {
-    expect(getSuggestedFishName('', {}, false)).toBe(FISH_NAMES[0])
+describe('getSuggestedCreatureName', () => {
+  it('returns the first creature name when no repo is selected', () => {
+    expect(getSuggestedCreatureName('', {}, false)).toBe(MARINE_CREATURES[0])
   })
 
   it('skips names already used in the selected repo', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
-          'repo-1': [{ path: '/tmp/worktrees/Salmon' }, { path: '/tmp/worktrees/Trout' }]
+          'repo-1': [{ path: '/tmp/worktrees/Nautilus' }, { path: '/tmp/worktrees/Seahorse' }]
         },
         true
       )
-    ).toBe('Tuna')
+    ).toBe('Starfish')
   })
 
   it('checks all repos when nestWorkspaces is false', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
           'repo-1': [],
-          'repo-2': [{ path: '/tmp/worktrees/Salmon' }]
+          'repo-2': [{ path: '/tmp/worktrees/Nautilus' }]
         },
         false
       )
-    ).toBe('Trout')
+    ).toBe('Seahorse')
   })
 
   it('only checks the selected repo when nestWorkspaces is true', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
           'repo-1': [],
-          'repo-2': [{ path: '/tmp/worktrees/Salmon' }]
+          'repo-2': [{ path: '/tmp/worktrees/Nautilus' }]
         },
         true
       )
-    ).toBe('Salmon')
+    ).toBe('Nautilus')
   })
 
   it('falls back to suffixed variants after the base list is exhausted', () => {
-    const usedWorktrees = FISH_NAMES.map((fishName) => ({ path: `/tmp/worktrees/${fishName}` }))
+    const usedWorktrees = MARINE_CREATURES.map((name) => ({ path: `/tmp/worktrees/${name}` }))
 
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
           'repo-1': usedWorktrees
         },
         true
       )
-    ).toBe(`${FISH_NAMES[0]}-2`)
+    ).toBe(`${MARINE_CREATURES[0]}-2`)
   })
 
   it('treats used names case-insensitively', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
-          'repo-1': [{ path: '/tmp/worktrees/sAlMoN' }]
+          'repo-1': [{ path: '/tmp/worktrees/nAuTiLuS' }]
         },
         true
       )
-    ).toBe('Trout')
+    ).toBe('Seahorse')
   })
 
   it('handles Windows-style worktree paths when deriving used basenames', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
-          'repo-1': [{ path: 'C:\\worktrees\\Salmon' }]
+          'repo-1': [{ path: 'C:\\worktrees\\Nautilus' }]
         },
         true
       )
-    ).toBe('Trout')
+    ).toBe('Seahorse')
   })
 
   it('handles stored worktree paths with trailing separators', () => {
     expect(
-      getSuggestedFishName(
+      getSuggestedCreatureName(
         'repo-1',
         {
-          'repo-1': [{ path: 'C:\\worktrees\\Salmon\\\\' }, { path: '/tmp/worktrees/Trout///' }]
+          'repo-1': [{ path: 'C:\\worktrees\\Nautilus\\\\' }, { path: '/tmp/worktrees/Seahorse///' }]
         },
         true
       )
-    ).toBe('Tuna')
+    ).toBe('Starfish')
   })
 })
 
 describe('shouldApplySuggestedName', () => {
   it('applies a suggestion when the field is blank', () => {
-    expect(shouldApplySuggestedName('', 'Salmon')).toBe(true)
-    expect(shouldApplySuggestedName('   ', 'Salmon')).toBe(true)
+    expect(shouldApplySuggestedName('', 'Nautilus')).toBe(true)
+    expect(shouldApplySuggestedName('   ', 'Nautilus')).toBe(true)
   })
 
   it('applies a recomputed suggestion when the current value is still the prior suggestion', () => {
-    expect(shouldApplySuggestedName('Salmon', 'Salmon')).toBe(true)
+    expect(shouldApplySuggestedName('Nautilus', 'Nautilus')).toBe(true)
   })
 
   it('does not overwrite a user-edited custom name when the repo selection changes', () => {
-    expect(shouldApplySuggestedName('feature/custom-branch', 'Salmon')).toBe(false)
+    expect(shouldApplySuggestedName('feature/custom-branch', 'Nautilus')).toBe(false)
   })
 })
 
-describe('FISH_NAMES', () => {
+describe('MARINE_CREATURES', () => {
   it('is non-empty and unique after normalization and sanitization', () => {
-    expect(FISH_NAMES.length).toBeGreaterThanOrEqual(260)
+    expect(MARINE_CREATURES.length).toBeGreaterThanOrEqual(260)
 
-    const normalizedNames = FISH_NAMES.map(normalizeSuggestedName)
-    const sanitizedNames = FISH_NAMES.map((fishName) => sanitizeWorktreeName(fishName))
+    const normalizedNames = MARINE_CREATURES.map(normalizeSuggestedName)
+    const sanitizedNames = MARINE_CREATURES.map((name) => sanitizeWorktreeName(name))
 
-    expect(new Set(normalizedNames).size).toBe(FISH_NAMES.length)
-    expect(new Set(sanitizedNames).size).toBe(FISH_NAMES.length)
+    expect(new Set(normalizedNames).size).toBe(MARINE_CREATURES.length)
+    expect(new Set(sanitizedNames).size).toBe(MARINE_CREATURES.length)
   })
 
   it('avoids names that read poorly as UI defaults', () => {
@@ -140,7 +140,7 @@ describe('FISH_NAMES', () => {
     ]
 
     for (const disallowedName of disallowedNames) {
-      expect(FISH_NAMES).not.toContain(disallowedName)
+      expect(MARINE_CREATURES).not.toContain(disallowedName)
     }
   })
 })

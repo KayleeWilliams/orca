@@ -26,7 +26,7 @@ import RepoDotLabel from '@/components/repo/RepoDotLabel'
 import { parseGitHubIssueOrPRNumber } from '@/lib/github-links'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import { getSuggestedFishName, shouldApplySuggestedName } from './worktree-name-suggestions'
+import { getSuggestedCreatureName, shouldApplySuggestedName } from './worktree-name-suggestions'
 
 const DIALOG_CLOSE_RESET_DELAY_MS = 200
 
@@ -107,7 +107,7 @@ const AddWorktreeDialog = React.memo(function AddWorktreeDialog() {
         ? 'run'
         : 'skip')
   const suggestedName = useMemo(
-    () => getSuggestedFishName(repoId, worktreesByRepo, settings?.nestWorkspaces ?? false),
+    () => getSuggestedCreatureName(repoId, worktreesByRepo, settings?.nestWorkspaces ?? false),
     [repoId, worktreesByRepo, settings?.nestWorkspaces]
   )
   // Why: setup visibility is part of the create decision no matter which default
