@@ -1,10 +1,21 @@
-// ─── Explicit agent status (reported via OSC 9999 escape sequences) ─────────
+// ─── Explicit agent status (reported via `orca status set` CLI → IPC) ───────
 // These types define the structured status that agents report at meaningful
 // checkpoints. They are distinct from the heuristic `AgentStatus` inferred
 // from terminal titles in agent-status.ts.
 
 export type AgentStatusState = 'working' | 'blocked' | 'waiting' | 'done'
 export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'aider' | 'unknown'
+
+/** A snapshot of a previous agent state, used to render activity blocks. */
+export type AgentStateHistoryEntry = {
+  state: AgentStatusState
+  summary: string
+  /** When this state was first reported. */
+  startedAt: number
+}
+
+/** Maximum number of history entries kept per agent to bound memory. */
+export const AGENT_STATE_HISTORY_MAX = 20
 
 export type AgentStatusEntry = {
   state: AgentStatusState
@@ -20,17 +31,32 @@ export type AgentStatusEntry = {
   /** Composite key: `${tabId}:${paneId}` — matches the cacheTimerByKey convention. */
   paneKey: string
   terminalTitle?: string
+  /** Rolling log of previous states. Each entry records a state the agent was in
+   *  before transitioning to the current one. Capped at AGENT_STATE_HISTORY_MAX. */
+  stateHistory: AgentStateHistoryEntry[]
 }
 
-// ─── OSC 9999 payload shape (what the agent actually prints) ────────────────
+// ─── Agent status payload shape (what the CLI sends via IPC) ────────────────
 // The agent only needs to provide state, summary, and next. The remaining
 // AgentStatusEntry fields (updatedAt, source, paneKey, etc.) are populated
-// by the renderer when it parses the OSC sequence.
+// by the renderer when it receives the IPC event.
 
-export type AgentStatusOscPayload = {
+export type AgentStatusPayload = {
   state: AgentStatusState
   summary?: string
   next?: string
+  agentType?: AgentType
+}
+
+/**
+ * The result of `parseAgentStatusPayload`: summary and next are always
+ * normalized to strings (empty string when the raw payload omits them),
+ * so consumers do not need nullish-coalescing on these fields.
+ */
+export type ParsedAgentStatusPayload = {
+  state: AgentStatusState
+  summary: string
+  next: string
   agentType?: AgentType
 }
 
@@ -65,16 +91,22 @@ function normalizeField(value: unknown): string {
 }
 
 /**
- * Parse and validate an OSC 9999 JSON payload. Returns null if the payload
- * is malformed or has an invalid state.
+ * Parse and validate an agent status JSON payload (received via CLI/IPC or
+ * OSC 9999). Returns null if the payload is malformed or has an invalid state.
  */
-export function parseAgentStatusPayload(json: string): AgentStatusOscPayload | null {
+export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload | null {
   try {
     const parsed = JSON.parse(json)
     if (typeof parsed !== 'object' || parsed === null) {
       return null
     }
-    const state = parsed.state as string
+    // Why: explicit typeof guard ensures non-string values (e.g. numbers)
+    // are rejected rather than relying on Set.has returning false for
+    // mismatched types.
+    if (typeof parsed.state !== 'string') {
+      return null
+    }
+    const state = parsed.state
     if (!VALID_STATES.has(state as AgentStatusState)) {
       return null
     }

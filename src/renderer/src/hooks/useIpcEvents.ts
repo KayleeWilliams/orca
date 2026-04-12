@@ -16,6 +16,7 @@ import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
+import { parseAgentStatusPayload } from '../../../shared/agent-status-types'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -397,6 +398,47 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: agent status arrives from the CLI via `orca status set` → Unix socket
+    // RPC → main process IPC → this listener. The payload is re-parsed through
+    // parseAgentStatusPayload to enforce the same validation and normalization
+    // (state enum, field truncation) that the OSC path used.
+    unsubs.push(
+      window.api.agentStatus.onSet((data) => {
+        const payload = parseAgentStatusPayload(
+          JSON.stringify({
+            state: data.state,
+            summary: data.summary,
+            next: data.next
+          })
+        )
+        if (!payload) {
+          return
+        }
+        const store = useAppStore.getState()
+        // Why: look up the terminal title for agent type inference — the CLI
+        // payload does not include terminal title, but the store may already
+        // know it from OSC title tracking.
+        const currentTitle = findTerminalTitleForPaneKey(store, data.paneKey)
+        store.setAgentStatus(data.paneKey, payload, currentTitle)
+      })
+    )
+
     return () => unsubs.forEach((fn) => fn())
   }, [])
+}
+
+/** Resolve a paneKey (tabId:paneId) to the current terminal title, if any.
+ *  Used for agent type inference when the CLI payload omits agentType. */
+function findTerminalTitleForPaneKey(
+  store: ReturnType<typeof useAppStore.getState>,
+  paneKey: string
+): string | undefined {
+  const tabId = paneKey.split(':')[0]
+  for (const tabs of Object.values(store.tabsByWorktree)) {
+    const tab = tabs.find((t) => t.id === tabId)
+    if (tab?.title) {
+      return tab.title
+    }
+  }
+  return undefined
 }

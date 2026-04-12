@@ -186,11 +186,19 @@ type SshApi = {
   }>
 }
 
+type AgentStatusApi = {
+  /** Listen for agent status updates forwarded from the CLI via the runtime. */
+  onSet: (
+    callback: (data: { paneKey: string; state: string; summary?: string; next?: string }) => void
+  ) => () => void
+}
+
 type Api = PreloadApi & {
   repos: ReposApi
   worktrees: WorktreesApi
   pty: PtyApi
   ssh: SshApi
+  agentStatus: AgentStatusApi
 }
 
 declare global {

@@ -204,4 +204,6 @@ export type IpcPtyTransportOptions = {
   onAgentBecameIdle?: (title: string) => void
   onAgentBecameWorking?: () => void
   onAgentExited?: () => void
+  /** Callback for OSC 9999 agent status payloads parsed from PTY output. */
+  onAgentStatus?: (payload: import('../../../../shared/agent-status-types').ParsedAgentStatusPayload) => void
 }

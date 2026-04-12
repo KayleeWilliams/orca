@@ -169,7 +169,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
       return 'working'
     }
     return liveTabs.length > 0 ? 'active' : 'inactive'
-  }, [tabs, browserTabs, agentStatusByPaneKey, agentStatusEpoch])
+    // Why: agentStatusEpoch is a cache-busting counter, not data consumed by
+    // the memo body. It forces re-derivation when an agent status entry crosses
+    // the freshness threshold so the visual status updates without polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasTerminals, tabs, agentStatusByPaneKey, agentStatusEpoch])
 
   const showPR = cardProps.includes('pr')
   const showCI = cardProps.includes('ci')

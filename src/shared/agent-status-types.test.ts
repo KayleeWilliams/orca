@@ -28,6 +28,12 @@ describe('parseAgentStatusPayload', () => {
     expect(parseAgentStatusPayload('{"state":""}')).toBeNull()
   })
 
+  it('returns null when state is a non-string type', () => {
+    expect(parseAgentStatusPayload('{"state":123}')).toBeNull()
+    expect(parseAgentStatusPayload('{"state":true}')).toBeNull()
+    expect(parseAgentStatusPayload('{"state":null}')).toBeNull()
+  })
+
   it('returns null for invalid JSON', () => {
     expect(parseAgentStatusPayload('not json')).toBeNull()
     expect(parseAgentStatusPayload('{broken')).toBeNull()
@@ -44,6 +50,13 @@ describe('parseAgentStatusPayload', () => {
   it('normalizes multiline summary to single line', () => {
     const result = parseAgentStatusPayload(
       '{"state":"working","summary":"line one\\nline two\\nline three"}'
+    )
+    expect(result!.summary).toBe('line one line two line three')
+  })
+
+  it('normalizes Windows-style line endings (\\r\\n) to single line', () => {
+    const result = parseAgentStatusPayload(
+      '{"state":"working","summary":"line one\\r\\nline two\\r\\nline three"}'
     )
     expect(result!.summary).toBe('line one line two line three')
   })

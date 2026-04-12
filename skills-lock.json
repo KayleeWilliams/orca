@@ -6,6 +6,11 @@
       "sourceType": "github",
       "computedHash": "587f7d9187c237d909b9f446cf3ac357184342d54ceb7c430dec56fdbac6816c"
     },
+    "orca-status": {
+      "source": "/Users/thebr/orca/workspaces/orca/orca-agent-status-dashboard/skills/orca-status",
+      "sourceType": "local",
+      "computedHash": "59e0bc33bbb6ac860a757540cfac7630b2c9bf30b60263eca759b4d471dae0e2"
+    },
     "react-useeffect": {
       "source": "softaworks/agent-toolkit",
       "sourceType": "github",

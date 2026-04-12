@@ -64,7 +64,8 @@ function makeAgentStatusEntry(
     source: overrides.source ?? 'agent',
     agentType: overrides.agentType ?? 'codex',
     paneKey: overrides.paneKey,
-    terminalTitle: overrides.terminalTitle
+    terminalTitle: overrides.terminalTitle,
+    stateHistory: overrides.stateHistory ?? []
   }
 }
 

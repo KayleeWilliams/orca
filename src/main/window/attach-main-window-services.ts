@@ -144,6 +144,11 @@ function registerRuntimeWindowLifecycle(
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId, setup })
       }
+    },
+    agentStatusChanged: (payload) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agentStatus:set', payload)
+      }
     }
   })
   // Why: the runtime must fail closed while the renderer graph is being torn
