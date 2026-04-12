@@ -1330,6 +1330,20 @@ const api = {
   },
   e2e: {
     getConfig: () => preloadE2EConfig
+  },
+
+  agentStatus: {
+    /** Listen for agent status updates forwarded from the CLI via the runtime. */
+    onSet: (
+      callback: (data: { paneKey: string; state: string; summary?: string; next?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { paneKey: string; state: string; summary?: string; next?: string }
+      ) => callback(data)
+      ipcRenderer.on('agentStatus:set', listener)
+      return () => ipcRenderer.removeListener('agentStatus:set', listener)
+    }
   }
 }
 

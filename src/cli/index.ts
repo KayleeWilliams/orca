@@ -55,6 +55,21 @@ const COMMAND_SPECS: CommandSpec[] = [
     examples: ['orca status', 'orca status --json']
   },
   {
+    path: ['status', 'set'],
+    summary: 'Report agent status to Orca (used by agents inside Orca terminals)',
+    usage: 'orca status set --state <state> [--summary <text>] [--next <text>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'state', 'summary', 'next'],
+    notes: [
+      'Reads ORCA_PANE_KEY from the environment to identify the reporting terminal pane.',
+      'Exits 0 on all failures — status reporting is fire-and-forget.',
+      'Valid states: working, blocked, waiting, done.'
+    ],
+    examples: [
+      'orca status set --state working --summary "Investigating auth test failures" --next "Fix the flaky assertion"',
+      'orca status set --state done --summary "Refactored auth module, all tests passing"'
+    ]
+  },
+  {
     path: ['repo', 'list'],
     summary: 'List repos registered in Orca',
     usage: 'orca repo list [--json]',
@@ -187,6 +202,33 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     return
   }
   const json = parsed.flags.has('json')
+
+  // Why: `status set` is fire-and-forget — it must exit 0 on ALL failures
+  // (missing env var, Orca not running, socket errors, bad flags) so it
+  // never interrupts the agent's work. Handle it before the general
+  // try/catch to avoid setting process.exitCode = 1 on any error path.
+  if (matches(parsed.commandPath, ['status', 'set'])) {
+    const paneKey = process.env.ORCA_PANE_KEY
+    if (!paneKey) {
+      // Not running inside an Orca-managed terminal — silently exit.
+      return
+    }
+    try {
+      const client = new RuntimeClient()
+      const result = await client.call<{ accepted: boolean }>('agentStatus.set', {
+        paneKey,
+        state: getRequiredStringFlag(parsed.flags, 'state'),
+        summary: getOptionalStringFlag(parsed.flags, 'summary'),
+        next: getOptionalStringFlag(parsed.flags, 'next')
+      })
+      if (json) {
+        console.log(JSON.stringify(result, null, 2))
+      }
+    } catch {
+      // Silently swallow — fire-and-forget.
+    }
+    return
+  }
 
   try {
     // Why: CLI syntax and flag errors should be reported before any runtime
@@ -446,7 +488,9 @@ export function findCommandSpec(commandPath: string[]): CommandSpec | undefined 
 }
 
 function isCommandGroup(commandPath: string[]): boolean {
-  return commandPath.length === 1 && ['repo', 'worktree', 'terminal'].includes(commandPath[0])
+  return (
+    commandPath.length === 1 && ['repo', 'worktree', 'terminal', 'status'].includes(commandPath[0])
+  )
 }
 
 function getRequiredStringFlag(flags: Map<string, string | boolean>, name: string): string {
@@ -760,6 +804,7 @@ Usage: orca <command> [options]
 Startup:
   open                      Launch Orca and wait for the runtime to be reachable
   status                    Show app/runtime/graph readiness
+  status set                Report agent status to Orca (fire-and-forget)
 
 Repos:
   repo list                 List repos registered in Orca
@@ -788,6 +833,7 @@ Terminals:
 Common Commands:
   orca open [--json]
   orca status [--json]
+  orca status set --state <state> [--summary <text>] [--next <text>] [--json]
   orca worktree list [--repo <selector>] [--limit <n>] [--json]
   orca worktree create --repo <selector> --name <name> [--base-branch <ref>] [--issue <number>] [--comment <text>] [--json]
   orca worktree show --worktree <selector> [--json]
@@ -894,10 +940,13 @@ function formatFlagHelp(flag: string): string {
     json: '--json                 Emit machine-readable JSON',
     limit: '--limit <n>            Maximum number of rows to return',
     name: '--name <name>          Name for the new worktree',
+    next: '--next <text>          What the agent plans to do next (status set)',
     path: '--path <path>          Filesystem path to the repo',
     query: '--query <text>        Search text for matching refs',
     ref: '--ref <ref>            Base ref to persist for the repo',
     repo: '--repo <selector>      Repo selector such as id:<id>, name:<name>, or path:<path>',
+    state: '--state <state>        Agent state: working, blocked, waiting, or done',
+    summary: '--summary <text>       What the agent is doing right now (status set)',
     terminal: '--terminal <handle>  Runtime-issued terminal handle',
     text: '--text <text>          Text to send to the terminal',
     'timeout-ms': '--timeout-ms <ms>     Maximum wait time before timing out',

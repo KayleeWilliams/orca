@@ -701,6 +701,46 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
+    if (request.method === 'agentStatus.set') {
+      const params =
+        request.params && typeof request.params === 'object' && request.params !== null
+          ? (request.params as {
+              paneKey?: unknown
+              state?: unknown
+              summary?: unknown
+              next?: unknown
+            })
+          : null
+
+      const paneKey = params?.paneKey
+      const state = params?.state
+      if (typeof paneKey !== 'string' || paneKey.length === 0) {
+        return this.errorResponse(request.id, 'invalid_argument', 'Missing paneKey')
+      }
+      if (typeof state !== 'string' || state.length === 0) {
+        return this.errorResponse(request.id, 'invalid_argument', 'Missing state')
+      }
+
+      // Why: the runtime is a relay — it does not store status. The renderer's
+      // zustand slice is the single source of truth for agent status. The runtime
+      // just forwards the payload so the CLI does not need direct renderer access.
+      this.runtime.notifyAgentStatusChanged({
+        paneKey,
+        state,
+        summary: typeof params?.summary === 'string' ? params.summary : undefined,
+        next: typeof params?.next === 'string' ? params.next : undefined
+      })
+
+      return {
+        id: request.id,
+        ok: true,
+        result: { accepted: true },
+        _meta: {
+          runtimeId: this.runtime.getRuntimeId()
+        }
+      }
+    }
+
     return this.errorResponse(request.id, 'method_not_found', `Unknown method: ${request.method}`)
   }
 

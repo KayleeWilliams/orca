@@ -592,7 +592,8 @@ describe('OrcaRuntimeService', () => {
     runtime.setNotifier({
       worktreesChanged: vi.fn(),
       reposChanged: vi.fn(),
-      activateWorktree
+      activateWorktree,
+      agentStatusChanged: vi.fn()
     })
     runtime.attachWindow(1)
 

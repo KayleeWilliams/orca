@@ -1,5 +1,10 @@
 import type { TerminalTab, Worktree } from '../../../shared/types'
-import type { AgentStatusEntry, AgentType } from '../../../shared/agent-status-types'
+import type {
+  AgentStatusEntry,
+  AgentStatusState,
+  AgentType
+} from '../../../shared/agent-status-types'
+import type { Status } from '../components/sidebar/StatusIndicator'
 
 // Re-export from shared module so existing renderer imports continue to work.
 // Why: the main process now needs the same agent detection logic for stat
@@ -145,6 +150,29 @@ export function isExplicitAgentStatusFresh(
   staleAfterMs: number
 ): boolean {
   return now - entry.updatedAt <= staleAfterMs
+}
+
+/**
+ * Map an explicit AgentStatusState to the visual Status used by
+ * StatusIndicator and WorktreeCard.
+ *
+ * | Explicit State | Visual Status | Meaning                        |
+ * |----------------|---------------|--------------------------------|
+ * | working        | working       | agent actively executing       |
+ * | blocked        | permission    | agent needs user attention     |
+ * | waiting        | permission    | agent needs user attention     |
+ * | done           | active        | task complete but pane live    |
+ */
+export function mapAgentStatusStateToVisualStatus(state: AgentStatusState): Status {
+  switch (state) {
+    case 'working':
+      return 'working'
+    case 'blocked':
+    case 'waiting':
+      return 'permission'
+    case 'done':
+      return 'active'
+  }
 }
 
 export function countWorkingAgents({

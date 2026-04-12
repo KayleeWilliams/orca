@@ -40,7 +40,7 @@ This is the best tradeoff because:
 - keeping fallback heuristics means all agent types still show *something* even before they adopt the new protocol
 - leaving `comment` user-owned avoids mixing a personal note field with machine-managed agent state
 
-**Decision:** Use **OSC escape sequences as the sole transport** for agent-reported status, parsed in the renderer's PTY transport layer. Status is real-time only — it lives in renderer memory and is not persisted to disk. See the [Transport Mechanism](#transport-mechanism) section below for the rationale.
+**Decision:** Use **`orca status set` CLI commands via IPC** as the primary transport for agent-reported status. The CLI sends status to the running Orca app over the existing Unix socket RPC (`RuntimeClient`), which forwards it to the renderer's zustand store. Status is real-time only — it lives in renderer memory and is not persisted to disk. See the [Transport Mechanism](#transport-mechanism) section below for the rationale.
 
 ## Why Not Just Reuse `comment`
 
@@ -138,68 +138,91 @@ Truncation is preferred over rejecting the payload, because the goal of status r
 
 ### Reporter Attribution (Pane Identity)
 
-The design relies on per-pane attribution so the hover can show multiple concurrently running agents in one worktree — including split panes within the same tab. This is one of the strongest reasons to prefer OSC as the write path: the PTY stream already tells Orca exactly which tab and pane is reporting.
+The design relies on per-pane attribution so the hover can show multiple concurrently running agents in one worktree — including split panes within the same tab. Attribution is solved by environment variable injection: Orca injects `ORCA_PANE_KEY=${tabId}:${paneId}` into every spawned terminal's environment via `pty:spawn`. The CLI reads this env var and includes it in the RPC payload, so the renderer knows exactly which pane reported the status.
 
 Because status lives only in renderer memory keyed by `paneKey`, there is no orphan cleanup problem. When a pane's terminal exits, its entry is removed; when a tab closes, all its pane entries are swept by prefix (same pattern as `cacheTimerByKey` cleanup in `closeTab`). When the renderer reloads, the zustand store starts fresh — no stale entries, no sweep logic, no lifecycle reconciliation. This is a direct consequence of choosing renderer-only state over persistence.
 
-### Why No CLI Surface
+### CLI Surface
 
-An earlier version of this design included `orca worktree status show` for read/debug access and `orca worktree status set` as an alternative write path. Both were dropped:
+The CLI is the primary write path for agent-reported status. Agents call `orca status set` to report what they are doing:
 
-- **No CLI read path**: with renderer-only state, there is nothing for the CLI to read. Status lives in the zustand store, not in a persisted file or runtime RPC. The hover UI is the read surface.
-- **No CLI write path**: OSC is strictly better for agent-originated writes (free terminal attribution, free worktree resolution, zero process overhead). A CLI write path would require `ORCA_TERMINAL_HANDLE` env var injection, handle remapping after renderer reloads, and subprocess spawn overhead — all to solve an attribution problem that OSC solves for free.
-- **Debuggability**: the hover UI provides the same visibility that `status show` would have. For developer debugging during implementation, the zustand devtools or a simple console log in the OSC parser is sufficient.
+```
+orca status set --state working --summary "Investigating auth test failures" --next "Fix the flaky assertion in login.test.ts"
+```
+
+The CLI sends the status payload to the running Orca app over the existing Unix socket RPC (`RuntimeClient` in `src/cli/runtime-client.ts`). The runtime forwards it to the renderer via IPC, which stores it in the zustand slice.
+
+**Pane attribution** is solved by environment variable injection: Orca injects `ORCA_PANE_KEY` (the `${tabId}:${paneId}` composite) into every spawned terminal's environment via `pty:spawn`. The CLI reads `ORCA_PANE_KEY` from its environment and includes it in the RPC payload. No worktree resolution is needed — the renderer already knows which worktree owns which pane.
+
+Why `ORCA_PANE_KEY` is stable: tab and pane IDs are assigned at terminal creation and persisted in worktree config. They do not change on renderer reload. A renderer reload resets the zustand store (which is correct — ephemeral status starts fresh), but the env var in the surviving shell process remains valid for new status reports because the pane key is reassigned from the same persisted config.
+
+**No CLI read path**: with renderer-only state, there is nothing meaningful for the CLI to read. Status lives in the zustand store, not in a persisted file. The hover UI is the read surface.
+
+**Debuggability**: for development testing, `orca status set` is itself the debug tool — run it from any Orca terminal and check the hover UI. No special debug surface needed.
 
 ## Transport Mechanism
 
-The transport question is settled: **OSC escape sequences are the sole write path** for agent-reported status. This section documents the rationale and the alternatives that were considered.
+The transport question is settled: **`orca status set` CLI commands via IPC** are the write path for agent-reported status. This section documents the rationale and the alternatives that were considered.
 
-### OSC Escape Sequences
+### CLI via IPC (Chosen)
 
-Agents print a custom OSC (Operating System Command) escape sequence to stdout:
+Agents call a CLI command to report status:
+
+```
+orca status set --state working --summary "Investigating auth test failures" --next "Fix the flaky assertion in login.test.ts"
+```
+
+The CLI sends the payload to the running Orca app via the existing Unix socket RPC (`RuntimeClient` in `src/cli/runtime-client.ts`).
+
+How it works:
+
+- Agent runs `orca status set` with structured flags
+- The CLI reads `ORCA_PANE_KEY` from the environment (injected by Orca when spawning the terminal)
+- The CLI calls `RuntimeClient.call('agentStatus.set', { paneKey, state, summary, next })` over the existing Unix socket
+- The runtime handler in the main process forwards the payload to the renderer via IPC (`mainWindow.webContents.send`)
+- The renderer receives the IPC event and writes to the `agentStatusByPaneKey` zustand slice
+- The hover UI reads from the slice — same as before
+
+Why this works well:
+
+- **self-documenting tool calls** — when the user watches an agent, they see `orca status set --state working --summary "Fix auth"` instead of a cryptic `printf` with escape codes. The visible Bash tool call is clear and understandable.
+- **existing IPC infrastructure** — `RuntimeClient` already handles CLI → app communication over Unix sockets with auth tokens, timeouts, and error handling. Adding a new RPC method is a few lines of code.
+- **pane attribution via env var** — Orca already passes custom `env` to `pty:spawn`. Injecting `ORCA_PANE_KEY=${tabId}:${paneId}` uses the existing plumbing. The pane key is stable (persisted in worktree config), so surviving terminals retain valid keys across renderer reloads.
+- **no worktree resolution** — the CLI sends the pane key, not a cwd. The renderer already knows which worktree owns which pane. No expensive `resolveCurrentWorktreeSelector` enumeration.
+- **input validation** — the CLI can validate state values, enforce field length limits, and return clear error messages before sending to the app
+- **natural agent instruction** — "run `orca status set`" is a familiar CLI pattern that agents handle well, less error-prone than getting printf escape syntax exactly right
+- **extensible** — adding new flags (e.g., `--progress 75%`) is a CLI change, not a binary protocol change
+
+Tradeoffs accepted:
+
+- **subprocess spawn overhead** — one `orca` process per status report (~5ms). At the 5-15 minute reporting cadence this is negligible.
+- **env var injection required** — Orca must inject `ORCA_PANE_KEY` into every spawned terminal. This is a small change to `pty:spawn` since the `env` parameter already exists.
+- **requires Orca CLI installed** — the `orca` command must be on PATH. This is already a setting in Orca's preferences (`CliSection.tsx`) and is the expected setup for CLI features.
+- **IPC dependency** — the status report fails if the Orca app is not running or the socket is unavailable. This is acceptable because agent status is only meaningful while Orca is running. The CLI should fail silently (exit 0) so it never interrupts the agent's work.
+
+### Why Not OSC Escape Sequences (Considered and Rejected)
+
+An earlier version of this design used OSC escape sequences as the sole transport:
 
 ```
 printf '\x1b]9999;{"state":"working","summary":"...","next":"..."}\x07'
 ```
 
-Orca's PTY parser — which already processes all terminal output — detects and extracts the payload.
+The agent would print a custom OSC sequence to stdout, and Orca's PTY parser (`pty-transport.ts`) would extract the JSON payload from the terminal data stream.
 
-How it works:
+OSC had genuine advantages for transport:
 
-- Agent prints a string containing the ESC byte (`0x1B`), a custom OSC code, a JSON payload, and a BEL terminator (`0x07`)
-- Orca's renderer-side PTY transport layer (`pty-transport.ts`) — which already processes all terminal output and parses OSC title sequences — pattern-matches the status OSC sequence and extracts the JSON
-- The PTY transport already knows which tab produced the data, so tab attribution is free
-- The renderer already knows which worktree owns each tab, so worktree resolution is free
-- The parsed payload goes straight into a zustand slice; the hover UI reads from it
+- **free pane attribution** — the PTY stream inherently identifies which tab/pane produced the data, so no env var injection was needed
+- **zero process overhead** — no subprocess spawn, no socket connection
+- **standard practice** — VS Code, iTerm2, and kitty all use custom OSC sequences for similar purposes
 
-Why parsing happens in the renderer, not the main process: Orca already parses OSC title sequences in `pty-transport.ts` on the renderer side. Status parsing is the same pattern — a richer version of what already exists. There is no reason to involve the main process when the renderer already has the PTY data stream, the tab identity, and the zustand store that the UI reads from.
+However, OSC was rejected because of a UX problem that only became apparent during implementation:
 
-Advantages:
+- **cryptic visible tool calls** — agents use Bash tool calls to emit the printf. The user sees `Bash(printf '\x1b]9999;{"state":"working",...}\x07')` in their terminal, which is incomprehensible. Since rich status summaries require the agent to make a tool call (hooks cannot provide summaries), the tool call is unavoidable — and `orca status set --summary "Fix auth"` is vastly more readable than raw escape codes.
+- **fragile prompt contract** — agents must get the printf escape syntax exactly right (`\x1b`, `\x07`, proper JSON escaping). CLI flags are harder to get wrong.
+- **if you're spawning a process anyway, use IPC** — the moment the agent runs a Bash command, the subprocess overhead argument for OSC disappears. And if you're running a subprocess, having it talk directly to the app via IPC is simpler than routing through the PTY byte stream.
 
-- **no `ORCA_TERMINAL_HANDLE` plumbing needed** — Orca already knows which PTY produced the output, so terminal attribution is inherent. This eliminates the env var injection, the handle remapping after renderer reload, and the chicken-and-egg ordering problem. A significant chunk of the CLI approach's complexity exists specifically to solve "who is calling?"
-- **no worktree resolution** — Orca already knows which worktree owns each PTY, so the expensive `resolveCurrentWorktreeSelector` enumeration is avoided entirely
-- **zero process overhead** — no subprocess spawn, no RPC connection, no socket negotiation
-- **simpler agent instruction** — "print this string" vs "run this CLI command with these flags and env vars"
-- **standard practice** — VS Code uses custom OSC sequences for shell integration (command detection, cwd tracking), iTerm2 uses them for inline images and notifications, kitty uses them for its graphics protocol. Orca already parses terminal titles via OSC sequences today — this is a richer version of the same pattern
-- **no false positive risk** — the ESC byte (`0x1B`) is a non-printable control character. Normal agent text output (JSON, logs, code) produces printable ASCII/UTF-8 characters. The only way to emit the actual ESC byte is through `printf` or equivalent, meaning an agent must deliberately use the protocol
-
-Tradeoffs accepted:
-
-- **not debuggable from a plain shell** — you can technically run `printf '\x1b]9999;...\x07'` but it is less discoverable than a CLI command. In practice, the hover UI is the read surface and zustand devtools suffice for development debugging.
-- **only works inside Orca-managed PTYs** — external scripts or CI cannot use this path. This is acceptable because agent status is inherently scoped to Orca-managed terminals; an external script reporting status into a worktree it is not running in would be misleading.
-- **PTY parser complexity** — need to carefully parse the OSC sequence from the byte stream, handle partial reads across chunks, and strip the sequence before it reaches the terminal emulator. However, Orca already does this for OSC title sequences in `pty-transport.ts`, so the pattern is established.
-
-### Why Not CLI Commands (Considered and Rejected)
-
-An alternative considered was using CLI commands (`orca worktree status set --state working --summary "..."`) as the write path. This was rejected because:
-
-- it requires `ORCA_TERMINAL_HANDLE` env var injection into every Orca-managed PTY (does not exist today, needs plumbing in `pty:spawn`)
-- env vars are immutable from outside the process, so handle remapping is needed after renderer reloads when surviving terminals still reference stale handles
-- `resolveCurrentWorktreeSelector` is expensive (enumerates all worktrees), needs a caching fast path
-- subprocess spawn overhead per status call (minor given the 5-15 minute cadence, but still unnecessary)
-- a significant chunk of the CLI approach's complexity exists specifically to solve "who is calling?" — a problem that OSC solves for free
-
-The CLI's main advantage was debuggability (`status show` for reading, `status set` for testing), but with renderer-only state the CLI cannot read status anyway, and the hover UI provides the same visibility.
+The pane attribution problem that originally motivated OSC over CLI turned out to be straightforward to solve: inject `ORCA_PANE_KEY` via the existing `env` parameter in `pty:spawn`.
 
 ### Prior Art: Superset (superset-sh/superset)
 
@@ -287,20 +310,20 @@ If we choose the OSC approach for status transport, we should pick a code that a
 
 ### Decision
 
-Use **OSC escape sequences as the sole transport** for agent-reported status. No CLI write path, no CLI read path.
+Use **`orca status set` CLI commands via IPC** as the write path for agent-reported status. No CLI read path.
 
 Why:
 
-- tab attribution is inherent on the PTY stream, so Orca does not need env-var handle injection
-- worktree ownership is already known by the renderer, so status writes do not need a `cwd -> worktree` lookup
-- agent writes stay lightweight and do not spawn subprocesses
-- parsing happens in `pty-transport.ts` alongside existing OSC title parsing — no main process involvement
-- status goes straight into a zustand slice, the hover UI reads from it
-- with renderer-only state, there is nothing for a CLI to read or persist
+- the visible tool call is self-documenting (`orca status set --summary "Fix auth"` vs. cryptic printf escape codes)
+- existing `RuntimeClient` IPC infrastructure handles the CLI → app communication with zero new transport code
+- pane attribution is solved cleanly by injecting `ORCA_PANE_KEY` via the existing `env` parameter in `pty:spawn`
+- the renderer already knows which worktree owns which pane, so no worktree resolution is needed
+- CLI flags are less error-prone for agents than escape sequence syntax
+- with renderer-only state, there is nothing for a CLI read path to return
 
 The rest of this document therefore assumes:
 
-- status writes arrive as OSC payloads on the PTY stream, parsed in the renderer
+- status writes arrive via `orca status set` → Unix socket RPC → IPC → renderer zustand slice
 - the hover UI is the read surface for status
 - heuristics remain the fallback when an agent does not emit explicit status
 
@@ -311,12 +334,12 @@ I would **not** make this a skill-only feature.
 Skills are useful for some agents, but they are not the universal contract across all agent types. The stable contract should be:
 
 - Orca runtime data model
-- a reporting mechanism (OSC escape sequence — see [Transport Mechanism](#transport-mechanism))
+- a reporting mechanism (`orca status set` CLI — see [Transport Mechanism](#transport-mechanism))
 - tiny instruction injected by Orca when launching an agent
 
 Recommended injected instruction:
 
-> When you reach a meaningful checkpoint, update Orca with a short status by printing: `printf '\x1b]9999;{"state":"working","summary":"...","next":"..."}\x07'`. Use state "done" when finished. Do not update on every trivial command.
+> When you reach a meaningful checkpoint, update Orca with a short status: `orca status set --state working --summary "..." --next "..."`. Use state "done" when finished. Do not update on every trivial command.
 
 Good checkpoints:
 
@@ -358,6 +381,84 @@ I would explicitly avoid requiring updates on every step. The right cadence is p
 - on done
 
 That keeps the signal high and the burden low.
+
+## Draft Skill: `orca-status`
+
+Below is a draft of the injected instruction that Orca appends to the agent's system prompt when launching a terminal. This is the full text the agent sees — it should be self-contained and require no prior knowledge of Orca internals.
+
+```
+# Orca Status Reporting
+
+You are running inside Orca, a terminal workspace manager. Orca can display
+what you are working on in its sidebar if you report status at meaningful
+checkpoints.
+
+## How to report
+
+Run the Orca CLI to update your status:
+
+    orca status set --state working --summary "..." --next "..."
+
+Flags:
+- --state (required): one of "working", "blocked", "waiting", "done"
+- --summary (optional): ≤200 chars, what you are doing right now
+- --next (optional): ≤200 chars, what you plan to do next
+
+Each report replaces the previous one. Omitted flags default to empty.
+
+## When to report
+
+Report at meaningful checkpoints — transitions in what you are doing, not
+every small step.
+
+Good checkpoints:
+- starting a task ("working", summary of approach)
+- switching from investigation to implementation
+- becoming blocked on tests, permissions, or user input ("blocked" or "waiting")
+- finishing a meaningful code change
+- finishing the task ("done", summary of what was accomplished)
+
+Do NOT report on:
+- every shell command or file read
+- every small edit
+- intermediate reasoning steps
+
+A good cadence is roughly every 5–15 minutes of real work, or whenever your
+high-level activity changes.
+
+## States
+
+- "working": you are actively executing — investigating, coding, running tests
+- "blocked": you cannot proceed without something being fixed (e.g., failing tests, missing dependency)
+- "waiting": you need user input or approval before continuing
+- "done": the task is complete
+
+## Best-effort
+
+Status reporting is fire-and-forget. If the command fails or the terminal is
+not managed by Orca, nothing bad happens — the command exits silently.
+Never retry a status update or let a failure interrupt your work.
+
+## Examples
+
+    orca status set --state working --summary "Investigating auth test failures" --next "Fix the flaky assertion in login.test.ts"
+
+    orca status set --state blocked --summary "3 tests failing after refactor" --next "Need to update mock fixtures"
+
+    orca status set --state done --summary "Refactored auth module, all tests passing"
+```
+
+### Design notes on the skill text
+
+**Why this length.** The full instruction is ~250 tokens. This is small relative to a typical agent system prompt (thousands of tokens) and comparable to other injected instructions Orca already provides (CLI skill, repo context). The cost is paid once per agent launch, not per turn.
+
+**Why examples matter.** Agents follow formatting conventions from examples more reliably than from abstract rules. The three examples cover the common status transitions (working → blocked → done) and demonstrate the right level of summary detail.
+
+**Why "do NOT report on" is explicit.** Without negative guidance, agents tend to report on every action. The explicit "bad checkpoints" list prevents the status hover from becoming a noisy activity log.
+
+**Why no mention of Orca internals.** The agent does not need to know about pane keys, zustand slices, IPC plumbing, or freshness thresholds. The instruction is a pure output contract: run this CLI command at these times.
+
+**Why CLI instead of printf/OSC.** The agent's tool call is visible to the user. `orca status set --summary "Fix auth"` is self-documenting; `printf '\x1b]9999;...\x07'` is incomprehensible. Since rich summaries require a tool call regardless, the CLI is strictly better UX.
 
 ## UI Plan
 
@@ -411,20 +512,24 @@ Within a group, sort by most recent `updatedAt` (explicit) or title-change times
 
 ## Rollout Plan
 
-### Phase 1: Transport + Renderer State
+### Phase 1: CLI + IPC + Renderer State
 
-- add OSC 9999 parsing in `pty-transport.ts` alongside existing OSC title parsing
-- add a zustand slice (`agentStatusByPaneKey`) for parsed status entries
+- add `ORCA_PANE_KEY` env var injection in `pty:spawn` (`src/main/ipc/pty.ts`) — set `ORCA_PANE_KEY=${tabId}:${paneId}` in the env passed to node-pty
+- add `orca status set` CLI subcommand that reads `ORCA_PANE_KEY` from env and calls `RuntimeClient.call('agentStatus.set', { paneKey, state, summary, next })`
+- add `agentStatus.set` RPC handler in the runtime (`src/main/runtime/orca-runtime.ts`) that forwards the payload to the renderer via `mainWindow.webContents.send`
+- add renderer-side IPC listener that writes to the `agentStatusByPaneKey` zustand slice
+- add a zustand slice (`agentStatusByPaneKey`) for status entries (if not already present from OSC work)
 - define payload normalization (single-line, max length, truncation)
 - ensure status updates do **not** bump `lastActivityAt` or reorder worktrees on every checkpoint
 - clean up entries when panes exit or tabs close (prefix-sweep on `${tabId}:`, matching `cacheTimerByKey` cleanup)
+- CLI should exit 0 on failure (silent fail) so it never interrupts agent work
 
 Success criteria:
 
-- an agent can report status via `printf '\x1b]9999;{"state":"working","summary":"...","next":"..."}\x07'`
-- the renderer parses the OSC payload and stores it in the zustand slice keyed by `paneKey` (`${tabId}:${paneId}`)
-- the OSC sequence is stripped before it reaches the terminal emulator
+- an agent can report status via `orca status set --state working --summary "..." --next "..."`
+- the renderer receives the payload via IPC and stores it in the zustand slice keyed by `paneKey`
 - status writes do not clobber user comments or create sort churn
+- `orca status set` works from any Orca-managed terminal and fails silently outside Orca
 
 ### Phase 2: UI
 
@@ -440,18 +545,47 @@ Success criteria:
 
 ### Phase 3: Agent Adoption
 
-- inject the short instruction into Orca-launched agents
-- add agent-specific launch wrappers only where needed
-- document the status contract
+Orca spawns shells, not agents — it has no generic mechanism to inject instructions into an arbitrary agent's system prompt at launch time. Each agent has its own extension system (Claude Code skills, Codex hooks, Gemini plugins, etc.), and there is no universal cross-agent injection API.
+
+The adoption path is therefore per-agent, using each agent's native skill/plugin system:
+
+- publish the `orca-status` skill so agents that support skills (e.g., Claude Code) can install it via `npx skills add`
+- for other agents, document the `orca status set` CLI contract so users can add equivalent instructions to their AGENTS.md, codex.md, etc.
+- expose the skill install command in Orca's settings UI so users can copy and run it
 
 Success criteria:
 
-- Claude Code, Codex, Gemini, OpenCode, and Aider launched via Orca can all report status
+- Claude Code users can install the `orca-status` skill and see status in the hover
+- the `orca status set` CLI contract is documented so any agent can adopt it
 - unsupported/manual terminals still degrade gracefully via heuristics
 
 ## Alternatives
 
-### 1. Parse terminal output strings
+### 1. OSC escape sequences
+
+Example:
+
+- agent prints `printf '\x1b]9999;{"state":"working","summary":"..."}\x07'` and Orca's PTY parser extracts the payload
+
+Pros:
+
+- free pane attribution from the PTY stream — no env var injection needed
+- zero process overhead — no subprocess spawn
+- standard practice (VS Code, iTerm2, kitty all use custom OSC for similar purposes)
+- parsing pattern already exists in `pty-transport.ts` for terminal titles
+
+Cons:
+
+- cryptic visible tool calls — the user sees `printf '\x1b]9999;...\x07'` and has no idea what's happening
+- fragile prompt contract — agents must get escape syntax exactly right
+- if a tool call is required anyway (for rich summaries), there's no advantage over CLI
+- adds PTY parser complexity for cross-chunk handling
+
+Verdict:
+
+Rejected in favor of CLI. The OSC transport is technically elegant but the UX is poor — the visible tool call is incomprehensible to users. Since rich summaries require a tool call regardless (hooks can't provide them), CLI via IPC is strictly better.
+
+### 2. Parse terminal output strings
 
 Example:
 
@@ -473,7 +607,7 @@ Verdict:
 
 Useful only as a last-resort fallback or later enhancement, not as the primary design.
 
-### 2. Claude Code hooks
+### 3. Claude Code hooks
 
 Example:
 
@@ -494,7 +628,7 @@ Verdict:
 
 Good optional optimization for Claude Code, but not the core design.
 
-### 3. Terminal-title parsing only
+### 4. Terminal-title parsing only
 
 Example:
 
@@ -517,7 +651,7 @@ Verdict:
 
 Keep as fallback presence detection only.
 
-### 4. Reuse `worktree.comment` with a formatting convention
+### 5. Reuse `worktree.comment` with a formatting convention
 
 Example:
 
@@ -540,7 +674,7 @@ Verdict:
 
 Rejected for this feature because `comment` is already a user-authored note surface in Orca.
 
-### 5. Orca-specific skill
+### 6. Orca-specific skill
 
 Example:
 
@@ -561,7 +695,7 @@ Verdict:
 
 Useful as supporting adoption material, not as the main contract.
 
-### 6. Sidecar summarizer process
+### 7. Sidecar summarizer process
 
 Example:
 
@@ -583,7 +717,7 @@ Verdict:
 
 Too much complexity for v1.
 
-### 7. User-updated manual status only
+### 8. User-updated manual status only
 
 Example:
 
@@ -607,20 +741,23 @@ Should remain possible, but not the answer to this problem.
 
 Build a **first-class Orca worktree status feature** with:
 
-- explicit agent-to-Orca status reporting over OSC escape sequences, parsed in the renderer
+- explicit agent-to-Orca status reporting via `orca status set` CLI commands over Unix socket IPC
+- `ORCA_PANE_KEY` env var injection in `pty:spawn` for pane attribution
 - real-time renderer-only state (zustand slice, no persistence)
-- prompt injection for agent adoption
+- per-agent skill/plugin adoption (e.g., `orca-status` skill for Claude Code)
 - title heuristics as fallback
 - a worktree status hover that shows all currently running agents
 
-This is the lowest-risk design that still satisfies the actual goal. By keeping status ephemeral and renderer-only, we avoid the complexity of persistence, cleanup, staleness TTLs, and CLI plumbing — while still giving users the visibility they need into what agents are doing right now.
+This is the lowest-risk design that still satisfies the actual goal. By keeping status ephemeral and renderer-only, we avoid the complexity of persistence, cleanup, and staleness TTLs. By using the CLI as the write path, the agent's tool calls are self-documenting to users, and the existing `RuntimeClient` IPC infrastructure handles transport with minimal new code.
 
 ## Concrete Next Step
 
 If we decide to build this, I would implement in this order:
 
 1. shared types for `AgentStatusEntry` and the zustand slice
-2. OSC 9999 parsing in `pty-transport.ts` — extract JSON payload, write to zustand slice, strip sequence before render
-3. UI hover on the worktree status icon with explicit-over-heuristic precedence and freshness indicators
-4. launch-time prompt injection for supported agents
-5. optional Claude Code hook optimization later
+2. `ORCA_PANE_KEY` env var injection in `pty:spawn`
+3. `agentStatus.set` RPC handler in the runtime, forwarding to the renderer via IPC
+4. `orca status set` CLI subcommand reading `ORCA_PANE_KEY` and calling the RPC
+5. renderer-side IPC listener writing to the zustand slice
+6. UI hover on the worktree status icon with explicit-over-heuristic precedence and freshness indicators
+7. publish the `orca-status` skill and expose the install command in settings

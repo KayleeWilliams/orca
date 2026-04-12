@@ -1,4 +1,7 @@
-/* oxlint-disable max-lines */
+/* oxlint-disable max-lines -- Why: the PTY transport manages lifecycle, data flow,
+agent status extraction, and title tracking for terminal panes. Splitting would
+scatter the tightly coupled IPC ↔ xterm data pipeline across files with no clear
+module boundary, making the data flow harder to trace during debugging. */
 import {
   detectAgentStatusFromTitle,
   clearWorkingIndicators,
@@ -17,7 +20,7 @@ import {
 } from './pty-dispatcher'
 import type { PtyTransport, IpcPtyTransportOptions, PtyConnectResult } from './pty-dispatcher'
 import { createBellDetector } from './bell-detector'
-import type { AgentStatusOscPayload } from '../../../../shared/agent-status-types'
+import type { ParsedAgentStatusPayload } from '../../../../shared/agent-status-types'
 import { parseAgentStatusPayload } from '../../../../shared/agent-status-types'
 
 // Re-export public API so existing consumers keep working.
@@ -45,15 +48,15 @@ const OSC_AGENT_STATUS_PREFIX = '\x1b]9999;'
 
 export type ProcessedAgentStatusChunk = {
   cleanData: string
-  payloads: AgentStatusOscPayload[]
+  payloads: ParsedAgentStatusPayload[]
 }
 
 /**
  * Extract all OSC 9999 payloads from a data chunk and return the last valid one.
  * Returns null if no valid agent status sequence is found.
  */
-export function extractAgentStatusOsc(data: string): AgentStatusOscPayload | null {
-  let last: AgentStatusOscPayload | null = null
+export function extractAgentStatusOsc(data: string): ParsedAgentStatusPayload | null {
+  let last: ParsedAgentStatusPayload | null = null
   let m: RegExpExecArray | null
   OSC_AGENT_STATUS_RE.lastIndex = 0
   while ((m = OSC_AGENT_STATUS_RE.exec(data)) !== null) {
@@ -107,7 +110,7 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
     const combined = pending + data
     pending = ''
 
-    const payloads: AgentStatusOscPayload[] = []
+    const payloads: ParsedAgentStatusPayload[] = []
     let cleanData = ''
     let cursor = 0
 
@@ -138,9 +141,8 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
   }
 }
 
-// TODO: onAgentStatus field needs to be added to IpcPtyTransportOptions in pty-dispatcher.
-// Why: main refactored IpcPtyTransportOptions to live in pty-dispatcher; the branch's
-// onAgentStatus callback must be added there rather than redefining the type here.
+// Why: onAgentStatus callback added to IpcPtyTransportOptions in pty-dispatcher
+// so the OSC 9999 status payloads can be forwarded to the store.
 
 export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTransport {
   const {
