@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
   const isDeleting = deleteState?.isDeleting ?? false
   const deleteError = deleteState?.error ?? null
   const canForceDelete = deleteState?.canForceDelete ?? false
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const worktreeName = worktree?.displayName ?? 'unknown'
   // Why: the main worktree is the repo's original clone directory — `git worktree remove`
   // always rejects it. We block the delete button upfront so the user doesn't have to
@@ -114,7 +115,21 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={(event) => {
+          if (isMainWorktree) {
+            return
+          }
+          event.preventDefault()
+          // Why: this confirmation dialog exists specifically to guard a
+          // destructive action the user already chose from the context menu.
+          // Radix otherwise picks the first tabbable control, which can be the
+          // cancel/close affordance and breaks the expected "Delete, Enter"
+          // flow for quick keyboard confirmation.
+          confirmButtonRef.current?.focus()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-sm">Delete Worktree</DialogTitle>
           <DialogDescription className="text-xs">
@@ -159,6 +174,7 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
           {!isMainWorktree &&
             (canForceDelete ? (
               <Button
+                ref={confirmButtonRef}
                 variant="destructive"
                 onClick={() => handleDelete(true)}
                 disabled={isDeleting}
@@ -168,6 +184,7 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
               </Button>
             ) : (
               <Button
+                ref={confirmButtonRef}
                 variant="destructive"
                 onClick={() => handleDelete(false)}
                 disabled={isDeleting}
