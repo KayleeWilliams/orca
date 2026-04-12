@@ -15,7 +15,15 @@ type TreeOpsCallbacks = {
 
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
+    // Why: fitAddon.fit() triggers a terminal reflow that can leave the viewport
+    // at a stale scroll offset, making the terminal appear scrolled up after a
+    // resize. Preserve the scroll-to-bottom state across the reflow.
+    const buf = pane.terminal.buffer.active
+    const wasAtBottom = buf.viewportY >= buf.baseY
     pane.fitAddon.fit()
+    if (wasAtBottom) {
+      pane.terminal.scrollToBottom()
+    }
   } catch {
     // Container may not have dimensions yet
   }

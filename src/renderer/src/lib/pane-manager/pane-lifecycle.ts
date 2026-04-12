@@ -204,7 +204,12 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       // to initialise before we ask it to repaint.
       requestAnimationFrame(() => {
         try {
+          const buf = pane.terminal.buffer.active
+          const wasAtBottom = buf.viewportY >= buf.baseY
           pane.fitAddon.fit()
+          if (wasAtBottom) {
+            pane.terminal.scrollToBottom()
+          }
           pane.terminal.refresh(0, pane.terminal.rows - 1)
         } catch {
           /* ignore — pane may have been disposed in the meantime */

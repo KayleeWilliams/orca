@@ -50,7 +50,12 @@ export function useTerminalFontZoom({
 
       pane.terminal.options.fontSize = nextSize
       try {
+        const buf = pane.terminal.buffer.active
+        const wasAtBottom = buf.viewportY >= buf.baseY
         pane.fitAddon.fit()
+        if (wasAtBottom) {
+          pane.terminal.scrollToBottom()
+        }
       } catch {
         /* ignore */
       }

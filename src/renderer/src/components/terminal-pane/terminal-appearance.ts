@@ -35,7 +35,14 @@ export function applyTerminalAppearance(
     pane.terminal.options.fontWeight = terminalFontWeights.fontWeight
     pane.terminal.options.fontWeightBold = terminalFontWeights.fontWeightBold
     try {
+      // Why: preserve scroll-to-bottom state across the reflow so appearance
+      // changes (theme, font size, etc.) don't make the terminal scroll up.
+      const buf = pane.terminal.buffer.active
+      const wasAtBottom = buf.viewportY >= buf.baseY
       pane.fitAddon.fit()
+      if (wasAtBottom) {
+        pane.terminal.scrollToBottom()
+      }
     } catch {
       /* ignore */
     }

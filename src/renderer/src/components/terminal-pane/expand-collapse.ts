@@ -101,7 +101,12 @@ export function createExpandCollapseActions(state: ExpandCollapseState) {
       const panes = manager.getPanes()
       for (const p of panes) {
         try {
+          const buf = p.terminal.buffer.active
+          const wasAtBottom = buf.viewportY >= buf.baseY
           p.fitAddon.fit()
+          if (wasAtBottom) {
+            p.terminal.scrollToBottom()
+          }
         } catch {
           /* container may not have dimensions */
         }
