@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: cookie import is a single pipeline (detect → decrypt → stage → swap)
    that must stay together so the encryption, schema, and staging steps remain in sync. */
 import { app, type BrowserWindow, dialog, session } from 'electron'
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createDecipheriv, pbkdf2Sync } from 'node:crypto'
 import {
   appendFileSync,
@@ -16,11 +16,23 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const DIAG_LOG = join(tmpdir(), 'orca-cookie-import-diag.log')
+// Why: writing to userData instead of tmpdir() so the diag log is only
+// readable by the current user, not world-readable in /tmp.
+let _diagLog: string | null = null
+function getDiagLogPath(): string {
+  if (!_diagLog) {
+    try {
+      _diagLog = join(app.getPath('userData'), 'cookie-import-diag.log')
+    } catch {
+      _diagLog = join(tmpdir(), 'orca-cookie-import-diag.log')
+    }
+  }
+  return _diagLog
+}
 function diag(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   try {
-    appendFileSync(DIAG_LOG, line)
+    appendFileSync(getDiagLogPath(), line)
   } catch {
     /* best-effort */
   }
@@ -368,7 +380,7 @@ function getUserAgentForBrowser(
   ): string | null {
     try {
       return (
-        execSync(`defaults read "${appPath}/Contents/Info" ${plistKey}`, {
+        execFileSync('defaults', ['read', `${appPath}/Contents/Info`, plistKey], {
           encoding: 'utf-8',
           timeout: 5_000
         }).trim() || null
@@ -410,17 +422,24 @@ function chromiumTimestampToUnix(chromiumTs: string): number {
   if (!chromiumTs || chromiumTs === '0') {
     return 0
   }
-  const ts = BigInt(chromiumTs)
-  if (ts === 0n) {
+  try {
+    const ts = BigInt(chromiumTs)
+    if (ts === 0n) {
+      return 0
+    }
+    return Math.max(Number(ts / 1000000n - CHROMIUM_EPOCH_OFFSET), 0)
+  } catch {
     return 0
   }
-  return Math.max(Number(ts / 1000000n - CHROMIUM_EPOCH_OFFSET), 0)
 }
 
 function getEncryptionKey(keychainService: string, keychainAccount: string): Buffer | null {
   try {
-    const raw = execSync(
-      `security find-generic-password -s "${keychainService}" -a "${keychainAccount}" -w`,
+    // Why: execFileSync bypasses shell interpretation, preventing command
+    // injection if keychainService/keychainAccount ever come from user input.
+    const raw = execFileSync(
+      'security',
+      ['find-generic-password', '-s', keychainService, '-a', keychainAccount, '-w'],
       { encoding: 'utf-8', timeout: 30_000 }
     ).trim()
     return pbkdf2Sync(raw, PBKDF2_SALT, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, 'sha1')
@@ -560,20 +579,6 @@ export async function importCookiesFromBrowser(
     // decrypts nothing — we export rows as hex blobs, decrypt in Node,
     // and generate parameterized INSERT statements.
 
-    // Read each cookie as a single hex-encoded blob of all fields to avoid
-    // any delimiter/parsing issues. We read one cookie per rowid.
-    const rowIdOutput = execSync(
-      `sqlite3 "${tmpCookiesPath}" "SELECT rowid FROM cookies ORDER BY rowid;"`,
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 30_000 }
-    ).trim()
-    const rowIds = rowIdOutput.split('\n').filter(Boolean)
-    diag(`  source has ${rowIds.length} cookies`)
-
-    if (rowIds.length === 0) {
-      rmSync(tmpDir, { recursive: true, force: true })
-      return { ok: false, reason: `No cookies found in ${browser.label}.` }
-    }
-
     // Read all non-blob columns + hex(value) + hex(encrypted_value) in one query
     // Use a unique separator that can't appear in hex output
     const SEP = '|||'
@@ -595,7 +600,12 @@ export async function importCookiesFromBrowser(
     ).trim()
 
     const allRows = allRowsOutput.split('\n').filter(Boolean)
-    diag(`  read ${allRows.length} rows with quote() encoding`)
+    diag(`  source has ${allRows.length} cookies`)
+
+    if (allRows.length === 0) {
+      rmSync(tmpDir, { recursive: true, force: true })
+      return { ok: false, reason: `No cookies found in ${browser.label}.` }
+    }
 
     const colIdx = Object.fromEntries(targetCols.map((col, i) => [col, i]))
 
@@ -607,8 +617,29 @@ export async function importCookiesFromBrowser(
       return parseInt(quoted, 10) || 0
     }
 
+    // Why: Google's integrity cookies (SIDCC, __Secure-*PSIDCC, __Secure-STRP)
+    // are cryptographically bound to the source browser's TLS fingerprint and
+    // environment. Importing them into a different browser causes
+    // accounts.google.com to reject the session with CookieMismatch. Skipping
+    // them lets Google regenerate fresh integrity cookies on the first request.
+    const INTEGRITY_COOKIE_NAMES = new Set([
+      'SIDCC',
+      '__Secure-1PSIDCC',
+      '__Secure-3PSIDCC',
+      '__Secure-STRP',
+      'AEC'
+    ])
+    function isIntegrityCookie(name: string, domain: string): boolean {
+      if (!INTEGRITY_COOKIE_NAMES.has(name)) {
+        return false
+      }
+      const d = domain.startsWith('.') ? domain.slice(1) : domain
+      return d === 'google.com' || d.endsWith('.google.com')
+    }
+
     let imported = 0
     let skipped = 0
+    let integritySkipped = 0
     let memoryLoaded = 0
     let memoryFailed = 0
     const domainSet = new Set<string>()
@@ -652,16 +683,25 @@ export async function importCookiesFromBrowser(
       }
 
       const domain = unquote(cols[colIdx.host_key])
+      const name = unquote(cols[colIdx.name])
+
+      if (isIntegrityCookie(name, domain)) {
+        integritySkipped++
+        continue
+      }
+
       const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
       domainSet.add(cleanDomain)
 
-      const name = unquote(cols[colIdx.name])
       const path = unquote(cols[colIdx.path])
       const secure = unquoteInt(cols[colIdx.is_secure]) === 1
       const httpOnly = unquoteInt(cols[colIdx.is_httponly]) === 1
       const sameSite = normalizeSameSite(unquoteInt(cols[colIdx.samesite]))
       const expiresUtc = chromiumTimestampToUnix(unquote(cols[colIdx.expires_utc]))
-      const value = Buffer.from(plaintextHex, 'hex').toString('utf-8')
+      // Why: cookie values are raw byte strings, not UTF-8 text. Using latin1
+      // (ISO-8859-1) preserves all byte values 0x00–0xFF without replacement
+      // characters that UTF-8 decoding would insert for invalid sequences.
+      const value = Buffer.from(plaintextHex, 'hex').toString('latin1')
 
       decryptedCookies.push({
         plaintextHex,
@@ -689,6 +729,7 @@ export async function importCookiesFromBrowser(
       sqlStatements.push(`INSERT OR REPLACE INTO cookies (${colList}) VALUES (${values});`)
       imported++
     }
+    diag(`  skipped ${integritySkipped} Google integrity cookies (SIDCC/STRP/AEC)`)
 
     sqlStatements.push('COMMIT;')
     diag(`  prepared ${imported} INSERT statements, ${skipped} skipped`)
@@ -704,6 +745,15 @@ export async function importCookiesFromBrowser(
 
     rmSync(tmpDir, { recursive: true, force: true })
     diag(`  SQLite staging complete: ${imported} cookies, ${domainSet.size} domains`)
+
+    // Why: clearing the session's in-memory cookie store before loading imported
+    // cookies prevents stale cookies from a previous Orca browsing session from
+    // mixing with the imported set. Mixed state (some old, some imported) causes
+    // sites like Google to detect inconsistent session cookies and reject them.
+    await targetSession.clearStorageData({ storages: ['cookies'] })
+    diag(
+      `  cleared existing session cookies before loading ${decryptedCookies.length} imported cookies`
+    )
 
     // Why: loading cookies into memory via cookies.set() makes them available
     // immediately without requiring a restart. The staging DB is kept as a
@@ -755,6 +805,7 @@ export async function importCookiesFromBrowser(
     const ua = getUserAgentForBrowser(browser.family)
     if (ua) {
       targetSession.setUserAgent(ua)
+      browserSessionRegistry.setupClientHintsOverride(targetSession, ua)
       browserSessionRegistry.persistUserAgent(ua)
       diag(`  set UA for partition: ${ua.substring(0, 80)}...`)
     }
@@ -769,6 +820,13 @@ export async function importCookiesFromBrowser(
     return { ok: true, profileId: '', summary }
   } catch (err) {
     rmSync(tmpDir, { recursive: true, force: true })
+    // Why: if the import fails after the staging DB was created, clean it up
+    // to avoid a stale staged import being applied on the next cold start.
+    try {
+      unlinkSync(stagingCookiesPath)
+    } catch {
+      /* may not exist yet */
+    }
     diag(`  SQLite import failed: ${err}`)
     return {
       ok: false,

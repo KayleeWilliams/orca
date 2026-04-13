@@ -134,4 +134,78 @@ describe('BrowserSessionRegistry', () => {
     expect(mockSession?.setPermissionRequestHandler).toHaveBeenCalled()
     expect(mockSession?.setPermissionCheckHandler).toHaveBeenCalled()
   })
+
+  describe('setupClientHintsOverride', () => {
+    it('overrides sec-ch-ua headers for Edge UA', () => {
+      const onBeforeSendHeaders = vi.fn()
+      const mockSess = { webRequest: { onBeforeSendHeaders } } as never
+      const edgeUa =
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.6890.3 Safari/537.36 Edg/147.0.3210.5'
+
+      browserSessionRegistry.setupClientHintsOverride(mockSess, edgeUa)
+
+      expect(onBeforeSendHeaders).toHaveBeenCalledWith(
+        { urls: ['https://*/*'] },
+        expect.any(Function)
+      )
+
+      const callback = vi.fn()
+      const listener = onBeforeSendHeaders.mock.calls[0][1]
+      listener(
+        { requestHeaders: { 'sec-ch-ua': 'old', 'sec-ch-ua-full-version-list': 'old' } },
+        callback
+      )
+      const modified = callback.mock.calls[0][0].requestHeaders
+      expect(modified['sec-ch-ua']).toContain('Microsoft Edge')
+      expect(modified['sec-ch-ua']).toContain('"147"')
+      expect(modified['sec-ch-ua-full-version-list']).toContain('147.0.3210.5')
+    })
+
+    it('overrides sec-ch-ua headers for Chrome UA', () => {
+      const onBeforeSendHeaders = vi.fn()
+      const mockSess = { webRequest: { onBeforeSendHeaders } } as never
+      const chromeUa =
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.6890.3 Safari/537.36'
+
+      browserSessionRegistry.setupClientHintsOverride(mockSess, chromeUa)
+
+      const callback = vi.fn()
+      const listener = onBeforeSendHeaders.mock.calls[0][1]
+      listener({ requestHeaders: { 'sec-ch-ua': 'old' } }, callback)
+      const modified = callback.mock.calls[0][0].requestHeaders
+      expect(modified['sec-ch-ua']).toContain('Google Chrome')
+      expect(modified['sec-ch-ua']).not.toContain('Microsoft Edge')
+    })
+
+    it('does not register handler for non-Chrome UA', () => {
+      const onBeforeSendHeaders = vi.fn()
+      const mockSess = { webRequest: { onBeforeSendHeaders } } as never
+
+      browserSessionRegistry.setupClientHintsOverride(
+        mockSess,
+        'Mozilla/5.0 (compatible; MSIE 10.0)'
+      )
+
+      expect(onBeforeSendHeaders).not.toHaveBeenCalled()
+    })
+
+    it('leaves non-Client-Hints headers unchanged', () => {
+      const onBeforeSendHeaders = vi.fn()
+      const mockSess = { webRequest: { onBeforeSendHeaders } } as never
+      browserSessionRegistry.setupClientHintsOverride(
+        mockSess,
+        'Mozilla/5.0 Chrome/147.0.0.0 Safari/537.36'
+      )
+
+      const callback = vi.fn()
+      const listener = onBeforeSendHeaders.mock.calls[0][1]
+      listener(
+        { requestHeaders: { Cookie: 'abc=123', 'sec-ch-ua': 'old', Accept: 'text/html' } },
+        callback
+      )
+      const modified = callback.mock.calls[0][0].requestHeaders
+      expect(modified.Cookie).toBe('abc=123')
+      expect(modified.Accept).toBe('text/html')
+    })
+  })
 })

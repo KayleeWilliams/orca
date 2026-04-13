@@ -984,31 +984,43 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   },
 
   fetchBrowserSessionProfiles: async () => {
-    const profiles = (await window.api.browser.sessionListProfiles()) as BrowserSessionProfile[]
-    set({ browserSessionProfiles: profiles })
+    try {
+      const profiles = (await window.api.browser.sessionListProfiles()) as BrowserSessionProfile[]
+      set({ browserSessionProfiles: profiles })
+    } catch {
+      /* best-effort — stale profile list is preferable to a crash */
+    }
   },
 
   createBrowserSessionProfile: async (scope, label) => {
-    const profile = (await window.api.browser.sessionCreateProfile({
-      scope,
-      label
-    })) as BrowserSessionProfile | null
-    if (profile) {
-      set((s) => ({
-        browserSessionProfiles: [...s.browserSessionProfiles, profile]
-      }))
+    try {
+      const profile = (await window.api.browser.sessionCreateProfile({
+        scope,
+        label
+      })) as BrowserSessionProfile | null
+      if (profile) {
+        set((s) => ({
+          browserSessionProfiles: [...s.browserSessionProfiles, profile]
+        }))
+      }
+      return profile
+    } catch {
+      return null
     }
-    return profile
   },
 
   deleteBrowserSessionProfile: async (profileId) => {
-    const ok = await window.api.browser.sessionDeleteProfile({ profileId })
-    if (ok) {
-      set((s) => ({
-        browserSessionProfiles: s.browserSessionProfiles.filter((p) => p.id !== profileId)
-      }))
+    try {
+      const ok = await window.api.browser.sessionDeleteProfile({ profileId })
+      if (ok) {
+        set((s) => ({
+          browserSessionProfiles: s.browserSessionProfiles.filter((p) => p.id !== profileId)
+        }))
+      }
+      return ok
+    } catch {
+      return false
     }
-    return ok
   },
 
   importCookiesToProfile: async (profileId) => {
@@ -1068,11 +1080,15 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   detectedBrowsers: [],
 
   fetchDetectedBrowsers: async () => {
-    const browsers = (await window.api.browser.sessionDetectBrowsers()) as {
-      family: string
-      label: string
-    }[]
-    set({ detectedBrowsers: browsers })
+    try {
+      const browsers = (await window.api.browser.sessionDetectBrowsers()) as {
+        family: string
+        label: string
+      }[]
+      set({ detectedBrowsers: browsers })
+    } catch {
+      /* best-effort — empty list is acceptable fallback */
+    }
   },
 
   importCookiesFromBrowser: async (profileId, browserFamily) => {
@@ -1127,10 +1143,14 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   },
 
   clearDefaultSessionCookies: async () => {
-    const ok = await window.api.browser.sessionClearDefaultCookies()
-    if (ok) {
-      await get().fetchBrowserSessionProfiles()
+    try {
+      const ok = await window.api.browser.sessionClearDefaultCookies()
+      if (ok) {
+        await get().fetchBrowserSessionProfiles()
+      }
+      return ok
+    } catch {
+      return false
     }
-    return ok
   }
 })

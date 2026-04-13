@@ -1121,6 +1121,12 @@ function BrowserPagePane({
   // handled by the guest page itself (Chromium's built-in Cmd+C) and never
   // reaches the host renderer keydown listener.
   useEffect(() => {
+    // Why: without the isActive gate, every mounted BrowserPagePane registers
+    // a global keydown listener, so Cmd+C would toggle grab mode on all panes
+    // simultaneously — not just the active one.
+    if (!isActive) {
+      return
+    }
     const handleKeyDown = (e: KeyboardEvent): void => {
       // Why: let native Cmd+C work in text inputs (address bar, search fields,
       // contentEditable regions). Only intercept when focus is on a non-input
@@ -1136,7 +1142,7 @@ function BrowserPagePane({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [grab])
+  }, [grab, isActive])
 
   useEffect(() => {
     if (!isActive) {

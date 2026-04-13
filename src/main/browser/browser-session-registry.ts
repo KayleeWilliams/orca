@@ -1,4 +1,4 @@
-import { app, session } from 'electron'
+import { app, type Session, session } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -85,7 +85,9 @@ class BrowserSessionRegistry {
   restorePersistedUserAgent(): void {
     const meta = this.loadPersistedMeta()
     if (meta.userAgent) {
-      session.fromPartition(ORCA_BROWSER_PARTITION).setUserAgent(meta.userAgent)
+      const sess = session.fromPartition(ORCA_BROWSER_PARTITION)
+      sess.setUserAgent(meta.userAgent)
+      this.setupClientHintsOverride(sess, meta.userAgent)
     }
     if (meta.defaultSource) {
       const current = this.profiles.get('default')
@@ -93,6 +95,46 @@ class BrowserSessionRegistry {
         this.profiles.set('default', { ...current, source: meta.defaultSource })
       }
     }
+  }
+
+  // Why: Electron's actual Chromium version (e.g. 134) differs from the source
+  // browser's version (e.g. Edge 147). The sec-ch-ua Client Hints headers
+  // reveal the real version, creating a mismatch that Google's anti-fraud
+  // detection flags as CookieMismatch on accounts.google.com. Override Client
+  // Hints on outgoing requests to match the source browser's UA.
+  setupClientHintsOverride(sess: Session, ua: string): void {
+    const chromeMatch = ua.match(/Chrome\/([\d.]+)/)
+    if (!chromeMatch) {
+      return
+    }
+    const fullChromeVersion = chromeMatch[1]
+    const majorVersion = fullChromeVersion.split('.')[0]
+
+    let brand = 'Google Chrome'
+    let brandFullVersion = fullChromeVersion
+
+    const edgeMatch = ua.match(/Edg\/([\d.]+)/)
+    if (edgeMatch) {
+      brand = 'Microsoft Edge'
+      brandFullVersion = edgeMatch[1]
+    }
+    const brandMajor = brandFullVersion.split('.')[0]
+
+    const secChUa = `"${brand}";v="${brandMajor}", "Chromium";v="${majorVersion}", "Not/A)Brand";v="24"`
+    const secChUaFull = `"${brand}";v="${brandFullVersion}", "Chromium";v="${fullChromeVersion}", "Not/A)Brand";v="24.0.0.0"`
+
+    sess.webRequest.onBeforeSendHeaders({ urls: ['https://*/*'] }, (details, callback) => {
+      const headers = details.requestHeaders
+      for (const key of Object.keys(headers)) {
+        const lower = key.toLowerCase()
+        if (lower === 'sec-ch-ua') {
+          headers[key] = secChUa
+        } else if (lower === 'sec-ch-ua-full-version-list') {
+          headers[key] = secChUaFull
+        }
+      }
+      callback({ requestHeaders: headers })
+    })
   }
 
   // Why: the import writes cookies to a staging DB because CookieMonster holds
@@ -241,15 +283,17 @@ class BrowserSessionRegistry {
   // import without deleting the default profile itself.
   async clearDefaultSessionCookies(): Promise<boolean> {
     try {
-      const sess = session.fromPartition(ORCA_BROWSER_PARTITION)
-      await sess.clearStorageData({ storages: ['cookies'] })
+      // Why: persist metadata BEFORE clearing storage so that if the app quits
+      // mid-clear, the next launch won't show a stale "imported from X" badge
+      // for cookies that were partially or fully removed.
       const defaultProfile = this.profiles.get('default')
       if (defaultProfile) {
         this.profiles.set('default', { ...defaultProfile, source: null })
       }
-      // Why: also clear any pending staged import so the next cold start
-      // doesn't silently restore the cookies the user just cleared.
       this.persistMeta({ defaultSource: null, userAgent: null, pendingCookieDbPath: null })
+
+      const sess = session.fromPartition(ORCA_BROWSER_PARTITION)
+      await sess.clearStorageData({ storages: ['cookies'] })
       return true
     } catch {
       return false
