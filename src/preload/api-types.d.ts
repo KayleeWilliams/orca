@@ -1,6 +1,11 @@
 /* eslint-disable max-lines -- Why: the preload contract is intentionally centralized in one declaration file so renderer and preload stay in lockstep when IPC surfaces change. */
 import type {
+  BrowserCookieImportResult,
+  BrowserCookieImportSummary,
   BrowserLoadError,
+  BrowserSessionProfile,
+  BrowserSessionProfileScope,
+  BrowserSessionProfileSource,
   CodexRateLimitAccountsState,
   CreateWorktreeResult,
   DirEntry,
@@ -114,6 +119,25 @@ export type BrowserApi = {
   onGrabActionShortcut: (
     callback: (args: { browserPageId: string; key: 'c' | 's' }) => void
   ) => () => void
+  sessionListProfiles: () => Promise<BrowserSessionProfile[]>
+  sessionCreateProfile: (args: {
+    scope: BrowserSessionProfileScope
+    label: string
+  }) => Promise<BrowserSessionProfile | null>
+  sessionDeleteProfile: (args: { profileId: string }) => Promise<boolean>
+  sessionImportCookies: (args: { profileId: string }) => Promise<BrowserCookieImportResult>
+  sessionResolvePartition: (args: { profileId: string | null }) => Promise<string | null>
+  sessionDetectBrowsers: () => Promise<DetectedBrowserInfo[]>
+  sessionImportFromBrowser: (args: {
+    profileId: string
+    browserFamily: string
+  }) => Promise<BrowserCookieImportResult>
+  sessionClearDefaultCookies: () => Promise<boolean>
+}
+
+export type DetectedBrowserInfo = {
+  family: BrowserSessionProfileSource['browserFamily']
+  label: string
 }
 
 export type PreflightStatus = {

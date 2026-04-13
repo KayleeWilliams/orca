@@ -57,8 +57,6 @@ export default function Terminal(): React.JSX.Element | null {
   const pinFile = useAppStore((s) => s.pinFile)
   const browserTabsByWorktree = useAppStore((s) => s.browserTabsByWorktree)
   const createBrowserTab = useAppStore((s) => s.createBrowserTab)
-  const createBrowserPage = useAppStore((s) => s.createBrowserPage)
-  const closeBrowserPage = useAppStore((s) => s.closeBrowserPage)
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((s) => s.setActiveBrowserTab)
   const updateBrowserTabPageState = useAppStore((s) => s.updateBrowserTabPageState)
@@ -245,17 +243,9 @@ export default function Terminal(): React.JSX.Element | null {
     if (!activeWorktreeId) {
       return
     }
-    const state = useAppStore.getState()
-    const defaultUrl = state.browserDefaultUrl ?? 'about:blank'
-    if (state.activeTabType === 'browser' && state.activeBrowserTabId) {
-      createBrowserPage(state.activeBrowserTabId, defaultUrl, {
-        title: 'New Browser Tab',
-        activate: true
-      })
-      return
-    }
+    const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
     createBrowserTab(activeWorktreeId, defaultUrl, { title: 'New Browser Tab' })
-  }, [activeWorktreeId, createBrowserPage, createBrowserTab])
+  }, [activeWorktreeId, createBrowserTab])
 
   const handleCloseTab = useCallback(
     (tabId: string) => {
@@ -524,13 +514,7 @@ export default function Terminal(): React.JSX.Element | null {
         if (state.activeTabType === 'editor' && state.activeFileId) {
           handleCloseFile(state.activeFileId)
         } else if (state.activeTabType === 'browser' && state.activeBrowserTabId) {
-          const activeWorkspace = Object.values(state.browserTabsByWorktree)
-            .flat()
-            .find((workspace) => workspace.id === state.activeBrowserTabId)
-          if (activeWorkspace?.activePageId) {
-            destroyPersistentWebview(activeWorkspace.activePageId)
-            closeBrowserPage(activeWorkspace.activePageId)
-          }
+          closeBrowserTab(state.activeBrowserTabId)
         }
         return
       }
@@ -607,7 +591,7 @@ export default function Terminal(): React.JSX.Element | null {
     handleNewTab,
     handleCloseTab,
     handleCloseBrowserTab,
-    closeBrowserPage,
+    closeBrowserTab,
     handleCloseFile,
     setActiveTab
   ])

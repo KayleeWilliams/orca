@@ -500,11 +500,15 @@ export default function TabGroupPanel({
             </div>
           )}
 
-        {activeBrowserTab && (
-          <div className="absolute inset-0 flex min-h-0 min-w-0">
-            <BrowserPane browserTab={activeBrowserTab} />
+        {browserItems.map((bt) => (
+          <div
+            key={bt.id}
+            className="absolute inset-0 flex min-h-0 min-w-0"
+            style={{ display: activeBrowserTab?.id === bt.id ? undefined : 'none' }}
+          >
+            <BrowserPane browserTab={bt} isActive={activeBrowserTab?.id === bt.id} />
           </div>
-        )}
+        ))}
       </div>
     </div>
   )

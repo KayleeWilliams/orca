@@ -94,6 +94,8 @@ function App(): React.JSX.Element {
   const hydrateWorkspaceSession = useAppStore((s) => s.hydrateWorkspaceSession)
   const hydrateEditorSession = useAppStore((s) => s.hydrateEditorSession)
   const hydrateBrowserSession = useAppStore((s) => s.hydrateBrowserSession)
+  const fetchBrowserSessionProfiles = useAppStore((s) => s.fetchBrowserSessionProfiles)
+  const fetchDetectedBrowsers = useAppStore((s) => s.fetchDetectedBrowsers)
   const reconnectPersistedTerminals = useAppStore((s) => s.reconnectPersistedTerminals)
   const hydratePersistedUI = useAppStore((s) => s.hydratePersistedUI)
   const openModal = useAppStore((s) => s.openModal)
@@ -155,6 +157,8 @@ function App(): React.JSX.Element {
           hydrateWorkspaceSession(session)
           hydrateEditorSession(session)
           hydrateBrowserSession(session)
+          await fetchBrowserSessionProfiles()
+          await fetchDetectedBrowsers()
           await reconnectPersistedTerminals(abortController.signal)
           syncZoomCSSVar()
         }
@@ -208,6 +212,8 @@ function App(): React.JSX.Element {
     hydrateWorkspaceSession,
     hydrateEditorSession,
     hydrateBrowserSession,
+    fetchBrowserSessionProfiles,
+    fetchDetectedBrowsers,
     reconnectPersistedTerminals
   ])
 

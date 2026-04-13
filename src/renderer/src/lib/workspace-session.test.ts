@@ -56,6 +56,23 @@ function createSnapshot(overrides: Partial<AppState> = {}): AppState {
       ]
     },
     activeBrowserTabIdByWorktree: { 'wt-1': 'browser-1' },
+    browserPagesByWorkspace: {
+      'browser-1': [
+        {
+          id: 'page-1',
+          workspaceId: 'browser-1',
+          worktreeId: 'wt-1',
+          url: 'https://example.com',
+          title: 'Example',
+          loading: true,
+          faviconUrl: null,
+          canGoBack: false,
+          canGoForward: false,
+          loadError: null,
+          createdAt: Date.now()
+        }
+      ]
+    },
     ...overrides
   } as AppState
 }

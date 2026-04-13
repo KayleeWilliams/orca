@@ -5,7 +5,7 @@ import icon from '../../../resources/icon.png?asset'
 import devIcon from '../../../resources/icon-dev.png?asset'
 import type { Store } from '../persistence'
 import { browserManager } from '../browser/browser-manager'
-import { ORCA_BROWSER_PARTITION } from '../../shared/constants'
+import { browserSessionRegistry } from '../browser/browser-session-registry'
 import {
   normalizeBrowserNavigationUrl,
   normalizeExternalBrowserUrl
@@ -145,7 +145,11 @@ export function createMainWindow(
     // non-browser partition into the guest and widen the app privilege boundary.
     // The one allowed data URL is Orca's inert blank-tab bootstrap page; deny
     // every other data URL so the renderer cannot inject arbitrary inline HTML.
-    if (!normalizedSrc || partition !== ORCA_BROWSER_PARTITION) {
+    // Why: session profiles use per-profile partitions (e.g.
+    // persist:orca-browser-session-<uuid>). The registry is the sole authority
+    // for which partitions are valid — renderer-provided strings that are not
+    // in the allowlist are rejected.
+    if (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition)) {
       event.preventDefault()
       return
     }
@@ -162,7 +166,10 @@ export function createMainWindow(
     webPreferences.allowRunningInsecureContent = false
     webPreferences.contextIsolation = true
     webPreferences.sandbox = true
-    webPreferences.partition = ORCA_BROWSER_PARTITION
+    // Why: preserve the registry-validated partition instead of forcing the
+    // legacy constant. This lets imported/isolated session profiles use their
+    // own cookie/storage partition while keeping all other hardening intact.
+    webPreferences.partition = partition
   })
 
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {

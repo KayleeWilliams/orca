@@ -549,7 +549,40 @@ const api = {
       ) => callback(data)
       ipcRenderer.on('browser:grabActionShortcut', listener)
       return () => ipcRenderer.removeListener('browser:grabActionShortcut', listener)
-    }
+    },
+
+    sessionListProfiles: (): Promise<unknown[]> =>
+      ipcRenderer.invoke('browser:session:listProfiles'),
+
+    sessionCreateProfile: (args: {
+      scope: 'default' | 'isolated' | 'imported'
+      label: string
+    }): Promise<unknown> => ipcRenderer.invoke('browser:session:createProfile', args),
+
+    sessionDeleteProfile: (args: { profileId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('browser:session:deleteProfile', args),
+
+    sessionImportCookies: (args: {
+      profileId: string
+    }): Promise<
+      { ok: true; profileId: string; summary: unknown } | { ok: false; reason: string }
+    > => ipcRenderer.invoke('browser:session:importCookies', args),
+
+    sessionResolvePartition: (args: { profileId: string | null }): Promise<string | null> =>
+      ipcRenderer.invoke('browser:session:resolvePartition', args),
+
+    sessionDetectBrowsers: (): Promise<unknown[]> =>
+      ipcRenderer.invoke('browser:session:detectBrowsers'),
+
+    sessionImportFromBrowser: (args: {
+      profileId: string
+      browserFamily: string
+    }): Promise<
+      { ok: true; profileId: string; summary: unknown } | { ok: false; reason: string }
+    > => ipcRenderer.invoke('browser:session:importFromBrowser', args),
+
+    sessionClearDefaultCookies: (): Promise<boolean> =>
+      ipcRenderer.invoke('browser:session:clearDefaultCookies')
   },
 
   hooks: {

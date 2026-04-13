@@ -190,10 +190,10 @@ export function useIpcEvents(): void {
           return
         }
         // Why: the guest process can request "open this link in Orca", but it
-        // does not own Orca's worktree/tab model. Resolve the source page in
-        // the renderer and create a sibling browser page in the same workspace
-        // so the action stays local to the user's current browser context.
-        store.createBrowserPage(sourcePage.workspaceId, url, { title: url, activate: true })
+        // does not own Orca's worktree/tab model. Resolve the source page's
+        // worktree and create a new outer browser tab so the link opens as a
+        // separate tab in the outer Orca tab bar.
+        store.createBrowserTab(sourcePage.worktreeId, url, { title: url })
       })
     )
 
@@ -203,24 +203,6 @@ export function useIpcEvents(): void {
       window.api.ui.onNewBrowserTab(() => {
         const store = useAppStore.getState()
         const worktreeId = store.activeWorktreeId
-        if (
-          worktreeId &&
-          store.activeTabType === 'browser' &&
-          store.activeBrowserTabId &&
-          Object.values(store.browserTabsByWorktree)
-            .flat()
-            .some((workspace) => workspace.id === store.activeBrowserTabId)
-        ) {
-          store.createBrowserPage(
-            store.activeBrowserTabId,
-            store.browserDefaultUrl ?? 'about:blank',
-            {
-              title: 'New Browser Tab',
-              activate: true
-            }
-          )
-          return
-        }
         if (worktreeId) {
           store.createBrowserTab(worktreeId, store.browserDefaultUrl ?? 'about:blank', {
             title: 'New Browser Tab'
@@ -266,17 +248,8 @@ export function useIpcEvents(): void {
     unsubs.push(
       window.api.ui.onCloseActiveTab(() => {
         const store = useAppStore.getState()
-        // Why: this IPC fires only from browser guest webContents, so
-        // activeTabType is always 'browser'. We intentionally skip the
-        // editor case — closing dirty editor files requires the save
-        // confirmation dialog which lives in Terminal.tsx component state.
         if (store.activeTabType === 'browser' && store.activeBrowserTabId) {
-          const activeWorkspace = Object.values(store.browserTabsByWorktree)
-            .flat()
-            .find((workspace) => workspace.id === store.activeBrowserTabId)
-          if (activeWorkspace?.activePageId) {
-            store.closeBrowserPage(activeWorkspace.activePageId)
-          }
+          store.closeBrowserTab(store.activeBrowserTabId)
         }
       })
     )

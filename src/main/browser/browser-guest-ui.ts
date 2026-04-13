@@ -22,15 +22,22 @@ export function setupGuestContextMenu(args: {
       return
     }
     const pageUrl = guest.getURL()
-    const linkUrl = params.linkURL || ''
+    // Why: params.linkURL is empty when the user right-clicks non-link
+    // content. Normalizing an empty string through normalizeBrowserNavigationUrl
+    // produces the blank-page constant (a truthy string), which would trick the
+    // renderer into showing "Open Link…" items for every right-click.
+    const rawLinkUrl = params.linkURL || ''
+    const linkUrl =
+      rawLinkUrl.length > 0
+        ? (normalizeExternalBrowserUrl(rawLinkUrl) ?? normalizeBrowserNavigationUrl(rawLinkUrl))
+        : null
     const sendContextMenu = (viewportX: number, viewportY: number): void => {
       renderer.send('browser:context-menu-requested', {
         browserPageId: browserTabId,
         x: viewportX,
         y: viewportY,
         pageUrl,
-        linkUrl:
-          normalizeBrowserNavigationUrl(linkUrl) ?? normalizeExternalBrowserUrl(linkUrl) ?? null,
+        linkUrl,
         canGoBack: guest.canGoBack(),
         canGoForward: guest.canGoForward()
       })

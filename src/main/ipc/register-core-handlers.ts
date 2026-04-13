@@ -16,6 +16,7 @@ import { setTrustedBrowserRendererWebContentsId } from './browser'
 import { registerSessionHandlers } from './session'
 import { registerSettingsHandlers } from './settings'
 import { registerBrowserHandlers } from './browser'
+import { browserSessionRegistry } from '../browser/browser-session-registry'
 import { registerShellHandlers } from './shell'
 import { registerUIHandlers } from './ui'
 import { registerCodexAccountHandlers } from './codex-accounts'
@@ -62,6 +63,12 @@ export function registerCoreHandlers(
   registerNotificationHandlers(store)
   registerSettingsHandlers(store)
   registerBrowserHandlers()
+  // Why: applyPendingCookieImport MUST run before restorePersistedUserAgent
+  // because the latter calls session.fromPartition() which initializes
+  // CookieMonster. The pending import replaces the live DB file so
+  // CookieMonster reads the imported cookies on first access.
+  browserSessionRegistry.applyPendingCookieImport()
+  browserSessionRegistry.restorePersistedUserAgent()
   registerShellHandlers()
   registerSessionHandlers(store)
   registerUIHandlers(store)

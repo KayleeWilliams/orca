@@ -2,8 +2,11 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type {
+  BrowserCookieImportResult,
+  BrowserCookieImportSummary,
   BrowserLoadError,
   BrowserPage,
+  BrowserSessionProfile,
   BrowserWorkspace,
   WorkspaceSessionState
 } from '../../../../shared/types'
@@ -12,6 +15,7 @@ import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
 type CreateBrowserTabOptions = {
   activate?: boolean
   title?: string
+  sessionProfileId?: string | null
 }
 
 type CreateBrowserPageOptions = {
@@ -64,6 +68,28 @@ export type BrowserSlice = {
   setBrowserTabUrl: (pageId: string, url: string) => void
   setBrowserPageUrl: (pageId: string, url: string) => void
   hydrateBrowserSession: (session: WorkspaceSessionState) => void
+  browserSessionProfiles: BrowserSessionProfile[]
+  browserSessionImportState: {
+    profileId: string
+    status: 'idle' | 'importing' | 'success' | 'error'
+    summary: BrowserCookieImportSummary | null
+    error: string | null
+  } | null
+  fetchBrowserSessionProfiles: () => Promise<void>
+  createBrowserSessionProfile: (
+    scope: 'isolated' | 'imported',
+    label: string
+  ) => Promise<BrowserSessionProfile | null>
+  deleteBrowserSessionProfile: (profileId: string) => Promise<boolean>
+  importCookiesToProfile: (profileId: string) => Promise<BrowserCookieImportResult>
+  clearBrowserSessionImportState: () => void
+  detectedBrowsers: { family: string; label: string }[]
+  fetchDetectedBrowsers: () => Promise<void>
+  importCookiesFromBrowser: (
+    profileId: string,
+    browserFamily: string
+  ) => Promise<BrowserCookieImportResult>
+  clearDefaultSessionCookies: () => Promise<boolean>
 }
 
 function normalizeUrl(url: string): string {
@@ -120,11 +146,13 @@ function buildWorkspaceFromPage(
   id: string,
   worktreeId: string,
   page: BrowserPage,
-  pageIds: string[]
+  pageIds: string[],
+  sessionProfileId?: string | null
 ): BrowserWorkspace {
   return {
     id,
     worktreeId,
+    sessionProfileId: sessionProfileId ?? null,
     activePageId: page.id,
     pageIds,
     url: page.url,
@@ -220,6 +248,8 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   recentlyClosedBrowserPagesByWorkspace: {},
   pendingAddressBarFocusByTabId: {},
   pendingAddressBarFocusByPageId: {},
+  browserSessionProfiles: [],
+  browserSessionImportState: null,
 
   createBrowserTab: (worktreeId, url, options) => {
     const workspaceId = globalThis.crypto.randomUUID()
@@ -230,7 +260,13 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     // happens to be active at any given moment.
     const existingCount = (get().browserTabsByWorktree[worktreeId] ?? []).length
     const browserTab = {
-      ...buildWorkspaceFromPage(workspaceId, worktreeId, page, [page.id]),
+      ...buildWorkspaceFromPage(
+        workspaceId,
+        worktreeId,
+        page,
+        [page.id],
+        options?.sessionProfileId
+      ),
       label: `Browser ${existingCount + 1}`
     }
 
@@ -955,5 +991,126 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         }
       }
     }
+  },
+
+  fetchBrowserSessionProfiles: async () => {
+    const profiles = (await window.api.browser.sessionListProfiles()) as BrowserSessionProfile[]
+    set({ browserSessionProfiles: profiles })
+  },
+
+  createBrowserSessionProfile: async (scope, label) => {
+    const profile = (await window.api.browser.sessionCreateProfile({
+      scope,
+      label
+    })) as BrowserSessionProfile | null
+    if (profile) {
+      set((s) => ({
+        browserSessionProfiles: [...s.browserSessionProfiles, profile]
+      }))
+    }
+    return profile
+  },
+
+  deleteBrowserSessionProfile: async (profileId) => {
+    const ok = await window.api.browser.sessionDeleteProfile({ profileId })
+    if (ok) {
+      set((s) => ({
+        browserSessionProfiles: s.browserSessionProfiles.filter((p) => p.id !== profileId)
+      }))
+    }
+    return ok
+  },
+
+  importCookiesToProfile: async (profileId) => {
+    set({
+      browserSessionImportState: {
+        profileId,
+        status: 'importing',
+        summary: null,
+        error: null
+      }
+    })
+    const result = (await window.api.browser.sessionImportCookies({
+      profileId
+    })) as BrowserCookieImportResult
+    if (result.ok) {
+      set({
+        browserSessionImportState: {
+          profileId,
+          status: 'success',
+          summary: result.summary,
+          error: null
+        }
+      })
+      await get().fetchBrowserSessionProfiles()
+    } else {
+      set({
+        browserSessionImportState: {
+          profileId,
+          status: result.reason === 'canceled' ? 'idle' : 'error',
+          summary: null,
+          error: result.reason === 'canceled' ? null : result.reason
+        }
+      })
+    }
+    return result
+  },
+
+  clearBrowserSessionImportState: () => {
+    set({ browserSessionImportState: null })
+  },
+
+  detectedBrowsers: [],
+
+  fetchDetectedBrowsers: async () => {
+    const browsers = (await window.api.browser.sessionDetectBrowsers()) as {
+      family: string
+      label: string
+    }[]
+    set({ detectedBrowsers: browsers })
+  },
+
+  importCookiesFromBrowser: async (profileId, browserFamily) => {
+    set({
+      browserSessionImportState: {
+        profileId,
+        status: 'importing',
+        summary: null,
+        error: null
+      }
+    })
+    const result = (await window.api.browser.sessionImportFromBrowser({
+      profileId,
+      browserFamily
+    })) as BrowserCookieImportResult
+    if (result.ok) {
+      set({
+        browserSessionImportState: {
+          profileId,
+          status: 'success',
+          summary: result.summary,
+          error: null
+        }
+      })
+      await get().fetchBrowserSessionProfiles()
+    } else {
+      set({
+        browserSessionImportState: {
+          profileId,
+          status: 'error',
+          summary: null,
+          error: result.reason
+        }
+      })
+    }
+    return result
+  },
+
+  clearDefaultSessionCookies: async () => {
+    const ok = await window.api.browser.sessionClearDefaultCookies()
+    if (ok) {
+      await get().fetchBrowserSessionProfiles()
+    }
+    return ok
   }
 })

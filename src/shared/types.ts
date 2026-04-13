@@ -122,6 +122,12 @@ export type BrowserWorkspace = {
    *  Optional so sessions persisted before this field was added fall back
    *  gracefully to the URL-derived label in getBrowserTabLabel. */
   label?: string
+  // Why: each browser workspace binds to exactly one session profile at creation
+  // time. The profile determines which Electron partition (and thus which
+  // cookies/storage) the guest webview uses. Absent means the legacy shared
+  // partition, which keeps backward compat with workspaces persisted before
+  // session profiles existed.
+  sessionProfileId?: string | null
   activePageId?: string | null
   pageIds?: string[]
   // Why: the active page owns real browser chrome state now, but the top-level
@@ -139,6 +145,33 @@ export type BrowserWorkspace = {
 }
 
 export type BrowserTab = BrowserWorkspace
+
+export type BrowserSessionProfileScope = 'default' | 'isolated' | 'imported'
+
+export type BrowserSessionProfileSource = {
+  browserFamily: 'chrome' | 'chromium' | 'arc' | 'edge' | 'manual'
+  profileName?: string
+  importedAt: number
+}
+
+export type BrowserSessionProfile = {
+  id: string
+  scope: BrowserSessionProfileScope
+  partition: string
+  label: string
+  source: BrowserSessionProfileSource | null
+}
+
+export type BrowserCookieImportSummary = {
+  totalCookies: number
+  importedCookies: number
+  skippedCookies: number
+  domains: string[]
+}
+
+export type BrowserCookieImportResult =
+  | { ok: true; profileId: string; summary: BrowserCookieImportSummary }
+  | { ok: false; reason: string }
 
 export type TerminalPaneSplitDirection = 'vertical' | 'horizontal'
 
