@@ -286,6 +286,40 @@ describe('registerPtyHandlers', () => {
     })
   })
 
+  it('captures the post-.zshenv ZDOTDIR for later wrapper stages', () => {
+    const originalPlatform = process.platform
+    const originalShell = process.env.SHELL
+
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'darwin'
+    })
+    process.env.SHELL = '/bin/zsh'
+
+    try {
+      spawnAndGetCall({ cwd: '/tmp', command: 'printf "hello"' })
+
+      const zshEnvWrite = writeFileSyncMock.mock.calls.find(
+        ([targetPath]) => targetPath === '/tmp/orca-user-data/shell-ready/zsh/.zshenv'
+      )
+
+      expect(zshEnvWrite).toBeDefined()
+      expect(zshEnvWrite?.[1]).toContain(
+        'export ORCA_ORIG_ZDOTDIR="${ZDOTDIR:-${ORCA_ORIG_ZDOTDIR:-$HOME}}"'
+      )
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+      if (originalShell === undefined) {
+        delete process.env.SHELL
+      } else {
+        process.env.SHELL = originalShell
+      }
+    }
+  })
+
   it('spawns a plain POSIX login shell and queues startup commands for the live session', () => {
     const originalPlatform = process.platform
     const originalShell = process.env.SHELL
@@ -413,6 +447,7 @@ describe('registerPtyHandlers', () => {
       value: 'win32'
     })
     process.env.USERPROFILE = 'C:\\Users\\jin'
+    getPathMock.mockReturnValue('C:\\Users\\jin\\AppData\\Roaming\\Orca')
 
     try {
       const [shell, args, options] = spawnAndGetCall({
@@ -426,7 +461,7 @@ describe('registerPtyHandlers', () => {
         '--',
         'bash',
         '-c',
-        "cd '/home/jin/repo' && exec bash -l"
+        "cd '/home/jin/repo' && exec bash --rcfile '/mnt/c/Users/jin/AppData/Roaming/Orca/shell-ready/bash/rcfile' -i"
       ])
       expect(options.cwd).toBe('C:\\Users\\jin')
     } finally {
@@ -664,6 +699,53 @@ describe('registerPtyHandlers', () => {
       vi.runAllTimers()
       expect(mockProc.proc.write).toHaveBeenCalledWith('claude\n')
     } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not write the WSL startup command before the shell-ready marker arrives', async () => {
+    vi.useFakeTimers()
+    const originalPlatform = process.platform
+    const originalUserProfile = process.env.USERPROFILE
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'win32'
+    })
+    process.env.USERPROFILE = 'C:\\Users\\jin'
+    getPathMock.mockReturnValue('C:\\Users\\jin\\AppData\\Roaming\\Orca')
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo',
+        command: 'codex'
+      })
+
+      expect(mockProc.proc.write).not.toHaveBeenCalled()
+
+      mockProc.emitData('last login: today\r\n')
+      vi.runOnlyPendingTimers()
+      expect(mockProc.proc.write).not.toHaveBeenCalled()
+
+      mockProc.emitData('\x1b]133;A\x07$ ')
+      await Promise.resolve()
+      vi.runAllTimers()
+      expect(mockProc.proc.write).toHaveBeenCalledWith('codex\n')
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+      if (originalUserProfile === undefined) {
+        delete process.env.USERPROFILE
+      } else {
+        process.env.USERPROFILE = originalUserProfile
+      }
       vi.useRealTimers()
     }
   })

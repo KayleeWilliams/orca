@@ -414,7 +414,13 @@ export default function TerminalPane({
     }
 
     const pasteIntoPane = (
-      pane: { id: number; terminal: { paste: (data: string) => void } },
+      pane: {
+        id: number
+        terminal: {
+          paste: (data: string) => void
+          modes: { readonly bracketedPasteMode: boolean }
+        }
+      },
       data: string
     ): void => {
       const transport = paneTransportsRef.current.get(pane.id)
@@ -422,9 +428,16 @@ export default function TerminalPane({
         // Why: our clipboard-intercept path already has the full paste payload
         // in memory. Sending it straight to the PTY avoids routing long pastes
         // back through xterm's textarea/paste machinery, which is the only
-        // remaining layer between Orca and the shell for Cmd/Ctrl+V. Fall back
-        // to xterm.paste() only if the pane is not connected yet.
-        transport.sendInput(data)
+        // remaining layer between Orca and the shell for Cmd/Ctrl+V. Normalize
+        // newlines the same way xterm does (CR-LF / LF → CR), and only wrap in
+        // bracketed paste escape sequences when the shell has opted in via DEC
+        // private mode 2004 — sending those escapes unconditionally would inject
+        // visible garbage into programs that haven't enabled the mode.
+        const normalized = data.replace(/\r?\n/g, '\r')
+        const payload = pane.terminal.modes.bracketedPasteMode
+          ? `\x1b[200~${normalized}\x1b[201~`
+          : normalized
+        transport.sendInput(payload)
         return
       }
       pane.terminal.paste(data)
@@ -435,7 +448,10 @@ export default function TerminalPane({
     // — which is the image-only clipboard scenario this fix targets.
     const pasteFromClipboard = (pane: {
       id: number
-      terminal: { paste: (data: string) => void }
+      terminal: {
+        paste: (data: string) => void
+        modes: { readonly bracketedPasteMode: boolean }
+      }
     }): void => {
       void window.api.ui
         .readClipboardText()
@@ -480,12 +496,21 @@ export default function TerminalPane({
       if (target.closest('[data-terminal-search-root]')) {
         return false
       }
+      // Why: standard form inputs inside the pane (e.g., the pane-title rename input)
+      // should receive paste events normally — only intercept for xterm surfaces.
+      if (
+        target instanceof HTMLInputElement ||
+        (target instanceof HTMLTextAreaElement &&
+          !target.classList.contains('xterm-helper-textarea'))
+      ) {
+        return false
+      }
+      // Why: only check containment within the active pane's root element.
+      // The previous fallback conditions (matching any .xterm-helper-textarea or
+      // any .xterm ancestor) were overly broad and would match xterm elements
+      // from inactive panes, routing their events to the active pane incorrectly.
       const paneRoot = pane.container
-      return (
-        paneRoot.contains(target) ||
-        target.classList.contains('xterm-helper-textarea') ||
-        target.closest('.xterm') !== null
-      )
+      return paneRoot.contains(target)
     }
 
     const onKeyPaste = (e: KeyboardEvent): void => {

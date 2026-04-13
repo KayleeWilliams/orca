@@ -16,7 +16,7 @@ import {
 import { app, type BrowserWindow, ipcMain } from 'electron'
 import * as pty from 'node-pty'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { parseWslPath } from '../wsl'
+import { parseWslPath, toLinuxPath } from '../wsl'
 import { openCodeHookService } from '../opencode/hook-service'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 
@@ -149,7 +149,7 @@ function getShellReadyWrapperRoot(): string {
 }
 
 function ensureShellReadyWrappers(): void {
-  if (didEnsureShellReadyWrappers || process.platform === 'win32') {
+  if (didEnsureShellReadyWrappers) {
     return
   }
   didEnsureShellReadyWrappers = true
@@ -161,6 +161,10 @@ function ensureShellReadyWrappers(): void {
   const zshEnv = `# Orca zsh shell-ready wrapper
 export ORCA_ORIG_ZDOTDIR="\${ORCA_ORIG_ZDOTDIR:-$HOME}"
 [[ -f "$ORCA_ORIG_ZDOTDIR/.zshenv" ]] && source "$ORCA_ORIG_ZDOTDIR/.zshenv"
+# Why: some users redirect ZDOTDIR from inside .zshenv. Capture the resolved
+# location after sourcing it so later startup files follow native zsh's path
+# resolution instead of getting pinned to the pre-.zshenv directory.
+export ORCA_ORIG_ZDOTDIR="\${ZDOTDIR:-\${ORCA_ORIG_ZDOTDIR:-$HOME}}"
 export ZDOTDIR=${quotePosixSingle(zshDir)}
 `
   const zshProfile = `# Orca zsh shell-ready wrapper
@@ -187,14 +191,20 @@ precmd_functions=(\${precmd_functions[@]} __orca_prompt_mark)
 `
   const bashRc = `# Orca bash shell-ready wrapper
 [[ -f /etc/profile ]] && source /etc/profile
+# Why: a real login shell sources exactly one of these files and never touches
+# ~/.bashrc directly — the convention is for ~/.bash_profile to source ~/.bashrc
+# itself.  We only fall back to ~/.bashrc when none of the login files exist, so
+# users who *only* have a ~/.bashrc still get a working environment without
+# double-sourcing for the common case where ~/.bash_profile already sources it.
 if [[ -f "$HOME/.bash_profile" ]]; then
   source "$HOME/.bash_profile"
 elif [[ -f "$HOME/.bash_login" ]]; then
   source "$HOME/.bash_login"
 elif [[ -f "$HOME/.profile" ]]; then
   source "$HOME/.profile"
+else
+  [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 fi
-[[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 # Why: append the marker through PROMPT_COMMAND so it fires after the prompt has
 # been rebuilt by user config, matching Superset's "shell ready" contract.
 __orca_prompt_mark() {
@@ -291,10 +301,21 @@ function writeStartupCommandWhenShellReady(
     // queue made zsh consume very long agent-launch commands incrementally,
     // which still truncated the command in practice. Keep the queue for normal
     // interactive typing, but mirror Superset for startup-command delivery.
-    proc.write(payload)
+    // Why: the PTY may have exited between shell-ready resolution and this
+    // microtask. Guard the write the same way the runtime write handler does
+    // (lines 398-403) so a dead PTY doesn't produce an unhandled exception.
+    try {
+      proc.write(payload)
+    } catch {
+      // PTY already exited — nothing to deliver the startup command to.
+    }
   }
 
-  readyPromise.then(flush)
+  // Why: if flush throws despite the inner try/catch (defensive), the .catch
+  // prevents an unhandled promise rejection from surfacing to the process.
+  readyPromise.then(flush).catch(() => {
+    /* startup command delivery failed — PTY likely exited */
+  })
   onExit(cleanup)
 }
 
@@ -453,14 +474,12 @@ export function registerPtyHandlers(
       } | null = null
       if (wslInfo) {
         shellPath = 'wsl.exe'
-        shellArgs = [
-          '-d',
-          wslInfo.distro,
-          '--',
-          'bash',
-          '-c',
-          `cd ${quotePosixSingle(wslInfo.linuxPath)} && exec bash -l`
-        ]
+        shellReadyLaunch = args.command ? getShellReadyLaunchConfig('/bin/bash') : null
+        const wslShellCommand =
+          shellReadyLaunch?.supportsReadyMarker === true
+            ? `cd ${quotePosixSingle(wslInfo.linuxPath)} && exec bash --rcfile ${quotePosixSingle(toLinuxPath(`${getShellReadyWrapperRoot()}/bash/rcfile`))} -i`
+            : `cd ${quotePosixSingle(wslInfo.linuxPath)} && exec bash -l`
+        shellArgs = ['-d', wslInfo.distro, '--', 'bash', '-c', wslShellCommand]
         // Why: set cwd to a valid Windows directory so node-pty's native
         // spawn doesn't fail on the UNC path.
         effectiveCwd = process.env.USERPROFILE || process.env.HOMEPATH || 'C:\\'
@@ -646,6 +665,20 @@ export function registerPtyHandlers(
         if (shellReadyTimeout) {
           clearTimeout(shellReadyTimeout)
           shellReadyTimeout = null
+        }
+        // Why: when the timeout fires (or finishShellReady is called before the
+        // full OSC 133;A sequence arrives), the scanner may be holding a partial
+        // match in heldBytes. Flush those bytes to the renderer so they aren't
+        // silently dropped — they are legitimate terminal output that just
+        // happened to start with the same prefix as the marker sequence.
+        if (shellReadyScanState && shellReadyScanState.heldBytes.length > 0) {
+          const heldData = shellReadyScanState.heldBytes
+          shellReadyScanState.heldBytes = ''
+          shellReadyScanState.matchPos = 0
+          runtime?.onPtyData(id, heldData, Date.now())
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('pty:data', { id, data: heldData })
+          }
         }
         const resolve = resolveShellReady
         resolveShellReady = null
