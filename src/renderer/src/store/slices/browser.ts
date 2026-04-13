@@ -11,6 +11,7 @@ import type {
   WorkspaceSessionState
 } from '../../../../shared/types'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
+import { pickNeighbor } from './tabs-helpers'
 
 type CreateBrowserTabOptions = {
   activate?: boolean
@@ -369,8 +370,11 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
 
       const nextActiveBrowserTabIdByWorktree = { ...s.activeBrowserTabIdByWorktree }
       const remainingBrowserTabs = nextBrowserTabsByWorktree[owningWorktreeId] ?? []
+      const tabBarOrder = s.tabBarOrderByWorktree[owningWorktreeId] ?? []
+      const neighborTabId = pickNeighbor(tabBarOrder, tabId)
       if (nextActiveBrowserTabIdByWorktree[owningWorktreeId] === tabId) {
-        nextActiveBrowserTabIdByWorktree[owningWorktreeId] = remainingBrowserTabs[0]?.id ?? null
+        nextActiveBrowserTabIdByWorktree[owningWorktreeId] =
+          neighborTabId ?? remainingBrowserTabs[0]?.id ?? null
       }
 
       const nextTabBarOrder = {
@@ -424,7 +428,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         browserPagesByWorkspace: nextBrowserPagesByWorkspace,
         activeBrowserTabId:
           s.activeBrowserTabId === tabId
-            ? (remainingBrowserTabs[0]?.id ?? null)
+            ? (neighborTabId ?? remainingBrowserTabs[0]?.id ?? null)
             : s.activeBrowserTabId,
         activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
         tabBarOrderByWorktree: nextTabBarOrder,
