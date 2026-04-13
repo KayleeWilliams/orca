@@ -62,6 +62,7 @@ export type WorkspaceVisibleTabType = 'terminal' | 'editor' | 'browser'
 
 export type Tab = {
   id: string // UUID for terminals, filePath for editors (preserves current convention)
+  entityId: string // ID of the backing content (terminal tab ID, file path, browser workspace ID)
   groupId: string
   worktreeId: string
   contentType: TabContentType

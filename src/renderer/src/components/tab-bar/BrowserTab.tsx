@@ -26,12 +26,6 @@ function formatBrowserTabUrlLabel(url: string): string {
 }
 
 function getBrowserTabLabel(tab: BrowserTabState): string {
-  // Why: always use the stable creation-time label ("Browser N") when present
-  // so the outer Orca tab never reflects inner page titles. The inner strip
-  // always shows page titles, so the outer tab only needs workspace identity.
-  if (tab.label) {
-    return tab.label
-  }
   if (
     !tab.title ||
     tab.title === tab.url ||

@@ -254,21 +254,13 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   createBrowserTab: (worktreeId, url, options) => {
     const workspaceId = globalThis.crypto.randomUUID()
     const page = buildBrowserPage(workspaceId, worktreeId, url, options?.title)
-    // Why: the label is set once at creation time and never updated from inner
-    // page titles. This keeps the outer Orca tab stable ("Browser 1", "Browser 2")
-    // matching the terminal convention rather than reflecting whichever inner page
-    // happens to be active at any given moment.
-    const existingCount = (get().browserTabsByWorktree[worktreeId] ?? []).length
-    const browserTab = {
-      ...buildWorkspaceFromPage(
-        workspaceId,
-        worktreeId,
-        page,
-        [page.id],
-        options?.sessionProfileId
-      ),
-      label: `Browser ${existingCount + 1}`
-    }
+    const browserTab = buildWorkspaceFromPage(
+      workspaceId,
+      worktreeId,
+      page,
+      [page.id],
+      options?.sessionProfileId
+    )
 
     set((s) => {
       const existingTabs = s.browserTabsByWorktree[worktreeId] ?? []
@@ -339,12 +331,10 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     })
 
     const state = get()
-    const targetGroupId =
-      state.activeGroupIdByWorktree[worktreeId] ?? state.groupsByWorktree[worktreeId]?.[0]?.id
-    if (
-      targetGroupId &&
-      !state.findTabForEntityInGroup(worktreeId, targetGroupId, workspaceId, 'browser')
-    ) {
+    const alreadyHasUnifiedTab = (state.unifiedTabsByWorktree[worktreeId] ?? []).some(
+      (t) => t.contentType === 'browser' && t.entityId === workspaceId
+    )
+    if (!alreadyHasUnifiedTab) {
       state.createUnifiedTab(worktreeId, 'browser', {
         entityId: workspaceId,
         label: browserTab.title

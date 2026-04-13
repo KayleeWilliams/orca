@@ -931,9 +931,13 @@ function BrowserPagePane({
     }
 
     const handleTitleUpdate = (event: { title?: string }): void => {
-      onUpdatePageStateRef.current(browserTab.id, {
-        title: getBrowserDisplayTitle(event.title, webview.getURL() || browserTab.url)
-      })
+      try {
+        onUpdatePageStateRef.current(browserTab.id, {
+          title: getBrowserDisplayTitle(event.title, webview.getURL() || browserTab.url)
+        })
+      } catch {
+        // Why: title-updated can fire before dom-ready, making getURL() throw.
+      }
     }
 
     const handleFaviconUpdate = (event: { favicons?: string[] }): void => {
@@ -1015,11 +1019,11 @@ function BrowserPagePane({
         evictParkedWebviews(browserTab.id)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Why: this effect mounts
-    // and wires up webview event listeners once per tab identity. browserTab.url and
-    // webviewPartition are intentionally excluded: re-running on URL changes would
-    // detach/reattach the webview, cancelling in-progress navigations. Callbacks use
-    // refs so they always see current values without needing to be in the dep array.
+    // Why: this effect mounts and wires up webview event listeners once per tab
+    // identity. browserTab.url and webviewPartition are intentionally excluded:
+    // re-running on URL changes would detach/reattach the webview, cancelling
+    // in-progress navigations. Callbacks use refs so they always see current values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     browserTab.id,
     workspaceId,

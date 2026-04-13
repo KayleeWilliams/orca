@@ -22,6 +22,9 @@ type WorkspaceSessionSnapshot = Pick<
   | 'browserTabsByWorktree'
   | 'browserPagesByWorkspace'
   | 'activeBrowserTabIdByWorktree'
+  | 'unifiedTabsByWorktree'
+  | 'groupsByWorktree'
+  | 'activeGroupIdByWorktree'
 >
 
 /** Build the editor-file portion of the workspace session for persistence.
@@ -108,6 +111,8 @@ export function buildWorkspaceSessionPayload(
       snapshot.browserTabsByWorktree,
       snapshot.browserPagesByWorkspace,
       snapshot.activeBrowserTabIdByWorktree
-    )
+    ),
+    unifiedTabs: snapshot.unifiedTabsByWorktree,
+    tabGroups: snapshot.groupsByWorktree
   }
 }

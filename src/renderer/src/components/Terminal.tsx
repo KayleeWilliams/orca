@@ -59,8 +59,6 @@ export default function Terminal(): React.JSX.Element | null {
   const createBrowserTab = useAppStore((s) => s.createBrowserTab)
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((s) => s.setActiveBrowserTab)
-  const updateBrowserTabPageState = useAppStore((s) => s.updateBrowserTabPageState)
-  const setBrowserTabUrl = useAppStore((s) => s.setBrowserTabUrl)
 
   const markFileDirty = useAppStore((s) => s.markFileDirty)
   const setTabBarOrder = useAppStore((s) => s.setTabBarOrder)
@@ -458,20 +456,6 @@ export default function Terminal(): React.JSX.Element | null {
     [setActiveBrowserTab, setActiveTabType]
   )
 
-  const handleBrowserTabPageStateUpdate = useCallback(
-    (tabId: string, updates: Parameters<typeof updateBrowserTabPageState>[1]) => {
-      updateBrowserTabPageState(tabId, updates)
-    },
-    [updateBrowserTabPageState]
-  )
-
-  const handleBrowserTabSetUrl = useCallback(
-    (tabId: string, url: string) => {
-      setBrowserTabUrl(tabId, url)
-    },
-    [setBrowserTabUrl]
-  )
-
   // Keyboard shortcuts
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -839,10 +823,9 @@ export default function Terminal(): React.JSX.Element | null {
           })}
       </div>
 
-      {/* Browser panes container — hidden when active tab is not a browser tab.
-          Only the active browser tab for the active worktree is mounted; others
-          are parked in a hidden off-screen container by BrowserPane to preserve
-          their webview guest process across tab switches. */}
+      {/* Browser panes container — all browser panes for the active worktree
+          stay mounted so webview DOM state (scroll position, form inputs, etc.)
+          survives tab switches. BrowserPagePane uses isActive + CSS to show/hide. */}
       <div
         className={`relative flex-1 min-h-0 overflow-hidden ${activeTabType !== 'browser' ? 'hidden' : ''}`}
       >
@@ -858,18 +841,20 @@ export default function Terminal(): React.JSX.Element | null {
               className={isVisibleWorktree ? 'absolute inset-0' : 'absolute inset-0 hidden'}
               aria-hidden={!isVisibleWorktree}
             >
-              {isVisibleWorktree && activeTabType === 'browser'
-                ? browserTabs
-                    .filter((browserTab) => browserTab.id === activeBrowserTabId)
-                    .map((browserTab) => (
-                      <BrowserPane
-                        key={browserTab.id}
-                        browserTab={browserTab}
-                        onUpdatePageState={handleBrowserTabPageStateUpdate}
-                        onSetUrl={handleBrowserTabSetUrl}
-                      />
-                    ))
-                : null}
+              {browserTabs.map((browserTab) => {
+                const isBrowserActive =
+                  isVisibleWorktree &&
+                  activeTabType === 'browser' &&
+                  browserTab.id === activeBrowserTabId
+                return (
+                  <div
+                    key={browserTab.id}
+                    className={`absolute inset-0${isBrowserActive ? '' : ' pointer-events-none hidden'}`}
+                  >
+                    <BrowserPane browserTab={browserTab} isActive={isBrowserActive} />
+                  </div>
+                )
+              })}
             </div>
           )
         })}

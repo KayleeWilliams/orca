@@ -71,6 +71,7 @@ function hydrateLegacyFormat(
     for (const tt of terminalTabs) {
       tabs.push({
         id: tt.id,
+        entityId: tt.id,
         groupId,
         worktreeId,
         contentType: 'terminal',
@@ -88,6 +89,7 @@ function hydrateLegacyFormat(
     for (const ef of editorFiles) {
       tabs.push({
         id: ef.filePath,
+        entityId: ef.filePath,
         groupId,
         worktreeId,
         contentType: 'editor',

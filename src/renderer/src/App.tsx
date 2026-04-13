@@ -116,6 +116,9 @@ function App(): React.JSX.Element {
   const browserTabsByWorktree = useAppStore((s) => s.browserTabsByWorktree)
   const browserPagesByWorkspace = useAppStore((s) => s.browserPagesByWorkspace)
   const activeBrowserTabIdByWorktree = useAppStore((s) => s.activeBrowserTabIdByWorktree)
+  const unifiedTabsByWorktree = useAppStore((s) => s.unifiedTabsByWorktree)
+  const groupsByWorktree = useAppStore((s) => s.groupsByWorktree)
+  const activeGroupIdByWorktree = useAppStore((s) => s.activeGroupIdByWorktree)
 
   // Right sidebar + editor state
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar)
@@ -254,7 +257,6 @@ function App(): React.JSX.Element {
           activeBrowserTabIdByWorktree,
           unifiedTabsByWorktree,
           groupsByWorktree,
-          layoutByWorktree,
           activeGroupIdByWorktree
         })
       )
@@ -274,7 +276,10 @@ function App(): React.JSX.Element {
     activeTabIdByWorktree,
     browserTabsByWorktree,
     browserPagesByWorkspace,
-    activeBrowserTabIdByWorktree
+    activeBrowserTabIdByWorktree,
+    unifiedTabsByWorktree,
+    groupsByWorktree,
+    activeGroupIdByWorktree
   ])
 
   // On shutdown, capture terminal scrollback buffers and flush to disk.

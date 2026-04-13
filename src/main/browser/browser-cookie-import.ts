@@ -715,12 +715,15 @@ export async function importCookiesFromBrowser(
         continue
       }
       try {
+        // Why: __Host- prefixed cookies must not have a domain attribute and
+        // must have path=/. Chromium rejects them otherwise.
+        const isHostPrefixed = cookie.name.startsWith('__Host-')
         await targetSession.cookies.set({
           url,
           name: cookie.name,
           value: cookie.value,
-          domain: cookie.domain,
-          path: cookie.path,
+          ...(isHostPrefixed ? {} : { domain: cookie.domain }),
+          path: isHostPrefixed ? '/' : cookie.path,
           secure: cookie.secure,
           httpOnly: cookie.httpOnly,
           sameSite: cookie.sameSite,

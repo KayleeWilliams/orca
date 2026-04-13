@@ -21,7 +21,9 @@ export type TabsSlice = {
   createUnifiedTab: (
     worktreeId: string,
     contentType: TabContentType,
-    init?: Partial<Pick<Tab, 'id' | 'label' | 'customLabel' | 'color' | 'isPreview' | 'isPinned'>>
+    init?: Partial<
+      Pick<Tab, 'id' | 'entityId' | 'label' | 'customLabel' | 'color' | 'isPreview' | 'isPinned'>
+    >
   ) => Tab
   closeUnifiedTab: (
     tabId: string
@@ -71,6 +73,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
 
       tab = {
         id,
+        entityId: init?.entityId ?? id,
         groupId: group.id,
         worktreeId,
         contentType,
