@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdtempSync,
   rmSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -403,6 +404,19 @@ const PBKDF2_ITERATIONS = 1003
 const PBKDF2_KEY_LENGTH = 16
 const PBKDF2_SALT = 'saltysalt'
 
+const CHROMIUM_EPOCH_OFFSET = 11644473600n
+
+function chromiumTimestampToUnix(chromiumTs: string): number {
+  if (!chromiumTs || chromiumTs === '0') {
+    return 0
+  }
+  const ts = BigInt(chromiumTs)
+  if (ts === 0n) {
+    return 0
+  }
+  return Math.max(Number(ts / 1000000n - CHROMIUM_EPOCH_OFFSET), 0)
+}
+
 function getEncryptionKey(keychainService: string, keychainAccount: string): Buffer | null {
   try {
     const raw = execSync(
@@ -581,14 +595,36 @@ export async function importCookiesFromBrowser(
     const allRows = allRowsOutput.split('\n').filter(Boolean)
     diag(`  read ${allRows.length} rows with quote() encoding`)
 
-    const valueColIdx = targetCols.indexOf('value')
-    const encValueColIdx = targetCols.indexOf('encrypted_value')
-    const hostKeyIdx = targetCols.indexOf('host_key')
+    const colIdx = Object.fromEntries(targetCols.map((col, i) => [col, i]))
+
+    function unquote(quoted: string): string {
+      return quoted.replace(/^'|'$/g, '').replace(/''/g, "'")
+    }
+
+    function unquoteInt(quoted: string): number {
+      return parseInt(quoted, 10) || 0
+    }
 
     let imported = 0
     let skipped = 0
+    let memoryLoaded = 0
+    let memoryFailed = 0
     const domainSet = new Set<string>()
     const sqlStatements: string[] = ['BEGIN TRANSACTION;']
+
+    type DecryptedCookie = {
+      plaintextHex: string
+      value: string
+      domain: string
+      name: string
+      path: string
+      secure: boolean
+      httpOnly: boolean
+      sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict'
+      expirationDate: number | undefined
+    }
+
+    const decryptedCookies: DecryptedCookie[] = []
 
     for (const row of allRows) {
       const cols = row.split(SEP)
@@ -597,14 +633,10 @@ export async function importCookiesFromBrowser(
         continue
       }
 
-      const hexEncValue = cols[encValueColIdx]
+      const hexEncValue = cols[colIdx.encrypted_value]
       const encBuf = Buffer.from(hexEncValue, 'hex')
-      const hexPlainValue = cols[valueColIdx]
+      const hexPlainValue = cols[colIdx.value]
 
-      // Why: decrypt the source browser's encrypted_value to raw bytes, then
-      // write those bytes directly to the `value` column as a hex blob.
-      // CookieMonster reads `value` as a raw byte string (std::string) when
-      // `encrypted_value` is empty, preserving every byte including non-ASCII.
       let plaintextHex: string
       if (encBuf.length > 0) {
         const rawDecrypted = decryptCookieValueRaw(encBuf, sourceKey)
@@ -617,10 +649,29 @@ export async function importCookiesFromBrowser(
         plaintextHex = hexPlainValue
       }
 
-      const hostKeyQuoted = cols[hostKeyIdx]
-      const hostKey = hostKeyQuoted.replace(/^'|'$/g, '').replace(/''/g, "'")
-      const cleanDomain = hostKey.startsWith('.') ? hostKey.slice(1) : hostKey
+      const domain = unquote(cols[colIdx.host_key])
+      const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
       domainSet.add(cleanDomain)
+
+      const name = unquote(cols[colIdx.name])
+      const path = unquote(cols[colIdx.path])
+      const secure = unquoteInt(cols[colIdx.is_secure]) === 1
+      const httpOnly = unquoteInt(cols[colIdx.is_httponly]) === 1
+      const sameSite = normalizeSameSite(unquoteInt(cols[colIdx.samesite]))
+      const expiresUtc = chromiumTimestampToUnix(unquote(cols[colIdx.expires_utc]))
+      const value = Buffer.from(plaintextHex, 'hex').toString('utf-8')
+
+      decryptedCookies.push({
+        plaintextHex,
+        value,
+        domain,
+        name,
+        path,
+        secure,
+        httpOnly,
+        sameSite,
+        expirationDate: expiresUtc > 0 ? expiresUtc : undefined
+      })
 
       const values = targetCols
         .map((col, i) => {
@@ -634,7 +685,6 @@ export async function importCookiesFromBrowser(
         })
         .join(', ')
       sqlStatements.push(`INSERT OR REPLACE INTO cookies (${colList}) VALUES (${values});`)
-
       imported++
     }
 
@@ -651,13 +701,51 @@ export async function importCookiesFromBrowser(
     })
 
     rmSync(tmpDir, { recursive: true, force: true })
-    diag(`  SQLite staging import complete: ${imported} cookies, ${domainSet.size} domains`)
+    diag(`  SQLite staging complete: ${imported} cookies, ${domainSet.size} domains`)
 
-    // Why: CookieMonster holds its own state in memory and overwrites the DB
-    // on flush/shutdown. Stage the DB and swap it in on next cold start,
-    // before CookieMonster initializes.
-    browserSessionRegistry.setPendingCookieImport(stagingCookiesPath)
-    diag(`  staged at ${stagingCookiesPath} — restart required`)
+    // Why: loading cookies into memory via cookies.set() makes them available
+    // immediately without requiring a restart. The staging DB is kept as a
+    // fallback for any cookies that fail the cookies.set() validation.
+    for (const cookie of decryptedCookies) {
+      const url = deriveUrl(cookie.domain, cookie.secure)
+      if (!url) {
+        memoryFailed++
+        continue
+      }
+      try {
+        await targetSession.cookies.set({
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          sameSite: cookie.sameSite,
+          expirationDate: cookie.expirationDate
+        })
+        memoryLoaded++
+      } catch {
+        memoryFailed++
+      }
+    }
+
+    diag(`  memory load: ${memoryLoaded} OK, ${memoryFailed} failed`)
+
+    if (memoryFailed > 0) {
+      // Why: some cookies couldn't be loaded via cookies.set() (non-ASCII values
+      // or other validation failures). Keep the staging DB so the next cold start
+      // picks them up from SQLite where CookieMonster reads them without validation.
+      browserSessionRegistry.setPendingCookieImport(stagingCookiesPath)
+      diag(`  staged at ${stagingCookiesPath} for ${memoryFailed} cookies that need restart`)
+    } else {
+      try {
+        unlinkSync(stagingCookiesPath)
+      } catch {
+        /* best-effort */
+      }
+      diag(`  all cookies loaded in-memory — no restart needed`)
+    }
 
     const ua = getUserAgentForBrowser(browser.family)
     if (ua) {
