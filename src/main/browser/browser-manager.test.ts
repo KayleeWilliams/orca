@@ -488,16 +488,23 @@ describe('browserManager', () => {
 
     expect(beforeInputHandler).toBeTypeOf('function')
 
-    for (const input of [
-      {
-        type: 'keyDown',
-        code: 'KeyR',
-        key: 'r',
-        meta: false,
-        control: true,
-        alt: false,
-        shift: false
-      },
+    // Why: on Linux, Ctrl is the shortcut modifier, so Ctrl+R is the reload
+    // shortcut (not a readline chord). Only test Ctrl+R as a readline passthrough
+    // on macOS where Cmd is the modifier and Ctrl+R is genuinely a readline chord.
+    const readlineChords = [
+      ...(process.platform === 'darwin'
+        ? [
+            {
+              type: 'keyDown',
+              code: 'KeyR',
+              key: 'r',
+              meta: false,
+              control: true,
+              alt: false,
+              shift: false
+            }
+          ]
+        : []),
       {
         type: 'keyDown',
         code: 'KeyU',
@@ -525,7 +532,8 @@ describe('browserManager', () => {
         alt: false,
         shift: false
       }
-    ]) {
+    ]
+    for (const input of readlineChords) {
       const preventDefault = vi.fn()
       beforeInputHandler?.({ preventDefault }, input)
       expect(preventDefault).not.toHaveBeenCalled()
