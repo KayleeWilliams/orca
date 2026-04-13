@@ -361,6 +361,12 @@ function BrowserPagePane({
   const browserTabUrlRef = useRef(browserTab.url)
   const activeLoadFailureRef = useRef<BrowserLoadError | null>(browserTab.loadError)
   const trackNextLoadingEventRef = useRef(false)
+  // Why: tracks the most recent URL the webview has navigated to or been
+  // observed at, from any source (navigation events, address bar, initial
+  // load). The URL sync effect checks this ref to avoid force-navigating
+  // the webview to an intermediate redirect URL — which would restart the
+  // redirect chain and cause an infinite loop.
+  const lastKnownWebviewUrlRef = useRef<string | null>(null)
   const onUpdatePageStateRef = useRef(onUpdatePageState)
   const onSetUrlRef = useRef(onSetUrl)
   const [addressBarValue, setAddressBarValue] = useState(browserTab.url)
@@ -809,6 +815,12 @@ function BrowserPagePane({
       container.appendChild(webview)
       parkedAtByTabId.delete(browserTab.id)
       syncNavigationState(webview)
+      // Why: seed the ref with the store URL so the URL sync effect does not
+      // force-navigate a reclaimed webview that is already on the right page.
+      // getURL() can throw briefly during reattach, so use the store URL which
+      // was set by the last navigation event before parking.
+      lastKnownWebviewUrlRef.current =
+        normalizeBrowserNavigationUrl(browserTabUrlRef.current) ?? null
     } else {
       webview = document.createElement('webview') as Electron.WebviewTag
       webview.setAttribute('partition', webviewPartition)
@@ -894,6 +906,7 @@ function BrowserPagePane({
       }
       trackNextLoadingEventRef.current = false
       activeLoadFailureRef.current = null
+      lastKnownWebviewUrlRef.current = normalizeBrowserNavigationUrl(currentUrl) ?? currentUrl
       rememberLiveBrowserUrl(browserTab.id, currentUrl)
       setAddressBarValue(toDisplayUrl(currentUrl))
       onSetUrlRef.current(browserTab.id, currentUrl)
@@ -920,6 +933,7 @@ function BrowserPagePane({
       if (isChromiumErrorPage(currentUrl)) {
         return
       }
+      lastKnownWebviewUrlRef.current = normalizeBrowserNavigationUrl(currentUrl) ?? currentUrl
       rememberLiveBrowserUrl(browserTab.id, currentUrl)
       setAddressBarValue(toDisplayUrl(currentUrl))
       onSetUrlRef.current(browserTab.id, currentUrl)
@@ -992,11 +1006,11 @@ function BrowserPagePane({
       // Only non-blank initial tabs should light up Orca's loading indicator;
       // reclaiming/activating a parked about:blank tab is not a meaningful
       // navigation and should not flash the tab-loading dot.
-      trackNextLoadingEventRef.current =
-        (normalizeBrowserNavigationUrl(initialBrowserUrlRef.current) ?? ORCA_BROWSER_BLANK_URL) !==
-        ORCA_BROWSER_BLANK_URL
-      webview.src =
+      const initialUrl =
         normalizeBrowserNavigationUrl(initialBrowserUrlRef.current) ?? ORCA_BROWSER_BLANK_URL
+      trackNextLoadingEventRef.current = initialUrl !== ORCA_BROWSER_BLANK_URL
+      lastKnownWebviewUrlRef.current = initialUrl
+      webview.src = initialUrl
     }
 
     return () => {
@@ -1043,14 +1057,23 @@ function BrowserPagePane({
     if (!normalizedUrl) {
       return
     }
+    // Why: navigation events (did-navigate, did-stop-loading) update both the
+    // store URL and this ref to the same value. If they match, the store URL
+    // change came from a navigation event — not a user action — so there is
+    // nothing to navigate to. Skipping here prevents the sync effect from
+    // force-navigating the webview back to an intermediate redirect URL, which
+    // would restart the redirect chain and cause an infinite loop.
+    if (lastKnownWebviewUrlRef.current === normalizedUrl) {
+      return
+    }
     let liveUrl: string | null = null
     try {
       liveUrl = webview.getURL() || null
     } catch {
       // Why: reattached parked guests can briefly reject getURL() before the
-      // underlying guest is fully ready again. Fall through to the attribute
-      // checks in that short window.
-      liveUrl = null
+      // underlying guest is fully ready again. Skip entirely so we do not
+      // misinterpret a transient error as a URL mismatch and force-navigate.
+      return
     }
     const normalizedLiveUrl = liveUrl ? (normalizeBrowserNavigationUrl(liveUrl) ?? liveUrl) : null
     const declaredSrc = webview.getAttribute('src')
@@ -1063,6 +1086,7 @@ function BrowserPagePane({
       // terminal link open, retry target update). Gate the next did-start-loading
       // event so only real navigations, not tab activation churn, show loading UI.
       trackNextLoadingEventRef.current = normalizedUrl !== ORCA_BROWSER_BLANK_URL
+      lastKnownWebviewUrlRef.current = normalizedUrl
       webview.src = normalizedUrl
       if (normalizedUrl !== ORCA_BROWSER_BLANK_URL) {
         keepAddressBarFocusRef.current = false
@@ -1348,6 +1372,7 @@ function BrowserPagePane({
       return
     }
     trackNextLoadingEventRef.current = nextUrl !== ORCA_BROWSER_BLANK_URL
+    lastKnownWebviewUrlRef.current = nextUrl
     webview.src = nextUrl
     if (nextUrl !== ORCA_BROWSER_BLANK_URL) {
       focusWebviewNow()
