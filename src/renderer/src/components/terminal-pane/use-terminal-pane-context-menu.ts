@@ -153,6 +153,12 @@ export function useTerminalPaneContextMenu({
     }
     const clickedPane = manager.getPanes().find((pane) => pane.container.contains(target)) ?? null
     contextPaneIdRef.current = clickedPane?.id ?? null
+    if (navigator.userAgent.includes('Windows')) {
+      // Why: Windows terminals default to right-click paste, and showing the
+      // context menu steals focus so pasted text isn't ready to submit.
+      void onPaste()
+      return
+    }
     const bounds = event.currentTarget.getBoundingClientRect()
     setPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
     setOpen(true)
