@@ -19,18 +19,16 @@ type BrowserSessionMeta = {
 
 class BrowserSessionRegistry {
   private readonly profiles = new Map<string, BrowserSessionProfile>()
-  private readonly defaultProfile: BrowserSessionProfile
 
   constructor() {
     const persisted = this.loadPersistedSource()
-    this.defaultProfile = {
+    this.profiles.set('default', {
       id: 'default',
       scope: 'default',
       partition: ORCA_BROWSER_PARTITION,
       label: 'Default',
       source: persisted
-    }
-    this.profiles.set(this.defaultProfile.id, this.defaultProfile)
+    })
   }
 
   // Why: the default profile's source metadata (what browser was imported,
@@ -116,10 +114,30 @@ class BrowserSessionRegistry {
       const liveCookiesPath = join(app.getPath('userData'), 'Partitions', partitionName, 'Cookies')
 
       copyFileSync(meta.pendingCookieDbPath, liveCookiesPath)
-      try {
-        unlinkSync(meta.pendingCookieDbPath)
-      } catch {
-        /* best-effort */
+      // Why: SQLite WAL mode stores uncommitted data in sidecar files.
+      // Stale WAL/SHM from a previous session could corrupt CookieMonster's
+      // read of the freshly swapped DB.
+      for (const suffix of ['-wal', '-shm']) {
+        try {
+          unlinkSync(liveCookiesPath + suffix)
+        } catch {
+          /* may not exist */
+        }
+        const stagingSidecar = meta.pendingCookieDbPath + suffix
+        if (existsSync(stagingSidecar)) {
+          try {
+            copyFileSync(stagingSidecar, liveCookiesPath + suffix)
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+      for (const ext of ['', '-wal', '-shm']) {
+        try {
+          unlinkSync(`${meta.pendingCookieDbPath}${ext}`)
+        } catch {
+          /* best-effort */
+        }
       }
       this.persistMeta({ pendingCookieDbPath: null })
     } catch {
@@ -132,11 +150,12 @@ class BrowserSessionRegistry {
   }
 
   persistUserAgent(userAgent: string | null): void {
-    this.persistSource(this.defaultProfile.source, userAgent)
+    const defaultProfile = this.profiles.get('default')
+    this.persistSource(defaultProfile?.source ?? null, userAgent)
   }
 
   getDefaultProfile(): BrowserSessionProfile {
-    return this.defaultProfile
+    return this.profiles.get('default')!
   }
 
   getProfile(profileId: string): BrowserSessionProfile | null {
@@ -228,7 +247,9 @@ class BrowserSessionRegistry {
       if (defaultProfile) {
         this.profiles.set('default', { ...defaultProfile, source: null })
       }
-      this.persistSource(null, null)
+      // Why: also clear any pending staged import so the next cold start
+      // doesn't silently restore the cookies the user just cleared.
+      this.persistMeta({ defaultSource: null, userAgent: null, pendingCookieDbPath: null })
       return true
     } catch {
       return false

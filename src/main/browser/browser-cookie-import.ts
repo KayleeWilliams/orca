@@ -456,7 +456,9 @@ function decryptCookieValueRaw(encryptedBuffer: Buffer, key: Buffer): Buffer | n
   }
   const version = encryptedBuffer.subarray(0, 3).toString('utf-8')
   if (version !== 'v10' && version !== 'v11') {
-    return encryptedBuffer
+    // Why: unknown encryption version — skip rather than importing raw
+    // encrypted bytes as the cookie value.
+    return null
   }
   const iv = Buffer.alloc(16, ' ')
   const ciphertext = encryptedBuffer.subarray(3)

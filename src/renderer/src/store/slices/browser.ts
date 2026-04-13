@@ -1030,30 +1030,43 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         error: null
       }
     })
-    const result = (await window.api.browser.sessionImportCookies({
-      profileId
-    })) as BrowserCookieImportResult
-    if (result.ok) {
+    try {
+      const result = (await window.api.browser.sessionImportCookies({
+        profileId
+      })) as BrowserCookieImportResult
+      if (result.ok) {
+        set({
+          browserSessionImportState: {
+            profileId,
+            status: 'success',
+            summary: result.summary,
+            error: null
+          }
+        })
+        await get().fetchBrowserSessionProfiles()
+      } else {
+        set({
+          browserSessionImportState: {
+            profileId,
+            status: result.reason === 'canceled' ? 'idle' : 'error',
+            summary: null,
+            error: result.reason === 'canceled' ? null : result.reason
+          }
+        })
+      }
+      return result
+    } catch (err) {
+      const reason = String((err as Error)?.message ?? err)
       set({
         browserSessionImportState: {
           profileId,
-          status: 'success',
-          summary: result.summary,
-          error: null
-        }
-      })
-      await get().fetchBrowserSessionProfiles()
-    } else {
-      set({
-        browserSessionImportState: {
-          profileId,
-          status: result.reason === 'canceled' ? 'idle' : 'error',
+          status: 'error',
           summary: null,
-          error: result.reason === 'canceled' ? null : result.reason
+          error: reason
         }
       })
+      return { ok: false as const, reason }
     }
-    return result
   },
 
   clearBrowserSessionImportState: () => {
@@ -1079,31 +1092,44 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         error: null
       }
     })
-    const result = (await window.api.browser.sessionImportFromBrowser({
-      profileId,
-      browserFamily
-    })) as BrowserCookieImportResult
-    if (result.ok) {
-      set({
-        browserSessionImportState: {
-          profileId,
-          status: 'success',
-          summary: result.summary,
-          error: null
-        }
-      })
-      await get().fetchBrowserSessionProfiles()
-    } else {
+    try {
+      const result = (await window.api.browser.sessionImportFromBrowser({
+        profileId,
+        browserFamily
+      })) as BrowserCookieImportResult
+      if (result.ok) {
+        set({
+          browserSessionImportState: {
+            profileId,
+            status: 'success',
+            summary: result.summary,
+            error: null
+          }
+        })
+        await get().fetchBrowserSessionProfiles()
+      } else {
+        set({
+          browserSessionImportState: {
+            profileId,
+            status: 'error',
+            summary: null,
+            error: result.reason
+          }
+        })
+      }
+      return result
+    } catch (err) {
+      const reason = String((err as Error)?.message ?? err)
       set({
         browserSessionImportState: {
           profileId,
           status: 'error',
           summary: null,
-          error: result.reason
+          error: reason
         }
       })
+      return { ok: false as const, reason }
     }
-    return result
   },
 
   clearDefaultSessionCookies: async () => {
