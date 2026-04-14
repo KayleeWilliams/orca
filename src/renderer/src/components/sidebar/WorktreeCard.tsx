@@ -173,7 +173,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     // the memo body. It forces re-derivation when an agent status entry crosses
     // the freshness threshold so the visual status updates without polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTerminals, tabs, agentStatusByPaneKey, agentStatusEpoch])
+  }, [tabs, browserTabs, agentStatusByPaneKey, agentStatusEpoch])
 
   const showPR = cardProps.includes('pr')
   const showCI = cardProps.includes('ci')

@@ -61,6 +61,7 @@ import type {
 } from '../../shared/browser-guest-events'
 import type { CliInstallStatus } from '../../shared/cli-install-types'
 import type { E2EConfig } from '../../shared/e2e-config'
+import type { AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../../shared/runtime-types'
 import type {
   ClaudeUsageBreakdownKind,
@@ -407,6 +408,14 @@ export type PreloadApi = {
     getInstallStatus: () => Promise<CliInstallStatus>
     install: () => Promise<CliInstallStatus>
     remove: () => Promise<CliInstallStatus>
+  }
+  agentHooks: {
+    claudeStatus: () => Promise<AgentHookInstallStatus>
+    claudeInstall: () => Promise<AgentHookInstallStatus>
+    claudeRemove: () => Promise<AgentHookInstallStatus>
+    codexStatus: () => Promise<AgentHookInstallStatus>
+    codexInstall: () => Promise<AgentHookInstallStatus>
+    codexRemove: () => Promise<AgentHookInstallStatus>
   }
   preflight: PreflightApi
   notifications: {

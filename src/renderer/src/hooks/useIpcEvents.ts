@@ -1,4 +1,4 @@
-/* oxlint-disable max-lines */
+/* oxlint-disable max-lines -- Why: this App-level IPC bridge intentionally keeps the renderer's main-process event contract in one place so shortcut, runtime, updater, and agent-status wiring do not drift across files. */
 import { useEffect } from 'react'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
@@ -398,27 +398,35 @@ export function useIpcEvents(): void {
       })
     )
 
-    // Why: agent status arrives from the CLI via `orca status set` → Unix socket
-    // RPC → main process IPC → this listener. The payload is re-parsed through
-    // parseAgentStatusPayload to enforce the same validation and normalization
-    // (state enum, field truncation) that the OSC path used.
+    // Why: agent status arrives from native hook receivers in the main process.
+    // Re-parse it here so the renderer enforces the same normalization rules
+    // (state enum, field truncation) regardless of whether the source was a
+    // hook callback or an OSC fallback path.
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
+        console.log('[agentStatus:set] Renderer received IPC:', data)
         const payload = parseAgentStatusPayload(
           JSON.stringify({
             state: data.state,
             summary: data.summary,
-            next: data.next
+            next: data.next,
+            agentType: data.agentType
           })
         )
         if (!payload) {
           return
         }
         const store = useAppStore.getState()
-        // Why: look up the terminal title for agent type inference — the CLI
-        // payload does not include terminal title, but the store may already
+        // Why: look up the terminal title for agent type inference — hook
+        // payloads do not include the current title, but the store may already
         // know it from OSC title tracking.
         const currentTitle = findTerminalTitleForPaneKey(store, data.paneKey)
+        console.log('[agentStatus:set] Storing:', {
+          paneKey: data.paneKey,
+          state: payload.state,
+          summary: payload.summary,
+          currentTitle
+        })
         store.setAgentStatus(data.paneKey, payload, currentTitle)
       })
     )

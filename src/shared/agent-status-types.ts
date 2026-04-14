@@ -1,10 +1,15 @@
-// ─── Explicit agent status (reported via `orca status set` CLI → IPC) ───────
-// These types define the structured status that agents report at meaningful
-// checkpoints. They are distinct from the heuristic `AgentStatus` inferred
-// from terminal titles in agent-status.ts.
+// ─── Explicit agent status (reported via native agent hooks → IPC) ──────────
+// These types define the normalized status that Orca receives from Claude,
+// Codex, and other explicit integrations. They are distinct from the heuristic
+// `AgentStatus` inferred from terminal titles in agent-status.ts.
 
 export type AgentStatusState = 'working' | 'blocked' | 'waiting' | 'done'
-export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'aider' | 'unknown'
+// Why: agent types are not restricted to a fixed set — new agents appear
+// regularly and users may run custom agents. Any non-empty string is accepted;
+// well-known names are kept as a convenience union for internal code that
+// wants to pattern-match on common agents.
+export type WellKnownAgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'aider' | 'unknown'
+export type AgentType = WellKnownAgentType | (string & {})
 
 /** A snapshot of a previous agent state, used to render activity blocks. */
 export type AgentStateHistoryEntry = {
@@ -36,10 +41,10 @@ export type AgentStatusEntry = {
   stateHistory: AgentStateHistoryEntry[]
 }
 
-// ─── Agent status payload shape (what the CLI sends via IPC) ────────────────
-// The agent only needs to provide state, summary, and next. The remaining
-// AgentStatusEntry fields (updatedAt, source, paneKey, etc.) are populated
-// by the renderer when it receives the IPC event.
+// ─── Agent status payload shape (what hook receivers send via IPC) ──────────
+// Hook integrations only need to provide normalized state fields. The
+// remaining AgentStatusEntry fields (updatedAt, source, paneKey, etc.) are
+// populated by the renderer when it receives the IPC event.
 
 export type AgentStatusPayload = {
   state: AgentStatusState
@@ -70,14 +75,8 @@ export const AGENT_STATUS_MAX_FIELD_LENGTH = 200
 export const AGENT_STATUS_STALE_AFTER_MS = 30 * 60 * 1000
 
 const VALID_STATES = new Set<AgentStatusState>(['working', 'blocked', 'waiting', 'done'])
-const VALID_AGENT_TYPES = new Set<AgentType>([
-  'claude',
-  'codex',
-  'gemini',
-  'opencode',
-  'aider',
-  'unknown'
-])
+/** Maximum length for the agent type label. */
+const AGENT_TYPE_MAX_LENGTH = 40
 
 /** Normalize a status field: trim, collapse to single line, truncate. */
 function normalizeField(value: unknown): string {
@@ -91,8 +90,9 @@ function normalizeField(value: unknown): string {
 }
 
 /**
- * Parse and validate an agent status JSON payload (received via CLI/IPC or
- * OSC 9999). Returns null if the payload is malformed or has an invalid state.
+ * Parse and validate an agent status JSON payload received from explicit
+ * hook integrations or OSC 9999. Returns null if the payload is malformed or
+ * has an invalid state.
  */
 export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload | null {
   try {
@@ -114,9 +114,10 @@ export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload 
       state: state as AgentStatusState,
       summary: normalizeField(parsed.summary),
       next: normalizeField(parsed.next),
-      agentType: VALID_AGENT_TYPES.has(parsed.agentType as AgentType)
-        ? (parsed.agentType as AgentType)
-        : undefined
+      agentType:
+        typeof parsed.agentType === 'string' && parsed.agentType.trim().length > 0
+          ? parsed.agentType.trim().slice(0, AGENT_TYPE_MAX_LENGTH)
+          : undefined
     }
   } catch {
     return null

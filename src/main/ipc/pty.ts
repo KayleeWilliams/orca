@@ -3,11 +3,13 @@ main-process module so spawn-time environment scoping, lifecycle cleanup,
 foreground-process inspection, and renderer IPC stay behind a single audited
 boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
-import { type BrowserWindow, ipcMain } from 'electron'
+import { join } from 'path'
+import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { GlobalSettings } from '../../shared/types'
 import { openCodeHookService } from '../opencode/hook-service'
+import { agentHookServer } from '../agent-hooks/server'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
 import type { IPtyProvider } from '../providers/types'
@@ -157,6 +159,11 @@ export function registerPtyHandlers(
           delete openCodeHookEnv.OPENCODE_CONFIG_DIR
         }
         Object.assign(baseEnv, openCodeHookEnv)
+        // Why: Claude/Codex native hooks run inside the shell process, so Orca
+        // must inject the loopback receiver coordinates before the agent starts.
+        // Without these env vars the global hook config cannot map callbacks back
+        // to the correct Orca pane.
+        Object.assign(baseEnv, agentHookServer.buildPtyEnv())
         // Why: PI_CODING_AGENT_DIR owns Pi's full config/session root. Build a
         // PTY-scoped overlay from the caller's chosen root so Pi sessions keep
         // their user state without sharing a mutable overlay across terminals.
@@ -172,6 +179,20 @@ export function registerPtyHandlers(
         // process environment or the user's unrelated external shells.
         if (selectedCodexHomePath) {
           baseEnv.CODEX_HOME = selectedCodexHomePath
+        }
+
+        // Why: in dev mode the `orca` CLI defaults to the production userData
+        // path, which routes status updates to the packaged Orca instead of
+        // this dev instance. Injecting ORCA_USER_DATA_PATH ensures CLI calls
+        // from agents running inside dev terminals reach the correct runtime.
+        // We also prepend the dev CLI launcher directory to PATH so `orca`
+        // resolves to the dev build (which supports ORCA_USER_DATA_PATH)
+        // instead of the production binary at /usr/local/bin/orca.
+        if (!app.isPackaged) {
+          const devUserData = app.getPath('userData')
+          baseEnv.ORCA_USER_DATA_PATH ??= devUserData
+          const devCliBin = join(devUserData, 'cli', 'bin')
+          baseEnv.PATH = `${devCliBin}:${baseEnv.PATH ?? ''}`
         }
 
         return baseEnv

@@ -22,6 +22,7 @@ import { browserSessionRegistry } from '../browser/browser-session-registry'
 import { registerShellHandlers } from './shell'
 import { registerUIHandlers } from './ui'
 import { registerCodexAccountHandlers } from './codex-accounts'
+import { registerAgentHookHandlers } from './agent-hooks'
 import { warmSystemFontFamilies } from '../system-fonts'
 import {
   registerClipboardHandlers,
@@ -60,6 +61,7 @@ export function registerCoreHandlers(
   registerClaudeUsageHandlers(claudeUsage)
   registerCodexUsageHandlers(codexUsage)
   registerCodexAccountHandlers(codexAccounts)
+  registerAgentHookHandlers()
   registerRateLimitHandlers(rateLimits)
   registerGitHubHandlers(store, stats)
   registerFeedbackHandlers()

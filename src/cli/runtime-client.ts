@@ -383,6 +383,12 @@ export function getDefaultUserDataPath(
   platform: NodeJS.Platform = process.platform,
   homeDir = homedir()
 ): string {
+  // Why: development builds and parallel Orca instances write their own
+  // runtime metadata under a different userData directory. This env var
+  // lets the CLI target a specific instance without shutting down production.
+  if (process.env.ORCA_USER_DATA_PATH) {
+    return process.env.ORCA_USER_DATA_PATH
+  }
   if (platform === 'darwin') {
     return join(homeDir, 'Library', 'Application Support', 'orca')
   }

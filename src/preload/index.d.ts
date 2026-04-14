@@ -1,4 +1,5 @@
 import type { ElectronAPI } from '@electron-toolkit/preload'
+import type { AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import type {
   CreateWorktreeResult,
   GitHubPRFile,
@@ -152,6 +153,15 @@ type CliApi = {
   remove: () => Promise<CliInstallStatus>
 }
 
+type AgentHooksApi = {
+  claudeStatus: () => Promise<AgentHookInstallStatus>
+  claudeInstall: () => Promise<AgentHookInstallStatus>
+  claudeRemove: () => Promise<AgentHookInstallStatus>
+  codexStatus: () => Promise<AgentHookInstallStatus>
+  codexInstall: () => Promise<AgentHookInstallStatus>
+  codexRemove: () => Promise<AgentHookInstallStatus>
+}
+
 type NotificationsApi = {
   dispatch: (args: NotificationDispatchRequest) => Promise<NotificationDispatchResult>
   openSystemSettings: () => Promise<void>
@@ -192,9 +202,15 @@ type SshApi = {
 }
 
 type AgentStatusApi = {
-  /** Listen for agent status updates forwarded from the CLI via the runtime. */
+  /** Listen for agent status updates forwarded from native hook receivers. */
   onSet: (
-    callback: (data: { paneKey: string; state: string; summary?: string; next?: string }) => void
+    callback: (data: {
+      paneKey: string
+      state: string
+      summary?: string
+      next?: string
+      agentType?: string
+    }) => void
   ) => () => void
 }
 
@@ -203,6 +219,21 @@ type Api = PreloadApi & {
   worktrees: WorktreesApi
   pty: PtyApi
   ssh: SshApi
+  gh: GhApi
+  settings: SettingsApi
+  cli: CliApi
+  agentHooks: AgentHooksApi
+  preflight: PreflightApi
+  notifications: NotificationsApi
+  shell: ShellApi
+  hooks: HooksApi
+  cache: CacheApi
+  session: SessionApi
+  updater: UpdaterApi
+  fs: FsApi
+  git: GitApi
+  ui: UIApi
+  runtime: RuntimeApi
   agentStatus: AgentStatusApi
 }
 

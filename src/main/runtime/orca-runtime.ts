@@ -93,13 +93,6 @@ type RuntimeNotifier = {
   worktreesChanged(repoId: string): void
   reposChanged(): void
   activateWorktree(repoId: string, worktreeId: string, setup?: CreateWorktreeResult['setup']): void
-  /** Forward an agent status payload from the CLI to the renderer. */
-  agentStatusChanged(payload: {
-    paneKey: string
-    state: string
-    summary?: string
-    next?: string
-  }): void
 }
 
 type TerminalHandleRecord = {
@@ -792,16 +785,6 @@ export class OrcaRuntimeService {
       }
     }
     return { stopped }
-  }
-
-  /** Relay an agent status payload from the CLI to the renderer via the notifier. */
-  notifyAgentStatusChanged(payload: {
-    paneKey: string
-    state: string
-    summary?: string
-    next?: string
-  }): void {
-    this.notifier?.agentStatusChanged(payload)
   }
 
   markRendererReloading(windowId: number): void {

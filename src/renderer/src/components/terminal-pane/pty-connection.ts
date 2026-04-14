@@ -158,8 +158,8 @@ export function connectPanePty(
     // Remove the entry so the hover UI does not show stale "working" for a dead agent.
     useAppStore.getState().removeAgentStatus(cacheKey)
   }
-  // Why: inject ORCA_PANE_KEY so the `orca status set` CLI can attribute status
-  // reports to the correct pane without needing to resolve worktrees from cwd.
+  // Why: inject ORCA_PANE_KEY so global Claude/Codex hooks can attribute their
+  // callbacks to the correct Orca pane without resolving worktrees from cwd.
   // The key matches the `${tabId}:${paneId}` composite used for cacheTimerByKey.
   const paneEnv = {
     ...paneStartup?.env,

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Copy, FolderOpen, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Check, Copy, Download, FolderOpen, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import type { AgentHookInstallStatus } from '../../../../shared/agent-hook-types'
 import { Button } from '../ui/button'
 import {
   Dialog,
@@ -20,9 +21,6 @@ type CliSectionProps = {
 
 const ORCA_CLI_SKILL_INSTALL_COMMAND =
   'npx skills add https://github.com/stablyai/orca --skill orca-cli'
-
-const ORCA_STATUS_SKILL_INSTALL_COMMAND =
-  'npx skills add https://github.com/stablyai/orca --skill orca-status'
 
 function getRevealLabel(platform: string): string {
   if (platform === 'darwin') {
@@ -52,6 +50,44 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<'install' | 'remove' | null>(null)
+  const [hookStatuses, setHookStatuses] = useState<{
+    claude: AgentHookInstallStatus | null
+    codex: AgentHookInstallStatus | null
+    loading: boolean
+  }>({
+    claude: null,
+    codex: null,
+    loading: true
+  })
+  const [busyHook, setBusyHook] = useState<'claude' | 'codex' | null>(null)
+
+  const refreshHookStatus = useCallback(async (): Promise<void> => {
+    setHookStatuses((prev) => ({ ...prev, loading: true }))
+    try {
+      const [claude, codex] = await Promise.all([
+        window.api.agentHooks.claudeStatus(),
+        window.api.agentHooks.codexStatus()
+      ])
+      setHookStatuses({ claude, codex, loading: false })
+    } catch {
+      setHookStatuses((prev) => ({ ...prev, loading: false }))
+    }
+  }, [])
+
+  const handleInstallHook = async (agent: 'claude' | 'codex'): Promise<void> => {
+    setBusyHook(agent)
+    try {
+      await (agent === 'claude'
+        ? window.api.agentHooks.claudeInstall()
+        : window.api.agentHooks.codexInstall())
+      toast.success(`Installed Orca ${agent === 'claude' ? 'Claude' : 'Codex'} hooks.`)
+      await refreshHookStatus()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to install ${agent} hooks.`)
+    } finally {
+      setBusyHook(null)
+    }
+  }
 
   const refreshStatus = async (): Promise<void> => {
     setLoading(true)
@@ -66,7 +102,8 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
 
   useEffect(() => {
     void refreshStatus()
-  }, [])
+    void refreshHookStatus()
+  }, [refreshHookStatus])
 
   const isEnabled = status?.state === 'installed'
   const isSupported = status?.supported ?? false
@@ -244,30 +281,71 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
             </div>
 
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Status skill</p>
-              <div className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-3 py-2">
-                <code className="overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground">
-                  {ORCA_STATUS_SKILL_INSTALL_COMMAND}
-                </code>
-                <TooltipProvider delayDuration={250}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() =>
-                          void handleCopySkillInstallCommand(ORCA_STATUS_SKILL_INSTALL_COMMAND)
-                        }
-                        aria-label="Copy status skill install command"
-                      >
-                        <Copy className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={6}>
-                      Copy
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">Native hooks</p>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => void refreshHookStatus()}
+                  disabled={hookStatuses.loading || busyHook !== null}
+                  aria-label="Refresh hook status"
+                >
+                  <RefreshCw className="size-3.5" />
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground/70">
+                Orca installs Claude and Codex global hooks so agent lifecycle updates flow into the
+                sidebar automatically.
+              </p>
+              <div className="mt-2 space-y-2">
+                {(
+                  [
+                    ['claude', hookStatuses.claude],
+                    ['codex', hookStatuses.codex]
+                  ] as const
+                ).map(([agent, status]) => {
+                  const installed = status?.managedHooksPresent === true
+                  return (
+                    <div
+                      key={agent}
+                      className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2"
+                    >
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-medium capitalize">{agent}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {hookStatuses.loading
+                            ? 'Checking hook status…'
+                            : (status?.detail ??
+                              (installed
+                                ? `Installed in ${status?.configPath}`
+                                : `Not installed in ${status?.configPath}`))}
+                        </p>
+                      </div>
+                      {installed ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 text-green-600 dark:text-green-400"
+                          disabled
+                        >
+                          <Check className="size-3.5" />
+                          Installed
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          disabled={busyHook !== null || hookStatuses.loading}
+                          onClick={() => void handleInstallHook(agent)}
+                        >
+                          <Download className="size-3.5" />
+                          {busyHook === agent ? 'Installing…' : 'Install'}
+                        </Button>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
