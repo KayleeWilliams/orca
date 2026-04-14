@@ -1,20 +1,24 @@
 /* eslint-disable max-lines -- Why: cookie import is a single pipeline (detect → decrypt → stage → swap)
    that must stay together so the encryption, schema, and staging steps remain in sync. */
 import { app, type BrowserWindow, dialog, session } from 'electron'
-import { execFileSync, execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createDecipheriv, pbkdf2Sync } from 'node:crypto'
 import {
   appendFileSync,
   copyFileSync,
   existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
-  unlinkSync,
-  writeFileSync
+  unlinkSync
 } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import Database from 'better-sqlite3'
+
+const IS_MACOS = process.platform === 'darwin'
+const IS_WINDOWS = process.platform === 'win32'
 
 // Why: writing to userData instead of tmpdir() so the diag log is only
 // readable by the current user, not world-readable in /tmp.
@@ -85,19 +89,64 @@ const CHROMIUM_BROWSERS: Omit<DetectedBrowser, 'cookiesPath'>[] = [
 ]
 
 function cookiesPathForBrowser(family: BrowserSessionProfileSource['browserFamily']): string {
-  const home = process.env.HOME ?? ''
-  switch (family) {
-    case 'chrome':
-      return join(home, 'Library/Application Support/Google/Chrome/Default/Cookies')
-    case 'edge':
-      return join(home, 'Library/Application Support/Microsoft Edge/Default/Cookies')
-    case 'arc':
-      return join(home, 'Library/Application Support/Arc/User Data/Default/Cookies')
-    case 'chromium':
-      return join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies')
-    default:
-      return ''
+  if (IS_MACOS) {
+    const home = process.env.HOME ?? ''
+    switch (family) {
+      case 'chrome':
+        return join(home, 'Library/Application Support/Google/Chrome/Default/Cookies')
+      case 'edge':
+        return join(home, 'Library/Application Support/Microsoft Edge/Default/Cookies')
+      case 'arc':
+        return join(home, 'Library/Application Support/Arc/User Data/Default/Cookies')
+      case 'chromium':
+        return join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies')
+      default:
+        return ''
+    }
   }
+
+  if (IS_WINDOWS) {
+    const localAppData = process.env.LOCALAPPDATA ?? ''
+    // Why: Chrome 96+ moved the Cookies file into a Network subdirectory.
+    // Check the new path first, then fall back to the legacy location so
+    // both current and older installations are detected.
+    const candidates = (paths: string[]): string => paths.find((p) => existsSync(p)) ?? paths[0]
+
+    switch (family) {
+      case 'chrome':
+        return candidates([
+          join(localAppData, 'Google', 'Chrome', 'User Data', 'Default', 'Network', 'Cookies'),
+          join(localAppData, 'Google', 'Chrome', 'User Data', 'Default', 'Cookies')
+        ])
+      case 'edge':
+        return candidates([
+          join(localAppData, 'Microsoft', 'Edge', 'User Data', 'Default', 'Network', 'Cookies'),
+          join(localAppData, 'Microsoft', 'Edge', 'User Data', 'Default', 'Cookies')
+        ])
+      case 'arc':
+        return candidates([
+          join(localAppData, 'Arc', 'User Data', 'Default', 'Network', 'Cookies'),
+          join(localAppData, 'Arc', 'User Data', 'Default', 'Cookies')
+        ])
+      case 'chromium':
+        return candidates([
+          join(
+            localAppData,
+            'BraveSoftware',
+            'Brave-Browser',
+            'User Data',
+            'Default',
+            'Network',
+            'Cookies'
+          ),
+          join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data', 'Default', 'Cookies')
+        ])
+      default:
+        return ''
+    }
+  }
+
+  return ''
 }
 
 export function detectInstalledBrowsers(): DetectedBrowser[] {
@@ -367,49 +416,99 @@ export async function importCookiesFromFile(
 
 // Why: Google and other services bind auth cookies to the User-Agent that
 // created them. We read the source browser's real version from its plist
-// and construct a matching UA string so imported sessions aren't invalidated.
+// (macOS) or registry (Windows) and construct a matching UA string so
+// imported sessions aren't invalidated.
 function getUserAgentForBrowser(
   family: BrowserSessionProfileSource['browserFamily']
 ): string | null {
-  const platform = 'Macintosh; Intel Mac OS X 10_15_7'
   const chromeBase = 'AppleWebKit/537.36 (KHTML, like Gecko)'
 
-  function readBrowserVersion(
-    appPath: string,
-    plistKey = 'CFBundleShortVersionString'
-  ): string | null {
-    try {
-      return (
-        execFileSync('defaults', ['read', `${appPath}/Contents/Info`, plistKey], {
-          encoding: 'utf-8',
-          timeout: 5_000
-        }).trim() || null
-      )
-    } catch {
-      return null
+  if (IS_MACOS) {
+    const platform = 'Macintosh; Intel Mac OS X 10_15_7'
+
+    function readBrowserVersionMac(
+      appPath: string,
+      plistKey = 'CFBundleShortVersionString'
+    ): string | null {
+      try {
+        return (
+          execFileSync('defaults', ['read', `${appPath}/Contents/Info`, plistKey], {
+            encoding: 'utf-8',
+            timeout: 5_000
+          }).trim() || null
+        )
+      } catch {
+        return null
+      }
+    }
+
+    switch (family) {
+      case 'chrome': {
+        const v = readBrowserVersionMac('/Applications/Google Chrome.app')
+        return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+      }
+      case 'edge': {
+        const v = readBrowserVersionMac('/Applications/Microsoft Edge.app')
+        return v
+          ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36 Edg/${v}`
+          : null
+      }
+      case 'arc': {
+        const v = readBrowserVersionMac('/Applications/Arc.app')
+        return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+      }
+      case 'chromium': {
+        const v = readBrowserVersionMac('/Applications/Brave Browser.app')
+        return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+      }
+      default:
+        return null
     }
   }
 
-  switch (family) {
-    case 'chrome': {
-      const v = readBrowserVersion('/Applications/Google Chrome.app')
-      return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+  if (IS_WINDOWS) {
+    const platform = 'Windows NT 10.0; Win64; x64'
+
+    // Why: Chromium browsers on Windows store their version in the BLBeacon
+    // registry key under HKCU. Reading from the registry is faster and more
+    // reliable than parsing executable metadata or Local State JSON.
+    function readBrowserVersionWin(registryPath: string): string | null {
+      try {
+        const output = execFileSync('reg', ['query', registryPath, '/v', 'version'], {
+          encoding: 'utf-8',
+          timeout: 5_000
+        })
+        const match = output.match(/version\s+REG_SZ\s+(.+)/i)
+        return match?.[1]?.trim() || null
+      } catch {
+        return null
+      }
     }
-    case 'edge': {
-      const v = readBrowserVersion('/Applications/Microsoft Edge.app')
-      return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36 Edg/${v}` : null
+
+    switch (family) {
+      case 'chrome': {
+        const v = readBrowserVersionWin('HKCU\\Software\\Google\\Chrome\\BLBeacon')
+        return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+      }
+      case 'edge': {
+        const v = readBrowserVersionWin('HKCU\\Software\\Microsoft\\Edge\\BLBeacon')
+        return v
+          ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36 Edg/${v}`
+          : null
+      }
+      case 'chromium': {
+        const v = readBrowserVersionWin('HKCU\\Software\\BraveSoftware\\Brave-Browser\\BLBeacon')
+        return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
+      }
+      // Why: Arc on Windows does not use a well-known BLBeacon registry key.
+      // Returning null is safe — the import still works, Google just may
+      // regenerate some session tokens on first request.
+      default:
+        return null
     }
-    case 'arc': {
-      const v = readBrowserVersion('/Applications/Arc.app')
-      return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
-    }
-    case 'chromium': {
-      const v = readBrowserVersion('/Applications/Brave Browser.app')
-      return v ? `Mozilla/5.0 (${platform}) ${chromeBase} Chrome/${v} Safari/537.36` : null
-    }
-    default:
-      return null
   }
+
+  return null
 }
 
 const PBKDF2_ITERATIONS = 1003
@@ -433,7 +532,7 @@ function chromiumTimestampToUnix(chromiumTs: string): number {
   }
 }
 
-function getEncryptionKey(keychainService: string, keychainAccount: string): Buffer | null {
+function getEncryptionKeyMacOS(keychainService: string, keychainAccount: string): Buffer | null {
   try {
     // Why: execFileSync bypasses shell interpretation, preventing command
     // injection if keychainService/keychainAccount ever come from user input.
@@ -446,6 +545,78 @@ function getEncryptionKey(keychainService: string, keychainAccount: string): Buf
   } catch {
     return null
   }
+}
+
+// Why: On Windows, Chromium stores the encryption key in the "Local State"
+// JSON file under os_crypt.encrypted_key. The key is base64-encoded and
+// prefixed with "DPAPI", then encrypted with the Windows Data Protection
+// API (DPAPI). We decrypt it via PowerShell's ProtectedData class which
+// calls CryptUnprotectData under the hood — this only succeeds for the
+// Windows user account that originally encrypted the key.
+function getEncryptionKeyWindows(cookiesPath: string): Buffer | null {
+  try {
+    // Navigate up from the Cookies file to find "Local State" in the
+    // browser's User Data directory. Limit to 5 levels to avoid traversing
+    // all the way to the filesystem root on bogus paths.
+    let dir = dirname(cookiesPath)
+    let localStatePath = ''
+    for (let depth = 0; depth < 5 && dir !== dirname(dir); depth++) {
+      const candidate = join(dir, 'Local State')
+      if (existsSync(candidate)) {
+        localStatePath = candidate
+        break
+      }
+      dir = dirname(dir)
+    }
+    if (!localStatePath) {
+      return null
+    }
+
+    const localState = JSON.parse(readFileSync(localStatePath, 'utf-8'))
+    const encryptedKeyB64: unknown = localState?.os_crypt?.encrypted_key
+    if (typeof encryptedKeyB64 !== 'string') {
+      return null
+    }
+
+    const encryptedKeyBuf = Buffer.from(encryptedKeyB64, 'base64')
+    // The first 5 bytes are the ASCII string "DPAPI" — a marker that
+    // confirms the remaining bytes are DPAPI-encrypted.
+    if (encryptedKeyBuf.subarray(0, 5).toString('utf-8') !== 'DPAPI') {
+      return null
+    }
+
+    const dpapiEncrypted = encryptedKeyBuf.subarray(5)
+    const b64Input = dpapiEncrypted.toString('base64')
+
+    // Why: execFileSync with an argument array avoids shell interpretation,
+    // preventing injection even if b64Input were somehow malicious. The
+    // base64 alphabet doesn't contain shell metacharacters, but defense
+    // in depth is cheap here.
+    const decryptedB64 = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${b64Input}'), $null, 'CurrentUser'))`
+      ],
+      { encoding: 'utf-8', timeout: 30_000 }
+    ).trim()
+
+    return Buffer.from(decryptedB64, 'base64')
+  } catch {
+    return null
+  }
+}
+
+function getEncryptionKeyForBrowser(browser: DetectedBrowser): Buffer | null {
+  if (IS_MACOS) {
+    return getEncryptionKeyMacOS(browser.keychainService, browser.keychainAccount)
+  }
+  if (IS_WINDOWS) {
+    return getEncryptionKeyWindows(browser.cookiesPath)
+  }
+  return null
 }
 
 // Why: Chromium 127+ prepends a 32-byte per-host HMAC to the cookie value
@@ -469,16 +640,7 @@ function hasHmacPrefix(buf: Buffer): boolean {
   return nonPrintable >= 8
 }
 
-function decryptCookieValueRaw(encryptedBuffer: Buffer, key: Buffer): Buffer | null {
-  if (!encryptedBuffer || encryptedBuffer.length === 0) {
-    return null
-  }
-  const version = encryptedBuffer.subarray(0, 3).toString('utf-8')
-  if (version !== 'v10' && version !== 'v11') {
-    // Why: unknown encryption version — skip rather than importing raw
-    // encrypted bytes as the cookie value.
-    return null
-  }
+function decryptCookieValueMacOS(encryptedBuffer: Buffer, key: Buffer): Buffer | null {
   const iv = Buffer.alloc(16, ' ')
   const ciphertext = encryptedBuffer.subarray(3)
   try {
@@ -488,6 +650,64 @@ function decryptCookieValueRaw(encryptedBuffer: Buffer, key: Buffer): Buffer | n
     return hasHmacPrefix(decrypted) ? decrypted.subarray(CHROMIUM_COOKIE_HMAC_LEN) : decrypted
   } catch {
     return null
+  }
+}
+
+// Why: On Windows, Chromium 80+ encrypts cookies with AES-256-GCM using
+// the key from Local State (after DPAPI decryption). The encrypted format
+// is: 3-byte version tag ("v10"/"v20") + 12-byte nonce + ciphertext +
+// 16-byte GCM authentication tag.
+function decryptCookieValueWindows(encryptedBuffer: Buffer, key: Buffer): Buffer | null {
+  // 3 (version) + 12 (nonce) + 16 (auth tag) = 31 byte minimum
+  const nonce = encryptedBuffer.subarray(3, 3 + 12)
+  const ciphertextWithTag = encryptedBuffer.subarray(3 + 12)
+  const authTag = ciphertextWithTag.subarray(-16)
+  const ciphertext = ciphertextWithTag.subarray(0, -16)
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', key, nonce)
+    decipher.setAuthTag(authTag)
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    // Why: Chromium 127+ prepends a 32-byte per-host HMAC to the plaintext
+    // before encrypting, regardless of platform. Strip it here just as the
+    // macOS path does.
+    return hasHmacPrefix(decrypted) ? decrypted.subarray(CHROMIUM_COOKIE_HMAC_LEN) : decrypted
+  } catch {
+    return null
+  }
+}
+
+function decryptCookieValueRaw(encryptedBuffer: Buffer, key: Buffer): Buffer | null {
+  if (!encryptedBuffer || encryptedBuffer.length === 0) {
+    return null
+  }
+  const version = encryptedBuffer.subarray(0, 3).toString('utf-8')
+  // Why: macOS uses v10/v11 (AES-128-CBC), Windows uses v10/v20 (AES-256-GCM).
+  // Reject versions that don't belong to the current platform to avoid silently
+  // producing garbage by feeding data to the wrong decryption algorithm.
+  if (IS_WINDOWS) {
+    if (version !== 'v10' && version !== 'v20') {
+      return null
+    }
+    if (encryptedBuffer.length < 3 + 12 + 16) {
+      return null
+    }
+    return decryptCookieValueWindows(encryptedBuffer, key)
+  }
+  if (version !== 'v10' && version !== 'v11') {
+    return null
+  }
+  return decryptCookieValueMacOS(encryptedBuffer, key)
+}
+
+// Why: better-sqlite3 may create WAL/SHM journal files alongside the
+// database. Clean up all three when removing a staging or temp DB.
+function unlinkDbFiles(dbPath: string): void {
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      unlinkSync(dbPath + suffix)
+    } catch {
+      /* best-effort — file may not exist */
+    }
   }
 }
 
@@ -503,11 +723,19 @@ export async function importCookiesFromBrowser(
 
   // Why: the browser may hold a lock on the Cookies file. Copying to a temp
   // location avoids lock contention and ensures we read a consistent snapshot.
+  // We also copy the WAL and SHM journal files if they exist — Chromium uses
+  // WAL mode by default, and recent cookies may reside only in the WAL file.
   const tmpDir = mkdtempSync(join(tmpdir(), 'orca-cookie-import-'))
   const tmpCookiesPath = join(tmpDir, 'Cookies')
 
   try {
     copyFileSync(browser.cookiesPath, tmpCookiesPath)
+    for (const suffix of ['-wal', '-shm']) {
+      const src = browser.cookiesPath + suffix
+      if (existsSync(src)) {
+        copyFileSync(src, tmpCookiesPath + suffix)
+      }
+    }
   } catch {
     rmSync(tmpDir, { recursive: true, force: true })
     return {
@@ -525,12 +753,17 @@ export async function importCookiesFromBrowser(
   // In packaged builds where os_crypt IS active, CookieMonster will re-encrypt
   // plaintext cookies on its next flush, so this approach is safe in both modes.
 
-  const sourceKey = getEncryptionKey(browser.keychainService, browser.keychainAccount)
+  const sourceKey = getEncryptionKeyForBrowser(browser)
   if (!sourceKey) {
     rmSync(tmpDir, { recursive: true, force: true })
+    // Why: the error message differs by platform because the key retrieval
+    // mechanisms are completely different — macOS Keychain vs Windows DPAPI.
+    const keyHint = IS_WINDOWS
+      ? 'Could not decrypt the browser encryption key. Try running Orca as the same Windows user that owns the browser profile.'
+      : 'macOS may have denied Keychain access.'
     return {
       ok: false,
-      reason: `Could not access ${browser.label} encryption key. macOS may have denied Keychain access.`
+      reason: `Could not access ${browser.label} encryption key. ${keyHint}`
     }
   }
 
@@ -552,69 +785,69 @@ export async function importCookiesFromBrowser(
   const stagingCookiesPath = join(app.getPath('userData'), 'Cookies-staged')
   try {
     copyFileSync(liveCookiesPath, stagingCookiesPath)
+    for (const suffix of ['-wal', '-shm']) {
+      const src = liveCookiesPath + suffix
+      if (existsSync(src)) {
+        copyFileSync(src, stagingCookiesPath + suffix)
+      }
+    }
   } catch {
     rmSync(tmpDir, { recursive: true, force: true })
+    unlinkDbFiles(stagingCookiesPath)
     return { ok: false, reason: 'Could not create staging cookie database.' }
   }
 
+  let sourceDb: InstanceType<typeof Database> | null = null
+  let stagingDb: InstanceType<typeof Database> | null = null
   try {
-    // Get target schema columns
-    const targetColsRaw = execSync(
-      `sqlite3 "${stagingCookiesPath}" "PRAGMA table_info(cookies);"`,
-      { encoding: 'utf-8', timeout: 5_000 }
-    ).trim()
-    const targetCols = targetColsRaw
-      .split('\n')
-      .map((line) => line.split('|')[1])
-      .filter(Boolean)
+    // Why: better-sqlite3 gives direct access to BLOB columns as Buffer
+    // objects, eliminating the hex-encoding round-trip and shell-escaping
+    // issues of the previous sqlite3 CLI approach. It also works on Windows
+    // where sqlite3 is not pre-installed.
+    stagingDb = new Database(stagingCookiesPath)
+    const targetCols = (stagingDb.pragma('table_info(cookies)') as { name: string }[]).map(
+      (c) => c.name
+    )
     const colList = targetCols.join(', ')
 
-    execSync(`sqlite3 "${stagingCookiesPath}" "DELETE FROM cookies;"`, {
-      encoding: 'utf-8',
-      timeout: 10_000
-    })
+    stagingDb.exec('DELETE FROM cookies')
 
-    // Why: sqlite3's text output corrupts rows containing tab/newline in
-    // values. Instead, build a SQL script entirely within sqlite3 that
-    // decrypts nothing — we export rows as hex blobs, decrypt in Node,
-    // and generate parameterized INSERT statements.
+    sourceDb = new Database(tmpCookiesPath, { readonly: true })
+    const sourceCols = new Set(
+      (sourceDb.pragma('table_info(cookies)') as { name: string }[]).map((c) => c.name)
+    )
+    // Why: the source browser's cookie schema may have columns the target
+    // (Electron's Chromium) doesn't, or vice versa. Only read columns
+    // present in both to avoid "no such column" errors.
+    const commonCols = targetCols.filter((c) => sourceCols.has(c))
 
-    // Read all non-blob columns + hex(value) + hex(encrypted_value) in one query
-    // Use a unique separator that can't appear in hex output
-    const SEP = '|||'
-    const selectCols = targetCols
-      .map((col) => {
-        if (col === 'value') {
-          return `hex(value)`
-        }
-        if (col === 'encrypted_value') {
-          return `hex(encrypted_value)`
-        }
-        return `quote(${col})`
-      })
-      .join(` || '${SEP}' || `)
+    if (commonCols.length === 0) {
+      sourceDb.close()
+      sourceDb = null
+      stagingDb.close()
+      stagingDb = null
+      rmSync(tmpDir, { recursive: true, force: true })
+      unlinkDbFiles(stagingCookiesPath)
+      return {
+        ok: false,
+        reason: `${browser.label} cookies database has an incompatible schema.`
+      }
+    }
 
-    const allRowsOutput = execSync(
-      `sqlite3 "${tmpCookiesPath}" "SELECT ${selectCols} FROM cookies ORDER BY rowid;"`,
-      { encoding: 'utf-8', maxBuffer: 500 * 1024 * 1024, timeout: 60_000 }
-    ).trim()
+    const allRows = sourceDb
+      .prepare(`SELECT ${commonCols.join(', ')} FROM cookies ORDER BY rowid`)
+      .all() as Record<string, unknown>[]
+    sourceDb.close()
+    sourceDb = null
 
-    const allRows = allRowsOutput.split('\n').filter(Boolean)
     diag(`  source has ${allRows.length} cookies`)
 
     if (allRows.length === 0) {
+      stagingDb.close()
+      stagingDb = null
       rmSync(tmpDir, { recursive: true, force: true })
+      unlinkDbFiles(stagingCookiesPath)
       return { ok: false, reason: `No cookies found in ${browser.label}.` }
-    }
-
-    const colIdx = Object.fromEntries(targetCols.map((col, i) => [col, i]))
-
-    function unquote(quoted: string): string {
-      return quoted.replace(/^'|'$/g, '').replace(/''/g, "'")
-    }
-
-    function unquoteInt(quoted: string): number {
-      return parseInt(quoted, 10) || 0
     }
 
     // Why: Google's integrity cookies (SIDCC, __Secure-*PSIDCC, __Secure-STRP)
@@ -643,10 +876,8 @@ export async function importCookiesFromBrowser(
     let memoryLoaded = 0
     let memoryFailed = 0
     const domainSet = new Set<string>()
-    const sqlStatements: string[] = ['BEGIN TRANSACTION;']
 
     type DecryptedCookie = {
-      plaintextHex: string
       value: string
       domain: string
       name: string
@@ -659,89 +890,88 @@ export async function importCookiesFromBrowser(
 
     const decryptedCookies: DecryptedCookie[] = []
 
-    for (const row of allRows) {
-      const cols = row.split(SEP)
-      if (cols.length !== targetCols.length) {
-        skipped++
-        continue
-      }
+    const placeholders = targetCols.map(() => '?').join(', ')
+    const insertStmt = stagingDb.prepare(
+      `INSERT OR REPLACE INTO cookies (${colList}) VALUES (${placeholders})`
+    )
+    const insertAll = stagingDb.transaction(() => {
+      for (const row of allRows) {
+        const encBuf = row.encrypted_value as Buffer | null
+        const plainBuf = row.value as Buffer | string | null
 
-      const hexEncValue = cols[colIdx.encrypted_value]
-      const encBuf = Buffer.from(hexEncValue, 'hex')
-      const hexPlainValue = cols[colIdx.value]
+        let decryptedValue: Buffer
+        if (encBuf && encBuf.length > 0) {
+          const rawDecrypted = decryptCookieValueRaw(encBuf, sourceKey)
+          if (rawDecrypted === null) {
+            skipped++
+            continue
+          }
+          decryptedValue = rawDecrypted
+        } else {
+          // Why: the value column in Chromium's DB is TEXT, so better-sqlite3
+          // may return a string. Convert to a Buffer for consistent handling.
+          decryptedValue =
+            plainBuf instanceof Buffer ? plainBuf : Buffer.from(String(plainBuf ?? ''), 'latin1')
+        }
 
-      let plaintextHex: string
-      if (encBuf.length > 0) {
-        const rawDecrypted = decryptCookieValueRaw(encBuf, sourceKey)
-        if (rawDecrypted === null) {
-          skipped++
+        const domain = String(row.host_key ?? '')
+        const name = String(row.name ?? '')
+
+        if (isIntegrityCookie(name, domain)) {
+          integritySkipped++
           continue
         }
-        plaintextHex = rawDecrypted.toString('hex')
-      } else {
-        plaintextHex = hexPlainValue
-      }
 
-      const domain = unquote(cols[colIdx.host_key])
-      const name = unquote(cols[colIdx.name])
+        const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
+        domainSet.add(cleanDomain)
 
-      if (isIntegrityCookie(name, domain)) {
-        integritySkipped++
-        continue
-      }
+        const path = String(row.path ?? '/')
+        const secure = row.is_secure === 1
+        const httpOnly = row.is_httponly === 1
+        const sameSite = normalizeSameSite(row.samesite)
+        const expiresUtc = chromiumTimestampToUnix(String(row.expires_utc ?? '0'))
+        // Why: cookie values are raw byte strings, not UTF-8 text. Using latin1
+        // (ISO-8859-1) preserves all byte values 0x00–0xFF without replacement
+        // characters that UTF-8 decoding would insert for invalid sequences.
+        const value = decryptedValue.toString('latin1')
 
-      const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
-      domainSet.add(cleanDomain)
+        decryptedCookies.push({
+          value,
+          domain,
+          name,
+          path,
+          secure,
+          httpOnly,
+          sameSite,
+          expirationDate: expiresUtc > 0 ? expiresUtc : undefined
+        })
 
-      const path = unquote(cols[colIdx.path])
-      const secure = unquoteInt(cols[colIdx.is_secure]) === 1
-      const httpOnly = unquoteInt(cols[colIdx.is_httponly]) === 1
-      const sameSite = normalizeSameSite(unquoteInt(cols[colIdx.samesite]))
-      const expiresUtc = chromiumTimestampToUnix(unquote(cols[colIdx.expires_utc]))
-      // Why: cookie values are raw byte strings, not UTF-8 text. Using latin1
-      // (ISO-8859-1) preserves all byte values 0x00–0xFF without replacement
-      // characters that UTF-8 decoding would insert for invalid sequences.
-      const value = Buffer.from(plaintextHex, 'hex').toString('latin1')
-
-      decryptedCookies.push({
-        plaintextHex,
-        value,
-        domain,
-        name,
-        path,
-        secure,
-        httpOnly,
-        sameSite,
-        expirationDate: expiresUtc > 0 ? expiresUtc : undefined
-      })
-
-      const values = targetCols
-        .map((col, i) => {
+        // Build the row for INSERT, substituting decrypted value and clearing
+        // encrypted_value so CookieMonster reads the plaintext column.
+        const insertValues = targetCols.map((col) => {
           if (col === 'encrypted_value') {
-            return "X''"
+            return Buffer.alloc(0)
           }
           if (col === 'value') {
-            return `X'${plaintextHex}'`
+            return decryptedValue
           }
-          return cols[i]
+          // Why: columns that exist in the target but not in the source get
+          // null, which SQLite resolves to the column's DEFAULT value.
+          if (!sourceCols.has(col)) {
+            return null
+          }
+          return row[col] ?? null
         })
-        .join(', ')
-      sqlStatements.push(`INSERT OR REPLACE INTO cookies (${colList}) VALUES (${values});`)
-      imported++
-    }
-    diag(`  skipped ${integritySkipped} Google integrity cookies (SIDCC/STRP/AEC)`)
-
-    sqlStatements.push('COMMIT;')
-    diag(`  prepared ${imported} INSERT statements, ${skipped} skipped`)
-
-    const sqlFilePath = join(tmpDir, 'import.sql')
-    writeFileSync(sqlFilePath, sqlStatements.join('\n'))
-
-    execSync(`sqlite3 "${stagingCookiesPath}" < "${sqlFilePath}"`, {
-      encoding: 'utf-8',
-      timeout: 60_000,
-      maxBuffer: 500 * 1024 * 1024
+        insertStmt.run(...insertValues)
+        imported++
+      }
     })
+    insertAll()
+    stagingDb.close()
+    stagingDb = null
+
+    diag(`  skipped ${integritySkipped} Google integrity cookies (SIDCC/STRP/AEC)`)
+    diag(`  inserted ${imported} cookies, ${skipped} skipped`)
 
     rmSync(tmpDir, { recursive: true, force: true })
     diag(`  SQLite staging complete: ${imported} cookies, ${domainSet.size} domains`)
@@ -794,11 +1024,7 @@ export async function importCookiesFromBrowser(
       browserSessionRegistry.setPendingCookieImport(stagingCookiesPath)
       diag(`  staged at ${stagingCookiesPath} for ${memoryFailed} cookies that need restart`)
     } else {
-      try {
-        unlinkSync(stagingCookiesPath)
-      } catch {
-        /* best-effort */
-      }
+      unlinkDbFiles(stagingCookiesPath)
       diag(`  all cookies loaded in-memory — no restart needed`)
     }
 
@@ -813,24 +1039,39 @@ export async function importCookiesFromBrowser(
     const summary: BrowserCookieImportSummary = {
       totalCookies: allRows.length,
       importedCookies: imported,
-      skippedCookies: skipped,
+      skippedCookies: skipped + integritySkipped,
       domains: [...domainSet].sort()
     }
 
     return { ok: true, profileId: '', summary }
   } catch (err) {
+    // Why: close any open database handles before cleaning up temp files,
+    // otherwise the file may still be locked on Windows.
+    try {
+      sourceDb?.close()
+    } catch {
+      /* best-effort */
+    }
+    try {
+      stagingDb?.close()
+    } catch {
+      /* best-effort */
+    }
     rmSync(tmpDir, { recursive: true, force: true })
     // Why: if the import fails after the staging DB was created, clean it up
     // to avoid a stale staged import being applied on the next cold start.
-    try {
-      unlinkSync(stagingCookiesPath)
-    } catch {
-      /* may not exist yet */
-    }
+    unlinkDbFiles(stagingCookiesPath)
     diag(`  SQLite import failed: ${err}`)
+    // Why: a "malformed" or "not a database" error typically means the browser
+    // held a lock during copy and we got a partial/corrupt file. Surface the
+    // actionable hint to close the browser and retry.
+    const errStr = String(err)
+    const isCorrupt =
+      errStr.includes('malformed') || errStr.includes('not a database') || errStr.includes('SQLITE')
+    const hint = isCorrupt ? ` Try closing ${browser.label} and retrying.` : ''
     return {
       ok: false,
-      reason: `Could not import cookies from ${browser.label}. ${err}`
+      reason: `Could not import cookies from ${browser.label}.${hint}`
     }
   }
 }
