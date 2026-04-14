@@ -12,7 +12,7 @@ import {
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import TerminalSearch from '@/components/TerminalSearch'
 import type { PtyTransport } from './pty-transport'
-import { fitPanes, shellEscapePath } from './pane-helpers'
+import { fitPanes, isWindowsUserAgent, shellEscapePath } from './pane-helpers'
 import { EMPTY_LAYOUT, paneLeafId, serializeTerminalLayout } from './layout-serialization'
 import { createExpandCollapseActions } from './expand-collapse'
 import { useTerminalKeyboardShortcuts, type SearchState } from './keyboard-handlers'
@@ -109,6 +109,11 @@ export default function TerminalPane({
   const clearTabPtyId = useAppStore((store) => store.clearTabPtyId)
   const markWorktreeUnread = useAppStore((store) => store.markWorktreeUnread)
   const settings = useAppStore((store) => store.settings)
+  // Why: Windows is the only platform where bare right-click is repurposed as
+  // a paste gesture; on macOS/Linux the terminal still owns right-click for the
+  // context menu. The settings default keeps the Windows shortcut feeling native
+  // without changing the other platforms' interaction model.
+  const rightClickToPaste = isWindowsUserAgent() && (settings?.terminalRightClickToPaste ?? true)
   const [startup] = useState(() => useAppStore.getState().pendingStartupByTabId[tabId])
   const consumeTabStartupCommand = useAppStore((store) => store.consumeTabStartupCommand)
   const [setupSplit] = useState(() => useAppStore.getState().pendingSetupSplitByTabId[tabId])
@@ -690,7 +695,8 @@ export default function TerminalPane({
     managerRef,
     toggleExpandPane,
     onRequestClosePane: handleRequestClosePane,
-    onSetTitle: handleStartRename
+    onSetTitle: handleStartRename,
+    rightClickToPaste
   })
 
   const effectiveAppearance = settings

@@ -99,9 +99,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     [sortedWorktrees, query, repoMap, prCache, issueCache]
   )
   const createWorktreeName = query.trim()
-  // Why: only surface the create-worktree action after the user has typed a query,
-  // so it doesn't clutter the default (empty-query) list of recent worktrees.
-  const showCreateAction = canCreateWorktree && createWorktreeName.length > 0
+  // Why: only surface the create-worktree action when the query yields no matches,
+  // so it doesn't clutter the list when existing worktrees already satisfy the search.
+  const showCreateAction =
+    canCreateWorktree && createWorktreeName.length > 0 && matches.length === 0
 
   // Build a map of worktreeId -> Worktree for quick lookup
   const worktreeMap = useMemo(() => {

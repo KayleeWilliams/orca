@@ -284,6 +284,11 @@ export class CodexAccountService {
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const child = spawn(resolveCodexCommand(), ['login'], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
+        // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
+        // batch scripts directly — it needs cmd.exe as an intermediary. Setting
+        // shell: true on win32 avoids the EINVAL error this would otherwise cause.
+        shell: process.platform === 'win32',
         env: {
           ...process.env,
           CODEX_HOME: managedHomePath

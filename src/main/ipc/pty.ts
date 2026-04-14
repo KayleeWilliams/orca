@@ -3,79 +3,93 @@ main-process module so spawn-time environment scoping, lifecycle cleanup,
 foreground-process inspection, and renderer IPC stay behind a single audited
 boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
-import { basename } from 'path'
-import { existsSync, accessSync, statSync, chmodSync, constants as fsConstants } from 'fs'
 import { type BrowserWindow, ipcMain } from 'electron'
-import * as pty from 'node-pty'
+export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { parseWslPath } from '../wsl'
 import { openCodeHookService } from '../opencode/hook-service'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
+import { LocalPtyProvider } from '../providers/local-pty-provider'
+import type { IPtyProvider } from '../providers/types'
 
-let ptyCounter = 0
-const ptyProcesses = new Map<string, pty.IPty>()
-/** Basename of the shell binary each PTY was spawned with (e.g. "zsh"). */
-const ptyShellName = new Map<string, string>()
-// Why: node-pty's onData/onExit register native NAPI ThreadSafeFunction
-// callbacks. If the PTY is killed without disposing these listeners, the
-// stale callbacks survive into node::FreeEnvironment() where NAPI attempts
-// to invoke/clean them up on a destroyed environment, triggering a SIGABRT
-// via Napi::Error::ThrowAsJavaScriptException. Storing and calling the
-// disposables before proc.kill() prevents the use-after-free crash.
-const ptyDisposables = new Map<string, { dispose: () => void }[]>()
+// ─── Provider Registry ──────────────────────────────────────────────
+// Routes PTY operations by connectionId. null = local provider.
+// SSH providers will be registered here in Phase 1.
 
-// Track which "page load generation" each PTY belongs to.
-// When the renderer reloads, we only kill PTYs from previous generations,
-// not ones spawned during the current page load. This prevents a race
-// condition where did-finish-load fires after PTYs have already been
-// created by the new page, killing them and leaving blank terminals.
-let loadGeneration = 0
-const ptyLoadGeneration = new Map<string, number>()
-let didEnsureSpawnHelperExecutable = false
+const localProvider = new LocalPtyProvider()
+const sshProviders = new Map<string, IPtyProvider>()
+// Why: PTY IDs are assigned at spawn time with a connectionId, but subsequent
+// write/resize/kill calls only carry the PTY ID. This map lets us route
+// post-spawn operations to the correct provider without the renderer needing
+// to track connectionId per-PTY.
+const ptyOwnership = new Map<string, string | null>()
 
-function disposePtyListeners(id: string): void {
-  const disposables = ptyDisposables.get(id)
-  if (disposables) {
-    for (const d of disposables) {
-      d.dispose()
+function getProvider(connectionId: string | null | undefined): IPtyProvider {
+  if (!connectionId) {
+    return localProvider
+  }
+  const provider = sshProviders.get(connectionId)
+  if (!provider) {
+    throw new Error(`No PTY provider for connection "${connectionId}"`)
+  }
+  return provider
+}
+
+function getProviderForPty(ptyId: string): IPtyProvider {
+  const connectionId = ptyOwnership.get(ptyId)
+  if (connectionId === undefined) {
+    return localProvider
+  }
+  return getProvider(connectionId)
+}
+
+/** Register an SSH PTY provider for a connection. */
+export function registerSshPtyProvider(connectionId: string, provider: IPtyProvider): void {
+  sshProviders.set(connectionId, provider)
+}
+
+/** Remove an SSH PTY provider when a connection is closed. */
+export function unregisterSshPtyProvider(connectionId: string): void {
+  sshProviders.delete(connectionId)
+}
+
+/** Get the SSH PTY provider for a connection (for dispose on cleanup). */
+export function getSshPtyProvider(connectionId: string): IPtyProvider | undefined {
+  return sshProviders.get(connectionId)
+}
+
+/** Get the local PTY provider (for direct access in tests/runtime). */
+export function getLocalPtyProvider(): LocalPtyProvider {
+  return localProvider
+}
+
+/** Get all PTY IDs owned by a given connectionId (for reconnection reattach). */
+export function getPtyIdsForConnection(connectionId: string): string[] {
+  const ids: string[] = []
+  for (const [ptyId, connId] of ptyOwnership) {
+    if (connId === connectionId) {
+      ids.push(ptyId)
     }
-    ptyDisposables.delete(id)
+  }
+  return ids
+}
+
+/**
+ * Remove all PTY ownership entries for a given connectionId.
+ * Why: when an SSH connection is closed, the remote PTYs are gone but their
+ * ownership entries linger. Without cleanup, subsequent spawn calls could
+ * look up a stale provider for those PTY IDs, and the map grows unboundedly.
+ */
+export function clearPtyOwnershipForConnection(connectionId: string): void {
+  for (const [ptyId, connId] of ptyOwnership) {
+    if (connId === connectionId) {
+      ptyOwnership.delete(ptyId)
+    }
   }
 }
 
-function clearPtyState(id: string): void {
-  disposePtyListeners(id)
-  clearPtyRegistryState(id)
-}
+// ─── Provider-scoped PTY state cleanup ──────────────────────────────
 
-function clearPtyRegistryState(id: string): void {
-  ptyProcesses.delete(id)
-  ptyShellName.delete(id)
-  ptyLoadGeneration.delete(id)
-}
-
-function killPtyProcess(id: string, proc: pty.IPty): boolean {
-  // Why: node-pty's listener disposables must be torn down before proc.kill()
-  // on every explicit teardown path, not just app quit. Some kills happen
-  // during reload/manual-close flows where waiting for later state cleanup is
-  // too late to stop the stale NAPI callbacks from surviving into shutdown.
-  disposePtyListeners(id)
-  let killed = true
-  try {
-    proc.kill()
-  } catch {
-    killed = false
-  }
-  // Why: once an explicit kill path decides this PTY is done, we must clear
-  // the bookkeeping maps even if node-pty reports the process was already
-  // gone. Leaving the stale registry entry behind makes later lookups think
-  // the PTY is still live even though runtime teardown already ran.
-  clearPtyRegistryState(id)
-  clearProviderPtyState(id)
-  return killed
-}
-
-function clearProviderPtyState(id: string): void {
+export function clearProviderPtyState(id: string): void {
   // Why: OpenCode and Pi both allocate PTY-scoped runtime state outside the
   // node-pty process table. Centralizing provider cleanup avoids drift where a
   // new teardown path forgets to remove one provider's overlay/hook state.
@@ -83,64 +97,19 @@ function clearProviderPtyState(id: string): void {
   piTitlebarExtensionService.clearPty(id)
 }
 
-function getShellValidationError(shellPath: string): string | null {
-  if (!existsSync(shellPath)) {
-    return (
-      `Shell "${shellPath}" does not exist. ` +
-      `Set a valid SHELL environment variable or install zsh/bash.`
-    )
-  }
-  try {
-    accessSync(shellPath, fsConstants.X_OK)
-  } catch {
-    return `Shell "${shellPath}" is not executable. Check file permissions.`
-  }
-  return null
+export function deletePtyOwnership(id: string): void {
+  ptyOwnership.delete(id)
 }
 
-function ensureNodePtySpawnHelperExecutable(): void {
-  if (didEnsureSpawnHelperExecutable || process.platform === 'win32') {
-    return
-  }
-  didEnsureSpawnHelperExecutable = true
+// Why: localProvider.onData/onExit return unsubscribe functions. Without
+// storing and calling these on re-registration, macOS app re-activation
+// creates a new BrowserWindow and re-calls registerPtyHandlers, leaking
+// duplicate listeners that forward every event twice.
+let localDataUnsub: (() => void) | null = null
+let localExitUnsub: (() => void) | null = null
+let didFinishLoadHandler: (() => void) | null = null
 
-  try {
-    const unixTerminalPath = require.resolve('node-pty/lib/unixTerminal.js')
-    const packageRoot =
-      basename(unixTerminalPath) === 'unixTerminal.js'
-        ? unixTerminalPath.replace(/[/\\]lib[/\\]unixTerminal\.js$/, '')
-        : unixTerminalPath
-    const candidates = [
-      `${packageRoot}/build/Release/spawn-helper`,
-      `${packageRoot}/build/Debug/spawn-helper`,
-      `${packageRoot}/prebuilds/${process.platform}-${process.arch}/spawn-helper`
-    ].map((candidate) =>
-      candidate
-        .replace('app.asar/', 'app.asar.unpacked/')
-        .replace('node_modules.asar/', 'node_modules.asar.unpacked/')
-    )
-
-    for (const candidate of candidates) {
-      if (!existsSync(candidate)) {
-        continue
-      }
-      const mode = statSync(candidate).mode
-      if ((mode & 0o111) !== 0) {
-        return
-      }
-      // Why: node-pty's Unix backend launches this helper before the requested
-      // shell binary. Some package-manager/install paths strip the execute bit
-      // from the prebuilt helper, which makes every PTY spawn fail with the
-      // misleading "posix_spawnp failed" shell error even when /bin/zsh exists.
-      chmodSync(candidate, mode | 0o755)
-      return
-    }
-  } catch (error) {
-    console.warn(
-      `[pty] Failed to ensure node-pty spawn-helper is executable: ${error instanceof Error ? error.message : String(error)}`
-    )
-  }
-}
+// ─── IPC Registration ───────────────────────────────────────────────
 
 export function registerPtyHandlers(
   mainWindow: BrowserWindow,
@@ -156,135 +125,25 @@ export function registerPtyHandlers(
   ipcMain.removeHandler('pty:getForegroundProcess')
   ipcMain.removeAllListeners('pty:write')
 
-  // Kill orphaned PTY processes from previous page loads when the renderer reloads.
-  // PTYs tagged with the current loadGeneration were spawned during THIS page load
-  // and must be preserved — only kill PTYs from earlier generations.
-  mainWindow.webContents.on('did-finish-load', () => {
-    for (const [id, proc] of ptyProcesses) {
-      const gen = ptyLoadGeneration.get(id) ?? -1
-      if (gen < loadGeneration) {
-        killPtyProcess(id, proc)
-        // Why: notify runtime so the agent detector can close out any live
-        // agent sessions. Without this, killed PTYs would remain in the
-        // detector's liveAgents map and accumulate inflated durations.
-        runtime?.onPtyExit(id, -1)
-      }
-    }
-    // Advance generation for the next page load
-    loadGeneration++
-  })
-
-  runtime?.setPtyController({
-    write: (ptyId, data) => {
-      const proc = ptyProcesses.get(ptyId)
-      if (!proc) {
-        return false
-      }
-      proc.write(data)
-      return true
-    },
-    kill: (ptyId) => {
-      const proc = ptyProcesses.get(ptyId)
-      if (!proc) {
-        return false
-      }
-      if (!killPtyProcess(ptyId, proc)) {
-        return false
-      }
-      runtime?.onPtyExit(ptyId, -1)
-      return true
-    }
-  })
-
-  ipcMain.handle(
-    'pty:spawn',
-    (_event, args: { cols: number; rows: number; cwd?: string; env?: Record<string, string> }) => {
-      const id = String(++ptyCounter)
-
-      const defaultCwd =
-        process.platform === 'win32'
-          ? process.env.USERPROFILE || process.env.HOMEPATH || 'C:\\'
-          : process.env.HOME || '/'
-
-      const cwd = args.cwd || defaultCwd
-
-      // Why: when the working directory is inside a WSL filesystem, spawn a
-      // WSL shell (wsl.exe) instead of a native Windows shell. This gives the
-      // user a Linux environment with access to their WSL-installed tools
-      // (git, node, etc.) rather than a PowerShell with no WSL toolchain.
-      const wslInfo = process.platform === 'win32' ? parseWslPath(cwd) : null
-
-      let shellPath: string
-      let shellArgs: string[]
-      let effectiveCwd: string
-      let validationCwd: string
-      if (wslInfo) {
-        // Why: use `bash -c "cd ... && exec bash -l"` instead of `--cd` because
-        // wsl.exe's --cd flag fails with ERROR_PATH_NOT_FOUND in some Node
-        // spawn configurations. The exec replaces the outer bash with a login
-        // shell so the user gets their normal shell environment.
-        const escapedCwd = wslInfo.linuxPath.replace(/'/g, "'\\''")
-        shellPath = 'wsl.exe'
-        shellArgs = ['-d', wslInfo.distro, '--', 'bash', '-c', `cd '${escapedCwd}' && exec bash -l`]
-        // Why: set cwd to a valid Windows directory so node-pty's native
-        // spawn doesn't fail on the UNC path.
-        effectiveCwd = process.env.USERPROFILE || process.env.HOMEPATH || 'C:\\'
-        // Why: still validate the requested WSL UNC path, not the fallback
-        // Windows cwd. Otherwise a deleted/mistyped WSL worktree silently
-        // spawns a shell in the home directory and hides the real error.
-        validationCwd = cwd
-      } else if (process.platform === 'win32') {
-        shellPath = process.env.COMSPEC || 'powershell.exe'
-        shellArgs = []
-        effectiveCwd = cwd
-        validationCwd = cwd
-      } else {
-        // Why: startup commands can pass env overrides for the PTY. Prefer an
-        // explicit SHELL override when present, but still validate/fallback it
-        // exactly like the inherited process shell so stale config can't brick
-        // terminal creation.
-        shellPath = args.env?.SHELL || process.env.SHELL || '/bin/zsh'
-        shellArgs = ['-l']
-        effectiveCwd = cwd
-        validationCwd = cwd
-      }
-
-      ensureNodePtySpawnHelperExecutable()
-
-      if (!existsSync(validationCwd)) {
-        throw new Error(
-          `Working directory "${validationCwd}" does not exist. ` +
-            `It may have been deleted or is on an unmounted volume.`
-        )
-      }
-      if (!statSync(validationCwd).isDirectory()) {
-        throw new Error(`Working directory "${validationCwd}" is not a directory.`)
-      }
-
+  // Configure the local provider with app-specific hooks
+  localProvider.configure({
+    buildSpawnEnv: (id, baseEnv) => {
       const selectedCodexHomePath = getSelectedCodexHomePath?.() ?? null
-      const spawnEnv = {
-        ...process.env,
-        ...args.env,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-        TERM_PROGRAM: 'Orca',
-        FORCE_HYPERLINK: '1'
-      } as Record<string, string>
 
       const openCodeHookEnv = openCodeHookService.buildPtyEnv(id)
-      if (spawnEnv.OPENCODE_CONFIG_DIR) {
+      if (baseEnv.OPENCODE_CONFIG_DIR) {
         // Why: OPENCODE_CONFIG_DIR is a singular extra config root. Replacing a
         // user-provided directory would silently hide their custom OpenCode
         // config, so preserve it and fall back to title-only detection there.
         delete openCodeHookEnv.OPENCODE_CONFIG_DIR
       }
-      Object.assign(spawnEnv, openCodeHookEnv)
+      Object.assign(baseEnv, openCodeHookEnv)
       // Why: PI_CODING_AGENT_DIR owns Pi's full config/session root. Build a
       // PTY-scoped overlay from the caller's chosen root so Pi sessions keep
       // their user state without sharing a mutable overlay across terminals.
       Object.assign(
-        spawnEnv,
-        piTitlebarExtensionService.buildPtyEnv(id, spawnEnv.PI_CODING_AGENT_DIR)
+        baseEnv,
+        piTitlebarExtensionService.buildPtyEnv(id, baseEnv.PI_CODING_AGENT_DIR)
       )
 
       // Why: the selected Codex account should affect Codex launched inside
@@ -293,193 +152,140 @@ export function registerPtyHandlers(
       // stays scoped to Orca terminals instead of mutating the app process or
       // the user's external shells.
       if (selectedCodexHomePath) {
-        spawnEnv.CODEX_HOME = selectedCodexHomePath
+        baseEnv.CODEX_HOME = selectedCodexHomePath
       }
 
-      // Why: When Electron is launched from Finder (not a terminal), the process
-      // does not inherit the user's shell locale settings. Without an explicit
-      // UTF-8 locale, multi-byte characters (e.g. em dashes U+2014) are
-      // misinterpreted by the PTY and rendered as garbled sequences like "�~@~T".
-      // We default LANG to en_US.UTF-8 but let the inherited or caller-provided
-      // env override it so user locale preferences are respected.
-      spawnEnv.LANG ??= 'en_US.UTF-8'
+      return baseEnv
+    },
+    onSpawned: (id) => runtime?.onPtySpawned(id),
+    onExit: (id, code) => {
+      clearProviderPtyState(id)
+      ptyOwnership.delete(id)
+      runtime?.onPtyExit(id, code)
+    },
+    onData: (id, data, timestamp) => runtime?.onPtyData(id, data, timestamp)
+  })
 
-      let ptyProcess: pty.IPty | undefined
-      let primaryError: string | null = null
-      if (process.platform !== 'win32') {
-        primaryError = getShellValidationError(shellPath)
+  // Wire up provider events → renderer IPC
+  localDataUnsub?.()
+  localExitUnsub?.()
+  localDataUnsub = localProvider.onData((payload) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pty:data', payload)
+    }
+  })
+  localExitUnsub = localProvider.onExit((payload) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pty:exit', payload)
+    }
+  })
+
+  // Kill orphaned PTY processes from previous page loads when the renderer reloads.
+  // Why: store the handler reference so we can remove it on re-registration,
+  // preventing duplicate handlers after macOS app re-activation.
+  if (didFinishLoadHandler) {
+    mainWindow.webContents.removeListener('did-finish-load', didFinishLoadHandler)
+  }
+  didFinishLoadHandler = () => {
+    const killed = localProvider.killOrphanedPtys(localProvider.advanceGeneration() - 1)
+    for (const { id } of killed) {
+      clearProviderPtyState(id)
+      ptyOwnership.delete(id)
+      runtime?.onPtyExit(id, -1)
+    }
+  }
+  mainWindow.webContents.on('did-finish-load', didFinishLoadHandler)
+
+  // Why: the runtime controller must route through getProviderForPty() so that
+  // CLI commands (terminal.send, terminal.stop) work for both local and remote PTYs.
+  // Hardcoding localProvider.getPtyProcess() would silently fail for remote PTYs.
+  runtime?.setPtyController({
+    write: (ptyId, data) => {
+      const provider = getProviderForPty(ptyId)
+      try {
+        provider.write(ptyId, data)
+        return true
+      } catch {
+        return false
       }
+    },
+    kill: (ptyId) => {
+      const provider = getProviderForPty(ptyId)
+      // Why: shutdown() is async but the PtyController interface is sync.
+      // Swallowing the rejection prevents an unhandled promise rejection crash
+      // if the remote SSH session is already gone.
+      void provider.shutdown(ptyId, false).catch(() => {})
+      clearProviderPtyState(ptyId)
+      runtime?.onPtyExit(ptyId, -1)
+      return true
+    }
+  })
 
-      if (!primaryError) {
-        try {
-          ptyProcess = pty.spawn(shellPath, shellArgs, {
-            name: 'xterm-256color',
-            cols: args.cols,
-            rows: args.rows,
-            cwd: effectiveCwd,
-            env: spawnEnv
-          })
-        } catch (err) {
-          // Why: node-pty.spawn can throw if posix_spawnp fails for reasons
-          // not caught by the validation above (e.g. architecture mismatch
-          // of the native addon, PTY allocation failure, or resource limits).
-          primaryError = err instanceof Error ? err.message : String(err)
-        }
+  // ─── IPC Handlers (thin dispatch layer) ─────────────────────────
+
+  ipcMain.handle(
+    'pty:spawn',
+    async (
+      _event,
+      args: {
+        cols: number
+        rows: number
+        cwd?: string
+        env?: Record<string, string>
+        command?: string
+        connectionId?: string | null
       }
-
-      if (!ptyProcess && process.platform !== 'win32') {
-        // Why: a stale login shell path (common after Homebrew/bash changes)
-        // should not brick Orca terminals. Fall back to system shells so the
-        // user still gets a working terminal while the bad SHELL config remains.
-        const configuredShellPath = shellPath
-        const fallbackShells = ['/bin/zsh', '/bin/bash', '/bin/sh'].filter(
-          (s) => s !== configuredShellPath
-        )
-        for (const fallback of fallbackShells) {
-          if (getShellValidationError(fallback)) {
-            continue
-          }
-          try {
-            // Why: set SHELL to the fallback *before* spawning so the child
-            // process inherits the correct value. Leaving the stale original
-            // SHELL in the env would confuse shell startup logic and any
-            // subprocesses that inspect $SHELL.
-            spawnEnv.SHELL = fallback
-            ptyProcess = pty.spawn(fallback, ['-l'], {
-              name: 'xterm-256color',
-              cols: args.cols,
-              rows: args.rows,
-              cwd: effectiveCwd,
-              env: spawnEnv
-            })
-            console.warn(
-              `[pty] Primary shell "${configuredShellPath}" failed (${primaryError ?? 'unknown error'}), fell back to "${fallback}"`
-            )
-            shellPath = fallback
-            break
-          } catch {
-            // Fallback also failed — try next.
-          }
-        }
-      }
-
-      if (!ptyProcess) {
-        const diag = [
-          `shell: ${shellPath}`,
-          `cwd: ${effectiveCwd}`,
-          `arch: ${process.arch}`,
-          `platform: ${process.platform} ${process.getSystemVersion?.() ?? ''}`
-        ].join(', ')
-        throw new Error(
-          `Failed to spawn shell "${shellPath}": ${primaryError ?? 'unknown error'} (${diag}). ` +
-            `If this persists, please file an issue.`
-        )
-      }
-
-      if (process.platform !== 'win32') {
-        // Why: after a successful fallback, update spawnEnv.SHELL to match what
-        // was actually launched. The value was already set inside the fallback loop
-        // before spawn, but we also need shellPath to reflect the fallback for the
-        // ptyShellName map below. (Primary-path spawns already have the correct
-        // SHELL from process.env / args.env.)
-        spawnEnv.SHELL = shellPath
-      }
-      const proc = ptyProcess
-      ptyProcesses.set(id, proc)
-      ptyShellName.set(id, basename(shellPath))
-      ptyLoadGeneration.set(id, loadGeneration)
-      runtime?.onPtySpawned(id)
-
-      const onDataDisposable = proc.onData((data) => {
-        runtime?.onPtyData(id, data, Date.now())
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('pty:data', { id, data })
-        }
+    ) => {
+      const provider = getProvider(args.connectionId)
+      const result = await provider.spawn({
+        cols: args.cols,
+        rows: args.rows,
+        cwd: args.cwd,
+        env: args.env,
+        command: args.command
       })
-
-      const onExitDisposable = proc.onExit(({ exitCode }) => {
-        clearPtyState(id)
-        clearProviderPtyState(id)
-        runtime?.onPtyExit(id, exitCode)
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('pty:exit', { id, code: exitCode })
-        }
-      })
-
-      ptyDisposables.set(id, [onDataDisposable, onExitDisposable])
-
-      return { id }
+      ptyOwnership.set(result.id, args.connectionId ?? null)
+      return result
     }
   )
 
   ipcMain.on('pty:write', (_event, args: { id: string; data: string }) => {
-    const proc = ptyProcesses.get(args.id)
-    if (proc) {
-      proc.write(args.data)
-    }
+    getProviderForPty(args.id).write(args.id, args.data)
   })
 
   ipcMain.handle('pty:resize', (_event, args: { id: string; cols: number; rows: number }) => {
-    const proc = ptyProcesses.get(args.id)
-    if (proc) {
-      proc.resize(args.cols, args.rows)
-    }
+    getProviderForPty(args.id).resize(args.id, args.cols, args.rows)
   })
 
-  ipcMain.handle('pty:kill', (_event, args: { id: string }) => {
-    const proc = ptyProcesses.get(args.id)
-    if (proc) {
-      killPtyProcess(args.id, proc)
-      runtime?.onPtyExit(args.id, -1)
-    }
-  })
-
-  // Check whether the terminal's foreground process differs from its shell
-  // (e.g. the user is running `node server.js`). Uses node-pty's native
-  // .process getter which reads the OS process table directly — no external
-  // tools like pgrep required.
-  ipcMain.handle('pty:hasChildProcesses', (_event, args: { id: string }): boolean => {
-    const proc = ptyProcesses.get(args.id)
-    if (!proc) {
-      return false
-    }
+  ipcMain.handle('pty:kill', async (_event, args: { id: string }) => {
+    // Why: try/finally ensures ptyOwnership is cleaned up even if shutdown
+    // throws (e.g. SSH connection already gone). Without this, the stale
+    // entry routes future lookups to a dead provider.
     try {
-      const foreground = proc.process
-      const shell = ptyShellName.get(args.id)
-      // If we can't determine the shell name, err on the side of caution.
-      if (!shell) {
-        return true
-      }
-      return foreground !== shell
-    } catch {
-      // .process can throw if the PTY fd is already closed.
-      return false
+      await getProviderForPty(args.id).shutdown(args.id, true)
+    } finally {
+      ptyOwnership.delete(args.id)
     }
   })
 
-  ipcMain.handle('pty:getForegroundProcess', (_event, args: { id: string }): string | null => {
-    const proc = ptyProcesses.get(args.id)
-    if (!proc) {
-      return null
+  ipcMain.handle(
+    'pty:hasChildProcesses',
+    async (_event, args: { id: string }): Promise<boolean> => {
+      return getProviderForPty(args.id).hasChildProcesses(args.id)
     }
-    try {
-      // Why: live Codex-session actions must key off the PTY foreground process,
-      // not the tab title. Agent CLIs do not reliably emit stable OSC titles,
-      // so title-based detection misses real Codex sessions that still need a
-      // restart after account switching.
-      return proc.process || null
-    } catch {
-      // .process can throw if the PTY fd is already closed.
-      return null
+  )
+
+  ipcMain.handle(
+    'pty:getForegroundProcess',
+    async (_event, args: { id: string }): Promise<string | null> => {
+      return getProviderForPty(args.id).getForegroundProcess(args.id)
     }
-  })
+  )
 }
 
 /**
  * Kill all PTY processes. Call on app quit.
  */
 export function killAllPty(): void {
-  for (const [id, proc] of ptyProcesses) {
-    killPtyProcess(id, proc)
-  }
+  localProvider.killAll()
 }

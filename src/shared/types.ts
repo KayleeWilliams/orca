@@ -1,4 +1,5 @@
 /* eslint-disable max-lines */
+import type { SshTarget } from './ssh-types'
 
 // ─── Repo ────────────────────────────────────────────────────────────
 export type RepoKind = 'git' | 'folder'
@@ -13,6 +14,8 @@ export type Repo = {
   gitUsername?: string
   worktreeBaseRef?: string
   hookSettings?: RepoHookSettings
+  /** SSH target ID for remote repos. null/undefined = local. */
+  connectionId?: string | null
 }
 
 export type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
@@ -459,6 +462,10 @@ export type GlobalSettings = {
   terminalActivePaneOpacity: number
   terminalPaneOpacityTransitionMs: number
   terminalDividerThicknessPx: number
+  /** Why: Windows terminals conventionally use right-click as a paste gesture.
+   *  The setting stays Windows-only so macOS/Linux keep their existing context
+   *  menu behavior and users can still reach the menu with Ctrl+right-click. */
+  terminalRightClickToPaste: boolean
   terminalFocusFollowsMouse: boolean
   terminalScrollbackBytes: number
   /** Why: opening arbitrary links inside Orca uses an isolated guest browser surface.
@@ -557,6 +564,7 @@ export type PersistedState = {
     issue: Record<string, { data: IssueInfo | null; fetchedAt: number }>
   }
   workspaceSession: WorkspaceSessionState
+  sshTargets: SshTarget[]
 }
 
 // ─── Filesystem ─────────────────────────────────────────────

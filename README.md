@@ -5,11 +5,13 @@
 <h1 align="center">Orca</h1>
 
 <p align="center">
-  <a href="https://github.com/stablyai/orca/stargazers"><img src="https://img.shields.io/github/stars/stablyai/orca?style=flat-square&color=black" alt="GitHub stars" /></a>
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-black?style=flat-square" alt="Supported Platforms" />
-  <img src="https://img.shields.io/badge/ships-150+-black?style=flat-square" alt="Ships" />
-  <a href="https://discord.gg/fzjDKHxv8Q"><img src="https://img.shields.io/badge/Discord-Join-black?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
-  <a href="https://x.com/orca_build"><img src="https://img.shields.io/twitter/follow/orca_build?style=social" alt="Follow on X" /></a>
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge" alt="Supported Platforms" />
+  <a href="https://discord.gg/fzjDKHxv8Q"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://x.com/orca_build"><img src="https://img.shields.io/twitter/follow/orca_build?style=for-the-badge&color=1DA1F2" alt="Follow on X" /></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="docs/README.zh-CN.md">中文</a> · <a href="docs/README.ja.md">日本語</a>
 </p>
 
 <p align="center">

@@ -26,18 +26,17 @@ import { SCROLLBACK_PRESETS_MB } from './SettingsConstants'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { useAppStore } from '../../store'
+import { isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import {
   TERMINAL_ADVANCED_SEARCH_ENTRIES,
   TERMINAL_CURSOR_SEARCH_ENTRIES,
   TERMINAL_DARK_THEME_SEARCH_ENTRIES,
   TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
-  TERMINAL_PANE_SEARCH_ENTRIES,
   TERMINAL_PANE_STYLE_SEARCH_ENTRIES,
+  TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY,
   TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES
 } from './terminal-search'
 import { DarkTerminalThemeSection, LightTerminalThemeSection } from './TerminalThemeSections'
-
-export { TERMINAL_PANE_SEARCH_ENTRIES }
 
 type TerminalPaneProps = {
   settings: GlobalSettings
@@ -57,6 +56,7 @@ export function TerminalPane({
   setScrollbackMode
 }: TerminalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
+  const isWindows = isWindowsUserAgent()
   const [themeSearchDark, setThemeSearchDark] = useState('')
   const [themeSearchLight, setThemeSearchLight] = useState('')
 
@@ -238,12 +238,14 @@ export function TerminalPane({
         </div>
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, TERMINAL_PANE_STYLE_SEARCH_ENTRIES) ? (
+    matchesSettingsSearch(searchQuery, TERMINAL_PANE_STYLE_SEARCH_ENTRIES) ||
+    (isWindows &&
+      matchesSettingsSearch(searchQuery, TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY)) ? (
       <section key="pane-styling" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Pane Styling</h3>
           <p className="text-xs text-muted-foreground">
-            Control inactive pane dimming, divider thickness, and transition timing.
+            Control inactive pane dimming, divider thickness, mouse behavior, and transition timing.
           </p>
         </div>
 
@@ -291,6 +293,45 @@ export function TerminalPane({
             />
           </SearchableSetting>
         </div>
+
+        {/* Why: the Windows-only right-click toggle lives in this section, so the
+            section must also match that search term or settings search would hide
+            the control even though it is present. */}
+        {isWindows &&
+          matchesSettingsSearch(searchQuery, TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY) && (
+            <SearchableSetting
+              title="Right-click to paste"
+              description="On Windows, right-click pastes the clipboard into the terminal. Use Ctrl+right-click to open the context menu."
+              keywords={['terminal', 'windows', 'right click', 'paste', 'context menu']}
+              className="flex items-center justify-between gap-4 px-1 py-2"
+            >
+              <div className="space-y-0.5">
+                <Label>Right-click to paste</Label>
+                <p className="text-xs text-muted-foreground">
+                  On Windows, right-click pastes the clipboard into the terminal. Use
+                  Ctrl+right-click to open the context menu.
+                </p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={settings.terminalRightClickToPaste}
+                onClick={() =>
+                  updateSettings({
+                    terminalRightClickToPaste: !settings.terminalRightClickToPaste
+                  })
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+                  settings.terminalRightClickToPaste ? 'bg-foreground' : 'bg-muted-foreground/30'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                    settings.terminalRightClickToPaste ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </SearchableSetting>
+          )}
 
         <SearchableSetting
           title="Focus Follows Mouse"

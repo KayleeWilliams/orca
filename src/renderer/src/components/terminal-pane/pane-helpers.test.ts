@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { shellEscapePath } from './pane-helpers'
+import { isWindowsUserAgent, shellEscapePath } from './pane-helpers'
+
+describe('isWindowsUserAgent', () => {
+  it('detects Windows user agents', () => {
+    expect(isWindowsUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(true)
+  })
+
+  it('ignores non-Windows user agents', () => {
+    expect(isWindowsUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')).toBe(false)
+  })
+})
 
 describe('shellEscapePath', () => {
   it('keeps safe POSIX paths unquoted', () => {

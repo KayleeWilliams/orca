@@ -98,6 +98,10 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalActivePaneOpacity: 1,
     terminalPaneOpacityTransitionMs: 140,
     terminalDividerThicknessPx: 3,
+    // Default true so Windows users get native right-click paste out of the
+    // box. Other platforms ignore this field because the UI never exposes it,
+    // and Ctrl+right-click still opens the context menu when paste is enabled.
+    terminalRightClickToPaste: true,
     // Default false: opt-in only (matches Ghostty's default). Existing users
     // on upgrade inherit this default via persistence.ts's
     // { ...defaults.settings, ...parsed.settings } merge, so enabling
@@ -135,7 +139,8 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
     settings: getDefaultSettings(homedir),
     ui: getDefaultUIState(),
     githubCache: { pr: {}, issue: {} },
-    workspaceSession: getDefaultWorkspaceSession()
+    workspaceSession: getDefaultWorkspaceSession(),
+    sshTargets: []
   }
 }
 

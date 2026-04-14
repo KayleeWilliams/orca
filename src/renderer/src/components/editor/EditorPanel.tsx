@@ -5,12 +5,21 @@ across multiple components. Autosave now lives in a smaller headless controller
 so hidden editor UI no longer participates in shutdown. */
 import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import * as monaco from 'monaco-editor'
-import { Columns2, FileText, Rows2 } from 'lucide-react'
+import { Columns2, Copy, ExternalLink, FileText, Rows2 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
+import { getConnectionId } from '@/lib/connection-context'
 import { detectLanguage } from '@/lib/language-detect'
 import { getEditorHeaderCopyState, getEditorHeaderOpenFileState } from './editor-header'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { CLOSE_ALL_CONTEXT_MENUS_EVENT } from '../tab-bar/SortableTab'
 import type { MarkdownViewMode, OpenFile } from '@/store/slices/editor'
 import MarkdownViewToggle from './MarkdownViewToggle'
 import { EditorContent } from './EditorContent'
@@ -27,6 +36,16 @@ import {
   type EditorPathMutationTarget
 } from './editor-autosave'
 import { UntitledFileRenameDialog } from './UntitledFileRenameDialog'
+
+const isMac = navigator.userAgent.includes('Mac')
+const isLinux = navigator.userAgent.includes('Linux')
+
+/** Platform-appropriate label: macOS → Finder, Windows → File Explorer, Linux → Files */
+const revealLabel = isMac
+  ? 'Reveal in Finder'
+  : isLinux
+    ? 'Open Containing Folder'
+    : 'Reveal in File Explorer'
 
 type FileContent = {
   content: string
@@ -71,6 +90,8 @@ export default function EditorPanel({
     : null
   const [sideBySide, setSideBySide] = useState(settings?.diffDefaultView === 'side-by-side')
   const [prevDiffView, setPrevDiffView] = useState(settings?.diffDefaultView)
+  const [pathMenuOpen, setPathMenuOpen] = useState(false)
+  const [pathMenuPoint, setPathMenuPoint] = useState({ x: 0, y: 0 })
 
   // Why: When the user changes their global diff-view preference in Settings,
   // sync the local toggle to match during render (avoids flash of stale diff mode).
@@ -83,6 +104,12 @@ export default function EditorPanel({
 
   const openFilesRef = useRef(openFiles)
   openFilesRef.current = openFiles
+
+  useEffect(() => {
+    const closeMenu = (): void => setPathMenuOpen(false)
+    window.addEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+    return () => window.removeEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+  }, [])
 
   // Why: keepCurrentModel / keepCurrent*Model retain Monaco models after unmount
   // so undo history survives tab switches. When a tab is *closed*, the user has
@@ -144,7 +171,7 @@ export default function EditorPanel({
       if (fileContents[activeFile.id]) {
         return
       }
-      void loadFileContent(activeFile.filePath, activeFile.id)
+      void loadFileContent(activeFile.filePath, activeFile.id, activeFile.worktreeId)
     } else if (
       activeFile.mode === 'diff' &&
       activeFile.diffSource !== undefined &&
@@ -166,17 +193,21 @@ export default function EditorPanel({
     return () => window.clearTimeout(timeout)
   }, [copiedPathToast])
 
-  const loadFileContent = useCallback(async (filePath: string, id: string): Promise<void> => {
-    try {
-      const result = (await window.api.fs.readFile({ filePath })) as FileContent
-      setFileContents((prev) => ({ ...prev, [id]: result }))
-    } catch (err) {
-      setFileContents((prev) => ({
-        ...prev,
-        [id]: { content: `Error loading file: ${err}`, isBinary: false }
-      }))
-    }
-  }, [])
+  const loadFileContent = useCallback(
+    async (filePath: string, id: string, worktreeId?: string): Promise<void> => {
+      try {
+        const connectionId = getConnectionId(worktreeId ?? null) ?? undefined
+        const result = (await window.api.fs.readFile({ filePath, connectionId })) as FileContent
+        setFileContents((prev) => ({ ...prev, [id]: result }))
+      } catch (err) {
+        setFileContents((prev) => ({
+          ...prev,
+          [id]: { content: `Error loading file: ${err}`, isBinary: false }
+        }))
+      }
+    },
+    []
+  )
 
   const loadDiffContent = useCallback(async (file: OpenFile | null): Promise<void> => {
     if (!file) {
@@ -192,6 +223,7 @@ export default function EditorPanel({
         file.branchCompare?.baseOid && file.branchCompare.headOid && file.branchCompare.mergeBase
           ? file.branchCompare
           : null
+      const connectionId = getConnectionId(file.worktreeId) ?? undefined
       const result =
         file.diffSource === 'branch' && branchCompare
           ? ((await window.api.git.branchDiff({
@@ -203,12 +235,14 @@ export default function EditorPanel({
                 mergeBase: branchCompare.mergeBase!
               },
               filePath: file.relativePath,
-              oldPath: file.branchOldPath
+              oldPath: file.branchOldPath,
+              connectionId
             })) as DiffContent)
           : ((await window.api.git.diff({
               worktreePath,
               filePath: file.relativePath,
-              staged: file.diffSource === 'staged'
+              staged: file.diffSource === 'staged',
+              connectionId
             })) as DiffContent)
       setDiffContents((prev) => ({ ...prev, [file.id]: result }))
     } catch (err) {
@@ -334,7 +368,7 @@ export default function EditorPanel({
 
       for (const file of matchingFiles) {
         if (file.mode === 'edit') {
-          void loadFileContent(file.filePath, file.id)
+          void loadFileContent(file.filePath, file.id, file.worktreeId)
         } else if (
           file.mode === 'diff' &&
           file.diffSource !== 'combined-uncommitted' &&
@@ -580,7 +614,15 @@ export default function EditorPanel({
       {!isCombinedDiff && (
         <div className="editor-header">
           <div className="editor-header-text">
-            <div className="editor-header-path-row">
+            <div
+              className="editor-header-path-row"
+              onContextMenuCapture={(event) => {
+                event.preventDefault()
+                window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
+                setPathMenuPoint({ x: event.clientX, y: event.clientY })
+                setPathMenuOpen(true)
+              }}
+            >
               <button
                 type="button"
                 className="editor-header-path"
@@ -596,6 +638,43 @@ export default function EditorPanel({
                 {headerCopyState.copyToastLabel}
               </span>
             </div>
+            <DropdownMenu open={pathMenuOpen} onOpenChange={setPathMenuOpen} modal={false}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-hidden
+                  tabIndex={-1}
+                  className="pointer-events-none fixed size-px opacity-0"
+                  style={{ left: pathMenuPoint.x, top: pathMenuPoint.y }}
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" sideOffset={0} align="start">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void window.api.ui.writeClipboardText(activeFile.filePath)
+                  }}
+                >
+                  <Copy className="w-3.5 h-3.5 mr-1.5" />
+                  Copy Path
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void window.api.ui.writeClipboardText(activeFile.relativePath)
+                  }}
+                >
+                  <Copy className="w-3.5 h-3.5 mr-1.5" />
+                  Copy Relative Path
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    window.api.shell.openPath(activeFile.filePath)
+                  }}
+                >
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                  {revealLabel}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           {isSingleDiff && (
             <TooltipProvider delayDuration={300}>

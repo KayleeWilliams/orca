@@ -8,6 +8,7 @@ type UseTerminalPaneContextMenuDeps = {
   toggleExpandPane: (paneId: number) => void
   onRequestClosePane: (paneId: number) => void
   onSetTitle: (paneId: number) => void
+  rightClickToPaste: boolean
 }
 
 type TerminalMenuState = {
@@ -32,7 +33,8 @@ export function useTerminalPaneContextMenu({
   managerRef,
   toggleExpandPane,
   onRequestClosePane,
-  onSetTitle
+  onSetTitle,
+  rightClickToPaste
 }: UseTerminalPaneContextMenuDeps): TerminalMenuState {
   const contextPaneIdRef = useRef<number | null>(null)
   const menuOpenedAtRef = useRef(0)
@@ -139,7 +141,6 @@ export function useTerminalPaneContextMenu({
 
   const onContextMenuCapture = (event: React.MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
-    menuOpenedAtRef.current = Date.now()
     window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
     const manager = managerRef.current
     if (!manager) {
@@ -153,6 +154,18 @@ export function useTerminalPaneContextMenu({
     }
     const clickedPane = manager.getPanes().find((pane) => pane.container.contains(target)) ?? null
     contextPaneIdRef.current = clickedPane?.id ?? null
+
+    // Why: Windows users expect bare right-click to paste when that setting is
+    // enabled, but Ctrl+right-click must still reach the app menu so the menu
+    // remains discoverable. We keep the terminal pane target in sync first so
+    // the paste path uses the clicked split even though no menu opens.
+    if (rightClickToPaste && !event.ctrlKey) {
+      event.stopPropagation()
+      void onPaste()
+      return
+    }
+
+    menuOpenedAtRef.current = Date.now()
     const bounds = event.currentTarget.getBoundingClientRect()
     setPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
     setOpen(true)

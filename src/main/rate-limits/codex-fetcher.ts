@@ -90,6 +90,11 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       ['-s', 'read-only', '-a', 'untrusted', 'app-server'],
       {
         stdio: ['pipe', 'pipe', 'pipe'],
+        // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
+        // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
+        // batch scripts directly — it needs cmd.exe as an intermediary. Setting
+        // shell: true on win32 avoids the EINVAL error this would otherwise cause.
+        shell: process.platform === 'win32',
         // Why: the selected Codex rate-limit account must only affect this fetch
         // subprocess. Never mutate process.env globally or other Codex features
         // would inherit the managed account unintentionally.
@@ -285,12 +290,19 @@ async function fetchViaPty(options?: FetchCodexRateLimitsOptions): Promise<Provi
   const pty = await import('node-pty')
   const codexCommand = resolveCodexCommand()
 
+  // Why: node-pty cannot spawn .cmd/.bat batch scripts directly on Windows —
+  // those need cmd.exe as an interpreter. Route through `cmd.exe /c <command>`
+  // so the PTY fallback works when Codex is installed via npm (codex.cmd).
+  const isWindowsBatchScript = process.platform === 'win32' && /\.(cmd|bat)$/i.test(codexCommand)
+  const spawnFile = isWindowsBatchScript ? 'cmd.exe' : codexCommand
+  const spawnArgs = isWindowsBatchScript ? ['/c', codexCommand] : []
+
   return new Promise<ProviderRateLimits>((resolve) => {
     let output = ''
     let resolved = false
     let sentStatus = false
 
-    const term = pty.spawn(codexCommand, [], {
+    const term = pty.spawn(spawnFile, spawnArgs, {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,

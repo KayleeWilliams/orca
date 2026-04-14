@@ -216,6 +216,12 @@ export type PreloadApi = {
     pickDirectory: () => Promise<string | null>
     clone: (args: { url: string; destination: string }) => Promise<Repo>
     cloneAbort: () => Promise<void>
+    addRemote: (args: {
+      connectionId: string
+      remotePath: string
+      displayName?: string
+      kind?: 'git' | 'folder'
+    }) => Promise<Repo>
     onCloneProgress: (callback: (data: { phase: string; percent: number }) => void) => () => void
     getGitUsername: (args: { repoId: string }) => Promise<string>
     getBaseRefDefault: (args: { repoId: string }) => Promise<string>
@@ -242,6 +248,8 @@ export type PreloadApi = {
       rows: number
       cwd?: string
       env?: Record<string, string>
+      command?: string
+      connectionId?: string | null
     }) => Promise<{ id: string }>
     write: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
@@ -319,6 +327,11 @@ export type PreloadApi = {
     check: (args: {
       repoId: string
     }) => Promise<{ hasHooks: boolean; hooks: OrcaHooks | null; mayNeedUpdate: boolean }>
+    createIssueCommandRunner: (args: {
+      repoId: string
+      worktreePath: string
+      command: string
+    }) => Promise<WorktreeSetupLaunch>
     readIssueCommand: (args: { repoId: string }) => Promise<{
       localContent: string | null
       sharedContent: string | null
@@ -359,36 +372,46 @@ export type PreloadApi = {
   claudeUsage: ClaudeUsageApi
   codexUsage: CodexUsageApi
   fs: {
-    readDir: (args: { dirPath: string }) => Promise<DirEntry[]>
+    readDir: (args: { dirPath: string; connectionId?: string }) => Promise<DirEntry[]>
     readFile: (args: {
       filePath: string
+      connectionId?: string
     }) => Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }>
-    writeFile: (args: { filePath: string; content: string }) => Promise<void>
-    createFile: (args: { filePath: string }) => Promise<void>
-    createDir: (args: { dirPath: string }) => Promise<void>
-    rename: (args: { oldPath: string; newPath: string }) => Promise<void>
-    deletePath: (args: { targetPath: string }) => Promise<void>
+    writeFile: (args: { filePath: string; content: string; connectionId?: string }) => Promise<void>
+    createFile: (args: { filePath: string; connectionId?: string }) => Promise<void>
+    createDir: (args: { dirPath: string; connectionId?: string }) => Promise<void>
+    rename: (args: { oldPath: string; newPath: string; connectionId?: string }) => Promise<void>
+    deletePath: (args: { targetPath: string; connectionId?: string }) => Promise<void>
     authorizeExternalPath: (args: { targetPath: string }) => Promise<void>
     stat: (args: {
       filePath: string
+      connectionId?: string
     }) => Promise<{ size: number; isDirectory: boolean; mtime: number }>
-    listFiles: (args: { rootPath: string }) => Promise<string[]>
-    search: (args: SearchOptions) => Promise<SearchResult>
-    watchWorktree: (args: { worktreePath: string }) => Promise<void>
-    unwatchWorktree: (args: { worktreePath: string }) => Promise<void>
+    listFiles: (args: { rootPath: string; connectionId?: string }) => Promise<string[]>
+    search: (args: SearchOptions & { connectionId?: string }) => Promise<SearchResult>
+    watchWorktree: (args: { worktreePath: string; connectionId?: string }) => Promise<void>
+    unwatchWorktree: (args: { worktreePath: string; connectionId?: string }) => Promise<void>
     onFsChanged: (callback: (payload: FsChangedPayload) => void) => () => void
   }
   git: {
-    status: (args: { worktreePath: string }) => Promise<{ entries: GitStatusEntry[] }>
-    conflictOperation: (args: { worktreePath: string }) => Promise<GitConflictOperation>
+    status: (args: {
+      worktreePath: string
+      connectionId?: string
+    }) => Promise<{ entries: GitStatusEntry[] }>
+    conflictOperation: (args: {
+      worktreePath: string
+      connectionId?: string
+    }) => Promise<GitConflictOperation>
     diff: (args: {
       worktreePath: string
       filePath: string
       staged: boolean
+      connectionId?: string
     }) => Promise<GitDiffResult>
     branchCompare: (args: {
       worktreePath: string
       baseRef: string
+      connectionId?: string
     }) => Promise<GitBranchCompareResult>
     branchDiff: (args: {
       worktreePath: string
@@ -400,16 +423,38 @@ export type PreloadApi = {
       }
       filePath: string
       oldPath?: string
+      connectionId?: string
     }) => Promise<GitDiffResult>
-    stage: (args: { worktreePath: string; filePath: string }) => Promise<void>
-    bulkStage: (args: { worktreePath: string; filePaths: string[] }) => Promise<void>
-    unstage: (args: { worktreePath: string; filePath: string }) => Promise<void>
-    bulkUnstage: (args: { worktreePath: string; filePaths: string[] }) => Promise<void>
-    discard: (args: { worktreePath: string; filePath: string }) => Promise<void>
+    stage: (args: {
+      worktreePath: string
+      filePath: string
+      connectionId?: string
+    }) => Promise<void>
+    bulkStage: (args: {
+      worktreePath: string
+      filePaths: string[]
+      connectionId?: string
+    }) => Promise<void>
+    unstage: (args: {
+      worktreePath: string
+      filePath: string
+      connectionId?: string
+    }) => Promise<void>
+    bulkUnstage: (args: {
+      worktreePath: string
+      filePaths: string[]
+      connectionId?: string
+    }) => Promise<void>
+    discard: (args: {
+      worktreePath: string
+      filePath: string
+      connectionId?: string
+    }) => Promise<void>
     remoteFileUrl: (args: {
       worktreePath: string
       relativePath: string
       line: number
+      connectionId?: string
     }) => Promise<string | null>
   }
   ui: {
@@ -454,5 +499,56 @@ export type PreloadApi = {
     refresh: () => Promise<RateLimitState>
     setPollingInterval: (ms: number) => Promise<void>
     onUpdate: (callback: (state: RateLimitState) => void) => () => void
+  }
+  ssh: {
+    listTargets: () => Promise<unknown[]>
+    addTarget: (args: { target: Record<string, unknown> }) => Promise<unknown>
+    updateTarget: (args: { id: string; updates: Record<string, unknown> }) => Promise<unknown>
+    removeTarget: (args: { id: string }) => Promise<void>
+    importConfig: () => Promise<unknown[]>
+    connect: (args: { targetId: string }) => Promise<unknown>
+    disconnect: (args: { targetId: string }) => Promise<void>
+    getState: (args: { targetId: string }) => Promise<unknown>
+    testConnection: (args: {
+      targetId: string
+    }) => Promise<{ success: boolean; error?: string; state?: unknown }>
+    onStateChanged: (callback: (data: { targetId: string; state: unknown }) => void) => () => void
+    onHostKeyVerify: (
+      callback: (data: {
+        host: string
+        ip: string
+        fingerprint: string
+        keyType: string
+        responseChannel: string
+      }) => void
+    ) => () => void
+    respondHostKeyVerify: (args: { channel: string; accepted: boolean }) => void
+    onAuthChallenge: (
+      callback: (data: {
+        targetId: string
+        name: string
+        instructions: string
+        prompts: { prompt: string; echo: boolean }[]
+        responseChannel: string
+      }) => void
+    ) => () => void
+    respondAuthChallenge: (args: { channel: string; responses: string[] }) => void
+    onPasswordPrompt: (
+      callback: (data: { targetId: string; responseChannel: string }) => void
+    ) => () => void
+    respondPassword: (args: { channel: string; password: string | null }) => void
+    addPortForward: (args: {
+      targetId: string
+      localPort: number
+      remoteHost: string
+      remotePort: number
+      label?: string
+    }) => Promise<unknown>
+    removePortForward: (args: { id: string }) => Promise<boolean>
+    listPortForwards: (args?: { targetId?: string }) => Promise<unknown[]>
+    browseDir: (args: { targetId: string; dirPath: string }) => Promise<{
+      entries: { name: string; isDirectory: boolean }[]
+      resolvedPath: string
+    }>
   }
 }

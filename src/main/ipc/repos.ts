@@ -1,3 +1,6 @@
+/* eslint-disable max-lines -- Why: repo IPC is intentionally centralized so SSH
+routing, clone lifecycle, and store persistence stay behind a single audited
+boundary. Splitting by line count would scatter tightly coupled repo behavior. */
 import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
@@ -17,6 +20,8 @@ import {
   getBaseRefDefault,
   searchBaseRefs
 } from '../git/repo'
+import { getSshGitProvider } from '../providers/ssh-git-dispatch'
+import { getActiveMultiplexer } from './ssh'
 
 // Why: module-scoped so the abort handle survives window re-creation on macOS.
 // registerRepoHandlers is called again when a new BrowserWindow is created,
@@ -38,6 +43,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:getGitUsername')
   ipcMain.removeHandler('repos:getBaseRefDefault')
   ipcMain.removeHandler('repos:searchBaseRefs')
+  ipcMain.removeHandler('repos:addRemote')
 
   ipcMain.handle('repos:list', () => {
     return store.getRepos()
@@ -69,6 +75,83 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     notifyReposChanged(mainWindow)
     return repo
   })
+
+  ipcMain.handle(
+    'repos:addRemote',
+    async (
+      _event,
+      args: {
+        connectionId: string
+        remotePath: string
+        displayName?: string
+        kind?: 'git' | 'folder'
+      }
+    ): Promise<Repo> => {
+      const gitProvider = getSshGitProvider(args.connectionId)
+      if (!gitProvider) {
+        throw new Error(`SSH connection "${args.connectionId}" not found or not connected`)
+      }
+
+      const existing = store
+        .getRepos()
+        .find((r) => r.connectionId === args.connectionId && r.path === args.remotePath)
+      if (existing) {
+        return existing
+      }
+
+      const pathSegments = args.remotePath.replace(/\/+$/, '').split('/')
+      const folderName = pathSegments.at(-1) || args.remotePath
+
+      let repoKind: 'git' | 'folder' = args.kind ?? 'git'
+      let resolvedPath = args.remotePath
+
+      if (args.kind !== 'folder') {
+        // Why: when kind is not explicitly 'folder', verify the remote path is
+        // a git repo. Throw on failure so the renderer can show the "Open as
+        // Folder" confirmation dialog — matching the local add-repo behavior
+        // where non-git directories require explicit user consent.
+        try {
+          const check = await gitProvider.isGitRepoAsync(args.remotePath)
+          if (check.isRepo) {
+            repoKind = 'git'
+            if (check.rootPath) {
+              resolvedPath = check.rootPath
+            }
+          } else {
+            throw new Error(`Not a valid git repository: ${args.remotePath}`)
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('Not a valid git repository')) {
+            throw err
+          }
+          throw new Error(`Not a valid git repository: ${args.remotePath}`)
+        }
+      }
+
+      const repo: Repo = {
+        id: randomUUID(),
+        path: resolvedPath,
+        displayName: args.displayName || folderName,
+        badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
+        addedAt: Date.now(),
+        kind: repoKind,
+        connectionId: args.connectionId
+      }
+
+      store.addRepo(repo)
+      notifyReposChanged(mainWindow)
+
+      // Why: register the workspace root with the relay so mutating FS operations
+      // are scoped to this repo's path. Without this, the relay's path ACL would
+      // reject writes to the workspace after the first root is registered.
+      const mux = getActiveMultiplexer(args.connectionId)
+      if (mux) {
+        mux.notify('session.registerRoot', { rootPath: resolvedPath })
+      }
+
+      return repo
+    }
+  )
 
   ipcMain.handle('repos:remove', async (_event, args: { repoId: string }) => {
     store.removeRepo(args.repoId)
@@ -239,10 +322,24 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     }
   )
 
-  ipcMain.handle('repos:getGitUsername', (_event, args: { repoId: string }) => {
+  ipcMain.handle('repos:getGitUsername', async (_event, args: { repoId: string }) => {
     const repo = store.getRepo(args.repoId)
     if (!repo || isFolderRepo(repo)) {
       return ''
+    }
+    // Why: remote repos have their git config on the remote host, so we
+    // must route through the relay's git.exec to read user.name.
+    if (repo.connectionId) {
+      const provider = getSshGitProvider(repo.connectionId)
+      if (!provider) {
+        return ''
+      }
+      try {
+        const result = await provider.exec(['config', 'user.name'], repo.path)
+        return result.stdout.trim()
+      } catch {
+        return ''
+      }
     }
     return getGitUsername(repo.path)
   })
@@ -250,6 +347,27 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.handle('repos:getBaseRefDefault', async (_event, args: { repoId: string }) => {
     const repo = store.getRepo(args.repoId)
     if (!repo || isFolderRepo(repo)) {
+      return 'origin/main'
+    }
+    // Why: remote repos need the relay to resolve symbolic-ref on the
+    // remote host where the git data lives.
+    if (repo.connectionId) {
+      const provider = getSshGitProvider(repo.connectionId)
+      if (!provider) {
+        return 'origin/main'
+      }
+      try {
+        const result = await provider.exec(
+          ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
+          repo.path
+        )
+        const ref = result.stdout.trim()
+        if (ref) {
+          return ref.replace(/^refs\/remotes\//, '')
+        }
+      } catch {
+        // Fall through to default
+      }
       return 'origin/main'
     }
     return getBaseRefDefault(repo.path)
@@ -262,7 +380,34 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       if (!repo || isFolderRepo(repo)) {
         return []
       }
-      return searchBaseRefs(repo.path, args.query, args.limit ?? 25)
+      const limit = args.limit ?? 25
+      // Why: remote repos need the relay to list branches on the remote host.
+      if (repo.connectionId) {
+        const provider = getSshGitProvider(repo.connectionId)
+        if (!provider) {
+          return []
+        }
+        try {
+          const result = await provider.exec(
+            [
+              'for-each-ref',
+              '--format=%(refname:short)',
+              '--sort=-committerdate',
+              `refs/remotes/origin/*${args.query}*`,
+              `refs/heads/*${args.query}*`
+            ],
+            repo.path
+          )
+          return result.stdout
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, limit)
+        } catch {
+          return []
+        }
+      }
+      return searchBaseRefs(repo.path, args.query, limit)
     }
   )
 }

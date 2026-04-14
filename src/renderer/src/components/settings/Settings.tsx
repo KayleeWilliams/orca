@@ -6,6 +6,7 @@ import {
   GitBranch,
   Keyboard,
   Palette,
+  Server,
   SlidersHorizontal,
   SquareTerminal
 } from 'lucide-react'
@@ -13,14 +14,17 @@ import type { OrcaHooks } from '../../../../shared/types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import { useAppStore } from '../../store'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
+import { isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import { SCROLLBACK_PRESETS_MB, getFallbackTerminalFonts } from './SettingsConstants'
 import { GeneralPane, GENERAL_PANE_SEARCH_ENTRIES } from './GeneralPane'
 import { AppearancePane, APPEARANCE_PANE_SEARCH_ENTRIES } from './AppearancePane'
 import { ShortcutsPane, SHORTCUTS_PANE_SEARCH_ENTRIES } from './ShortcutsPane'
-import { TerminalPane, TERMINAL_PANE_SEARCH_ENTRIES } from './TerminalPane'
+import { TerminalPane } from './TerminalPane'
 import { RepositoryPane, getRepositoryPaneSearchEntries } from './RepositoryPane'
+import { getTerminalPaneSearchEntries } from './terminal-search'
 import { GitPane, GIT_PANE_SEARCH_ENTRIES } from './GitPane'
 import { NotificationsPane, NOTIFICATIONS_PANE_SEARCH_ENTRIES } from './NotificationsPane'
+import { SshPane, SSH_PANE_SEARCH_ENTRIES } from './SshPane'
 import { StatsPane, STATS_PANE_SEARCH_ENTRIES } from '../stats/StatsPane'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSection } from './SettingsSection'
@@ -34,6 +38,7 @@ type SettingsNavTarget =
   | 'notifications'
   | 'shortcuts'
   | 'stats'
+  | 'ssh'
   | 'repo'
 
 type SettingsNavSection = {
@@ -42,6 +47,7 @@ type SettingsNavSection = {
   description: string
   icon: typeof SlidersHorizontal
   searchEntries: SettingsSearchEntry[]
+  badge?: string
 }
 
 function getSettingsSectionId(pane: SettingsNavTarget, repoId: string | null): string {
@@ -72,6 +78,14 @@ function Settings(): React.JSX.Element {
     Record<string, { hasHooks: boolean; hooks: OrcaHooks | null; mayNeedUpdate: boolean }>
   >({})
   const systemPrefersDark = useSystemPrefersDark()
+  const isWindows = isWindowsUserAgent()
+  // Why: the Terminal settings section shares one search index with the
+  // sidebar. We trim Windows-only entries on other platforms so search never
+  // reveals controls that the renderer will intentionally hide.
+  const terminalPaneSearchEntries = useMemo(
+    () => getTerminalPaneSearchEntries(isWindows),
+    [isWindows]
+  )
   const [scrollbackMode, setScrollbackMode] = useState<'preset' | 'custom'>('preset')
   const [prevScrollbackBytes, setPrevScrollbackBytes] = useState(settings?.terminalScrollbackBytes)
   const [terminalFontSuggestions, setTerminalFontSuggestions] = useState<string[]>(
@@ -236,7 +250,7 @@ function Settings(): React.JSX.Element {
         title: 'Terminal',
         description: 'Terminal appearance, previews, and defaults for new panes.',
         icon: SquareTerminal,
-        searchEntries: TERMINAL_PANE_SEARCH_ENTRIES
+        searchEntries: terminalPaneSearchEntries
       },
       {
         id: 'notifications',
@@ -259,6 +273,14 @@ function Settings(): React.JSX.Element {
         icon: BarChart3,
         searchEntries: STATS_PANE_SEARCH_ENTRIES
       },
+      {
+        id: 'ssh',
+        title: 'SSH',
+        description: 'Remote SSH connections.',
+        icon: Server,
+        searchEntries: SSH_PANE_SEARCH_ENTRIES,
+        badge: 'Beta'
+      },
       ...repos.map((repo) => ({
         id: `repo-${repo.id}`,
         title: repo.displayName,
@@ -267,7 +289,7 @@ function Settings(): React.JSX.Element {
         searchEntries: getRepositoryPaneSearchEntries(repo)
       }))
     ],
-    [repos]
+    [repos, terminalPaneSearchEntries]
   )
 
   const visibleNavSections = useMemo(
@@ -369,7 +391,7 @@ function Settings(): React.JSX.Element {
     .filter((section) => section.id.startsWith('repo-'))
     .map((section) => {
       const repo = repos.find((entry) => entry.id === section.id.replace('repo-', ''))
-      return { ...section, badgeColor: repo?.badgeColor }
+      return { ...section, badgeColor: repo?.badgeColor, isRemote: !!repo?.connectionId }
     })
 
   return (
@@ -433,7 +455,7 @@ function Settings(): React.JSX.Element {
                   id="terminal"
                   title="Terminal"
                   description="Terminal appearance, previews, and defaults for new panes."
-                  searchEntries={TERMINAL_PANE_SEARCH_ENTRIES}
+                  searchEntries={terminalPaneSearchEntries}
                 >
                   <TerminalPane
                     settings={settings}
@@ -470,6 +492,16 @@ function Settings(): React.JSX.Element {
                   searchEntries={STATS_PANE_SEARCH_ENTRIES}
                 >
                   <StatsPane />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="ssh"
+                  title="SSH"
+                  badge="Beta"
+                  description="Manage remote SSH connections. Connect to remote servers to browse files, run terminals, and use git."
+                  searchEntries={SSH_PANE_SEARCH_ENTRIES}
+                >
+                  <SshPane />
                 </SettingsSection>
 
                 {repos.map((repo) => {

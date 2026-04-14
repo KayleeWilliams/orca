@@ -30,7 +30,9 @@ export function fitAndFocusPanes(manager: PaneManager): void {
   focusActivePane(manager)
 }
 
-function isWindowsUserAgent(userAgent: string): boolean {
+export function isWindowsUserAgent(
+  userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
+): boolean {
   return userAgent.includes('Windows')
 }
 
