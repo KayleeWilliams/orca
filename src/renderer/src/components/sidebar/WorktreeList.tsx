@@ -323,6 +323,14 @@ const WorktreeList = React.memo(function WorktreeList() {
     gap: 6,
     getItemKey: (index) => {
       const row = rows[index]
+      // Why: when rows shrink (group collapse, worktree removal) the
+      // virtualizer's elementsCache can still hold stale entries whose
+      // data-index exceeds the new rows length. measureElement calls
+      // getItemKey for those stale indices, so we need a fallback to
+      // avoid "Cannot read properties of undefined (reading 'type')".
+      if (!row) {
+        return `__stale_${index}`
+      }
       return row.type === 'header' ? `hdr:${row.key}` : `wt:${row.worktree.id}`
     }
   })
