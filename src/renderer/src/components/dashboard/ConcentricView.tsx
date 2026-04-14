@@ -33,6 +33,14 @@ function AgentDots({
   rows: RepoGroup['worktrees'][number]['rows']
   now: number
 }): React.JSX.Element {
+  if (rows.length === 0) {
+    return (
+      <div className="mt-2 text-[9px] uppercase tracking-[0.14em] text-muted-foreground/65">
+        No agents
+      </div>
+    )
+  }
+
   return (
     <div className="mt-2 flex flex-wrap justify-center gap-1">
       {rows.slice(0, 6).map((row) => {
@@ -119,7 +127,9 @@ function RepoOrb({
                 'hover:scale-[1.03] hover:border-foreground/30',
                 isActive
                   ? 'border-foreground/35 bg-accent/70 shadow-[0_10px_30px_rgba(0,0,0,0.12)]'
-                  : 'border-border/60 bg-background/90 shadow-[0_6px_20px_rgba(0,0,0,0.08)]'
+                  : rows.length === 0
+                    ? 'border-border/45 bg-muted/35 shadow-[0_4px_16px_rgba(0,0,0,0.06)]'
+                    : 'border-border/60 bg-background/90 shadow-[0_6px_20px_rgba(0,0,0,0.08)]'
               )}
               style={{
                 width: size,

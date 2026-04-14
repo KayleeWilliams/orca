@@ -95,11 +95,17 @@ function ListView({
                     <ChevronRight className="size-3" />
                   </div>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  {rows.map((row) => (
-                    <AgentRow key={row.key} row={row} now={now} />
-                  ))}
-                </div>
+                {rows.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    {rows.map((row) => (
+                      <AgentRow key={row.key} row={row} now={now} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-border/45 bg-muted/25 px-2 py-2 text-[10px] text-muted-foreground">
+                    No active agents in this worktree
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -128,10 +134,9 @@ export default function AgentDashboard(): React.JSX.Element {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-[18rem] space-y-2">
-          <div className="text-sm font-medium text-foreground">No agent activity yet</div>
+          <div className="text-sm font-medium text-foreground">No worktrees yet</div>
           <div className="text-xs leading-relaxed text-muted-foreground">
-            Claude and Codex sessions will appear here once a terminal pane reports hook-driven
-            lifecycle events or a live agent title is detected.
+            Add or create a worktree to populate the dashboard.
           </div>
         </div>
       </div>

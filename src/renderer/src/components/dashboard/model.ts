@@ -103,7 +103,11 @@ export function buildRepoGroups(
               .filter(isAgentRow)
               .sort(compareRows)
 
-            return rows.length > 0 ? { worktree, rows } : null
+            // Why: the dashboard is also a global navigation surface. Keeping
+            // worktrees visible even with zero detected agents avoids a blank
+            // screen between lifecycle events and lets users jump straight to a
+            // dormant worktree from either the concentric or list view.
+            return { worktree, rows }
           })
           .filter((value): value is WorktreeGroup => value !== null) ?? []
 
@@ -113,6 +117,9 @@ export function buildRepoGroups(
 }
 
 export function formatWorktreeStateSummary(rows: DashboardRow[], now: number): string {
+  if (rows.length === 0) {
+    return 'no agents'
+  }
   const waiting = rows.filter((row) => getRowState(row, now).label === 'Waiting').length
   const working = rows.filter((row) => getRowState(row, now).label === 'Working').length
   if (waiting > 0) {
