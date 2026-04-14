@@ -127,13 +127,21 @@ function describeClaudeUsageFailure(output: string): string {
 export async function fetchViaPty(): Promise<ProviderRateLimits> {
   const pty = await import('node-pty')
 
+  // Why: node-pty cannot spawn .cmd/.bat batch scripts directly on Windows —
+  // those need cmd.exe as an interpreter. The bare 'claude' command may resolve
+  // to claude.cmd (e.g. when installed via npm). Routing through cmd.exe /c
+  // lets Windows handle PATHEXT resolution and find the correct executable.
+  const isWin32 = process.platform === 'win32'
+  const spawnFile = isWin32 ? 'cmd.exe' : 'claude'
+  const spawnArgs = isWin32 ? ['/c', 'claude'] : []
+
   return new Promise<ProviderRateLimits>((resolve) => {
     let output = ''
     let resolved = false
     let sentUsage = false
     let stopDetected = false
 
-    const term = pty.spawn('claude', [], {
+    const term = pty.spawn(spawnFile, spawnArgs, {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
