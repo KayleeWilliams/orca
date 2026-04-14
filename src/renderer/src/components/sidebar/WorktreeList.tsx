@@ -371,6 +371,25 @@ const WorktreeList = React.memo(function WorktreeList() {
     clearPendingRevealWorktreeId
   ])
 
+  // ── Async content re-measurement ──────────────────────────────
+  // PR and issue data arrive asynchronously after cards mount. When a
+  // card gains an issue/PR row its height changes, and the virtualizer's
+  // ResizeObserver should reposition subsequent items. In practice the
+  // observer can miss the resize when it coincides with React's batched
+  // rendering — leaving stale measurements and overlapping cards.
+  //
+  // Why useLayoutEffect: runs after React commits the new DOM (cards now
+  // include the issue row) but before the browser paints, so the user
+  // never sees a frame of overlap.
+  const prCacheLen = useAppStore((s) => Object.keys(s.prCache).length)
+  const issueCacheLen = useAppStore((s) => Object.keys(s.issueCache).length)
+
+  useLayoutEffect(() => {
+    virtualizer.elementsCache.forEach((element) => {
+      virtualizer.measureElement(element)
+    })
+  }, [prCacheLen, issueCacheLen, virtualizer])
+
   const navigateWorktree = useCallback(
     (direction: 'up' | 'down') => {
       const worktreeRows = rows.filter(
