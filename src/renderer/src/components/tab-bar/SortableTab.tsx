@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { X, Terminal as TerminalIcon, Minimize2 } from 'lucide-react'
+import { X, Terminal as TerminalIcon, Minimize2, Columns2, Rows2 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +34,7 @@ type SortableTabProps = {
   onSetCustomTitle: (tabId: string, title: string | null) => void
   onSetTabColor: (tabId: string, color: string | null) => void
   onToggleExpand: (tabId: string) => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
 }
 
 export const TAB_COLORS = [
@@ -63,7 +64,8 @@ export default function SortableTab({
   onCloseToRight,
   onSetCustomTitle,
   onSetTabColor,
-  onToggleExpand
+  onToggleExpand,
+  onSplitGroup
 }: SortableTabProps): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id
@@ -208,6 +210,23 @@ export default function SortableTab({
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-48" sideOffset={0} align="start">
+          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
+            <Rows2 className="mr-1.5 size-3.5" />
+            Split Up
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
+            <Rows2 className="mr-1.5 size-3.5" />
+            Split Down
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
+            <Columns2 className="mr-1.5 size-3.5" />
+            Split Left
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
+            <Columns2 className="mr-1.5 size-3.5" />
+            Split Right
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => onClose(tab.id)}>Close</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onCloseOthers(tab.id)} disabled={tabCount <= 1}>
             Close Others

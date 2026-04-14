@@ -62,7 +62,7 @@ type TabBarProps = {
   onCloseAllFiles?: () => void
   onPinFile?: (fileId: string, tabId?: string) => void
   tabBarOrder?: string[]
-  onCreateSplitGroup?: (direction: 'right' | 'down') => void
+  onCreateSplitGroup?: (direction: 'left' | 'right' | 'up' | 'down') => void
 }
 
 type TabItem =
@@ -245,6 +245,7 @@ function TabBarInner({
                     onSetCustomTitle={onSetCustomTitle}
                     onSetTabColor={onSetTabColor}
                     onToggleExpand={onTogglePaneExpand}
+                    onSplitGroup={(direction) => onCreateSplitGroup?.(direction)}
                   />
                 )
               }
@@ -258,6 +259,7 @@ function TabBarInner({
                     onActivate={() => onActivateBrowserTab?.(item.id)}
                     onClose={() => onCloseBrowserTab?.(item.id)}
                     onCloseToRight={() => onCloseToRight(item.id)}
+                    onSplitGroup={(direction) => onCreateSplitGroup?.(direction)}
                   />
                 )
               }
@@ -273,6 +275,7 @@ function TabBarInner({
                   onCloseToRight={() => onCloseToRight(item.id)}
                   onCloseAll={() => onCloseAllFiles?.()}
                   onPin={() => onPinFile?.(item.data.id, item.data.tabId)}
+                  onSplitGroup={(direction) => onCreateSplitGroup?.(direction)}
                 />
               )
             })}

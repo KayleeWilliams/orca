@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { X, FileCode, GitCompareArrows, Copy, ShieldAlert, ExternalLink } from 'lucide-react'
+import {
+  X,
+  FileCode,
+  GitCompareArrows,
+  Copy,
+  ShieldAlert,
+  ExternalLink,
+  Columns2,
+  Rows2
+} from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,9 +44,10 @@ export default function EditorFileTab({
   onClose,
   onCloseToRight,
   onCloseAll,
-  onPin
+  onPin,
+  onSplitGroup
 }: {
-  file: OpenFile
+  file: OpenFile & { tabId?: string }
   isActive: boolean
   hasTabsToRight: boolean
   statusByRelativePath: Map<string, GitFileStatus>
@@ -46,9 +56,13 @@ export default function EditorFileTab({
   onCloseToRight: () => void
   onCloseAll: () => void
   onPin?: () => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: file.id
+    // Why: split groups can duplicate the same open file into multiple visible
+    // tabs. Using the unified tab ID keeps each rendered tab draggable as a
+    // distinct item instead of collapsing every copy onto the file entity ID.
+    id: file.tabId ?? file.id
   })
 
   const style = {
@@ -186,6 +200,23 @@ export default function EditorFileTab({
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-48" sideOffset={0} align="start">
+          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
+            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Up
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
+            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Down
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
+            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Left
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
+            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Right
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onClose}>Close</DropdownMenuItem>
           <DropdownMenuItem onSelect={onCloseAll}>Close All Editor Tabs</DropdownMenuItem>
           <DropdownMenuItem onSelect={onCloseToRight} disabled={!hasTabsToRight}>

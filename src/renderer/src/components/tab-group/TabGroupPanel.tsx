@@ -7,7 +7,8 @@ import type { BrowserTab as BrowserTabState } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import TabBar from '../tab-bar/TabBar'
 import TerminalPane from '../terminal-pane/TerminalPane'
-import BrowserPane, { destroyPersistentWebview } from '../browser-pane/BrowserPane'
+import BrowserPane from '../browser-pane/BrowserPane'
+import { useTabGroupController } from './useTabGroupController'
 
 const EditorPanel = lazy(() => import('../editor/EditorPanel'))
 
@@ -44,32 +45,14 @@ export default function TabGroupPanel({
     )
   )
   const focusGroup = useAppStore((state) => state.focusGroup)
-  const activateTab = useAppStore((state) => state.activateTab)
-  const closeUnifiedTab = useAppStore((state) => state.closeUnifiedTab)
-  const closeOtherTabs = useAppStore((state) => state.closeOtherTabs)
-  const closeTabsToRight = useAppStore((state) => state.closeTabsToRight)
-  const reorderUnifiedTabs = useAppStore((state) => state.reorderUnifiedTabs)
-  const createEmptySplitGroup = useAppStore((state) => state.createEmptySplitGroup)
-  const closeEmptyGroup = useAppStore((state) => state.closeEmptyGroup)
-  const createTab = useAppStore((state) => state.createTab)
-  const closeTab = useAppStore((state) => state.closeTab)
-  const setActiveTab = useAppStore((state) => state.setActiveTab)
-  const setActiveFile = useAppStore((state) => state.setActiveFile)
-  const setActiveTabType = useAppStore((state) => state.setActiveTabType)
   const setTabCustomTitle = useAppStore((state) => state.setTabCustomTitle)
   const setTabColor = useAppStore((state) => state.setTabColor)
   const consumeSuppressedPtyExit = useAppStore((state) => state.consumeSuppressedPtyExit)
-  const createBrowserTab = useAppStore((state) => state.createBrowserTab)
-  const closeFile = useAppStore((state) => state.closeFile)
-  const closeAllFiles = useAppStore((state) => state.closeAllFiles)
-  const pinFile = useAppStore((state) => state.pinFile)
   const expandedPaneByTabId = useAppStore((state) => state.expandedPaneByTabId)
   const browserTabsByWorktree = useAppStore((state) => state.browserTabsByWorktree)
   const runtimeTerminalTabs = useAppStore(
     (state) => state.tabsByWorktree[worktreeId] ?? EMPTY_RUNTIME_TERMINALS
   )
-  const closeBrowserTab = useAppStore((state) => state.closeBrowserTab)
-  const setActiveBrowserTab = useAppStore((state) => state.setActiveBrowserTab)
 
   const group = useMemo(
     () => worktreeGroups.find((item) => item.id === groupId) ?? null,
@@ -147,165 +130,37 @@ export default function TabGroupPanel({
     [runtimeTerminalTabs]
   )
 
-  const closeEditorIfUnreferenced = useCallback(
-    (entityId: string, closingTabId: string) => {
-      const otherReference = (useAppStore.getState().unifiedTabsByWorktree[worktreeId] ?? []).some(
-        (item) =>
-          item.id !== closingTabId &&
-          item.entityId === entityId &&
-          (item.contentType === 'editor' ||
-            item.contentType === 'diff' ||
-            item.contentType === 'conflict-review')
-      )
-      if (!otherReference) {
-        closeFile(entityId)
-      }
-    },
-    [closeFile, worktreeId]
-  )
+  const controller = useTabGroupController({
+    groupId,
+    worktreeId,
+    group,
+    groupTabs,
+    activeTab,
+    worktreeBrowserTabs
+  })
 
-  const handleActivateTerminal = useCallback(
+  const handleTerminalClose = useCallback(
     (terminalId: string) => {
       const item = groupTabs.find(
         (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
       )
-      if (!item) {
-        return
+      if (item) {
+        controller.closeItem(item.id)
       }
-      focusGroup(worktreeId, groupId)
-      activateTab(item.id)
-      setActiveTab(terminalId)
-      setActiveTabType('terminal')
     },
-    [activateTab, focusGroup, groupId, groupTabs, setActiveTab, setActiveTabType, worktreeId]
+    [controller, groupTabs]
   )
 
-  const handleActivateEditor = useCallback(
-    (tabId: string) => {
-      const item = groupTabs.find((candidate) => candidate.id === tabId)
-      if (!item) {
-        return
-      }
-      focusGroup(worktreeId, groupId)
-      activateTab(item.id)
-      setActiveFile(item.entityId)
-      setActiveTabType('editor')
-    },
-    [activateTab, focusGroup, groupId, groupTabs, setActiveFile, setActiveTabType, worktreeId]
-  )
-
-  const handleActivateBrowser = useCallback(
+  const handleBrowserClose = useCallback(
     (browserTabId: string) => {
       const item = groupTabs.find(
         (candidate) => candidate.entityId === browserTabId && candidate.contentType === 'browser'
       )
-      if (!item) {
-        return
-      }
-      focusGroup(worktreeId, groupId)
-      activateTab(item.id)
-      setActiveBrowserTab(browserTabId)
-      setActiveTabType('browser')
-    },
-    [activateTab, focusGroup, groupId, groupTabs, setActiveBrowserTab, setActiveTabType, worktreeId]
-  )
-
-  const handleClose = useCallback(
-    (itemId: string) => {
-      const item = groupTabs.find((candidate) => candidate.id === itemId)
-      if (!item) {
-        return
-      }
-      if (item.contentType === 'terminal') {
-        closeTab(item.entityId)
-      } else if (item.contentType === 'browser') {
-        destroyPersistentWebview(item.entityId)
-        closeBrowserTab(item.entityId)
-      } else {
-        closeEditorIfUnreferenced(item.entityId, item.id)
-        closeUnifiedTab(item.id)
+      if (item) {
+        controller.closeItem(item.id)
       }
     },
-    [closeBrowserTab, closeEditorIfUnreferenced, closeTab, closeUnifiedTab, groupTabs]
-  )
-
-  const handleCloseGroup = useCallback(() => {
-    const items = [...(useAppStore.getState().unifiedTabsByWorktree[worktreeId] ?? [])].filter(
-      (item) => item.groupId === groupId
-    )
-    for (const item of items) {
-      if (item.contentType === 'terminal') {
-        closeTab(item.entityId)
-      } else if (item.contentType === 'browser') {
-        destroyPersistentWebview(item.entityId)
-        closeBrowserTab(item.entityId)
-      } else {
-        closeEditorIfUnreferenced(item.entityId, item.id)
-        closeUnifiedTab(item.id)
-      }
-    }
-    // Why: split creation can leave intentionally empty groups behind. Closing
-    // the group chrome must collapse those placeholders too, not just groups
-    // that still own tabs.
-    closeEmptyGroup(worktreeId, groupId)
-  }, [
-    closeBrowserTab,
-    closeEditorIfUnreferenced,
-    closeEmptyGroup,
-    closeTab,
-    closeUnifiedTab,
-    groupId,
-    worktreeId
-  ])
-
-  const handleCreateSplitGroup = useCallback(
-    (direction: 'right' | 'down') => {
-      focusGroup(worktreeId, groupId)
-      createEmptySplitGroup(worktreeId, groupId, direction)
-    },
-    [createEmptySplitGroup, focusGroup, groupId, worktreeId]
-  )
-
-  const handleCloseOthers = useCallback(
-    (itemId: string) => {
-      const closedIds = closeOtherTabs(itemId)
-      for (const closedId of closedIds) {
-        const item = groupTabs.find((candidate) => candidate.id === closedId)
-        if (!item) {
-          continue
-        }
-        if (item.contentType === 'terminal') {
-          closeTab(item.entityId)
-        } else if (item.contentType === 'browser') {
-          destroyPersistentWebview(item.entityId)
-          closeBrowserTab(item.entityId)
-        } else {
-          closeEditorIfUnreferenced(item.entityId, item.id)
-        }
-      }
-    },
-    [closeBrowserTab, closeEditorIfUnreferenced, closeOtherTabs, closeTab, groupTabs]
-  )
-
-  const handleCloseToRight = useCallback(
-    (itemId: string) => {
-      const closedIds = closeTabsToRight(itemId)
-      for (const closedId of closedIds) {
-        const item = groupTabs.find((candidate) => candidate.id === closedId)
-        if (!item) {
-          continue
-        }
-        if (item.contentType === 'terminal') {
-          closeTab(item.entityId)
-        } else if (item.contentType === 'browser') {
-          destroyPersistentWebview(item.entityId)
-          closeBrowserTab(item.entityId)
-        } else {
-          closeEditorIfUnreferenced(item.entityId, item.id)
-        }
-      }
-    },
-    [closeBrowserTab, closeEditorIfUnreferenced, closeTabsToRight, closeTab, groupTabs]
+    [controller, groupTabs]
   )
 
   const tabBar = (
@@ -314,21 +169,14 @@ export default function TabGroupPanel({
       activeTabId={activeTab?.contentType === 'terminal' ? activeTab.entityId : null}
       worktreeId={worktreeId}
       expandedPaneByTabId={expandedPaneByTabId}
-      onActivate={handleActivateTerminal}
-      onClose={(terminalId) => {
-        const item = groupTabs.find(
-          (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
-        )
-        if (item) {
-          handleClose(item.id)
-        }
-      }}
+      onActivate={controller.activateTerminal}
+      onClose={handleTerminalClose}
       onCloseOthers={(terminalId) => {
         const item = groupTabs.find(
           (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
         )
         if (item) {
-          handleCloseOthers(item.id)
+          controller.closeOthers(item.id)
         }
       }}
       onCloseToRight={(terminalId) => {
@@ -336,38 +184,12 @@ export default function TabGroupPanel({
           (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
         )
         if (item) {
-          handleCloseToRight(item.id)
+          controller.closeToRight(item.id)
         }
       }}
-      onReorder={(_, order) => {
-        if (!group) {
-          return
-        }
-        const itemOrder = order
-          .map(
-            (entityId) =>
-              groupTabs.find(
-                (item) => item.contentType === 'terminal' && item.entityId === entityId
-              )?.id
-          )
-          .filter((value): value is string => Boolean(value))
-          .concat(
-            group.tabOrder.filter(
-              (itemId) =>
-                !groupTabs.find((item) => item.contentType === 'terminal' && item.id === itemId)
-            )
-          )
-        reorderUnifiedTabs(groupId, itemOrder)
-      }}
-      onNewTerminalTab={() => {
-        const terminal = createTab(worktreeId)
-        setActiveTab(terminal.id)
-        setActiveTabType('terminal')
-      }}
-      onNewBrowserTab={() => {
-        const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
-        createBrowserTab(worktreeId, defaultUrl, { title: 'New Browser Tab' })
-      }}
+      onReorder={(_, order) => controller.reorderTabBar(order)}
+      onNewTerminalTab={controller.newTerminalTab}
+      onNewBrowserTab={controller.newBrowserTab}
       onSetCustomTitle={setTabCustomTitle}
       onSetTabColor={setTabColor}
       onTogglePaneExpand={() => {}}
@@ -386,18 +208,11 @@ export default function TabGroupPanel({
             ? 'browser'
             : 'editor'
       }
-      onActivateFile={handleActivateEditor}
-      onCloseFile={handleClose}
-      onActivateBrowserTab={handleActivateBrowser}
-      onCloseBrowserTab={(browserTabId) => {
-        const item = groupTabs.find(
-          (candidate) => candidate.entityId === browserTabId && candidate.contentType === 'browser'
-        )
-        if (item) {
-          handleClose(item.id)
-        }
-      }}
-      onCloseAllFiles={closeAllFiles}
+      onActivateFile={controller.activateEditor}
+      onCloseFile={controller.closeItem}
+      onActivateBrowserTab={controller.activateBrowser}
+      onCloseBrowserTab={handleBrowserClose}
+      onCloseAllFiles={controller.closeAllFiles}
       onPinFile={(_fileId, tabId) => {
         if (!tabId) {
           return
@@ -406,16 +221,10 @@ export default function TabGroupPanel({
         if (!item) {
           return
         }
-        pinFile(item.entityId, item.id)
+        controller.pinFile(item.entityId, item.id)
       }}
-      tabBarOrder={(group?.tabOrder ?? []).map((itemId) => {
-        const item = groupTabs.find((candidate) => candidate.id === itemId)
-        if (!item) {
-          return itemId
-        }
-        return item.contentType === 'terminal' ? item.entityId : item.id
-      })}
-      onCreateSplitGroup={handleCreateSplitGroup}
+      tabBarOrder={controller.tabBarOrder}
+      onCreateSplitGroup={controller.createSplitGroup}
     />
   )
 
@@ -428,27 +237,28 @@ export default function TabGroupPanel({
       }`}
       onPointerDown={() => focusGroup(worktreeId, groupId)}
     >
-      {/* Why: every group, including the initial unsplit root, must render its
-          chrome inside the same panel stack. Portaling the first group's tabs
-          into the window titlebar created a second vertical frame of reference,
-          so the first split appeared to "jump down" when later groups rendered
-          inline below it. */}
-      <div className="flex items-stretch h-9 shrink-0 border-b border-border bg-card">
-        {tabBar}
-        {hasSplitGroups && (
-          <button
-            type="button"
-            aria-label="Close tab group"
-            title="Close tab group"
-            onClick={(event) => {
-              event.stopPropagation()
-              handleCloseGroup()
-            }}
-            className="mr-1 my-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent/50 hover:text-foreground group-hover/tab-group:opacity-100 focus:opacity-100"
-          >
-            <X className="size-4" />
-          </button>
-        )}
+      {/* Why: every split group must keep its own real tab row because the app
+          can show multiple groups at once, while the window titlebar only has
+          one shared center slot. Rendering true tab chrome here preserves
+          per-group titles without making groups fight over one portal target. */}
+      <div className="shrink-0 border-b border-border bg-card">
+        <div className="flex items-stretch">
+          <div className="min-w-0 flex-1">{tabBar}</div>
+          {hasSplitGroups && (
+            <button
+              type="button"
+              aria-label="Close Group"
+              title="Close Group"
+              onClick={(event) => {
+                event.stopPropagation()
+                controller.closeGroup()
+              }}
+              className="mx-1 my-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -472,9 +282,9 @@ export default function TabGroupPanel({
                 if (consumeSuppressedPtyExit(ptyId)) {
                   return
                 }
-                handleClose(item.id)
+                controller.closeItem(item.id)
               }}
-              onCloseTab={() => handleClose(item.id)}
+              onCloseTab={() => controller.closeItem(item.id)}
             />
           ))}
 

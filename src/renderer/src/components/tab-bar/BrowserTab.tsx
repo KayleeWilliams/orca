@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Globe, X, ExternalLink } from 'lucide-react'
+import { Globe, X, ExternalLink, Columns2, Rows2 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
@@ -47,7 +48,8 @@ export default function BrowserTab({
   hasTabsToRight,
   onActivate,
   onClose,
-  onCloseToRight
+  onCloseToRight,
+  onSplitGroup
 }: {
   tab: BrowserTabState
   isActive: boolean
@@ -55,6 +57,7 @@ export default function BrowserTab({
   onActivate: () => void
   onClose: () => void
   onCloseToRight: () => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id
@@ -163,6 +166,23 @@ export default function BrowserTab({
           sideOffset={0}
           align="start"
         >
+          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
+            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Up
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
+            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Down
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
+            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Left
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
+            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+            Split Right
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onClose}>Close</DropdownMenuItem>
           <DropdownMenuItem onSelect={onCloseToRight} disabled={!hasTabsToRight}>
             Close Tabs To The Right
