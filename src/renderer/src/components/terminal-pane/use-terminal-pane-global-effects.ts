@@ -36,9 +36,9 @@ export function useTerminalPaneGlobalEffects({
   // function can cancel it if the pane deactivates mid-flush.
   const pendingFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Why: the deferred rAF (guardedResumeAndFit) must be cancellable when
-  // the pane deactivates before the rAF fires — otherwise it would call
-  // resumeRendering() on an already-suspended manager.
+  // Why: the deferred rAF (guardedFit) must be cancellable when the pane
+  // deactivates before the rAF fires — otherwise it would call
+  // fitAndFocusPanes() on a suspended manager.
   const pendingRafRef = useRef<number | null>(null)
 
   // Why: two independent code paths schedule fitPanes() after a worktree
