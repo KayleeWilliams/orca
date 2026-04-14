@@ -561,14 +561,6 @@ function App(): React.JSX.Element {
         e.preventDefault()
         actions.setRightSidebarTab('source-control')
         actions.setRightSidebarOpen(true)
-        return
-      }
-
-      // Cmd/Ctrl+Shift+D — toggle right sidebar / agent dashboard tab
-      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
-        e.preventDefault()
-        actions.setRightSidebarTab('dashboard')
-        actions.setRightSidebarOpen(true)
       }
     }
 
