@@ -5,11 +5,19 @@ across multiple components. Autosave now lives in a smaller headless controller
 so hidden editor UI no longer participates in shutdown. */
 import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import * as monaco from 'monaco-editor'
-import { Columns2, FileText, Rows2 } from 'lucide-react'
+import { Columns2, Copy, ExternalLink, FileText, Rows2 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { getEditorHeaderCopyState, getEditorHeaderOpenFileState } from './editor-header'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { CLOSE_ALL_CONTEXT_MENUS_EVENT } from '../tab-bar/SortableTab'
 import type { MarkdownViewMode, OpenFile } from '@/store/slices/editor'
 import MarkdownViewToggle from './MarkdownViewToggle'
 import { EditorContent } from './EditorContent'
@@ -23,6 +31,16 @@ import {
   type EditorFileSavedDetail,
   type EditorPathMutationTarget
 } from './editor-autosave'
+
+const isMac = navigator.userAgent.includes('Mac')
+const isLinux = navigator.userAgent.includes('Linux')
+
+/** Platform-appropriate label: macOS → Finder, Windows → File Explorer, Linux → Files */
+const revealLabel = isMac
+  ? 'Reveal in Finder'
+  : isLinux
+    ? 'Open Containing Folder'
+    : 'Reveal in File Explorer'
 
 type FileContent = {
   content: string
@@ -61,6 +79,8 @@ export default function EditorPanel({
   )
   const [sideBySide, setSideBySide] = useState(settings?.diffDefaultView === 'side-by-side')
   const [prevDiffView, setPrevDiffView] = useState(settings?.diffDefaultView)
+  const [pathMenuOpen, setPathMenuOpen] = useState(false)
+  const [pathMenuPoint, setPathMenuPoint] = useState({ x: 0, y: 0 })
 
   // Why: When the user changes their global diff-view preference in Settings,
   // sync the local toggle to match during render (avoids flash of stale diff mode).
@@ -73,6 +93,12 @@ export default function EditorPanel({
 
   const openFilesRef = useRef(openFiles)
   openFilesRef.current = openFiles
+
+  useEffect(() => {
+    const closeMenu = (): void => setPathMenuOpen(false)
+    window.addEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+    return () => window.removeEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+  }, [])
 
   // Why: keepCurrentModel / keepCurrent*Model retain Monaco models after unmount
   // so undo history survives tab switches. When a tab is *closed*, the user has
@@ -454,7 +480,15 @@ export default function EditorPanel({
       {!isCombinedDiff && (
         <div className="editor-header">
           <div className="editor-header-text">
-            <div className="editor-header-path-row">
+            <div
+              className="editor-header-path-row"
+              onContextMenuCapture={(event) => {
+                event.preventDefault()
+                window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
+                setPathMenuPoint({ x: event.clientX, y: event.clientY })
+                setPathMenuOpen(true)
+              }}
+            >
               <button
                 type="button"
                 className="editor-header-path"
@@ -470,6 +504,43 @@ export default function EditorPanel({
                 {headerCopyState.copyToastLabel}
               </span>
             </div>
+            <DropdownMenu open={pathMenuOpen} onOpenChange={setPathMenuOpen} modal={false}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-hidden
+                  tabIndex={-1}
+                  className="pointer-events-none fixed size-px opacity-0"
+                  style={{ left: pathMenuPoint.x, top: pathMenuPoint.y }}
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" sideOffset={0} align="start">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void window.api.ui.writeClipboardText(activeFile.filePath)
+                  }}
+                >
+                  <Copy className="w-3.5 h-3.5 mr-1.5" />
+                  Copy Path
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void window.api.ui.writeClipboardText(activeFile.relativePath)
+                  }}
+                >
+                  <Copy className="w-3.5 h-3.5 mr-1.5" />
+                  Copy Relative Path
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    window.api.shell.openPath(activeFile.filePath)
+                  }}
+                >
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                  {revealLabel}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           {isSingleDiff && (
             <TooltipProvider delayDuration={300}>

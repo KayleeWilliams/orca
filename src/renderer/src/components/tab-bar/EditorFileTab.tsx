@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { X, FileCode, GitCompareArrows, Copy, ShieldAlert } from 'lucide-react'
+import { X, FileCode, GitCompareArrows, Copy, ShieldAlert, ExternalLink } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +15,16 @@ import { STATUS_COLORS, STATUS_LABELS } from '../right-sidebar/status-display'
 import type { GitFileStatus } from '../../../../shared/types'
 import type { OpenFile } from '../../store/slices/editor'
 import { CLOSE_ALL_CONTEXT_MENUS_EVENT } from './SortableTab'
+
+const isMac = navigator.userAgent.includes('Mac')
+const isLinux = navigator.userAgent.includes('Linux')
+
+/** Platform-appropriate label: macOS → Finder, Windows → File Explorer, Linux → Files */
+const revealLabel = isMac
+  ? 'Reveal in Finder'
+  : isLinux
+    ? 'Open Containing Folder'
+    : 'Reveal in File Explorer'
 
 export default function EditorFileTab({
   file,
@@ -177,10 +187,10 @@ export default function EditorFileTab({
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-48" sideOffset={0} align="start">
           <DropdownMenuItem onSelect={onClose}>Close</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onCloseAll}>Close All Editor Tabs</DropdownMenuItem>
           <DropdownMenuItem onSelect={onCloseToRight} disabled={!hasTabsToRight}>
             Close Tabs To The Right
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onCloseAll}>Close All Editor Tabs</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => {
@@ -197,6 +207,15 @@ export default function EditorFileTab({
           >
             <Copy className="w-3.5 h-3.5 mr-1.5" />
             Copy Relative Path
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => {
+              window.api.shell.openPath(file.filePath)
+            }}
+          >
+            <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+            {revealLabel}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
