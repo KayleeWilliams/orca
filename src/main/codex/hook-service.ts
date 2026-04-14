@@ -10,7 +10,11 @@ import {
   type HookDefinition
 } from '../agent-hooks/installer-utils'
 
-const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const
+// Why: Codex permission prompts arrive through PreToolUse hook callbacks. Orca
+// maps that event to the waiting state, so the managed hook registration must
+// subscribe to PreToolUse or the sidebar can never show Codex as blocked on
+// approval.
+const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'] as const
 
 function getConfigPath(): string {
   return join(homedir(), '.codex', 'hooks.json')
