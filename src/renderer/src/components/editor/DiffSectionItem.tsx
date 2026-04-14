@@ -112,8 +112,8 @@ export function DiffSectionItem({
   /** Notify the virtualizer to re-measure this item after an async height change
    *  (e.g. Monaco collapsing unchanged regions or section collapse toggle). */
   requestRemeasure: (index: number) => void
-  modifiedEditorsRef: MutableRefObject<Map<number, monacoEditor.IStandaloneCodeEditor>>
-  handleSectionSaveRef: MutableRefObject<(index: number) => Promise<void>>
+  modifiedEditorsRef: MutableRefObject<Map<string, monacoEditor.IStandaloneCodeEditor>>
+  handleSectionSaveRef: MutableRefObject<(sectionKey: string) => Promise<void>>
 }): React.JSX.Element {
   const openFile = useAppStore((s) => s.openFile)
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
@@ -142,19 +142,22 @@ export function DiffSectionItem({
   // Why: when the virtualizer unmounts this section during scroll, capture
   // any unsaved edits so they survive the round-trip through section state
   // and are restored when the user scrolls back.
-  const indexRef = useRef(index)
-  indexRef.current = index
+  const sectionKeyRef = useRef(section.key)
+  sectionKeyRef.current = section.key
+  const latestModifiedContentRef = useRef(section.modifiedContent)
+  latestModifiedContentRef.current = section.modifiedContent
   useEffect(() => {
     const editorsMap = modifiedEditorsRef.current
     return () => {
-      const idx = indexRef.current
-      const editor = editorsMap.get(idx)
-      if (editor) {
-        const content = editor.getValue()
+      const sectionKey = sectionKeyRef.current
+      if (editorsMap.has(sectionKey)) {
+        const content = latestModifiedContentRef.current
         setSections((prev) =>
-          prev.map((s, i) => (i === idx ? { ...s, modifiedContent: content } : s))
+          prev.map((candidate) =>
+            candidate.key === sectionKey ? { ...candidate, modifiedContent: content } : candidate
+          )
         )
-        editorsMap.delete(idx)
+        editorsMap.delete(sectionKey)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable refs only; runs on unmount
@@ -205,14 +208,19 @@ export function DiffSectionItem({
       return
     }
 
-    modifiedEditorsRef.current.set(index, modifiedEditor)
+    modifiedEditorsRef.current.set(section.key, modifiedEditor)
     modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
-      handleSectionSaveRef.current(index)
+      handleSectionSaveRef.current(section.key)
     )
     modifiedEditor.onDidChangeModelContent(() => {
       const current = modifiedEditor.getValue()
+      latestModifiedContentRef.current = current
       setSections((prev) =>
-        prev.map((s, i) => (i === index ? { ...s, dirty: current !== s.modifiedContent } : s))
+        prev.map((candidate) =>
+          candidate.key === section.key
+            ? { ...candidate, dirty: current !== candidate.modifiedContent }
+            : candidate
+        )
       )
     })
   }

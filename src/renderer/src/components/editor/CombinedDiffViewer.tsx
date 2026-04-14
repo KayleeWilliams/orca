@@ -260,19 +260,23 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
     ]
   )
 
-  const modifiedEditorsRef = useRef<Map<number, monacoEditor.IStandaloneCodeEditor>>(new Map())
+  // Why: virtualization unmounts rows during scroll, and the combined diff can
+  // also rebuild its section array when git entries change. Track editors by the
+  // section's stable identity instead of array index so unmount/save logic cannot
+  // write stale content into a different file that later occupies the same slot.
+  const modifiedEditorsRef = useRef<Map<string, monacoEditor.IStandaloneCodeEditor>>(new Map())
 
   const toggleSection = useCallback((index: number) => {
     setSections((prev) => prev.map((s, i) => (i === index ? { ...s, collapsed: !s.collapsed } : s)))
   }, [])
 
   const handleSectionSave = useCallback(
-    async (index: number) => {
-      const section = sections[index]
+    async (sectionKey: string) => {
+      const section = sections.find((candidate) => candidate.key === sectionKey)
       if (!section) {
         return
       }
-      const modifiedEditor = modifiedEditorsRef.current.get(index)
+      const modifiedEditor = modifiedEditorsRef.current.get(sectionKey)
       if (!modifiedEditor) {
         return
       }
@@ -283,7 +287,11 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
         const connectionId = getConnectionId(file.worktreeId) ?? undefined
         await window.api.fs.writeFile({ filePath: absolutePath, content, connectionId })
         setSections((prev) =>
-          prev.map((s, i) => (i === index ? { ...s, modifiedContent: content, dirty: false } : s))
+          prev.map((candidate) =>
+            candidate.key === sectionKey
+              ? { ...candidate, modifiedContent: content, dirty: false }
+              : candidate
+          )
         )
       } catch (err) {
         console.error('Save failed:', err)
@@ -421,7 +429,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
         return 30
       }
       const cached = sectionHeights[index]
-      if (cached) {
+      if (cached !== undefined) {
         return cached + 30
       }
       return 200
@@ -558,8 +566,8 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
         </div>
       </div>
 
+      {skippedConflictNotice}
       <div ref={scrollContainerRef} className="flex-1 overflow-auto scrollbar-editor">
-        {skippedConflictNotice}
         <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((vItem) => {
             const section = sections[vItem.index]
