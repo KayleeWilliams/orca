@@ -48,6 +48,7 @@ const {
     autoUpdaterMock.downloadUpdate.mockReset()
     autoUpdaterMock.quitAndInstall.mockReset()
     autoUpdaterMock.setFeedURL.mockClear()
+    delete (autoUpdaterMock as Record<string, unknown>).verifyUpdateCodeSignature
   }
 
   const autoUpdaterMock = {
@@ -618,5 +619,39 @@ describe('updater', () => {
 
     expect(setDismissedUpdateNudgeId).toHaveBeenCalledWith('campaign-1')
     expect(setPendingUpdateNudgeId).toHaveBeenCalledWith(null)
+  })
+
+  // Why: issue #631 — the Windows auto-updater fails because installed
+  // versions signed with the wrong certificate have a stale publisherName
+  // in app-update.yml. verifyUpdateCodeSignature must be overridden on
+  // Windows so electron-updater skips Authenticode verification.
+  it('overrides verifyUpdateCodeSignature on Windows to skip signing verification', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32' })
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    setupAutoUpdater(mainWindow as never)
+
+    // The override should be set on the autoUpdater mock
+    const override = (autoUpdaterMock as Record<string, unknown>).verifyUpdateCodeSignature
+    expect(override).toBeTypeOf('function')
+    // Calling it should resolve to null (meaning "signature valid, skip check")
+    await expect((override as () => Promise<string | null>)()).resolves.toBeNull()
+  })
+
+  it('does not override verifyUpdateCodeSignature on non-Windows platforms', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' })
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    setupAutoUpdater(mainWindow as never)
+
+    expect((autoUpdaterMock as Record<string, unknown>).verifyUpdateCodeSignature).toBeUndefined()
   })
 })
