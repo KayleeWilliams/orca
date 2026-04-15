@@ -499,14 +499,16 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       // Why: bump lastActivityAt on selection so the 'recent' sort (which
       // orders by last interaction time) reflects the user's navigation.
-      // For 'smart' sort, do NOT bump sortEpoch — that would re-sort the
-      // sidebar on every click, causing the reorder-on-click bug (PR #209).
-      // For 'recent' sort, reordering on click IS the expected behavior:
-      // the most recently selected worktree should move to the top.
+      // For 'recent' sort, bump sortEpoch only when switching TO a different
+      // worktree — the re-sort settles the *previous* worktree into its new
+      // recency position while the user's attention is already on the target.
+      // This avoids the jarring visual of items teleporting while you watch.
       const metaUpdates: Partial<WorktreeMeta> = { lastActivityAt: now }
       if (shouldClearUnread) {
         metaUpdates.isUnread = false
       }
+      const isSwitch =
+        s.sortBy === 'recent' && s.activeWorktreeId !== null && s.activeWorktreeId !== worktreeId
       return {
         activeWorktreeId: worktreeId,
         activeFileId,
@@ -515,7 +517,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: activeTabType },
         activeTabId,
         worktreesByRepo: applyWorktreeUpdates(s.worktreesByRepo, worktreeId, metaUpdates),
-        ...(s.sortBy === 'recent' ? { sortEpoch: s.sortEpoch + 1 } : {})
+        ...(isSwitch ? { sortEpoch: s.sortEpoch + 1 } : {})
       }
     })
 
