@@ -9,7 +9,8 @@ const {
   guestSetBackgroundThrottlingMock,
   guestSetWindowOpenHandlerMock,
   guestOpenDevToolsMock,
-  webContentsFromIdMock
+  webContentsFromIdMock,
+  screenGetCursorScreenPointMock
 } = vi.hoisted(() => ({
   shellOpenExternalMock: vi.fn(),
   menuBuildFromTemplateMock: vi.fn(),
@@ -18,7 +19,8 @@ const {
   guestSetBackgroundThrottlingMock: vi.fn(),
   guestSetWindowOpenHandlerMock: vi.fn(),
   guestOpenDevToolsMock: vi.fn(),
-  webContentsFromIdMock: vi.fn()
+  webContentsFromIdMock: vi.fn(),
+  screenGetCursorScreenPointMock: vi.fn(() => ({ x: 0, y: 0 }))
 }))
 
 vi.mock('electron', () => ({
@@ -26,6 +28,9 @@ vi.mock('electron', () => ({
   shell: { openExternal: shellOpenExternalMock },
   Menu: {
     buildFromTemplate: menuBuildFromTemplateMock
+  },
+  screen: {
+    getCursorScreenPoint: screenGetCursorScreenPointMock
   },
   webContents: {
     fromId: webContentsFromIdMock

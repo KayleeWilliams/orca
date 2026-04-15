@@ -1,4 +1,4 @@
-import { webContents } from 'electron'
+import { screen, webContents } from 'electron'
 import {
   normalizeBrowserNavigationUrl,
   normalizeExternalBrowserUrl
@@ -31,47 +31,22 @@ export function setupGuestContextMenu(args: {
       rawLinkUrl.length > 0
         ? (normalizeExternalBrowserUrl(rawLinkUrl) ?? normalizeBrowserNavigationUrl(rawLinkUrl))
         : null
-    const sendContextMenu = (viewportX: number, viewportY: number): void => {
-      renderer.send('browser:context-menu-requested', {
-        browserPageId: browserTabId,
-        x: viewportX,
-        y: viewportY,
-        pageUrl,
-        linkUrl,
-        canGoBack: guest.canGoBack(),
-        canGoForward: guest.canGoForward()
-      })
-    }
-
-    // Why: Electron reports guest context-menu coordinates in page space.
-    // Orca's renderer-owned menu needs viewport-relative coordinates so the
-    // menu appears under the cursor even after the page has scrolled.
-    if (typeof guest.executeJavaScript !== 'function') {
-      // Why: some tests and rare teardown edges only expose a minimal
-      // WebContents shape. Falling back to raw coordinates keeps the menu
-      // request best-effort instead of hard-failing on missing helpers.
-      sendContextMenu(params.x, params.y)
-      return
-    }
-
-    void guest
-      .executeJavaScript('({ scrollX: window.scrollX, scrollY: window.scrollY })', true)
-      .then((scroll) => {
-        const scrollX =
-          typeof scroll === 'object' && scroll && 'scrollX' in scroll
-            ? Number((scroll as { scrollX: unknown }).scrollX) || 0
-            : 0
-        const scrollY =
-          typeof scroll === 'object' && scroll && 'scrollY' in scroll
-            ? Number((scroll as { scrollY: unknown }).scrollY) || 0
-            : 0
-        sendContextMenu(params.x - scrollX, params.y - scrollY)
-      })
-      .catch(() => {
-        // Why: if the guest is tearing down, best-effort fallback to the raw
-        // coordinates is better than dropping the Orca menu entirely.
-        sendContextMenu(params.x, params.y)
-      })
+    // Why: send BOTH the guest viewport coordinates AND the OS screen cursor
+    // position. The renderer will try the screen cursor approach (which is
+    // immune to guest/renderer coordinate space mismatches) and fall back to
+    // guest coords if the screen API is unavailable.
+    const cursor = screen.getCursorScreenPoint()
+    renderer.send('browser:context-menu-requested', {
+      browserPageId: browserTabId,
+      x: params.x,
+      y: params.y,
+      screenX: cursor.x,
+      screenY: cursor.y,
+      pageUrl,
+      linkUrl,
+      canGoBack: guest.canGoBack(),
+      canGoForward: guest.canGoForward()
+    })
   }
 
   // Why: `before-mouse-event` fires for every mouse event (move, down, up,
@@ -97,6 +72,13 @@ export function setupGuestContextMenu(args: {
     removeDismissListener()
     dismissHandler = (_evt: Electron.Event, mouse: Electron.MouseInputEvent): void => {
       if (mouse.type !== 'mouseDown') {
+        return
+      }
+      // Why: a right-click mouseDown will be followed by a new context-menu
+      // event with updated coordinates. Sending a dismiss here would cause
+      // the renderer to briefly close the menu (trigger snaps to 0,0) then
+      // reopen it, producing a visible flash at the top-left corner.
+      if (mouse.button === 'right') {
         return
       }
       const renderer = resolveRenderer(browserTabId)

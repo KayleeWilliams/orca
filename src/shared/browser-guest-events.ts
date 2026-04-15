@@ -42,6 +42,8 @@ export type BrowserContextMenuRequestedEvent = {
   browserPageId: string
   x: number
   y: number
+  screenX: number
+  screenY: number
   pageUrl: string
   linkUrl: string | null
   canGoBack: boolean

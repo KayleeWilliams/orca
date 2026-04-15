@@ -1,5 +1,6 @@
 /* eslint-disable max-lines */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import {
   ArrowLeft,
@@ -387,6 +388,7 @@ function BrowserPagePane({
     linkUrl: string | null
     pageUrl: string
   } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const grab = useGrabMode(browserTab.id)
   const createBrowserTab = useAppStore((s) => s.createBrowserTab)
@@ -594,9 +596,29 @@ function BrowserPagePane({
       if (event.browserPageId !== browserTab.id) {
         return
       }
+      // Why: convert the OS screen cursor position to the renderer's CSS
+      // viewport coordinates. This is the only approach immune to coordinate
+      // space mismatches between the guest process and the renderer (caused
+      // by UI zoom, DPI scaling, or Electron version differences).
+      // window.screenX/Y gives the window origin in the same screen
+      // coordinate system that screen.getCursorScreenPoint() uses. Dividing
+      // by the zoom factor converts screen points to CSS pixels.
+      const zoomFactor = Math.pow(1.2, window.api.ui.getZoomLevel())
+      const x = Math.round((event.screenX - window.screenX) / zoomFactor)
+      const y = Math.round((event.screenY - window.screenY) / zoomFactor)
+      console.debug(
+        '[context-menu] screen=(%d,%d) window=(%d,%d) zoom=%.2f → viewport=(%d,%d)',
+        event.screenX,
+        event.screenY,
+        window.screenX,
+        window.screenY,
+        zoomFactor,
+        x,
+        y
+      )
       setContextMenu({
-        x: event.x,
-        y: event.y,
+        x,
+        y,
         linkUrl: event.linkUrl,
         pageUrl: event.pageUrl
       })
@@ -611,6 +633,58 @@ function BrowserPagePane({
       setContextMenu(null)
     })
   }, [browserTab.id])
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return
+    }
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setContextMenu(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [contextMenu])
+
+  // Why: position: fixed can be offset by ancestor CSS properties (backdrop-filter,
+  // transform, will-change) that create new containing blocks. Even with a Portal to
+  // document.body, global CSS or Electron chrome can shift the element. Measuring the
+  // actual rendered position and correcting before paint is immune to all of these.
+  // Additionally, flip the menu when it would overflow the viewport edge so right-clicking
+  // near the screen border keeps the entire menu visible.
+  useLayoutEffect(() => {
+    const el = contextMenuRef.current
+    if (!el || !contextMenu) {
+      return
+    }
+    el.style.left = `${contextMenu.x}px`
+    el.style.top = `${contextMenu.y}px`
+    const rect = el.getBoundingClientRect()
+
+    // Why: CSS containing blocks can shift "fixed" elements. Capture the offset
+    // between where we asked CSS to place the element and where it actually rendered.
+    const offsetX = contextMenu.x - rect.left
+    const offsetY = contextMenu.y - rect.top
+
+    let renderX = contextMenu.x
+    let renderY = contextMenu.y
+
+    // Flip so the opposite corner aligns with the cursor when the menu overflows.
+    if (rect.right > window.innerWidth) {
+      renderX = contextMenu.x - rect.width
+    }
+    if (rect.bottom > window.innerHeight) {
+      renderY = contextMenu.y - rect.height
+    }
+
+    renderX = Math.max(0, renderX)
+    renderY = Math.max(0, renderY)
+
+    el.style.left = `${renderX + offsetX}px`
+    el.style.top = `${renderY + offsetY}px`
+  }, [contextMenu])
 
   useEffect(() => {
     return window.api.browser.onDownloadRequested((event) => {
@@ -1545,109 +1619,132 @@ function BrowserPagePane({
         isActive ? 'z-10' : 'pointer-events-none hidden'
       )}
     >
-      {/* IPC-driven context menu — main intercepts guest right-clicks and sends
-          the event here so Orca can offer link actions that require renderer/store access. */}
-      <DropdownMenu
-        open={contextMenu !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setContextMenu(null)
-          }
-        }}
-        modal={false}
-      >
-        <DropdownMenuTrigger asChild>
-          <button
-            aria-hidden
-            tabIndex={-1}
-            className="pointer-events-none fixed size-px opacity-0"
-            style={{
-              left: contextMenu?.x ?? 0,
-              top: contextMenu?.y ?? 0
-            }}
-          />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          className="min-w-[13rem] rounded-[11px] border-border/80 p-1 shadow-[0_16px_36px_rgba(0,0,0,0.24)]"
-          sideOffset={0}
-          align="start"
-        >
-          {contextMenu?.linkUrl ? (
+      {/* IPC-driven context menu — rendered in a Portal so position: fixed is
+          relative to the viewport, not affected by ancestor backdrop-filter or
+          transform properties that create new containing blocks. */}
+      {contextMenu
+        ? createPortal(
             <>
-              <DropdownMenuItem
-                onSelect={() => {
-                  if (contextMenu.linkUrl) {
-                    createBrowserTab(worktreeId, contextMenu.linkUrl, {
-                      title: contextMenu.linkUrl
-                    })
-                  }
-                }}
+              <div className="fixed inset-0 z-50" onPointerDown={() => setContextMenu(null)} />
+              <div
+                ref={contextMenuRef}
+                role="menu"
+                data-testid="browser-context-menu"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+                className="fixed z-50 min-w-[13rem] overflow-hidden rounded-[11px] border border-black/14 bg-[rgba(255,255,255,0.82)] p-1 text-black shadow-[0_16px_36px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.14)] backdrop-blur-2xl dark:border-white/14 dark:bg-[rgba(0,0,0,0.72)] dark:text-white dark:shadow-[0_20px_44px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.04)]"
               >
-                Open Link In Orca Browser
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  if (contextMenu.linkUrl) {
-                    const targetUrl = normalizeExternalBrowserUrl(contextMenu.linkUrl)
+                {contextMenu.linkUrl ? (
+                  <>
+                    <button
+                      role="menuitem"
+                      className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                      onClick={() => {
+                        createBrowserTab(worktreeId, contextMenu.linkUrl!, {
+                          title: contextMenu.linkUrl!
+                        })
+                        setContextMenu(null)
+                      }}
+                    >
+                      Open Link In Orca Browser
+                    </button>
+                    <button
+                      role="menuitem"
+                      className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                      onClick={() => {
+                        const targetUrl = normalizeExternalBrowserUrl(contextMenu.linkUrl!)
+                        if (targetUrl) {
+                          void window.api.shell.openUrl(targetUrl)
+                        }
+                        setContextMenu(null)
+                      }}
+                    >
+                      Open Link In Default Browser
+                    </button>
+                    <button
+                      role="menuitem"
+                      className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                      onClick={() => {
+                        void window.api.ui.writeClipboardText(contextMenu.linkUrl ?? '')
+                        setContextMenu(null)
+                      }}
+                    >
+                      Copy Link Address
+                    </button>
+                    <div className="my-1 h-px bg-border/70" />
+                  </>
+                ) : null}
+                <button
+                  role="menuitem"
+                  disabled={!browserTab.canGoBack}
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 disabled:pointer-events-none disabled:opacity-50 dark:hover:bg-white/14"
+                  onClick={() => {
+                    webviewRef.current?.goBack()
+                    setContextMenu(null)
+                  }}
+                >
+                  Back
+                </button>
+                <button
+                  role="menuitem"
+                  disabled={!browserTab.canGoForward}
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 disabled:pointer-events-none disabled:opacity-50 dark:hover:bg-white/14"
+                  onClick={() => {
+                    webviewRef.current?.goForward()
+                    setContextMenu(null)
+                  }}
+                >
+                  Forward
+                </button>
+                <button
+                  role="menuitem"
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                  onClick={() => {
+                    webviewRef.current?.reload()
+                    setContextMenu(null)
+                  }}
+                >
+                  Reload
+                </button>
+                <div className="my-1 h-px bg-border/70" />
+                <button
+                  role="menuitem"
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                  onClick={() => {
+                    const targetUrl = normalizeExternalBrowserUrl(contextMenu.pageUrl)
                     if (targetUrl) {
                       void window.api.shell.openUrl(targetUrl)
                     }
-                  }
-                }}
-              >
-                Open Link In Default Browser
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  void window.api.ui.writeClipboardText(contextMenu?.linkUrl ?? '')
-                }}
-              >
-                Copy Link Address
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </>
-          ) : null}
-          <DropdownMenuItem
-            disabled={!browserTab.canGoBack}
-            onSelect={() => webviewRef.current?.goBack()}
-          >
-            Back
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!browserTab.canGoForward}
-            onSelect={() => webviewRef.current?.goForward()}
-          >
-            Forward
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => webviewRef.current?.reload()}>Reload</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => {
-              const targetUrl = normalizeExternalBrowserUrl(contextMenu?.pageUrl ?? '')
-              if (targetUrl) {
-                void window.api.shell.openUrl(targetUrl)
-              }
-            }}
-          >
-            Open Page In Default Browser
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => {
-              void window.api.ui.writeClipboardText(contextMenu?.pageUrl ?? '')
-            }}
-          >
-            Copy Page URL
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => {
-              void window.api.browser.openDevTools({ browserPageId: browserTab.id })
-            }}
-          >
-            Inspect Page
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+                    setContextMenu(null)
+                  }}
+                >
+                  Open Page In Default Browser
+                </button>
+                <button
+                  role="menuitem"
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                  onClick={() => {
+                    void window.api.ui.writeClipboardText(contextMenu.pageUrl)
+                    setContextMenu(null)
+                  }}
+                >
+                  Copy Page URL
+                </button>
+                <div className="my-1 h-px bg-border/70" />
+                <button
+                  role="menuitem"
+                  className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
+                  onClick={() => {
+                    void window.api.browser.openDevTools({ browserPageId: browserTab.id })
+                    setContextMenu(null)
+                  }}
+                >
+                  Inspect Page
+                </button>
+              </div>
+            </>,
+            document.body
+          )
+        : null}
 
       {/* Browser Settings dialog — uses Radix Portal so layout is unaffected */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
