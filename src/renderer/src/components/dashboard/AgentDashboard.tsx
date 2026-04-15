@@ -1,196 +1,238 @@
-import React, { useMemo, useState } from 'react'
-import { Bot, ChevronRight, Orbit, Rows3 } from 'lucide-react'
-import { useAppStore } from '@/store'
-import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { LayoutList, Target } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
-import { buildRepoGroups, formatRowAgentLabel, getRowState } from './model'
+import { useDashboardData } from './useDashboardData'
+import { useDashboardFilter } from './useDashboardFilter'
+import { useDashboardKeyboard } from './useDashboardKeyboard'
+import DashboardFilterBar from './DashboardFilterBar'
+import DashboardRepoGroup from './DashboardRepoGroup'
 import ConcentricView from './ConcentricView'
-import type { DashboardRow } from './model'
+import { useRetainedAgents } from './useRetainedAgents'
 
-type DashboardMode = 'concentric' | 'list'
+type ViewMode = 'list' | 'radial'
 
-function AgentRow({ row, now }: { row: DashboardRow; now: number }): React.JSX.Element {
-  const state = getRowState(row, now)
-  const isStale =
-    row.kind === 'explicit' &&
-    !isExplicitAgentStatusFresh(row.explicit, now, AGENT_STATUS_STALE_AFTER_MS)
+const AgentDashboard = React.memo(function AgentDashboard() {
+  const liveGroups = useDashboardData()
+  // Why: useRetainedAgents merges "done" entries for agents that have
+  // disappeared from live data (terminal closed, pane exited) so they
+  // persist in the dashboard until the user clicks through to dismiss them.
+  const { enrichedGroups: groups, dismissWorktreeAgents } = useRetainedAgents(liveGroups)
 
-  return (
-    <div className="flex items-center gap-2 rounded-md border border-border/40 bg-background/60 px-2 py-1.5">
-      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
-        <Bot className="size-3.5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] font-medium text-foreground">
-          {formatRowAgentLabel(row)}
-        </div>
-        <div className={cn('truncate text-[10px] text-muted-foreground', isStale && 'opacity-60')}>
-          {row.tabTitle}
-        </div>
-      </div>
-      <span
-        className={cn(
-          'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide',
-          state.className
-        )}
-      >
-        {state.label}
-      </span>
-    </div>
+  // Why: viewMode toggles between the list (card grid) and radial (concentric
+  // circles) views. Default to 'radial' — the concentric view is the primary
+  // visualization. The list view is available as a familiar fallback.
+  const [viewMode, setViewMode] = useState<ViewMode>('radial')
+
+  // Why: checkedWorktreeIds tracks which "done" worktrees the user has already
+  // clicked through to. These are hidden from the 'active' filter so the
+  // dashboard only shows items that still need attention.
+  const [checkedWorktreeIds, setCheckedWorktreeIds] = useState<Set<string>>(new Set())
+  const prevDominantStates = useRef<Record<string, string>>({})
+
+  const { filter, setFilter, filteredGroups, hasResults } = useDashboardFilter(
+    groups,
+    checkedWorktreeIds
   )
-}
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
+  const [focusedWorktreeId, setFocusedWorktreeId] = useState<string | null>(null)
 
-function ListView({
-  repoGroups,
-  now,
-  activeWorktreeId,
-  onSelectWorktree
-}: {
-  repoGroups: ReturnType<typeof buildRepoGroups>
-  now: number
-  activeWorktreeId: string | null
-  onSelectWorktree: (worktreeId: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-4">
-      {repoGroups.map(({ repo, worktrees }) => (
-        <section key={repo.id} className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1">
-            <span
-              className="size-2 rounded-full"
-              style={{ backgroundColor: repo.badgeColor }}
-              aria-hidden="true"
-            />
-            <div className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              {repo.displayName}
-            </div>
-            <div className="text-[10px] text-muted-foreground/70">{worktrees.length}</div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {worktrees.map(({ worktree, rows }) => (
-              <button
-                key={worktree.id}
-                type="button"
-                onClick={() => onSelectWorktree(worktree.id)}
-                className={cn(
-                  'flex w-full flex-col gap-2 rounded-lg border px-3 py-3 text-left transition-colors',
-                  activeWorktreeId === worktree.id
-                    ? 'border-border bg-accent/45'
-                    : 'border-border/50 bg-background hover:bg-accent/25'
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] font-semibold text-foreground">
-                      {worktree.displayName}
-                    </div>
-                    <div className="truncate text-[10px] text-muted-foreground">
-                      {worktree.branch}
-                    </div>
-                  </div>
-                  <div className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                    <span>{rows.length}</span>
-                    <ChevronRight className="size-3" />
-                  </div>
-                </div>
-                {rows.length > 0 ? (
-                  <div className="flex flex-col gap-1.5">
-                    {rows.map((row) => (
-                      <AgentRow key={row.key} row={row} now={now} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-md border border-dashed border-border/45 bg-muted/25 px-2 py-2 text-[10px] text-muted-foreground">
-                    No active agents in this worktree
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  )
-}
+  // Why: when a worktree transitions back to working/blocked after being checked
+  // as done, automatically un-check it so it reappears in the active filter.
+  useEffect(() => {
+    const newStates: Record<string, string> = {}
+    const toUncheck: string[] = []
+    for (const group of groups) {
+      for (const wt of group.worktrees) {
+        newStates[wt.worktree.id] = wt.dominantState
+        const prev = prevDominantStates.current[wt.worktree.id]
+        if (
+          checkedWorktreeIds.has(wt.worktree.id) &&
+          prev === 'done' &&
+          (wt.dominantState === 'working' || wt.dominantState === 'blocked')
+        ) {
+          toUncheck.push(wt.worktree.id)
+        }
+      }
+    }
+    prevDominantStates.current = newStates
+    if (toUncheck.length > 0) {
+      setCheckedWorktreeIds((prev) => {
+        const next = new Set(prev)
+        for (const id of toUncheck) {
+          next.delete(id)
+        }
+        return next
+      })
+    }
+  }, [groups, checkedWorktreeIds])
 
-export default function AgentDashboard(): React.JSX.Element {
-  const repos = useAppStore((s) => s.repos)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
-  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
-  const agentStatusByPaneKey = useAppStore((s) => s.agentStatusByPaneKey)
-  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const [mode, setMode] = useState<DashboardMode>('concentric')
-
-  const now = Date.now()
-  const repoGroups = useMemo(
-    () => buildRepoGroups(repos, worktreesByRepo, tabsByWorktree, agentStatusByPaneKey, now),
-    [repos, worktreesByRepo, tabsByWorktree, agentStatusByPaneKey, now]
+  const handleCheckWorktree = useCallback(
+    (worktreeId: string) => {
+      setCheckedWorktreeIds((prev) => new Set(prev).add(worktreeId))
+      // Also dismiss any retained "done" agents for this worktree so they
+      // vanish from both the list and concentric views after the user checks.
+      dismissWorktreeAgents(worktreeId)
+    },
+    [dismissWorktreeAgents]
   )
 
-  if (repoGroups.length === 0) {
+  const toggleCollapse = useCallback((repoId: string) => {
+    setCollapsedRepos((prev) => {
+      const next = new Set(prev)
+      if (next.has(repoId)) {
+        next.delete(repoId)
+      } else {
+        next.add(repoId)
+      }
+      return next
+    })
+  }, [])
+
+  useDashboardKeyboard({
+    filteredGroups,
+    collapsedRepos,
+    focusedWorktreeId,
+    setFocusedWorktreeId,
+    filter,
+    setFilter
+  })
+
+  // Summary stats across all repos (unfiltered)
+  const stats = useMemo(() => {
+    let runningAgents = 0
+    let blockedAgents = 0
+    let doneAgents = 0
+    for (const group of groups) {
+      for (const wt of group.worktrees) {
+        for (const agent of wt.agents) {
+          if (agent.state === 'working') {
+            runningAgents++
+          }
+          if (agent.state === 'blocked' || agent.state === 'waiting') {
+            blockedAgents++
+          }
+          if (agent.state === 'done') {
+            doneAgents++
+          }
+        }
+      }
+    }
+    return { running: runningAgents, blocked: blockedAgents, done: doneAgents }
+  }, [groups])
+
+  // Empty state: no repos at all
+  if (groups.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-6 text-center">
-        <div className="max-w-[18rem] space-y-2">
-          <div className="text-sm font-medium text-foreground">No worktrees yet</div>
-          <div className="text-xs leading-relaxed text-muted-foreground">
-            Add or create a worktree to populate the dashboard.
-          </div>
+      <div className="flex h-full w-full items-center justify-center p-4">
+        <div className="text-center text-[11px] text-muted-foreground">
+          No repos added. Add a repo to see agent activity.
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 scrollbar-sleek">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Agent Dashboard
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            Lifecycle-first overview across all active worktrees
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      {/* Summary stats header + view toggle */}
+      <div className="shrink-0 border-b border-border/40 px-3 py-2">
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          {stats.running > 0 && (
+            <span>
+              <span className="font-semibold text-emerald-500">{stats.running}</span> running
+            </span>
+          )}
+          {stats.blocked > 0 && (
+            <span>
+              <span className="font-semibold text-amber-500">{stats.blocked}</span> blocked
+            </span>
+          )}
+          {stats.done > 0 && (
+            <span>
+              <span className="font-semibold text-sky-500/80">{stats.done}</span> done
+            </span>
+          )}
+          {stats.running === 0 && stats.blocked === 0 && stats.done === 0 && (
+            <span className="text-muted-foreground/50">No active agents</span>
+          )}
+
+          {/* View mode toggle */}
+          <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('radial')}
+              className={cn(
+                'flex items-center justify-center rounded p-1 transition-colors',
+                viewMode === 'radial'
+                  ? 'bg-accent text-foreground'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground'
+              )}
+              aria-label="Concentric view"
+            >
+              <Target size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={cn(
+                'flex items-center justify-center rounded p-1 transition-colors',
+                viewMode === 'list'
+                  ? 'bg-accent text-foreground'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground'
+              )}
+              aria-label="List view"
+            >
+              <LayoutList size={12} />
+            </button>
           </div>
         </div>
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={(value) => {
-            if (value === 'concentric' || value === 'list') {
-              setMode(value)
-            }
-          }}
-          variant="outline"
-          size="sm"
-        >
-          <ToggleGroupItem value="concentric" aria-label="Concentric view">
-            <Orbit className="mr-1 size-3.5" />
-            Concentric
-          </ToggleGroupItem>
-          <ToggleGroupItem value="list" aria-label="List view">
-            <Rows3 className="mr-1 size-3.5" />
-            List
-          </ToggleGroupItem>
-        </ToggleGroup>
       </div>
 
-      {mode === 'concentric' ? (
-        <ConcentricView
-          repoGroups={repoGroups}
-          now={now}
-          activeWorktreeId={activeWorktreeId}
-          onSelectWorktree={setActiveWorktree}
-        />
+      {/* Filter bar — only shown in list mode (concentric view shows everything) */}
+      {viewMode === 'list' && (
+        <div className="flex shrink-0 items-center justify-center border-b border-border/40 px-2 py-1.5">
+          <DashboardFilterBar value={filter} onChange={setFilter} />
+        </div>
+      )}
+
+      {/* Scrollable content — switches between concentric and list views */}
+      {viewMode === 'radial' ? (
+        <ConcentricView groups={groups} onCheckWorktree={handleCheckWorktree} />
       ) : (
-        <ListView
-          repoGroups={repoGroups}
-          now={now}
-          activeWorktreeId={activeWorktreeId}
-          onSelectWorktree={setActiveWorktree}
-        />
+        <div className="flex-1 overflow-y-auto scrollbar-sleek">
+          <div className="flex flex-col gap-2 p-2">
+            {hasResults ? (
+              filteredGroups.map((group) => (
+                <DashboardRepoGroup
+                  key={group.repo.id}
+                  group={group}
+                  isCollapsed={collapsedRepos.has(group.repo.id)}
+                  onToggleCollapse={() => toggleCollapse(group.repo.id)}
+                  focusedWorktreeId={focusedWorktreeId}
+                  onFocusWorktree={setFocusedWorktreeId}
+                  onCheckWorktree={handleCheckWorktree}
+                />
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 gap-2">
+                <div className="text-[11px] text-muted-foreground/60">
+                  {filter === 'active' ? 'All agents are idle.' : 'No worktrees match this filter.'}
+                </div>
+                {filter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter('all')}
+                    className="text-[11px] text-primary/70 hover:text-primary hover:underline"
+                  >
+                    Show all
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
-}
+})
+
+export default AgentDashboard

@@ -1,183 +1,127 @@
-import React from 'react'
-import { cn } from '@/lib/utils'
-import { formatRowAgentLabel, formatWorktreeStateSummary, getRowState } from './model'
-import type { RepoGroup } from './model'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
+import { useAppStore } from '@/store'
+import type { DashboardRepoGroup } from './useDashboardData'
+import RepoSystem, { stateColor } from './RepoSystem'
 
-function bubbleSize(agentCount: number): number {
-  return Math.max(92, Math.min(132, 88 + agentCount * 8))
+export type TooltipData = {
+  x: number
+  y: number
+  agentLabel: string
+  state: string
+  worktreeName: string
+  branchName?: string
 }
 
-function ringPosition(index: number, total: number, ringIndex: number): { x: number; y: number } {
-  const radius = 118 + ringIndex * 68
-  const angle = (Math.PI * 2 * index) / Math.max(total, 1) - Math.PI / 2
-  return {
-    x: Math.cos(angle) * radius,
-    y: Math.sin(angle) * radius
-  }
+// ─── Scroll Position Persistence ─────────────────────────────────────────────
+// Why: the concentric view unmounts when the user switches sidebar tabs. A
+// module-level variable survives the unmount so scroll position is restored
+// when the user returns to the dashboard.
+let savedScrollTop = 0
+
+type ConcentricViewProps = {
+  groups: DashboardRepoGroup[]
+  onCheckWorktree: (id: string) => void
 }
 
-function splitIntoRings(count: number): number[] {
-  if (count <= 6) {
-    return [count]
-  }
-  if (count <= 14) {
-    return [6, count - 6]
-  }
-  return [6, 8, count - 14]
-}
+export default function ConcentricView({ groups, onCheckWorktree }: ConcentricViewProps) {
+  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
+  const setActiveView = useAppStore((s) => s.setActiveView)
+  const [tooltip, setTooltip] = useState<TooltipData | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
-function AgentDots({
-  rows,
-  now
-}: {
-  rows: RepoGroup['worktrees'][number]['rows']
-  now: number
-}): React.JSX.Element {
-  if (rows.length === 0) {
+  // Restore scroll position on mount, save on unmount
+  useEffect(() => {
+    const el = containerRef.current
+    if (el) {
+      el.scrollTop = savedScrollTop
+    }
+    return () => {
+      if (el) {
+        savedScrollTop = el.scrollTop
+      }
+    }
+  }, [])
+
+  const handleClick = useCallback(
+    (worktreeId: string) => {
+      setActiveWorktree(worktreeId)
+      setActiveView('terminal')
+      onCheckWorktree(worktreeId)
+    },
+    [setActiveWorktree, setActiveView, onCheckWorktree]
+  )
+
+  const showTooltip = useCallback((e: React.MouseEvent, data: Omit<TooltipData, 'x' | 'y'>) => {
+    const container = containerRef.current
+    if (!container) {
+      return
+    }
+    const rect = container.getBoundingClientRect()
+    // Why: the tooltip is position:absolute inside the scrollable container,
+    // so we must add scrollTop to map viewport coords to content coords.
+    setTooltip({
+      ...data,
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top + container.scrollTop
+    })
+  }, [])
+
+  const hideTooltip = useCallback(() => setTooltip(null), [])
+
+  if (groups.length === 0) {
     return (
-      <div className="mt-2 text-[9px] uppercase tracking-[0.14em] text-muted-foreground/65">
-        No agents
+      <div className="flex h-full items-center justify-center p-4 text-center text-[11px] text-muted-foreground">
+        No repos added. Add a repo to see agent activity.
       </div>
     )
   }
 
   return (
-    <div className="mt-2 flex flex-wrap justify-center gap-1">
-      {rows.slice(0, 6).map((row) => {
-        const state = getRowState(row, now)
-        return (
-          <span
-            key={row.key}
-            title={`${formatRowAgentLabel(row)} • ${state.label}`}
-            className={cn('size-2 rounded-full', state.dotClassName)}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
-function RepoOrb({
-  group,
-  now,
-  activeWorktreeId,
-  onSelectWorktree
-}: {
-  group: RepoGroup
-  now: number
-  activeWorktreeId: string | null
-  onSelectWorktree: (worktreeId: string) => void
-}): React.JSX.Element {
-  const ringCounts = splitIntoRings(group.worktrees.length)
-  let offset = 0
-
-  return (
-    <section className="relative flex min-h-[30rem] items-center justify-center overflow-hidden rounded-[2rem] border border-border/50 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_58%)] px-4 py-8">
-      <div className="pointer-events-none absolute inset-0 opacity-60">
-        {[140, 230, 310].map((size) => (
-          <div
-            key={size}
-            className="absolute left-1/2 top-1/2 rounded-full border border-border/30"
-            style={{
-              width: size,
-              height: size,
-              transform: 'translate(-50%, -50%)'
-            }}
+    <div ref={containerRef} className="relative flex-1 overflow-y-auto scrollbar-sleek">
+      <div className="flex flex-col items-center gap-1 py-2">
+        {groups.map((group) => (
+          <RepoSystem
+            key={group.repo.id}
+            group={group}
+            onClick={handleClick}
+            onShowTooltip={showTooltip}
+            onHideTooltip={hideTooltip}
           />
         ))}
       </div>
 
-      <div
-        className="relative flex size-40 items-center justify-center rounded-full border text-center shadow-sm"
-        style={{
-          background: `radial-gradient(circle at 30% 30%, ${group.repo.badgeColor}33, transparent 58%), var(--background)`,
-          borderColor: `${group.repo.badgeColor}55`
-        }}
-      >
-        <div className="space-y-1 px-4">
-          <div
-            className="mx-auto size-2 rounded-full"
-            style={{ backgroundColor: group.repo.badgeColor }}
-          />
-          <div className="line-clamp-3 text-[13px] font-semibold leading-tight text-foreground">
-            {group.repo.displayName}
+      {/* Floating tooltip overlay — shows per-agent detail on hover */}
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-50 max-w-[220px] rounded-lg border border-border/50 bg-popover/95 px-3 py-2 shadow-xl backdrop-blur-sm"
+          style={{
+            left: tooltip.x,
+            top: tooltip.y - 12,
+            transform: 'translate(-50%, -100%)'
+          }}
+        >
+          {/* Agent identity + state */}
+          <div className="flex items-center gap-1.5">
+            <span
+              className="inline-block size-[6px] shrink-0 rounded-full"
+              style={{ backgroundColor: stateColor(tooltip.state).fill }}
+            />
+            <span className="text-[11px] font-semibold text-foreground">{tooltip.agentLabel}</span>
+            <span
+              className="text-[10px] font-medium"
+              style={{ color: stateColor(tooltip.state).fill }}
+            >
+              {tooltip.state.charAt(0).toUpperCase() + tooltip.state.slice(1)}
+            </span>
           </div>
-          <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            {group.worktrees.length} worktrees
+
+          {/* Worktree context */}
+          <div className="mt-0.5 text-[9px] text-muted-foreground/50">
+            {tooltip.worktreeName}
+            {tooltip.branchName ? ` · ${tooltip.branchName}` : ''}
           </div>
         </div>
-      </div>
-
-      {ringCounts.map((count, ringIndex) => {
-        const worktrees = group.worktrees.slice(offset, offset + count)
-        offset += count
-
-        return worktrees.map(({ worktree, rows }, index) => {
-          const position = ringPosition(index, count, ringIndex)
-          const size = bubbleSize(rows.length)
-          const isActive = worktree.id === activeWorktreeId
-
-          return (
-            <button
-              key={worktree.id}
-              type="button"
-              onClick={() => onSelectWorktree(worktree.id)}
-              className={cn(
-                'absolute flex flex-col items-center justify-center rounded-full border px-3 text-center transition-all',
-                'hover:scale-[1.03] hover:border-foreground/30',
-                isActive
-                  ? 'border-foreground/35 bg-accent/70 shadow-[0_10px_30px_rgba(0,0,0,0.12)]'
-                  : rows.length === 0
-                    ? 'border-border/45 bg-muted/35 shadow-[0_4px_16px_rgba(0,0,0,0.06)]'
-                    : 'border-border/60 bg-background/90 shadow-[0_6px_20px_rgba(0,0,0,0.08)]'
-              )}
-              style={{
-                width: size,
-                height: size,
-                left: `calc(50% + ${position.x}px - ${size / 2}px)`,
-                top: `calc(50% + ${position.y}px - ${size / 2}px)`
-              }}
-            >
-              <div className="line-clamp-2 text-[11px] font-semibold leading-tight text-foreground">
-                {worktree.displayName}
-              </div>
-              <div className="mt-1 truncate text-[9px] text-muted-foreground">
-                {worktree.branch}
-              </div>
-              <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-muted-foreground/80">
-                {formatWorktreeStateSummary(rows, now)}
-              </div>
-              <AgentDots rows={rows} now={now} />
-            </button>
-          )
-        })
-      })}
-    </section>
-  )
-}
-
-export default function ConcentricView({
-  repoGroups,
-  now,
-  activeWorktreeId,
-  onSelectWorktree
-}: {
-  repoGroups: RepoGroup[]
-  now: number
-  activeWorktreeId: string | null
-  onSelectWorktree: (worktreeId: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-      {repoGroups.map((group) => (
-        <RepoOrb
-          key={group.repo.id}
-          group={group}
-          now={now}
-          activeWorktreeId={activeWorktreeId}
-          onSelectWorktree={onSelectWorktree}
-        />
-      ))}
+      )}
     </div>
   )
 }
