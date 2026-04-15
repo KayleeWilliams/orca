@@ -254,10 +254,10 @@
   padding: 32px 24px;
 }
 .mermaid-viewer-canvas .mermaid-block {
-  max-width: 100%;
+  width: 100%;
 }
 .mermaid-viewer-canvas .mermaid-block svg {
-  max-width: 100%;
+  width: 100%;
   height: auto;
 }
 
