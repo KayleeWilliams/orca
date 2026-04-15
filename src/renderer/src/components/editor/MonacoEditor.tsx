@@ -19,6 +19,7 @@ import { computeMonacoRevealRange } from './monaco-reveal-range'
 
 type MonacoEditorProps = {
   filePath: string
+  viewStateKey: string
   relativePath: string
   content: string
   language: string
@@ -31,6 +32,7 @@ type MonacoEditorProps = {
 
 export default function MonacoEditor({
   filePath,
+  viewStateKey,
   relativePath,
   content,
   language,
@@ -147,7 +149,7 @@ export default function MonacoEditor({
       }
       editorInstance.onDidChangeCursorPosition((e) => {
         setEditorCursorLine(filePath, e.position.lineNumber)
-        setWithLRU(cursorPositionCache, filePath, {
+        setWithLRU(cursorPositionCache, viewStateKey, {
           lineNumber: e.position.lineNumber,
           column: e.position.column
         })
@@ -162,7 +164,7 @@ export default function MonacoEditor({
           clearTimeout(scrollThrottleTimerRef.current)
         }
         scrollThrottleTimerRef.current = setTimeout(() => {
-          setWithLRU(scrollTopCache, filePath, e.scrollTop)
+          setWithLRU(scrollTopCache, viewStateKey, e.scrollTop)
           scrollThrottleTimerRef.current = null
         }, 150)
       })
@@ -194,8 +196,8 @@ export default function MonacoEditor({
           useAppStore.getState().setPendingEditorReveal(null)
         })
       } else {
-        const savedCursor = cursorPositionCache.get(filePath)
-        const savedScrollTop = scrollTopCache.get(filePath)
+        const savedCursor = cursorPositionCache.get(viewStateKey)
+        const savedScrollTop = scrollTopCache.get(viewStateKey)
         if (savedScrollTop !== undefined || savedCursor) {
           // Why: Monaco renders synchronously, so a single RAF is sufficient to
           // wait for the layout pass. Unlike react-markdown or Tiptap, there is
@@ -243,10 +245,10 @@ export default function MonacoEditor({
       }
       const ed = editorRef.current
       if (ed) {
-        setWithLRU(scrollTopCache, filePath, ed.getScrollTop())
+        setWithLRU(scrollTopCache, viewStateKey, ed.getScrollTop())
         const pos = ed.getPosition()
         if (pos) {
-          setWithLRU(cursorPositionCache, filePath, {
+          setWithLRU(cursorPositionCache, viewStateKey, {
             lineNumber: pos.lineNumber,
             column: pos.column
           })
@@ -255,7 +257,7 @@ export default function MonacoEditor({
       cancelScheduledReveal()
       clearTransientRevealHighlight()
     }
-  }, [cancelScheduledReveal, clearTransientRevealHighlight, filePath])
+  }, [cancelScheduledReveal, clearTransientRevealHighlight, viewStateKey])
 
   // Update editor options when settings change
   useEffect(() => {

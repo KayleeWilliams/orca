@@ -57,7 +57,7 @@ export default function BrowserTab({
   onActivate: () => void
   onClose: () => void
   onCloseToRight: () => void
-  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id
@@ -166,20 +166,20 @@ export default function BrowserTab({
           sideOffset={0}
           align="start"
         >
-          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
-            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('up', tab.id)}>
+            <Rows2 className="mr-1.5 size-3.5" />
             Split Up
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
-            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('down', tab.id)}>
+            <Rows2 className="mr-1.5 size-3.5" />
             Split Down
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
-            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('left', tab.id)}>
+            <Columns2 className="mr-1.5 size-3.5" />
             Split Left
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
-            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('right', tab.id)}>
+            <Columns2 className="mr-1.5 size-3.5" />
             Split Right
           </DropdownMenuItem>
           <DropdownMenuSeparator />

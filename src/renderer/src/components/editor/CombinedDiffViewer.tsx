@@ -42,7 +42,13 @@ type CachedCombinedDiffViewState = {
 const combinedDiffViewStateCache = new Map<string, CachedCombinedDiffViewState>()
 const combinedDiffScrollTopCache = new Map<string, number>()
 
-export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.JSX.Element {
+export default function CombinedDiffViewer({
+  file,
+  viewStateKey
+}: {
+  file: OpenFile
+  viewStateKey: string
+}): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
   const gitBranchChangesByWorktree = useAppStore((s) => s.gitBranchChangesByWorktree)
@@ -139,11 +145,12 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
   )
 
   // Why: switching tabs or worktrees unmounts this viewer through the shared
-  // editor surface above it. Cache the rendered combined-diff state by tab id
-  // so remounting can restore loaded sections and scroll position instead of
-  // flashing back to "Loading..." and forcing the user to find their place again.
+  // editor surface above it. Cache the rendered combined-diff state by the
+  // visible pane key so remounting can restore loaded sections and scroll
+  // position instead of flashing back to "Loading..." and forcing the user to
+  // find their place again.
   useEffect(() => {
-    const cached = combinedDiffViewStateCache.get(file.id)
+    const cached = combinedDiffViewStateCache.get(viewStateKey)
     const canRestoreCachedSections =
       cached &&
       cached.entrySignature === entrySignature &&
@@ -154,11 +161,11 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       setSideBySide(cached.sideBySide)
       loadedIndicesRef.current = new Set(cached.loadedIndices)
       pendingRestoreScrollTopRef.current =
-        combinedDiffScrollTopCache.get(file.id) ?? cached.scrollTop
+        combinedDiffScrollTopCache.get(viewStateKey) ?? cached.scrollTop
       return
     }
 
-    pendingRestoreScrollTopRef.current = combinedDiffScrollTopCache.get(file.id) ?? null
+    pendingRestoreScrollTopRef.current = combinedDiffScrollTopCache.get(viewStateKey) ?? null
     setSections(
       entries.map((entry) => ({
         key: `${'area' in entry ? entry.area : 'branch'}:${entry.path}`,
@@ -178,7 +185,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
     loadedIndicesRef.current.clear()
     generationRef.current += 1
     setGeneration((prev) => prev + 1)
-  }, [entries, entrySignature, file.id])
+  }, [entries, entrySignature, viewStateKey])
 
   // Progressive loading: load diff content when a section becomes visible
   const loadedIndicesRef = useRef<Set<number>>(new Set())
@@ -299,8 +306,8 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       return
     }
     const preservedScrollTop =
-      combinedDiffScrollTopCache.get(file.id) ?? scrollContainerRef.current?.scrollTop ?? 0
-    setWithLRU(combinedDiffViewStateCache, file.id, {
+      combinedDiffScrollTopCache.get(viewStateKey) ?? scrollContainerRef.current?.scrollTop ?? 0
+    setWithLRU(combinedDiffViewStateCache, viewStateKey, {
       entrySignature,
       sections,
       sectionHeights,
@@ -308,7 +315,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       scrollTop: preservedScrollTop,
       sideBySide
     })
-  }, [entries.length, entrySignature, file.id, sectionHeights, sections, sideBySide])
+  }, [entries.length, entrySignature, sectionHeights, sections, sideBySide, viewStateKey])
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current
@@ -316,19 +323,19 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       return
     }
 
-    const cached = combinedDiffViewStateCache.get(file.id)
+    const cached = combinedDiffViewStateCache.get(viewStateKey)
     if (cached && cached.entrySignature === entrySignature) {
       pendingRestoreScrollTopRef.current =
-        combinedDiffScrollTopCache.get(file.id) ?? cached.scrollTop
+        combinedDiffScrollTopCache.get(viewStateKey) ?? cached.scrollTop
     }
 
     const updateCachedScrollPosition = (): void => {
-      const existing = combinedDiffViewStateCache.get(file.id)
-      setWithLRU(combinedDiffScrollTopCache, file.id, container.scrollTop)
+      const existing = combinedDiffViewStateCache.get(viewStateKey)
+      setWithLRU(combinedDiffScrollTopCache, viewStateKey, container.scrollTop)
       if (!existing || existing.entrySignature !== entrySignature) {
         return
       }
-      setWithLRU(combinedDiffViewStateCache, file.id, {
+      setWithLRU(combinedDiffViewStateCache, viewStateKey, {
         ...existing,
         scrollTop: container.scrollTop
       })
@@ -343,7 +350,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       updateCachedScrollPosition()
       container.removeEventListener('scroll', updateCachedScrollPosition)
     }
-  }, [entrySignature, file.id, sections.length])
+  }, [entrySignature, sections.length, viewStateKey])
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current
@@ -365,7 +372,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
       const maxScrollTop = Math.max(0, liveContainer.scrollHeight - liveContainer.clientHeight)
       const nextScrollTop = Math.min(liveTarget, maxScrollTop)
       liveContainer.scrollTop = nextScrollTop
-      setWithLRU(combinedDiffScrollTopCache, file.id, nextScrollTop)
+      setWithLRU(combinedDiffScrollTopCache, viewStateKey, nextScrollTop)
 
       if (Math.abs(liveContainer.scrollTop - liveTarget) <= 1 || maxScrollTop >= liveTarget) {
         pendingRestoreScrollTopRef.current = null
@@ -380,7 +387,7 @@ export default function CombinedDiffViewer({ file }: { file: OpenFile }): React.
 
     restoreScrollPosition()
     return () => window.cancelAnimationFrame(frameId)
-  }, [file.id, sectionHeights, sections])
+  }, [sectionHeights, sections, viewStateKey])
 
   const openAlternateDiff = useCallback(() => {
     if (!file.combinedAlternate) {

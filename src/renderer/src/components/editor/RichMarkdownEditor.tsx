@@ -30,6 +30,7 @@ type RichMarkdownEditorProps = {
   fileId: string
   content: string
   filePath: string
+  scrollCacheKey: string
   onContentChange: (content: string) => void
   onDirtyStateHint: (dirty: boolean) => void
   onSave: (content: string) => void
@@ -43,6 +44,7 @@ export default function RichMarkdownEditor({
   fileId,
   content,
   filePath,
+  scrollCacheKey,
   onContentChange,
   onDirtyStateHint,
   onSave
@@ -329,7 +331,7 @@ export default function RichMarkdownEditor({
     return flushPendingSerialization
   }, [flushPendingSerialization])
 
-  useEditorScrollRestore(scrollContainerRef, `${filePath}:rich`, editor)
+  useEditorScrollRestore(scrollContainerRef, scrollCacheKey, editor)
 
   // Why: the custom Image extension reads filePath from editor.storage to resolve
   // relative image src values to file:// URLs for display. After updating the

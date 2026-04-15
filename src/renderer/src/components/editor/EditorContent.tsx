@@ -33,6 +33,7 @@ type MarkdownViewMode = 'source' | 'rich'
 
 export function EditorContent({
   activeFile,
+  viewStateScopeId,
   fileContents,
   diffContents,
   editBuffers,
@@ -47,6 +48,7 @@ export function EditorContent({
   handleSave
 }: {
   activeFile: OpenFile
+  viewStateScopeId: string
   fileContents: Record<string, FileContent>
   diffContents: Record<string, GitDiffResult>
   editBuffers: Record<string, string>
@@ -65,6 +67,13 @@ export function EditorContent({
   handleDirtyStateHint: (dirty: boolean) => void
   handleSave: (content: string) => Promise<void>
 }): React.JSX.Element {
+  const editorViewStateKey =
+    viewStateScopeId === activeFile.id
+      ? activeFile.filePath
+      : `${activeFile.filePath}::${viewStateScopeId}`
+  const diffViewStateKey =
+    viewStateScopeId === activeFile.id ? activeFile.id : `${activeFile.id}::${viewStateScopeId}`
+
   const openConflictFile = useAppStore((s) => s.openConflictFile)
   const openConflictReview = useAppStore((s) => s.openConflictReview)
   const closeFile = useAppStore((s) => s.closeFile)
@@ -80,12 +89,14 @@ export function EditorContent({
 
   const renderMonacoEditor = (fc: FileContent): React.JSX.Element => (
     // Why: Without a key, React reuses the same MonacoEditor instance when
-    // switching tabs, just updating props. That means useLayoutEffect cleanup
-    // (which snapshots scroll position) never fires. Keying on activeFile.id
-    // forces unmount/remount so the scroll cache captures the outgoing position.
+    // switching tabs or split panes, just updating props. That means
+    // useLayoutEffect cleanup (which snapshots scroll position) never fires.
+    // Keying on the visible pane identity forces unmount/remount so each split
+    // tab keeps its own viewport state even when the underlying file is shared.
     <MonacoEditor
-      key={activeFile.id}
+      key={viewStateScopeId}
       filePath={activeFile.filePath}
+      viewStateKey={editorViewStateKey}
       relativePath={activeFile.relativePath}
       content={editBuffers[activeFile.id] ?? fc.content}
       language={resolvedLanguage}
@@ -158,10 +169,11 @@ export function EditorContent({
           <div className="min-h-0 flex-1">
             {/* Why: same remount reasoning as MonacoEditor — see renderMonacoEditor. */}
             <RichMarkdownEditor
-              key={activeFile.id}
+              key={viewStateScopeId}
               fileId={activeFile.id}
               content={editorContent}
               filePath={activeFile.filePath}
+              scrollCacheKey={`${editorViewStateKey}:rich`}
               onContentChange={onContentChangeWithFm}
               onDirtyStateHint={handleDirtyStateHint}
               onSave={onSaveWithFm}
@@ -183,9 +195,10 @@ export function EditorContent({
           user out of preview entirely. Source mode remains available for edits. */}
           <div className="min-h-0 flex-1">
             <MarkdownPreview
-              key={activeFile.id}
+              key={viewStateScopeId}
               content={currentContent}
               filePath={activeFile.filePath}
+              scrollCacheKey={`${editorViewStateKey}:preview`}
             />
           </div>
         </div>
@@ -232,7 +245,13 @@ export function EditorContent({
   }
 
   if (isCombinedDiff) {
-    return <CombinedDiffViewer key={activeFile.id} file={activeFile} />
+    return (
+      <CombinedDiffViewer
+        key={viewStateScopeId}
+        file={activeFile}
+        viewStateKey={diffViewStateKey}
+      />
+    )
   }
 
   if (activeFile.mode === 'edit') {
@@ -306,8 +325,8 @@ export function EditorContent({
   }
   return (
     <DiffViewer
-      key={activeFile.id}
-      modelKey={activeFile.id}
+      key={viewStateScopeId}
+      modelKey={diffViewStateKey}
       originalContent={dc.originalContent}
       modifiedContent={editBuffers[activeFile.id] ?? dc.modifiedContent}
       language={resolvedLanguage}

@@ -57,9 +57,11 @@ type FileContent = {
 type DiffContent = GitDiffResult
 
 function EditorPanelInner({
-  activeFileId: activeFileIdProp
+  activeFileId: activeFileIdProp,
+  activeViewStateId: activeViewStateIdProp
 }: {
   activeFileId?: string | null
+  activeViewStateId?: string | null
 } = {}): React.JSX.Element | null {
   const openFiles = useAppStore((s) => s.openFiles)
   const globalActiveFileId = useAppStore((s) => s.activeFileId)
@@ -78,6 +80,7 @@ function EditorPanelInner({
   const settings = useAppStore((s) => s.settings)
 
   const activeFile = openFiles.find((f) => f.id === activeFileId) ?? null
+  const activeViewStateId = activeViewStateIdProp ?? activeFileId
 
   const [fileContents, setFileContents] = useState<Record<string, FileContent>>({})
   const [diffContents, setDiffContents] = useState<Record<string, DiffContent>>({})
@@ -92,6 +95,14 @@ function EditorPanelInner({
   const [prevDiffView, setPrevDiffView] = useState(settings?.diffDefaultView)
   const [pathMenuOpen, setPathMenuOpen] = useState(false)
   const [pathMenuPoint, setPathMenuPoint] = useState({ x: 0, y: 0 })
+
+  const deleteCacheEntriesByPrefix = useCallback(<T,>(cache: Map<string, T>, prefix: string) => {
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix)) {
+        cache.delete(key)
+      }
+    }
+  }, [])
 
   // Why: When the user changes their global diff-view preference in Settings,
   // sync the local toggle to match during render (avoids flash of stale diff mode).
@@ -133,6 +144,7 @@ function EditorPanelInner({
             // prop is provided. This convention is version-dependent.
             monaco.editor.getModel(monaco.Uri.parse(prevFile.filePath))?.dispose()
             scrollTopCache.delete(prevFile.filePath)
+            deleteCacheEntriesByPrefix(scrollTopCache, `${prevFile.filePath}::`)
             // Why: markdown edit tabs cycle through three view modes (source, rich,
             // preview), each caching scroll under a mode-scoped key. All must be
             // evicted so a reopened file starts fresh regardless of which mode was
@@ -140,6 +152,7 @@ function EditorPanelInner({
             scrollTopCache.delete(`${prevFile.filePath}:rich`)
             scrollTopCache.delete(`${prevFile.filePath}:preview`)
             cursorPositionCache.delete(prevFile.filePath)
+            deleteCacheEntriesByPrefix(cursorPositionCache, `${prevFile.filePath}::`)
             break
           case 'diff':
             // Why: kept diff models are keyed by tab id, not file path, because the
@@ -147,6 +160,7 @@ function EditorPanelInner({
             monaco.editor.getModel(monaco.Uri.parse(`diff:original:${prevId}`))?.dispose()
             monaco.editor.getModel(monaco.Uri.parse(`diff:modified:${prevId}`))?.dispose()
             diffViewStateCache.delete(prevId)
+            deleteCacheEntriesByPrefix(diffViewStateCache, `${prevId}::`)
             break
           case 'conflict-review':
             break
@@ -154,7 +168,7 @@ function EditorPanelInner({
       }
     }
     prevOpenFilesRef.current = currentFilesById
-  }, [openFiles])
+  }, [deleteCacheEntriesByPrefix, openFiles])
 
   // Load file content when active file changes
   useEffect(() => {
@@ -728,6 +742,7 @@ function EditorPanelInner({
       <Suspense fallback={loadingFallback}>
         <EditorContent
           activeFile={activeFile}
+          viewStateScopeId={activeViewStateId ?? activeFile.id}
           fileContents={fileContents}
           diffContents={diffContents}
           editBuffers={editorDrafts}

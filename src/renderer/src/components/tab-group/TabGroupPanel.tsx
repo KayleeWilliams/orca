@@ -212,7 +212,7 @@ export default function TabGroupPanel({
       onCloseFile={controller.closeItem}
       onActivateBrowserTab={controller.activateBrowser}
       onCloseBrowserTab={handleBrowserClose}
-      onCloseAllFiles={controller.closeAllFiles}
+      onCloseAllFiles={controller.closeAllEditorTabsInGroup}
       onPinFile={(_fileId, tabId) => {
         if (!tabId) {
           return
@@ -305,7 +305,7 @@ export default function TabGroupPanel({
                   </div>
                 }
               >
-                <EditorPanel activeFileId={activeTab.entityId} />
+                <EditorPanel activeFileId={activeTab.entityId} activeViewStateId={activeTab.id} />
               </Suspense>
             </div>
           )}

@@ -25,11 +25,13 @@ import {
 type MarkdownPreviewProps = {
   content: string
   filePath: string
+  scrollCacheKey: string
 }
 
 export default function MarkdownPreview({
   content,
-  filePath
+  filePath,
+  scrollCacheKey
 }: MarkdownPreviewProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -57,11 +59,9 @@ export default function MarkdownPreview({
       .trim()
   }, [frontMatter])
 
-  // Why: Each markdown viewing mode (source/rich/preview) produces different
-  // DOM structures and content heights. A scroll position saved in source mode
-  // has no meaningful correspondence in preview mode. Using mode-scoped keys
-  // means each mode remembers its own position independently.
-  const scrollCacheKey = `${filePath}:preview`
+  // Why: each split pane needs its own markdown preview viewport even when the
+  // underlying file is shared. The caller passes a pane-scoped cache key so
+  // duplicate tabs do not overwrite each other's preview scroll state.
 
   // Save scroll position with trailing throttle and synchronous unmount snapshot.
   useLayoutEffect(() => {

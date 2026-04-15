@@ -25,6 +25,7 @@ export function useTabGroupController({
   const closeTabsToRight = useAppStore((state) => state.closeTabsToRight)
   const reorderUnifiedTabs = useAppStore((state) => state.reorderUnifiedTabs)
   const createEmptySplitGroup = useAppStore((state) => state.createEmptySplitGroup)
+  const closeEmptyGroup = useAppStore((state) => state.closeEmptyGroup)
   const createTab = useAppStore((state) => state.createTab)
   const closeTab = useAppStore((state) => state.closeTab)
   const setActiveTab = useAppStore((state) => state.setActiveTab)
@@ -32,7 +33,6 @@ export function useTabGroupController({
   const setActiveTabType = useAppStore((state) => state.setActiveTabType)
   const createBrowserTab = useAppStore((state) => state.createBrowserTab)
   const closeFile = useAppStore((state) => state.closeFile)
-  const closeAllFiles = useAppStore((state) => state.closeAllFiles)
   const pinFile = useAppStore((state) => state.pinFile)
   const closeBrowserTab = useAppStore((state) => state.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((state) => state.setActiveBrowserTab)
@@ -141,25 +141,37 @@ export function useTabGroupController({
   )
 
   const createSplitGroup = useCallback(
-    (direction: 'left' | 'right' | 'up' | 'down') => {
+    (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId?: string) => {
+      const sourceTab =
+        groupTabs.find((candidate) =>
+          candidate.contentType === 'terminal' || candidate.contentType === 'browser'
+            ? candidate.entityId === sourceVisibleTabId
+            : candidate.id === sourceVisibleTabId
+        ) ?? activeTab
+
       focusGroup(worktreeId, groupId)
       const newGroupId = createEmptySplitGroup(worktreeId, groupId, direction)
-      if (!newGroupId || !activeTab) {
+      if (!newGroupId || !sourceTab) {
         return
       }
 
+      // Why: tab context-menu split actions are scoped to the tab that opened
+      // the menu, not whichever tab was already active in the group. Falling
+      // back to the active tab preserves the "+" menu behavior, which creates
+      // a split from the current surface without a tab-specific source ID.
+
       // Why: VS Code-style split actions leave the original group untouched and
       // seed the new group with equivalent visible content when possible.
-      if (activeTab.contentType === 'terminal') {
+      if (sourceTab.contentType === 'terminal') {
         const terminal = createTab(worktreeId, newGroupId)
         setActiveTab(terminal.id)
         setActiveTabType('terminal')
         return
       }
 
-      if (activeTab.contentType === 'browser') {
+      if (sourceTab.contentType === 'browser') {
         const browserTab = worktreeBrowserTabs.find(
-          (candidate) => candidate.id === activeTab.entityId
+          (candidate) => candidate.id === sourceTab.entityId
         )
         if (!browserTab) {
           return
@@ -171,22 +183,25 @@ export function useTabGroupController({
         return
       }
 
-      copyUnifiedTabToGroup(activeTab.id, newGroupId, {
-        entityId: activeTab.entityId,
-        label: activeTab.label,
-        isPinned: activeTab.isPinned
+      copyUnifiedTabToGroup(sourceTab.id, newGroupId, {
+        entityId: sourceTab.entityId,
+        label: sourceTab.label,
+        customLabel: sourceTab.customLabel,
+        color: sourceTab.color,
+        isPinned: sourceTab.isPinned
       })
-      setActiveFile(activeTab.entityId)
+      setActiveFile(sourceTab.entityId)
       setActiveTabType('editor')
     },
     [
-      activeTab,
       createBrowserTab,
       createEmptySplitGroup,
       createTab,
       copyUnifiedTabToGroup,
       focusGroup,
       groupId,
+      groupTabs,
+      activeTab,
       setActiveFile,
       setActiveTab,
       setActiveTabType,
@@ -225,9 +240,27 @@ export function useTabGroupController({
       for (const item of items) {
         closeItem(item.id)
       }
+      // Why: split creation can intentionally leave empty placeholder groups
+      // behind. Closing the group chrome must collapse those panes even when
+      // no tabs remain to trigger `closeUnifiedTab` cleanup.
+      closeEmptyGroup(worktreeId, groupId)
     },
     closeOthers: (itemId: string) => closeMany(closeOtherTabs(itemId)),
     closeToRight: (itemId: string) => closeMany(closeTabsToRight(itemId)),
+    closeAllEditorTabsInGroup: () => {
+      // Why: this action is launched from one split group's editor tab menu.
+      // In split layouts it must only close editor surfaces owned by that
+      // group, not every editor tab in the worktree.
+      for (const item of groupTabs) {
+        if (
+          item.contentType === 'editor' ||
+          item.contentType === 'diff' ||
+          item.contentType === 'conflict-review'
+        ) {
+          closeItem(item.id)
+        }
+      }
+    },
     reorderTabBar: (order: string[]) => {
       if (!group) {
         return
@@ -255,7 +288,6 @@ export function useTabGroupController({
       const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
       createBrowserTab(worktreeId, defaultUrl, { title: 'New Browser Tab' })
     },
-    closeAllFiles,
     pinFile,
     copyUnifiedTabToGroup,
     tabBarOrder,

@@ -56,7 +56,7 @@ export default function EditorFileTab({
   onCloseToRight: () => void
   onCloseAll: () => void
   onPin?: () => void
-  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     // Why: split groups can duplicate the same open file into multiple visible
@@ -200,20 +200,20 @@ export default function EditorFileTab({
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-48" sideOffset={0} align="start">
-          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
-            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('up', file.tabId ?? file.id)}>
+            <Rows2 className="mr-1.5 size-3.5" />
             Split Up
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
-            <Rows2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('down', file.tabId ?? file.id)}>
+            <Rows2 className="mr-1.5 size-3.5" />
             Split Down
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
-            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('left', file.tabId ?? file.id)}>
+            <Columns2 className="mr-1.5 size-3.5" />
             Split Left
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
-            <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+          <DropdownMenuItem onSelect={() => onSplitGroup('right', file.tabId ?? file.id)}>
+            <Columns2 className="mr-1.5 size-3.5" />
             Split Right
           </DropdownMenuItem>
           <DropdownMenuSeparator />

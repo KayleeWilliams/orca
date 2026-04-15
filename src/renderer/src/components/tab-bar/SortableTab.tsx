@@ -34,7 +34,7 @@ type SortableTabProps = {
   onSetCustomTitle: (tabId: string, title: string | null) => void
   onSetTabColor: (tabId: string, color: string | null) => void
   onToggleExpand: (tabId: string) => void
-  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down') => void
+  onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
 }
 
 export const TAB_COLORS = [
@@ -210,19 +210,19 @@ export default function SortableTab({
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-48" sideOffset={0} align="start">
-          <DropdownMenuItem onSelect={() => onSplitGroup('up')}>
+          <DropdownMenuItem onSelect={() => onSplitGroup('up', tab.id)}>
             <Rows2 className="mr-1.5 size-3.5" />
             Split Up
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('down')}>
+          <DropdownMenuItem onSelect={() => onSplitGroup('down', tab.id)}>
             <Rows2 className="mr-1.5 size-3.5" />
             Split Down
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('left')}>
+          <DropdownMenuItem onSelect={() => onSplitGroup('left', tab.id)}>
             <Columns2 className="mr-1.5 size-3.5" />
             Split Left
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onSplitGroup('right')}>
+          <DropdownMenuItem onSelect={() => onSplitGroup('right', tab.id)}>
             <Columns2 className="mr-1.5 size-3.5" />
             Split Right
           </DropdownMenuItem>
