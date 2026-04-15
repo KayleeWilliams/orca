@@ -23,7 +23,6 @@
     "typecheck": "tsc --noEmit -p config/tsconfig.node.json --composite false && tsc --noEmit -p config/tsconfig.cli.json --composite false && tsc --noEmit -p config/tsconfig.web.json --composite false",
     "start": "electron-vite preview",
     "dev": "node config/scripts/run-electron-vite-dev.mjs",
-    "repro:browser-tab-maximize": "node config/scripts/repro-browser-tab-maximize.mjs",
     "build:relay": "node scripts/build-relay.mjs",
     "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false",
     "build:electron-vite": "node config/scripts/run-electron-vite-build.mjs",
