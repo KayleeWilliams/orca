@@ -47,15 +47,18 @@ export function SshDisconnectedDialog({
     try {
       await window.api.ssh.connect({ targetId })
       onOpenChange(false)
-      toast.success(`Reconnected to ${targetLabel}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Reconnection failed')
     } finally {
       setConnecting(false)
     }
-  }, [targetId, targetLabel, onOpenChange])
+  }, [targetId, onOpenChange])
 
-  const isConnecting = connecting || status === 'reconnecting' || status === 'connecting'
+  const isConnecting =
+    connecting ||
+    status === 'connecting' ||
+    status === 'deploying-relay' ||
+    status === 'reconnecting'
   const message = isConnecting
     ? 'Reconnecting to the remote host...'
     : (STATUS_MESSAGES[status] ?? 'This remote repository is not connected.')
@@ -63,40 +66,45 @@ export function SshDisconnectedDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent className="sm:max-w-sm gap-3 p-5" showCloseButton={false}>
+        <DialogHeader className="gap-1">
+          <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
             {isConnecting ? (
-              <Loader2 className="size-5 text-yellow-500 animate-spin" />
+              <Loader2 className="size-4 text-yellow-500 animate-spin" />
             ) : (
-              <WifiOff className="size-5 text-muted-foreground" />
+              <WifiOff className="size-4 text-muted-foreground" />
             )}
             {isConnecting ? 'Reconnecting...' : 'SSH Disconnected'}
           </DialogTitle>
-          <DialogDescription className="pt-1">{message}</DialogDescription>
+          <DialogDescription className="text-xs">{message}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/40 px-4 py-3">
-          <Globe className="size-4 shrink-0 text-muted-foreground" />
+        <div className="flex items-center gap-2.5 rounded-md border border-border/50 bg-card/40 px-3 py-2">
+          <Globe className="size-3.5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            <span className="text-sm font-medium">{targetLabel}</span>
+            <span className="text-xs font-medium">{targetLabel}</span>
           </div>
           {isConnecting ? (
-            <Loader2 className="size-4 shrink-0 text-yellow-500 animate-spin" />
+            <Loader2 className="size-3.5 shrink-0 text-yellow-500 animate-spin" />
           ) : (
-            <span className={`size-2 shrink-0 rounded-full ${statusColor(status)}`} />
+            <span className={`size-1.5 shrink-0 rounded-full ${statusColor(status)}`} />
           )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isConnecting}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={isConnecting}
+          >
             Dismiss
           </Button>
           {showReconnect && (
-            <Button onClick={() => void handleReconnect()} disabled={isConnecting}>
+            <Button size="sm" onClick={() => void handleReconnect()} disabled={isConnecting}>
               {isConnecting ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                   Connecting...
                 </>
               ) : (

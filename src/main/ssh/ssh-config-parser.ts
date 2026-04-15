@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'fs'
+import { execFile } from 'child_process'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { SshTarget } from '../../shared/ssh-types'
@@ -137,6 +138,7 @@ export function sshConfigHostsToTargets(
     targets.push({
       id: `ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       label,
+      configHost: entry.host,
       host: effectiveHost,
       port: entry.port ?? 22,
       username: entry.user ?? '',
@@ -147,4 +149,72 @@ export function sshConfigHostsToTargets(
   }
 
   return targets
+}
+
+// ── ssh -G config resolution ──────────────────────────────────────────
+
+export type SshResolvedConfig = {
+  hostname: string
+  user?: string
+  port: number
+  identityFile: string[]
+  forwardAgent: boolean
+  proxyCommand?: string
+  proxyJump?: string
+}
+
+const SSH_G_TIMEOUT_MS = 5000
+
+// Why: `ssh -G <host>` asks OpenSSH to resolve the full effective config
+// for a host, including Include directives, Match blocks, wildcard
+// inheritance, and ProxyCommand expansion. This gives us correct config
+// resolution without reimplementing OpenSSH's complex matching logic.
+export function resolveWithSshG(host: string): Promise<SshResolvedConfig | null> {
+  return new Promise((resolve) => {
+    // Why: '--' prevents a host label starting with '-' from being interpreted
+    // as an SSH flag (classic argument injection vector).
+    execFile('ssh', ['-G', '--', host], { timeout: SSH_G_TIMEOUT_MS }, (err, stdout) => {
+      if (err) {
+        resolve(null)
+        return
+      }
+      resolve(parseSshGOutput(stdout))
+    })
+  })
+}
+
+export function parseSshGOutput(stdout: string): SshResolvedConfig {
+  const map = new Map<string, string>()
+  const identityFiles: string[] = []
+
+  for (const line of stdout.split('\n')) {
+    const spaceIdx = line.indexOf(' ')
+    if (spaceIdx === -1) {
+      continue
+    }
+    const key = line.substring(0, spaceIdx).toLowerCase()
+    const value = line.substring(spaceIdx + 1).trim()
+    if (key === 'identityfile') {
+      identityFiles.push(resolveHomePath(value))
+    } else {
+      map.set(key, value)
+    }
+  }
+
+  // Why: `ssh -G` outputs `proxycommand none` / `proxyjump none` when no
+  // proxy is configured. Treating "none" as real would spawn bad commands.
+  const rawProxy = map.get('proxycommand')
+  const proxyCommand = rawProxy && rawProxy !== 'none' ? rawProxy : undefined
+  const rawJump = map.get('proxyjump')
+  const proxyJump = rawJump && rawJump !== 'none' ? rawJump : undefined
+
+  return {
+    hostname: map.get('hostname') ?? '',
+    user: map.get('user') || undefined,
+    port: parseInt(map.get('port') ?? '22', 10),
+    identityFile: identityFiles,
+    forwardAgent: map.get('forwardagent') === 'yes',
+    proxyCommand,
+    proxyJump
+  }
 }

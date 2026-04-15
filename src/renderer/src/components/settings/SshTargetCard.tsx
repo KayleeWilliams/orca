@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Loader2, MonitorSmartphone, Pencil, Server, Trash2, Wifi, WifiOff } from 'lucide-react'
 import type {
   SshTarget,
@@ -11,8 +12,6 @@ import { Button } from '../ui/button'
 export const STATUS_LABELS: Record<SshConnectionStatus, string> = {
   disconnected: 'Disconnected',
   connecting: 'Connecting\u2026',
-  'host-key-verification': 'Verifying host key\u2026',
-  'auth-challenge': 'Authenticating\u2026',
   'auth-failed': 'Auth failed',
   'deploying-relay': 'Deploying relay\u2026',
   connected: 'Connected',
@@ -26,8 +25,6 @@ export function statusColor(status: SshConnectionStatus): string {
     case 'connected':
       return 'bg-emerald-500'
     case 'connecting':
-    case 'host-key-verification':
-    case 'auth-challenge':
     case 'deploying-relay':
     case 'reconnecting':
       return 'bg-yellow-500'
@@ -41,9 +38,7 @@ export function statusColor(status: SshConnectionStatus): string {
 }
 
 export function isConnecting(status: SshConnectionStatus): boolean {
-  return ['connecting', 'host-key-verification', 'auth-challenge', 'deploying-relay'].includes(
-    status
-  )
+  return ['connecting', 'deploying-relay', 'reconnecting'].includes(status)
 }
 
 // ── SshTargetCard ────────────────────────────────────────────────────
@@ -70,6 +65,23 @@ export function SshTargetCard({
   onRemove
 }: SshTargetCardProps): React.JSX.Element {
   const status: SshConnectionStatus = state?.status ?? 'disconnected'
+  const [actionInFlight, setActionInFlight] = useState<'connect' | 'disconnect' | null>(null)
+
+  const handleConnect = (): void => {
+    if (actionInFlight) {
+      return
+    }
+    setActionInFlight('connect')
+    Promise.resolve(onConnect(target.id)).finally(() => setActionInFlight(null))
+  }
+
+  const handleDisconnect = (): void => {
+    if (actionInFlight) {
+      return
+    }
+    setActionInFlight('disconnect')
+    Promise.resolve(onDisconnect(target.id)).finally(() => setActionInFlight(null))
+  }
 
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/40 px-4 py-3">
@@ -95,8 +107,9 @@ export function SshTargetCard({
           <Button
             variant="ghost"
             size="xs"
-            onClick={() => onDisconnect(target.id)}
+            onClick={handleDisconnect}
             className="gap-1.5"
+            disabled={actionInFlight !== null}
           >
             <WifiOff className="size-3" />
             Disconnect
@@ -111,10 +124,15 @@ export function SshTargetCard({
             <Button
               variant="ghost"
               size="xs"
-              onClick={() => onConnect(target.id)}
+              onClick={handleConnect}
               className="gap-1.5"
+              disabled={actionInFlight !== null}
             >
-              <Wifi className="size-3" />
+              {actionInFlight === 'connect' ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Wifi className="size-3" />
+              )}
               Connect
             </Button>
             <Button

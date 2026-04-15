@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { parseSshConfig, sshConfigHostsToTargets } from './ssh-config-parser'
+import { parseSshConfig, sshConfigHostsToTargets, parseSshGOutput } from './ssh-config-parser'
 
 vi.mock('os', () => ({
   homedir: () => '/home/testuser'
@@ -209,3 +209,105 @@ describe('sshConfigHostsToTargets', () => {
     expect(targets[0].jumpHost).toBe('bastion.example.com')
   })
 })
+
+// ── parseSshGOutput ──────────────────────────────────────────────────
+
+describe('parseSshGOutput', () => {
+  it('parses hostname, user, port from ssh -G output', () => {
+    const output = [
+      'hostname 192.168.1.100',
+      'user deploy',
+      'port 2222',
+      'identityfile /home/testuser/.ssh/id_ed25519',
+      'forwardagent no'
+    ].join('\n')
+
+    const result = parseSshGOutput(output)
+    expect(result.hostname).toBe('192.168.1.100')
+    expect(result.user).toBe('deploy')
+    expect(result.port).toBe(2222)
+    expect(result.identityFile).toEqual(['/home/testuser/.ssh/id_ed25519'])
+    expect(result.forwardAgent).toBe(false)
+  })
+
+  it('collects multiple identity files', () => {
+    const output = [
+      'hostname example.com',
+      'identityfile ~/.ssh/id_ed25519',
+      'identityfile ~/.ssh/id_rsa',
+      'port 22'
+    ].join('\n')
+
+    const result = parseSshGOutput(output)
+    expect(result.identityFile).toEqual([
+      '/home/testuser/.ssh/id_ed25519',
+      '/home/testuser/.ssh/id_rsa'
+    ])
+  })
+
+  it('parses forwardagent yes', () => {
+    const output = 'hostname example.com\nforwardagent yes\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.forwardAgent).toBe(true)
+  })
+
+  it('defaults port to 22 when missing', () => {
+    const output = 'hostname example.com'
+    const result = parseSshGOutput(output)
+    expect(result.port).toBe(22)
+  })
+
+  it('returns empty hostname when missing', () => {
+    const output = 'user admin\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.hostname).toBe('')
+  })
+
+  it('returns undefined user when missing', () => {
+    const output = 'hostname example.com\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.user).toBeUndefined()
+  })
+
+  it('handles empty output', () => {
+    const result = parseSshGOutput('')
+    expect(result.hostname).toBe('')
+    expect(result.port).toBe(22)
+    expect(result.identityFile).toEqual([])
+  })
+
+  it('skips lines without spaces', () => {
+    const output = 'hostname example.com\nbadline\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.hostname).toBe('example.com')
+    expect(result.port).toBe(22)
+  })
+
+  it('parses proxycommand and filters "none"', () => {
+    const output = 'hostname example.com\nproxycommand ssh -W %h:%p bastion\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.proxyCommand).toBe('ssh -W %h:%p bastion')
+
+    const noneOutput = 'hostname example.com\nproxycommand none\nport 22'
+    const noneResult = parseSshGOutput(noneOutput)
+    expect(noneResult.proxyCommand).toBeUndefined()
+  })
+
+  it('parses proxyjump and filters "none"', () => {
+    const output = 'hostname example.com\nproxyjump bastion.example.com\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.proxyJump).toBe('bastion.example.com')
+
+    const noneOutput = 'hostname example.com\nproxyjump none\nport 22'
+    const noneResult = parseSshGOutput(noneOutput)
+    expect(noneResult.proxyJump).toBeUndefined()
+  })
+
+  it('handles ~ expansion in identity file paths', () => {
+    const output = 'hostname example.com\nidentityfile ~/custom_key\nport 22'
+    const result = parseSshGOutput(output)
+    expect(result.identityFile).toEqual(['/home/testuser/custom_key'])
+  })
+})
+
+// Why: resolveWithSshG tests are in ssh-config-resolver.test.ts (max-lines).

@@ -1,39 +1,33 @@
-import { Client as SshClient } from 'ssh2'
-import type { ConnectConfig, ClientChannel } from 'ssh2'
-import { type ChildProcess, execFileSync } from 'child_process'
-import { readFileSync } from 'fs'
-import { createHash } from 'crypto'
+import { readFileSync, existsSync } from 'fs'
+import { spawn, type ChildProcess } from 'child_process'
+import { homedir } from 'os'
+import { join } from 'path'
+import { Duplex } from 'stream'
 import type { Socket as NetSocket } from 'net'
+import type { ConnectConfig } from 'ssh2'
 import type { SshTarget, SshConnectionState } from '../../shared/ssh-types'
+import type { SshResolvedConfig } from './ssh-config-parser'
 
-// Why: types live here (not ssh-connection.ts) to break a circular import.
-
-export type HostKeyVerifyRequest = {
-  host: string
-  ip: string
-  fingerprint: string
-  keyType: string
-}
-
-export type AuthChallengeRequest = {
-  targetId: string
-  name: string
-  instructions: string
-  prompts: { prompt: string; echo: boolean }[]
-}
+export type SshCredentialKind = 'passphrase' | 'password'
 
 export type SshConnectionCallbacks = {
   onStateChange: (targetId: string, state: SshConnectionState) => void
-  onHostKeyVerify: (req: HostKeyVerifyRequest) => Promise<boolean>
-  onAuthChallenge: (req: AuthChallengeRequest) => Promise<string[]>
-  onPasswordPrompt: (targetId: string) => Promise<string | null>
+  onCredentialRequest?: (
+    targetId: string,
+    kind: SshCredentialKind,
+    detail: string
+  ) => Promise<string | null>
+}
+
+export function isPassphraseError(err: Error): boolean {
+  const msg = err.message.toLowerCase()
+  return msg.includes('passphrase') || msg.includes('encrypted key') || msg.includes('bad decrypt')
 }
 
 export const INITIAL_RETRY_ATTEMPTS = 5
 export const INITIAL_RETRY_DELAY_MS = 2000
 export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 5000, 10000, 10000, 10000, 30000, 30000]
-export const AUTH_CHALLENGE_TIMEOUT_MS = 60_000
-export const CONNECT_TIMEOUT_MS = 15_000
+export const CONNECT_TIMEOUT_MS = 30_000
 
 const TRANSIENT_ERROR_CODES = new Set([
   'ETIMEDOUT',
@@ -43,6 +37,15 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ENETUNREACH',
   'EAI_AGAIN'
 ])
+
+export function isAuthError(err: Error): boolean {
+  const msg = err.message.toLowerCase()
+  return (
+    msg.includes('all configured authentication methods failed') ||
+    msg.includes('authentication failed') ||
+    (err as { level?: string }).level === 'client-authentication'
+  )
+}
 
 export function isTransientError(err: Error): boolean {
   const code = (err as NodeJS.ErrnoException).code
@@ -65,235 +68,161 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// Why: prevents shell injection when interpolating into ProxyCommand.
 export function shellEscape(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`
 }
 
-// Why: ssh2 doesn't check known_hosts. Without this, every connection blocks
-// on a UI prompt that isn't wired up yet, causing a silent timeout.
-function isHostKnown(host: string, port: number): boolean {
-  try {
-    const lookup = port === 22 ? host : `[${host}]:${port}`
-    execFileSync('ssh-keygen', ['-F', lookup], { stdio: 'pipe', timeout: 3000 })
-    return true
-  } catch {
-    return false
-  }
+function cmdEscape(s: string): string {
+  return `"${s.replace(/"/g, '""')}"`
 }
 
-// ── Auth handler state (passed in by the connection) ────────────────
+// Why: ssh2 only tries keys that are explicitly provided. Users with keys in
+// standard locations (e.g. ~/.ssh/id_ed25519) but no SSH agent running would
+// fail to authenticate. Probing default paths matches VS Code's _findDefaultKeyFile.
+const DEFAULT_KEY_NAMES = ['id_ed25519', 'id_rsa', 'id_ecdsa', 'id_dsa', 'id_xmss']
 
-export type AuthHandlerState = {
-  agentAttempted: boolean
-  keyAttempted: boolean
-  setState: (status: string, error?: string) => void
-}
+const DEFAULT_KEY_PATHS = DEFAULT_KEY_NAMES.map((name) => `~/.ssh/${name}`)
 
-export type ConnectConfigResult = {
-  config: ConnectConfig
-  jumpClient: SshClient | null
-  proxyProcess: ChildProcess | null
-}
-export async function buildConnectConfig(
-  target: SshTarget,
-  callbacks: SshConnectionCallbacks,
-  authState: AuthHandlerState
-): Promise<ConnectConfigResult> {
-  const config: ConnectConfig = {
-    host: target.host,
-    port: target.port,
-    username: target.username,
-    readyTimeout: CONNECT_TIMEOUT_MS,
-    keepaliveInterval: 5000,
-    keepaliveCountMax: 4,
+// Why: parseSshGOutput expands ~ to homedir(), so resolved identityFile
+// paths won't match the ~/... form in DEFAULT_KEY_PATHS. Pre-expand for
+// the comparison in buildConnectConfig.
+const EXPANDED_DEFAULT_KEY_PATHS = DEFAULT_KEY_NAMES.map((name) => join(homedir(), '.ssh', name))
 
-    // Why: ssh2's hostVerifier callback form `(key, verify) => void` blocks
-    // the handshake until `verify(true/false)` is called. We check
-    // known_hosts first so trusted hosts connect without a UI prompt.
-    hostVerifier: (key: Buffer, verify: (accept: boolean) => void) => {
-      if (isHostKnown(target.host, target.port)) {
-        verify(true)
-        return
-      }
-
-      const fingerprint = createHash('sha256').update(key).digest('base64')
-      const keyType = 'unknown'
-
-      authState.setState('host-key-verification')
-      callbacks
-        .onHostKeyVerify({
-          host: target.host,
-          ip: target.host,
-          fingerprint,
-          keyType
-        })
-        .then((accepted) => {
-          verify(accepted)
-        })
-        .catch(() => {
-          verify(false)
-        })
-    },
-
-    authHandler: (methodsLeft, _partialSuccess, callback) => {
-      // ssh2 passes null on the first call, meaning "try whatever you want".
-      // Treat it as all methods available.
-      const methods = methodsLeft ?? ['publickey', 'keyboard-interactive', 'password']
-
-      // Try auth methods in order: agent -> publickey -> keyboard-interactive -> password
-      // The custom authHandler overrides ssh2's built-in sequence, so we must
-      // explicitly try agent auth here -- the config.agent field alone is not enough.
-      if (methods.includes('publickey') && process.env.SSH_AUTH_SOCK && !authState.agentAttempted) {
-        authState.agentAttempted = true
-        callback({
-          type: 'agent' as const,
-          agent: process.env.SSH_AUTH_SOCK,
-          username: target.username
-        } as never)
-        return
-      }
-
-      if (methods.includes('publickey') && target.identityFile && !authState.keyAttempted) {
-        authState.keyAttempted = true
-        try {
-          callback({
-            type: 'publickey' as const,
-            username: target.username,
-            key: readFileSync(target.identityFile)
-          } as never)
-          return
-        } catch {
-          // Key file unreadable -- fall through to next method
-        }
-      }
-
-      if (methods.includes('keyboard-interactive')) {
-        callback({
-          type: 'keyboard-interactive' as const,
-          username: target.username,
-          prompt: async (
-            _name: string,
-            instructions: string,
-            _lang: string,
-            prompts: { prompt: string; echo: boolean }[],
-            finish: (responses: string[]) => void
-          ) => {
-            authState.setState('auth-challenge')
-
-            const timeoutPromise = sleep(AUTH_CHALLENGE_TIMEOUT_MS).then(() => null)
-            const responsePromise = callbacks.onAuthChallenge({
-              targetId: target.id,
-              name: _name,
-              instructions,
-              prompts
-            })
-
-            const responses = await Promise.race([responsePromise, timeoutPromise])
-
-            if (!responses) {
-              finish([])
-              return
-            }
-            finish(responses)
-          }
-        } as never)
-        return
-      }
-
-      if (methods.includes('password')) {
-        callbacks
-          .onPasswordPrompt(target.id)
-          .then((password) => {
-            if (password === null) {
-              authState.setState('auth-failed', 'Authentication cancelled')
-              callback(false as never)
-              return
-            }
-            callback({
-              type: 'password' as const,
-              username: target.username,
-              password
-            } as never)
-          })
-          .catch(() => {
-            callback(false as never)
-          })
-        return
-      }
-
-      authState.setState('auth-failed', 'No supported authentication methods')
-      callback(false as never)
-    }
-  }
-
-  // If an identity file is specified, try it for the initial attempt
-  if (target.identityFile) {
+export function findDefaultKeyFile(): { path: string; contents: Buffer } | undefined {
+  for (const keyPath of DEFAULT_KEY_PATHS) {
+    const resolved = keyPath.replace(/^~/, homedir())
     try {
-      config.privateKey = readFileSync(target.identityFile)
+      if (!existsSync(resolved)) {
+        continue
+      }
+      const contents = readFileSync(resolved)
+      return { path: keyPath, contents }
     } catch {
-      // Will fall through to other auth methods
+      continue
     }
   }
+  return undefined
+}
 
-  // Try SSH agent by default
+// Why: matches VS Code's _connectSSH auth method selection (lines 606-611, 727-758).
+// ssh2 handles the auth negotiation natively — no custom authHandler needed.
+export function buildConnectConfig(
+  target: SshTarget,
+  resolved: SshResolvedConfig | null
+): ConnectConfig {
+  const effectiveHost = target.host || resolved?.hostname || target.label
+  const effectivePort = target.port || resolved?.port || 22
+  const effectiveUser = target.username || resolved?.user || ''
+
+  const config: Record<string, unknown> = {
+    host: effectiveHost,
+    port: effectivePort,
+    username: effectiveUser,
+    readyTimeout: CONNECT_TIMEOUT_MS,
+    keepaliveInterval: 15_000
+  }
+
+  // Why: always provide agent when available. Unlike VS Code (which has a
+  // passphrase prompt UI), we can't decrypt passphrase-protected keys at
+  // runtime. The agent holds decrypted keys, so it must always be a
+  // fallback even when an explicit key file is also provided.
   if (process.env.SSH_AUTH_SOCK) {
     config.agent = process.env.SSH_AUTH_SOCK
   }
 
-  let proxyProcess: ChildProcess | null = null
+  const resolvedIdentity = resolved?.identityFile?.[0]
+  const explicitKey =
+    target.identityFile ||
+    (resolvedIdentity && !EXPANDED_DEFAULT_KEY_PATHS.includes(resolvedIdentity)
+      ? resolvedIdentity
+      : undefined)
+
+  if (explicitKey) {
+    try {
+      config.privateKey = readFileSync(explicitKey.replace(/^~/, homedir()))
+    } catch {
+      // Key unreadable — agent will handle auth if available
+    }
+  } else {
+    const fallback = findDefaultKeyFile()
+    if (fallback) {
+      config.privateKey = fallback.contents
+    }
+  }
+
+  return config as ConnectConfig
+}
+
+// Why: ProxyJump and jumpHost are syntactic sugar for ProxyCommand.
+// OpenSSH internally converts `ProxyJump bastion` to
+// `ProxyCommand ssh -W %h:%p bastion`. We do the same so that ssh2
+// gets a single proxy spawn path regardless of how the tunnel was configured.
+export type EffectiveProxy =
+  | { kind: 'proxy-command'; command: string }
+  | { kind: 'jump-host'; jumpHost: string }
+
+export function resolveEffectiveProxy(
+  target: SshTarget,
+  resolved: SshResolvedConfig | null
+): EffectiveProxy | undefined {
   if (target.proxyCommand) {
-    const { spawn } = await import('child_process')
-    const expanded = target.proxyCommand
-      .replace(/%h/g, shellEscape(target.host))
-      .replace(/%p/g, shellEscape(String(target.port)))
-      .replace(/%r/g, shellEscape(target.username))
-    proxyProcess = spawn('/bin/sh', ['-c', expanded], { stdio: ['pipe', 'pipe', 'pipe'] })
-    // Why: a single PassThrough used for both directions creates a feedback loop —
-    // proxy stdout data flows through the PassThrough and gets piped right back to
-    // proxy stdin. Use a Duplex wrapper where reads come from stdout and writes
-    // go to stdin independently.
-    const { Duplex } = await import('stream')
-    const stream = new Duplex({
-      read() {},
-      write(chunk, _encoding, cb) {
-        proxyProcess!.stdin!.write(chunk, cb)
-      }
-    })
-    proxyProcess.stdout!.on('data', (data) => stream.push(data))
-    proxyProcess.stdout!.on('end', () => stream.push(null))
-    config.sock = stream as unknown as NetSocket
+    return { kind: 'proxy-command', command: target.proxyCommand }
   }
-
-  // Wire JumpHost: establish an intermediate SSH connection and forward a channel.
-  // Why: the jump client is returned to the caller so it can be destroyed on
-  // disconnect — otherwise the intermediate TCP connection leaks.
-  let jumpClient: SshClient | null = null
-  if (target.jumpHost && !target.proxyCommand) {
-    jumpClient = new SshClient()
-    const jumpConn = jumpClient
-    await new Promise<void>((resolve, reject) => {
-      jumpConn.on('ready', () => resolve())
-      jumpConn.on('error', (err) => reject(err))
-      jumpConn.connect({
-        host: target.jumpHost!,
-        port: 22,
-        username: target.username,
-        agent: process.env.SSH_AUTH_SOCK ?? undefined,
-        readyTimeout: CONNECT_TIMEOUT_MS
-      })
-    })
-    const forwardedChannel = await new Promise<ClientChannel>((resolve, reject) => {
-      jumpConn.forwardOut('127.0.0.1', 0, target.host, target.port, (err, channel) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(channel)
-        }
-      })
-    })
-    config.sock = forwardedChannel as unknown as NetSocket
+  if (resolved?.proxyCommand) {
+    return { kind: 'proxy-command', command: resolved.proxyCommand }
   }
+  const jump = target.jumpHost || resolved?.proxyJump
+  if (jump) {
+    return { kind: 'jump-host', jumpHost: jump }
+  }
+  return undefined
+}
 
-  return { config, jumpClient, proxyProcess }
+// Why: ssh2 doesn't natively support ProxyCommand. When the SSH config
+// specifies one (e.g. `cloudflared access ssh --hostname %h`), we spawn
+// the command and bridge its stdin/stdout into a Duplex stream that ssh2
+// uses as its transport socket via `config.sock`.
+function getShellSpawnConfig(command: string): { file: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const comspec = process.env.ComSpec || 'cmd.exe'
+    return { file: comspec, args: ['/d', '/s', '/c', command] }
+  }
+  return { file: '/bin/sh', args: ['-c', command] }
+}
+
+export function spawnProxyCommand(
+  proxy: EffectiveProxy,
+  host: string,
+  port: number,
+  user: string
+): { process: ChildProcess; sock: NetSocket } {
+  const proc =
+    proxy.kind === 'jump-host'
+      ? // Why: ProxyJump is structured input, not a shell snippet. Spawn ssh
+        // directly so jump-host values cannot escape through shell parsing.
+        spawn('ssh', ['-W', `${host}:${port}`, '--', proxy.jumpHost], { stdio: ['pipe', 'pipe', 'pipe'] })
+      : (() => {
+          const escape = process.platform === 'win32' ? cmdEscape : shellEscape
+          const expanded = proxy.command
+            .replace(/%h/g, escape(host))
+            .replace(/%p/g, escape(String(port)))
+            .replace(/%r/g, escape(user))
+          const shell = getShellSpawnConfig(expanded)
+          return spawn(shell.file, shell.args, { stdio: ['pipe', 'pipe', 'pipe'] })
+        })()
+
+  // Why: a single PassThrough for both directions creates a feedback loop.
+  // Reads come from the proxy's stdout; writes go to its stdin.
+  const stream = new Duplex({
+    read() {},
+    write(chunk, _encoding, cb) {
+      proc.stdin!.write(chunk, cb)
+    }
+  })
+  proc.stdout!.on('data', (data) => stream.push(data))
+  proc.stdout!.on('end', () => stream.push(null))
+  proc.stdin!.on('error', (err) => stream.destroy(err))
+  proc.on('error', (err) => stream.destroy(err))
+
+  return { process: proc, sock: stream as unknown as NetSocket }
 }

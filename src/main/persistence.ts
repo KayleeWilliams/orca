@@ -52,6 +52,12 @@ function normalizeSortBy(sortBy: unknown): 'name' | 'recent' | 'repo' {
   return getDefaultUIState().sortBy
 }
 
+// Why: old persisted targets predate configHost. Default to label-based lookup
+// so imported SSH aliases keep resolving through ssh -G after upgrade.
+function normalizeSshTarget(t: SshTarget): SshTarget {
+  return { ...t, configHost: t.configHost ?? t.label ?? t.host }
+}
+
 export class Store {
   private state: PersistedState
   private writeTimer: ReturnType<typeof setTimeout> | null = null
@@ -88,7 +94,7 @@ export class Store {
             sortBy: normalizeSortBy(parsed.ui?.sortBy)
           },
           workspaceSession: { ...defaults.workspaceSession, ...parsed.workspaceSession },
-          sshTargets: parsed.sshTargets ?? []
+          sshTargets: (parsed.sshTargets ?? []).map(normalizeSshTarget)
         }
       }
     } catch (err) {
@@ -311,18 +317,17 @@ export class Store {
   // ── SSH Targets ────────────────────────────────────────────────────
 
   getSshTargets(): SshTarget[] {
-    return this.state.sshTargets ?? []
+    return (this.state.sshTargets ?? []).map(normalizeSshTarget)
   }
 
   getSshTarget(id: string): SshTarget | undefined {
-    return this.state.sshTargets?.find((t) => t.id === id)
+    const target = this.state.sshTargets?.find((t) => t.id === id)
+    return target ? normalizeSshTarget(target) : undefined
   }
 
   addSshTarget(target: SshTarget): void {
-    if (!this.state.sshTargets) {
-      this.state.sshTargets = []
-    }
-    this.state.sshTargets.push(target)
+    this.state.sshTargets ??= []
+    this.state.sshTargets.push(normalizeSshTarget(target))
     this.scheduleSave()
   }
 
@@ -331,7 +336,7 @@ export class Store {
     if (!target) {
       return null
     }
-    Object.assign(target, updates)
+    Object.assign(target, updates, normalizeSshTarget({ ...target, ...updates }))
     this.scheduleSave()
     return { ...target }
   }

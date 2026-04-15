@@ -22,6 +22,12 @@ export type RelayDeployResult = {
   platform: RelayPlatform
 }
 
+// Why: individual exec commands have 30s timeouts, but the full deploy
+// pipeline (detect platform → check existing → upload → npm install →
+// launch) has no overall bound. A hanging `npm install` or slow SFTP
+// upload could block the connection indefinitely.
+const RELAY_DEPLOY_TIMEOUT_MS = 120_000
+
 /**
  * Deploy the relay to the remote host and launch it.
  *
@@ -34,6 +40,24 @@ export type RelayDeployResult = {
  * 6. Return the transport (relay's stdin/stdout) for multiplexer use
  */
 export async function deployAndLaunchRelay(
+  conn: SshConnection,
+  onProgress?: (status: string) => void
+): Promise<RelayDeployResult> {
+  let timeoutHandle: ReturnType<typeof setTimeout>
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`Relay deployment timed out after ${RELAY_DEPLOY_TIMEOUT_MS / 1000}s`))
+    }, RELAY_DEPLOY_TIMEOUT_MS)
+  })
+
+  try {
+    return await Promise.race([deployAndLaunchRelayInner(conn, onProgress), timeoutPromise])
+  } finally {
+    clearTimeout(timeoutHandle!)
+  }
+}
+
+async function deployAndLaunchRelayInner(
   conn: SshConnection,
   onProgress?: (status: string) => void
 ): Promise<RelayDeployResult> {
@@ -50,9 +74,11 @@ export async function deployAndLaunchRelay(
   // Why: SFTP does not expand `~`, so we must resolve the remote home directory
   // explicitly. `echo $HOME` over exec gives us the absolute path.
   const remoteHome = (await execCommand(conn, 'echo $HOME')).trim()
-  // Why: a malicious or misconfigured remote could return a $HOME containing
-  // shell metacharacters. Validate it looks like a reasonable path.
-  if (!remoteHome || !/^\/[a-zA-Z0-9/_.-]+$/.test(remoteHome)) {
+  // Why: we only interpolate $HOME into single-quoted shell strings later, so
+  // this validation only needs to reject obviously unsafe control characters.
+  // Allow spaces and non-ASCII so valid home directories are not rejected.
+  // oxlint-disable-next-line no-control-regex
+  if (!remoteHome || !remoteHome.startsWith('/') || /[\u0000\r\n]/.test(remoteHome)) {
     throw new Error(`Remote $HOME is not a valid path: ${remoteHome.slice(0, 100)}`)
   }
   const remoteRelayDir = `${remoteHome}/${RELAY_REMOTE_DIR}/relay-v${RELAY_VERSION}`

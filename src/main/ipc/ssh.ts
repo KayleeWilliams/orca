@@ -11,10 +11,11 @@ import { registerSshPtyProvider } from './pty'
 import { registerSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { registerSshGitProvider } from '../providers/ssh-git-dispatch'
 import { SshPortForwardManager } from '../ssh/ssh-port-forward'
-import type { SshTarget, SshConnectionState } from '../../shared/ssh-types'
+import type { SshTarget, SshConnectionState, SshConnectionStatus } from '../../shared/ssh-types'
+import { isAuthError } from '../ssh/ssh-connection-utils'
 import { cleanupConnection, wireUpSshPtyEvents, reestablishRelayStack } from './ssh-relay-helpers'
-import { buildSshAuthCallbacks } from './ssh-auth-helpers'
 import { registerSshBrowseHandler } from './ssh-browse'
+import { requestCredential, registerCredentialHandler } from './ssh-passphrase'
 
 let sshStore: SshConnectionStore | null = null
 let connectionManager: SshConnectionManager | null = null
@@ -32,6 +33,7 @@ const initializedConnections = new Set<string>()
 // flash "connected" then "disconnected". Suppressing broadcasts during tests
 // avoids that visual glitch.
 const testingTargets = new Set<string>()
+const explicitRelaySetupTargets = new Set<string>()
 
 export function registerSshHandlers(
   store: Store,
@@ -59,7 +61,11 @@ export function registerSshHandlers(
 
   sshStore = new SshConnectionStore(store)
 
+  registerCredentialHandler(getMainWindow)
+
   const callbacks: SshConnectionCallbacks = {
+    onCredentialRequest: (targetId, kind, detail) =>
+      requestCredential(getMainWindow, targetId, kind, detail),
     onStateChange: (targetId: string, state: SshConnectionState) => {
       if (testingTargets.has(targetId)) {
         return
@@ -76,7 +82,8 @@ export function registerSshHandlers(
       if (
         state.status === 'connected' &&
         state.reconnectAttempt === 0 &&
-        initializedConnections.has(targetId)
+        initializedConnections.has(targetId) &&
+        !explicitRelaySetupTargets.has(targetId)
       ) {
         void reestablishRelayStack(
           targetId,
@@ -86,9 +93,7 @@ export function registerSshHandlers(
           portForwardManager
         )
       }
-    },
-
-    ...buildSshAuthCallbacks(getMainWindow)
+    }
   }
 
   connectionManager = new SshConnectionManager(callbacks)
@@ -129,21 +134,23 @@ export function registerSshHandlers(
     }
 
     let conn
+    explicitRelaySetupTargets.add(args.targetId)
     try {
       conn = await connectionManager!.connect(target)
     } catch (err) {
-      // Why: SshConnection.connect() sets its internal state to 'error', but
-      // the onStateChange callback may have been suppressed or the state may
-      // not have propagated to the renderer. Explicitly broadcast the error
-      // so the UI leaves 'connecting'/'host-key-verification'.
+      // Why: SshConnection.connect() sets its internal state, but the
+      // onStateChange callback may not have propagated to the renderer.
+      // Explicitly broadcast so the UI leaves 'connecting'.
+      const errObj = err instanceof Error ? err : new Error(String(err))
+      const status: SshConnectionStatus = isAuthError(errObj) ? 'auth-failed' : 'error'
       const win = getMainWindow()
       if (win && !win.isDestroyed()) {
         win.webContents.send('ssh:state-changed', {
           targetId: args.targetId,
           state: {
             targetId: args.targetId,
-            status: 'error',
-            error: err instanceof Error ? err.message : String(err),
+            status,
+            error: errObj.message,
             reconnectAttempt: 0
           }
         })
@@ -151,21 +158,16 @@ export function registerSshHandlers(
       throw err
     }
 
-    // Deploy relay and establish multiplexer
-    callbacks.onStateChange(args.targetId, {
-      targetId: args.targetId,
-      status: 'deploying-relay',
-      error: null,
-      reconnectAttempt: 0
-    })
-
     try {
-      const { transport } = await deployAndLaunchRelay(conn, (status) => {
-        const win = getMainWindow()
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('ssh:deploy-progress', { targetId: args.targetId, status })
-        }
+      // Deploy relay and establish multiplexer
+      callbacks.onStateChange(args.targetId, {
+        targetId: args.targetId,
+        status: 'deploying-relay',
+        error: null,
+        reconnectAttempt: 0
       })
+
+      const { transport } = await deployAndLaunchRelay(conn)
 
       const mux = new SshChannelMultiplexer(transport)
       activeMultiplexers.set(args.targetId, mux)
@@ -202,6 +204,8 @@ export function registerSshHandlers(
       // Relay deployment failed — disconnect SSH
       await connectionManager!.disconnect(args.targetId)
       throw err
+    } finally {
+      explicitRelaySetupTargets.delete(args.targetId)
     }
 
     return connectionManager!.getState(args.targetId)
