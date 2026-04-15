@@ -458,14 +458,18 @@ const WorktreeList = React.memo(function WorktreeList() {
     const structuralChange = worktreeCount !== prevWorktreeCountRef.current
     prevWorktreeCountRef.current = worktreeCount
 
-    if (structuralChange) {
+    // Why: 'recent' sort order only changes on explicit user action (clicking
+    // a worktree), not from background signal churn like smart sort. Applying
+    // immediately avoids a 3-second lag between clicking and seeing the
+    // worktree move to the top.
+    if (structuralChange || sortBy === 'recent') {
       setDebouncedSortEpoch(sortEpoch)
       return
     }
 
     const timer = setTimeout(() => setDebouncedSortEpoch(sortEpoch), SORT_SETTLE_MS)
     return () => clearTimeout(timer)
-  }, [sortEpoch, debouncedSortEpoch, worktreeCount])
+  }, [sortEpoch, debouncedSortEpoch, worktreeCount, sortBy])
 
   // Why a latching ref: we need to distinguish "app just started, no PTYs
   // have spawned yet" from "user closed all terminals mid-session." The
