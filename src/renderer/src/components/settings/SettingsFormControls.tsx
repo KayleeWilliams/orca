@@ -1,3 +1,6 @@
+/* eslint-disable max-lines -- Why: these small settings form primitives and controls
+co-locate shared layout and keyboard interaction logic, which keeps the settings
+panel wiring simple even though the file exceeds the default line limit. */
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ScrollArea } from '../ui/scroll-area'
 import { Input } from '../ui/input'
@@ -258,9 +261,15 @@ export function FontAutocomplete({
   // changes — useEffect would leave one render with the stale index visible.
   const [prevFilteredSuggestions, setPrevFilteredSuggestions] = useState(filteredSuggestions)
   const [prevOpen, setPrevOpen] = useState(open)
-  if (filteredSuggestions !== prevFilteredSuggestions || open !== prevOpen) {
+  const [prevHighlightedValue, setPrevHighlightedValue] = useState(value)
+  if (
+    filteredSuggestions !== prevFilteredSuggestions ||
+    open !== prevOpen ||
+    value !== prevHighlightedValue
+  ) {
     setPrevFilteredSuggestions(filteredSuggestions)
     setPrevOpen(open)
+    setPrevHighlightedValue(value)
     if (!open || filteredSuggestions.length === 0) {
       setHighlightedIndex(-1)
     } else {
