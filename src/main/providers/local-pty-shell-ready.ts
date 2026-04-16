@@ -209,9 +209,17 @@ export function writeStartupCommandWhenShellReady(
   onExit: (cleanup: () => void) => void
 ): void {
   let sent = false
+  let postReadyTimer: ReturnType<typeof setTimeout> | null = null
+  let postReadyDataDisposable: { dispose: () => void } | null = null
 
   const cleanup = (): void => {
     sent = true
+    if (postReadyTimer !== null) {
+      clearTimeout(postReadyTimer)
+      postReadyTimer = null
+    }
+    postReadyDataDisposable?.dispose()
+    postReadyDataDisposable = null
   }
 
   const flush = (): void => {
@@ -219,6 +227,12 @@ export function writeStartupCommandWhenShellReady(
       return
     }
     sent = true
+    postReadyDataDisposable?.dispose()
+    postReadyDataDisposable = null
+    if (postReadyTimer !== null) {
+      clearTimeout(postReadyTimer)
+      postReadyTimer = null
+    }
     // Why: run startup commands inside the same interactive shell Orca keeps
     // open for the pane. Spawning `shell -c <command>; exec shell -l` would
     // avoid the race, but it would also replace the session after the agent
@@ -230,7 +244,37 @@ export function writeStartupCommandWhenShellReady(
     proc.write(payload)
   }
 
-  readyPromise.then(flush)
+  readyPromise.then(() => {
+    if (sent) {
+      return
+    }
+    // Why: the shell-ready marker (OSC 133;A) fires from precmd/PROMPT_COMMAND,
+    // before the prompt is drawn and before zle/readline switches the PTY into
+    // raw mode. Writing the command while the kernel still has ECHO enabled
+    // causes the characters to be echoed once by the kernel and then redisplayed
+    // by the line editor after the prompt — producing a visible duplicate.
+    //
+    // Strategy: wait for the next PTY data event after the ready marker. That
+    // data is the shell drawing its prompt, which means the shell is about to
+    // (or has already) switched to raw mode. A brief follow-up delay covers the
+    // gap between the last prompt write() and the tcsetattr() that enables raw
+    // mode. The 50ms fallback timeout handles the case where the prompt data
+    // arrived in the same chunk as the ready marker (no subsequent onData).
+    postReadyDataDisposable = proc.onData(() => {
+      postReadyDataDisposable?.dispose()
+      postReadyDataDisposable = null
+      if (postReadyTimer !== null) {
+        clearTimeout(postReadyTimer)
+      }
+      postReadyTimer = setTimeout(flush, 30)
+    })
+    postReadyTimer = setTimeout(() => {
+      postReadyDataDisposable?.dispose()
+      postReadyDataDisposable = null
+      postReadyTimer = null
+      flush()
+    }, 50)
+  })
   onExit(cleanup)
 }
 

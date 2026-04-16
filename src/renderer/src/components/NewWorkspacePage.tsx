@@ -5,6 +5,8 @@ import React, { startTransition, useEffect, useCallback, useMemo, useRef, useSta
 import {
   ArrowRight,
   CircleDot,
+  EllipsisVertical,
+  ExternalLink,
   Github,
   GitPullRequest,
   LoaderCircle,
@@ -17,6 +19,12 @@ import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
@@ -1569,7 +1577,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
   ])
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background dark:bg-[#1a1a1a] text-foreground">
       <LightRays
         count={6}
         color="rgba(120, 160, 255, 0.15)"
@@ -1581,9 +1589,9 @@ export default function NewWorkspacePage(): React.JSX.Element {
 
       {selectedRepo?.badgeColor && (
         <div
-          className="pointer-events-none absolute inset-0 z-0 opacity-15 transition-opacity duration-700 ease-in-out"
+          className="pointer-events-none absolute inset-0 z-0 opacity-30 transition-opacity duration-700 ease-in-out"
           style={{
-            background: `radial-gradient(circle at top right, ${selectedRepo.badgeColor}, transparent 60%)`
+            background: `radial-gradient(circle at top right, ${selectedRepo.badgeColor}, transparent 75%)`
           }}
         />
       )}
@@ -1919,12 +1927,14 @@ export default function NewWorkspacePage(): React.JSX.Element {
                         onClick={() => handleSelectWorkItem(item)}
                         className="grid w-full gap-4 px-4 py-4 text-left transition hover:bg-muted/40 lg:grid-cols-[96px_minmax(0,1.8fr)_minmax(140px,1fr)_150px_120px_90px]"
                       >
-                        <div className="flex items-start gap-2">
-                          <span className="flex max-w-full flex-col rounded-lg border border-border/50 bg-background/50 px-2 py-1 text-left backdrop-blur-md supports-[backdrop-filter]:bg-background/50">
-                            <span className="max-w-[72px] truncate text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                              {item.type === 'issue' ? 'ISSUE' : 'PR'}
-                            </span>
-                            <span className="max-w-[72px] truncate text-sm font-semibold leading-none text-foreground">
+                        <div className="flex items-center">
+                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/40 px-2.5 py-1.5 text-muted-foreground">
+                            {item.type === 'pr' ? (
+                              <GitPullRequest className="size-3.5" />
+                            ) : (
+                              <CircleDot className="size-3.5" />
+                            )}
+                            <span className="font-mono text-[13px] font-normal">
                               #{item.number}
                             </span>
                           </span>
@@ -1983,11 +1993,29 @@ export default function NewWorkspacePage(): React.JSX.Element {
                           </TooltipContent>
                         </Tooltip>
 
-                        <div className="flex items-center justify-start lg:justify-end">
+                        <div className="flex items-center justify-start gap-1 lg:justify-end">
                           <span className="inline-flex items-center gap-1 rounded-xl border border-border/50 bg-background/50 backdrop-blur-md px-3 py-1.5 text-sm text-foreground supports-[backdrop-filter]:bg-background/50">
                             Use
                             <ArrowRight className="size-4" />
                           </span>
+                          <DropdownMenu modal={false}>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={(e) => e.stopPropagation()}
+                                className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+                                aria-label="More actions"
+                              >
+                                <EllipsisVertical className="size-4" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuItem onSelect={() => window.open(item.url, '_blank')}>
+                                <ExternalLink className="size-4" />
+                                Open in browser
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </button>
                     )

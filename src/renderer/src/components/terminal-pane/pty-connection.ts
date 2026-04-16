@@ -3,39 +3,11 @@ import type { IDisposable } from '@xterm/xterm'
 import { isGeminiTerminalTitle, isClaudeAgent } from '@/lib/agent-status'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
-import type { PtyTransport } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
+import type { PtyConnectionDeps } from './pty-connection-types'
 
 const pendingSpawnByTabId = new Map<string, Promise<string | null>>()
-
-type PtyConnectionDeps = {
-  tabId: string
-  worktreeId: string
-  cwd?: string
-  startup?: { command: string; env?: Record<string, string> } | null
-  restoredLeafId?: string | null
-  restoredPtyIdByLeafId?: Record<string, string>
-  paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
-  pendingWritesRef: React.RefObject<Map<number, string>>
-  isActiveRef: React.RefObject<boolean>
-  isVisibleRef: React.RefObject<boolean>
-  onPtyExitRef: React.RefObject<(ptyId: string) => void>
-  onPtyErrorRef?: React.RefObject<(paneId: number, message: string) => void>
-  clearTabPtyId: (tabId: string, ptyId: string) => void
-  consumeSuppressedPtyExit: (ptyId: string) => boolean
-  updateTabTitle: (tabId: string, title: string) => void
-  setRuntimePaneTitle: (tabId: string, paneId: number, title: string) => void
-  clearRuntimePaneTitle: (tabId: string, paneId: number) => void
-  updateTabPtyId: (tabId: string, ptyId: string) => void
-  markWorktreeUnread: (worktreeId: string) => void
-  dispatchNotification: (event: {
-    source: 'agent-task-complete' | 'terminal-bell'
-    terminalTitle?: string
-  }) => void
-  setCacheTimerStartedAt: (key: string, ts: number | null) => void
-  syncPanePtyLayoutBinding: (paneId: number, ptyId: string | null) => void
-}
 
 export function connectPanePty(
   pane: ManagedPane,
@@ -44,6 +16,7 @@ export function connectPanePty(
 ): IDisposable {
   let disposed = false
   let connectFrame: number | null = null
+  let startupInjectTimer: ReturnType<typeof setTimeout> | null = null
   // Why: setup commands must only run once — in the initial pane of the tab.
   // Capture and clear the startup reference synchronously so that panes
   // created later by splits or layout restoration cannot re-execute the
@@ -233,12 +206,12 @@ export function connectPanePty(
     // constant used for serialized scrollback capture.
     const MAX_PENDING_BYTES = 512 * 1024
 
-    // Why: startup command delivery is deferred until the shell has emitted its
-    // first output chunk, then injected on the next animation frame. This avoids
-    // racing the shell's first prompt paint which can cause the command to appear
-    // as a bare echoed line before the actual prompt.
-    let pendingStartupCommand = paneStartup?.command ?? null
-    let startupDispatchScheduled = false
+    // Why: for local connections (connectionId === null) the local PTY provider
+    // already writes the startup command via writeStartupCommandWhenShellReady,
+    // which is shell-ready-aware and reliable. Re-sending it here would cause
+    // the command to appear twice in the terminal. For SSH connections the relay
+    // has no equivalent mechanism, so the renderer must inject it via sendInput.
+    let pendingStartupCommand = connectionId ? (paneStartup?.command ?? null) : null
 
     const startFreshSpawn = (): void => {
       const spawnPromise = Promise.resolve(
@@ -287,20 +260,18 @@ export function connectPanePty(
         pending.set(pane.id, buf)
       }
 
-      if (pendingStartupCommand && !startupDispatchScheduled) {
-        startupDispatchScheduled = true
-        requestAnimationFrame(() => {
-          if (!pendingStartupCommand) {
+      if (pendingStartupCommand) {
+        if (startupInjectTimer !== null) {
+          clearTimeout(startupInjectTimer)
+        }
+        startupInjectTimer = setTimeout(() => {
+          startupInjectTimer = null
+          if (!pendingStartupCommand || disposed) {
             return
           }
-          // Why: writing the startup command immediately on PTY connect can race
-          // the shell's first prompt paint, which makes the command appear once
-          // as a bare echoed line and again at the actual prompt. Wait until the
-          // shell has emitted its first output chunk, then inject on the next
-          // frame so the command lands on a normal prompt line.
           transport.sendInput(`${pendingStartupCommand}\r`)
           pendingStartupCommand = null
-        })
+        }, 50)
       }
     }
 
@@ -406,6 +377,10 @@ export function connectPanePty(
   return {
     dispose() {
       disposed = true
+      if (startupInjectTimer !== null) {
+        clearTimeout(startupInjectTimer)
+        startupInjectTimer = null
+      }
       if (connectFrame !== null) {
         // Why: StrictMode and split-group remounts can dispose a pane binding
         // before its deferred PTY attach/spawn work runs. Cancel that queued

@@ -123,16 +123,18 @@ function renderSetupYamlPreview(command: string): React.JSX.Element[] {
       return (
         <div key={`${line}-${index}`} className="whitespace-pre">
           <span className="text-muted-foreground">{keyMatch[1]}</span>
-          <span className="font-semibold text-sky-300">{keyMatch[2]}</span>
+          <span className="font-semibold text-sky-600 dark:text-sky-300">{keyMatch[2]}</span>
           <span className="text-muted-foreground">{keyMatch[3]}</span>
-          {keyMatch[4] ? <span className="text-amber-300">{keyMatch[4]}</span> : null}
+          {keyMatch[4] ? (
+            <span className="text-amber-600 dark:text-amber-300">{keyMatch[4]}</span>
+          ) : null}
         </div>
       )
     }
 
     return (
       <div key={`${line}-${index}`} className="whitespace-pre">
-        <span className="text-emerald-300/95">{line}</span>
+        <span className="text-emerald-700 dark:text-emerald-300/95">{line}</span>
       </div>
     )
   })
@@ -254,7 +256,7 @@ export default function NewWorkspaceComposerCard({
             </div>
           </div>
 
-          <div className="flex flex-col rounded-[16px] border border-border/60 bg-transparent dark:bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+          <div className="flex flex-col rounded-[16px] border border-border/60 bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
             <div className="flex items-start">
               <span className="select-none pl-4 pt-4 font-mono text-[15px] leading-7 font-bold text-foreground">
                 {'>'}
@@ -544,7 +546,7 @@ export default function NewWorkspaceComposerCard({
                     value={note}
                     onChange={(event) => onNoteChange(event.target.value)}
                     placeholder="Write a note"
-                    className="h-10 rounded-xl border-border/60 bg-background/80 shadow-sm supports-[backdrop-filter]:bg-background/70"
+                    className="h-10 rounded-xl border-border/60 bg-input/30 shadow-sm"
                   />
                 </div>
 
