@@ -1,7 +1,7 @@
 ---
 name: electron
-description: Automate Electron desktop apps (VS Code, Slack, Discord, Figma, Notion, Spotify, etc.) using playwright-cli via Chrome DevTools Protocol. Use when the user needs to interact with an Electron app, automate a desktop app, connect to a running app, control a native app, or test an Electron application. Triggers include "automate Slack app", "control VS Code", "interact with Discord app", "test this Electron app", "connect to desktop app", or any task requiring automation of a native Electron application.
-allowed-tools: Bash(playwright-cli:*), Bash(npx playwright-cli:*), Bash(curl:*), Bash(lsof:*), Bash(open:*), Bash(ps:*), Bash(kill:*)
+description: Launch, automate, and validate Electron desktop apps using playwright-cli via Chrome DevTools Protocol. Use this skill to validate UI changes in Orca, test features in the running Electron app, verify code fixes work end-to-end, or automate any Electron app (VS Code, Slack, Discord, etc.). Triggers include "validate in Electron", "test in the app", "verify the fix", "check the UI", "/electron", "automate Slack app", "control VS Code", or any task requiring interaction with a running Electron application.
+allowed-tools: Bash(playwright-cli:*), Bash(npx playwright-cli:*), Bash(curl:*), Bash(lsof:*), Bash(open:*), Bash(ps:*), Bash(kill:*), Bash(node:*), Bash(pnpm:*), Read, Grep, Monitor
 ---
 
 # Electron App Automation
@@ -40,6 +40,37 @@ playwright-cli attach --cdp="http://localhost:9222"
 playwright-cli snapshot
 playwright-cli click e5
 playwright-cli screenshot
+```
+
+## Launching Orca Dev Build with CDP
+
+Orca uses electron-vite for dev builds. The correct way to launch with CDP:
+
+```bash
+# Launch Orca dev with remote debugging (run in background)
+node config/scripts/run-electron-vite-dev.mjs --remote-debugging-port=9333 2>&1 &
+
+# Wait for "DevTools listening on ws://..." in the output, then attach
+playwright-cli attach --cdp="http://localhost:9333"
+```
+
+**Key details:**
+- Pass `--remote-debugging-port=NNNN` directly to the script — do NOT use `pnpm run dev -- --` (the double `--` breaks Chromium flag parsing)
+- electron-vite also supports `REMOTE_DEBUGGING_PORT` env var: `REMOTE_DEBUGGING_PORT=9333 pnpm run dev`
+- The Zustand store is exposed at `window.__store` — use `window.__store.getState()` and `window.__store.getState().someAction()` to read/mutate state
+- Use port 9333 (not 9222) to avoid conflicts with other Electron apps
+
+### Accessing Orca State via eval
+
+```bash
+# Read store state
+playwright-cli eval "(() => { const s = window.__store?.getState(); return JSON.stringify({ activeWorktreeId: s.activeWorktreeId, activeTabId: s.activeTabId, activeFileId: s.activeFileId, activeTabType: s.activeTabType }); })()"
+
+# Open an editor file
+playwright-cli eval "(() => { const s = window.__store?.getState(); const wtId = s.activeWorktreeId; s.openFile({ worktreeId: wtId, filePath: '/path/to/file', relativePath: 'file.ts', mode: 'edit', language: 'typescript' }); return 'done'; })()"
+
+# Close a file
+playwright-cli eval "(() => { window.__store.getState().closeFile('/path/to/file'); return 'closed'; })()"
 ```
 
 ## Launching Electron Apps with CDP

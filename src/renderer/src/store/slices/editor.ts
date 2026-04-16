@@ -561,7 +561,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
   // remain visible until the file leaves the sidebar, the session resets, or
   // the file becomes live-unresolved again. trackedConflictPaths is tied to
   // sidebar presence, not tab lifecycle.
-  closeFile: (fileId) =>
+  closeFile: (fileId) => {
     set((s) => {
       const closedFile = s.openFiles.find((f) => f.id === fileId)
       const idx = s.openFiles.findIndex((f) => f.id === fileId)
@@ -674,7 +674,27 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         tabBarOrderByWorktree: nextTabBarOrderByWorktree,
         pendingEditorReveal: null
       }
-    }),
+    })
+
+    // Why: the unified tab model drives visual tab‐bar order and neighbor
+    // selection via pickNeighbor(group.tabOrder). Without this, closing an
+    // editor/diff tab picks the next active file from the openFiles array
+    // instead of the visual tab order, producing inconsistent behavior vs
+    // terminal/browser tab closes which already go through closeUnifiedTab.
+    for (const tabs of Object.values(get().unifiedTabsByWorktree ?? {})) {
+      const unifiedTab = tabs.find(
+        (entry) =>
+          entry.entityId === fileId &&
+          (entry.contentType === 'editor' ||
+            entry.contentType === 'diff' ||
+            entry.contentType === 'conflict-review')
+      )
+      if (unifiedTab) {
+        get().closeUnifiedTab(unifiedTab.id)
+        break
+      }
+    }
+  },
 
   closeAllFiles: () => {
     const state = get()
