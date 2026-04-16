@@ -287,12 +287,20 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 className="absolute left-0 right-0"
                 style={{ transform: `translateY(${vItem.start}px)` }}
               >
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   className={cn(
-                    'group mt-2 flex h-7 w-full items-center gap-1.5 px-1.5 text-left transition-all',
+                    'group mt-2 flex h-7 w-full items-center gap-1.5 px-1.5 text-left transition-all cursor-pointer',
                     row.repo ? 'overflow-hidden' : row.tone
                   )}
                   onClick={() => toggleGroup(row.key)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      toggleGroup(row.key)
+                    }
+                  }}
                 >
                   {row.icon ? (
                     <div
@@ -354,7 +362,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       )}
                     />
                   </div>
-                </button>
+                </div>
               </div>
             )
           }
