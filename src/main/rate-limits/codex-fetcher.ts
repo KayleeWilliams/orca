@@ -85,25 +85,22 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
     let resolved = false
     let rpcId = 0
 
-    const child = spawn(
-      resolveCodexCommand(),
-      ['-s', 'read-only', '-a', 'untrusted', 'app-server'],
-      {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
-        // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
-        // batch scripts directly — it needs cmd.exe as an intermediary. Setting
-        // shell: true on win32 avoids the EINVAL error this would otherwise cause.
-        shell: process.platform === 'win32',
-        // Why: the selected Codex rate-limit account must only affect this fetch
-        // subprocess. Never mutate process.env globally or other Codex features
-        // would inherit the managed account unintentionally.
-        env: {
-          ...process.env,
-          ...(options?.codexHomePath ? { CODEX_HOME: options.codexHomePath } : {})
-        }
+    const codexCommand = resolveCodexCommand()
+    const child = spawn(codexCommand, ['-s', 'read-only', '-a', 'untrusted', 'app-server'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
+      // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
+      // batch scripts directly — it needs cmd.exe as an intermediary. Setting
+      // shell: true on win32 avoids the EINVAL error this would otherwise cause.
+      shell: process.platform === 'win32',
+      // Why: the selected Codex rate-limit account must only affect this fetch
+      // subprocess. Never mutate process.env globally or other Codex features
+      // would inherit the managed account unintentionally.
+      env: {
+        ...process.env,
+        ...(options?.codexHomePath ? { CODEX_HOME: options.codexHomePath } : {})
       }
-    )
+    })
 
     const timeout = setTimeout(() => {
       if (!resolved) {
@@ -213,14 +210,19 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       if (!resolved) {
         resolved = true
         clearTimeout(timeout)
-        const isNotInstalled = (err as NodeJS.ErrnoException).code === 'ENOENT'
+        const isEnoent = (err as NodeJS.ErrnoException).code === 'ENOENT'
+        const isBareCommand = codexCommand === 'codex'
         resolve({
           provider: 'codex',
           session: null,
           weekly: null,
           updatedAt: Date.now(),
-          error: isNotInstalled ? 'Codex CLI not found' : err.message,
-          status: isNotInstalled ? 'unavailable' : 'error'
+          error: isEnoent
+            ? isBareCommand
+              ? 'Codex CLI not found'
+              : 'Codex CLI found but could not run — Node.js may not be in your PATH'
+            : err.message,
+          status: isEnoent && isBareCommand ? 'unavailable' : 'error'
         })
       }
     })

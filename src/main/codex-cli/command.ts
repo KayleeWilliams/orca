@@ -71,7 +71,11 @@ function getVersionManagerDirectories(
   const directories = [
     join(homePath, '.volta', 'bin'),
     join(homePath, '.asdf', 'shims'),
-    join(homePath, '.fnm', 'aliases', 'default', 'bin')
+    join(homePath, '.fnm', 'aliases', 'default', 'bin'),
+    // Why: mise (formerly rtx) exposes managed tool binaries via a shims
+    // directory, similar to asdf. Without this, users who installed node
+    // or CLI tools through mise can't be found by the fallback probe.
+    join(homePath, '.local', 'share', 'mise', 'shims')
   ]
 
   // Why: GUI-launched Electron apps do not inherit shell init from version
@@ -140,4 +144,16 @@ export function resolveCodexCommand(options: ResolveCommandOptions = {}): string
 
 export function resolveClaudeCommand(options: ResolveCommandOptions = {}): string {
   return resolveCommand('claude', options)
+}
+
+// Why: GUI-launched Electron apps inherit a minimal PATH that excludes Node
+// version manager directories. CLI tools like codex/claude are Node scripts
+// with #!/usr/bin/env node shebangs — they need `node` in PATH to execute,
+// not just to be *found*. This function returns the version manager bin paths
+// so the caller can augment process.env.PATH at startup.
+export function getVersionManagerBinPaths(options: ResolveCommandOptions = {}): string[] {
+  const platform = options.platform ?? process.platform
+  const homePath = options.homePath ?? homedir()
+  const nodeNames = getExecutableNames(platform, 'node')
+  return getVersionManagerDirectories(platform, homePath, nodeNames)
 }

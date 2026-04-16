@@ -282,7 +282,8 @@ export class CodexAccountService {
 
   private async runCodexLogin(managedHomePath: string): Promise<void> {
     await new Promise<void>((resolvePromise, rejectPromise) => {
-      const child = spawn(resolveCodexCommand(), ['login'], {
+      const codexCommand = resolveCodexCommand()
+      const child = spawn(codexCommand, ['login'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
         // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
@@ -325,8 +326,17 @@ export class CodexAccountService {
 
       child.on('error', (error) => {
         settle(() => {
-          const cause = (error as NodeJS.ErrnoException).code === 'ENOENT'
-          rejectPromise(new Error(cause ? 'Codex CLI not found.' : error.message))
+          const isEnoent = (error as NodeJS.ErrnoException).code === 'ENOENT'
+          // Why: ENOENT can mean either the codex binary doesn't exist OR the
+          // script's shebang interpreter (node) isn't in PATH. When we resolved
+          // codex to a full path, ENOENT almost certainly means node is missing.
+          const isBareCommand = codexCommand === 'codex'
+          const message = isEnoent
+            ? isBareCommand
+              ? 'Codex CLI not found.'
+              : 'Codex CLI found but could not run — Node.js may not be in your PATH.'
+            : error.message
+          rejectPromise(new Error(message))
         })
       })
 

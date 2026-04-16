@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { join } from 'path'
+import { getVersionManagerBinPaths } from '../codex-cli/command'
 
 const DEV_PARENT_SHUTDOWN_GRACE_MS = 3000
 
@@ -52,6 +53,13 @@ export function patchPackagedProcessPath(): void {
   if (home) {
     extraPaths.push(join(home, '.local/bin'), join(home, '.nix-profile/bin'))
   }
+
+  // Why: CLI tools installed via Node version managers (nvm, volta, asdf, fnm,
+  // pnpm, yarn, bun) use #!/usr/bin/env node shebangs that need `node` in PATH.
+  // resolveCodexCommand() can locate the codex binary in these directories, but
+  // spawning it still fails if node itself isn't in PATH. Adding version manager
+  // bin paths here fixes all spawn sites (login, rate limits, usage tracking).
+  extraPaths.push(...getVersionManagerBinPaths())
 
   const currentPath = process.env.PATH ?? ''
   const existing = new Set(currentPath.split(':'))

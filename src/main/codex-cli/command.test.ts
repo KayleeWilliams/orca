@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resolveClaudeCommand, resolveCodexCommand } from './command'
+import { getVersionManagerBinPaths, resolveClaudeCommand, resolveCodexCommand } from './command'
 
 function makeExecutable(path: string): void {
   mkdirSync(dirname(path), { recursive: true })
@@ -92,6 +92,14 @@ describe('resolveCodexCommand', () => {
     expect(resolveCodexCommand({ platform: 'win32', pathEnv: '', homePath: root })).toBe(bunPath)
   })
 
+  it('finds Codex in mise shims directory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-codex-command-'))
+    const misePath = join(root, '.local', 'share', 'mise', 'shims', 'codex')
+    makeExecutable(misePath)
+
+    expect(resolveCodexCommand({ platform: 'linux', pathEnv: '', homePath: root })).toBe(misePath)
+  })
+
   it('returns the bare command when no filesystem candidate exists', () => {
     const root = mkdtempSync(join(tmpdir(), 'orca-codex-command-'))
 
@@ -154,5 +162,37 @@ describe('resolveClaudeCommand', () => {
     const root = mkdtempSync(join(tmpdir(), 'orca-claude-command-'))
 
     expect(resolveClaudeCommand({ platform: 'linux', pathEnv: '', homePath: root })).toBe('claude')
+  })
+})
+
+describe('getVersionManagerBinPaths', () => {
+  it('includes volta, asdf, fnm, mise, pnpm, yarn, and bun directories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-vm-paths-'))
+    const paths = getVersionManagerBinPaths({ platform: 'darwin', pathEnv: '', homePath: root })
+
+    expect(paths).toContain(join(root, '.volta', 'bin'))
+    expect(paths).toContain(join(root, '.asdf', 'shims'))
+    expect(paths).toContain(join(root, '.fnm', 'aliases', 'default', 'bin'))
+    expect(paths).toContain(join(root, '.local', 'share', 'mise', 'shims'))
+    expect(paths).toContain(join(root, 'Library', 'pnpm'))
+    expect(paths).toContain(join(root, '.yarn', 'bin'))
+    expect(paths).toContain(join(root, '.bun', 'bin'))
+  })
+
+  it('includes nvm bin dir when node versions exist', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-vm-paths-'))
+    const nodeBin = join(root, '.nvm', 'versions', 'node', 'v22.14.0', 'bin', 'node')
+    makeExecutable(nodeBin)
+
+    const paths = getVersionManagerBinPaths({ platform: 'darwin', pathEnv: '', homePath: root })
+    expect(paths).toContain(join(root, '.nvm', 'versions', 'node', 'v22.14.0', 'bin'))
+  })
+
+  it('uses platform-specific pnpm path on Linux', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-vm-paths-'))
+    const paths = getVersionManagerBinPaths({ platform: 'linux', pathEnv: '', homePath: root })
+
+    expect(paths).toContain(join(root, '.local', 'share', 'pnpm'))
+    expect(paths).not.toContain(join(root, 'Library', 'pnpm'))
   })
 })
