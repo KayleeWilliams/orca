@@ -8,9 +8,20 @@ type StoreState = {
   settings: { promptCacheTimerEnabled?: boolean } | null
 }
 
+type ConnectCallbacks = {
+  onData?: (data: string) => void
+  onError?: (msg: string) => void
+}
+
 type MockTransport = {
   attach: ReturnType<typeof vi.fn>
-  connect: ReturnType<typeof vi.fn>
+  connect: ReturnType<typeof vi.fn> & {
+    mockImplementation: (
+      impl: (
+        opts: { callbacks?: ConnectCallbacks } & Record<string, unknown>
+      ) => Promise<string | null>
+    ) => unknown
+  }
   sendInput: ReturnType<typeof vi.fn>
   resize: ReturnType<typeof vi.fn>
   getPtyId: ReturnType<typeof vi.fn>
@@ -59,13 +70,13 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
     attach: vi.fn(({ existingPtyId }: { existingPtyId: string }) => {
       ptyId = existingPtyId
     }),
-    connect: vi.fn().mockImplementation(async () => {
-      return ptyId
-    }),
+    connect: vi.fn(
+      async (_opts: { callbacks?: ConnectCallbacks } & Record<string, unknown>) => ptyId
+    ),
     sendInput: vi.fn(() => true),
     resize: vi.fn(() => true),
     getPtyId: vi.fn(() => ptyId)
-  }
+  } as MockTransport
 }
 
 function createPane(paneId: number) {
@@ -120,11 +131,6 @@ function createDeps(overrides: Record<string, unknown> = {}) {
   }
 }
 
-type ConnectCallbacks = {
-  onData?: (data: string) => void
-  onError?: (msg: string) => void
-}
-
 describe('connectPanePty', () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
@@ -173,10 +179,10 @@ describe('connectPanePty', () => {
     // would cause the command to appear twice in the terminal.
     const { connectPanePty } = await import('./pty-connection')
 
-    let capturedDataCallback: ((data: string) => void) | null = null
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
     const transport = createMockTransport()
     transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-      capturedDataCallback = callbacks.onData ?? null
+      capturedDataCallback.current = callbacks.onData ?? null
       return 'pty-local-1'
     })
     transportFactoryQueue.push(transport)
@@ -193,10 +199,10 @@ describe('connectPanePty', () => {
     const deps = createDeps({ startup: { command: "claude 'say test'" } })
 
     connectPanePty(pane as never, manager as never, deps as never)
-    expect(capturedDataCallback).not.toBeNull()
+    expect(capturedDataCallback.current).not.toBeNull()
 
     // Simulate PTY output (shell prompt arriving)
-    capturedDataCallback?.('(base) user@host $ ')
+    capturedDataCallback.current?.('(base) user@host $ ')
 
     // Even after the debounce window, the renderer must not inject the command
     // because the main process already wrote it via writeStartupCommandWhenShellReady.
@@ -218,11 +224,13 @@ describe('connectPanePty', () => {
     try {
       const { connectPanePty } = await import('./pty-connection')
 
-      let capturedDataCallback: ((data: string) => void) | null = null
+      const capturedDataCallback: { current: ((data: string) => void) | null } = {
+        current: null
+      }
       const transport = createMockTransport()
       transport.connect.mockImplementation(
         async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-          capturedDataCallback = callbacks.onData ?? null
+          capturedDataCallback.current = callbacks.onData ?? null
           return 'pty-ssh-1'
         }
       )
@@ -240,10 +248,10 @@ describe('connectPanePty', () => {
       const deps = createDeps({ startup: { command: "claude 'say test'" } })
 
       connectPanePty(pane as never, manager as never, deps as never)
-      expect(capturedDataCallback).not.toBeNull()
+      expect(capturedDataCallback.current).not.toBeNull()
 
       // Simulate shell prompt arriving — queues the debounce timer
-      capturedDataCallback?.('user@remote $ ')
+      capturedDataCallback.current?.('user@remote $ ')
 
       // Fire all queued setTimeout callbacks (the debounce)
       for (const fn of pendingTimeouts) {
