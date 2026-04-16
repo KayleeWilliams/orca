@@ -320,7 +320,14 @@ describe('setActiveWorktree', () => {
 
     const worktree = store.getState().worktreesByRepo.repo1[0]
     expect(worktree.sortOrder).toBe(123)
-    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+    // Why: setActiveWorktree now persists lastActivityAt for the recent sort,
+    // but must never touch sortOrder which is managed by persistSortOrder.
+    expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeId,
+        updates: expect.not.objectContaining({ sortOrder: expect.anything() })
+      })
+    )
   })
 
   it('falls back to the worktree browser tab when the restored editor id belongs to a different worktree', () => {
