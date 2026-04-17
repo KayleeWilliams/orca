@@ -120,7 +120,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
     defaultTaskViewPreset: 'all',
-    agentCmdOverrides: {}
+    agentCmdOverrides: {},
+    terminalMacOptionAsAlt: 'true'
   }
 }
 

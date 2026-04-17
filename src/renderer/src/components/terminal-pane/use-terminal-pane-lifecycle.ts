@@ -386,7 +386,8 @@ export function useTerminalPaneLifecycle({
             )
           ),
           cursorStyle: currentSettings?.terminalCursorStyle ?? 'bar',
-          cursorBlink: currentSettings?.terminalCursorBlink ?? true
+          cursorBlink: currentSettings?.terminalCursorBlink ?? true,
+          macOptionIsMeta: currentSettings?.terminalMacOptionAsAlt === 'true'
         }
       },
       onLinkClick: (event, url) => {

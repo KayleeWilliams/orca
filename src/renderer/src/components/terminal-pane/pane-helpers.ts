@@ -65,6 +65,12 @@ export function isWindowsUserAgent(
   return userAgent.includes('Windows')
 }
 
+export function isMacUserAgent(
+  userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
+): boolean {
+  return userAgent.includes('Mac')
+}
+
 export function shellEscapePath(
   path: string,
   userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent

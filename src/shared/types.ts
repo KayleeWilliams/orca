@@ -580,6 +580,13 @@ export type GlobalSettings = {
   defaultTaskViewPreset: TaskViewPresetId
   /** Per-agent CLI command overrides. A missing key means use the catalog default binary name. */
   agentCmdOverrides: Partial<Record<TuiAgent, string>>
+  /** Why: macOS terminals must choose between letting Option compose layout
+   *  characters (@ on German, € on French) or treating Option as Meta/Esc for
+   *  readline shortcuts. Mirrors Ghostty's macos-option-as-alt setting.
+   *  'false' = compose (default, for non-US keyboards);
+   *  'true' = full Meta on both Option keys;
+   *  'left' / 'right' = only that Option key acts as Meta, the other composes. */
+  terminalMacOptionAsAlt: 'true' | 'false' | 'left' | 'right'
 }
 
 export type NotificationEventSource = 'agent-task-complete' | 'terminal-bell' | 'test'

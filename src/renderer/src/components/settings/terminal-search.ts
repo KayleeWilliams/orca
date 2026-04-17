@@ -89,6 +89,29 @@ export const TERMINAL_ADVANCED_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const TERMINAL_MAC_OPTION_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Option as Alt',
+    description:
+      "Controls whether the macOS Option key sends Alt/Esc sequences or composes characters. Mirrors Ghostty's macos-option-as-alt.",
+    keywords: [
+      'terminal',
+      'option',
+      'alt',
+      'key',
+      'meta',
+      'compose',
+      'mac',
+      'macos',
+      'keyboard',
+      'german',
+      'international',
+      'readline',
+      'ghostty'
+    ]
+  }
+]
+
 export const TERMINAL_WINDOWS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Right-click to paste',
@@ -100,17 +123,21 @@ export const TERMINAL_WINDOWS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
 export const TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY = TERMINAL_WINDOWS_SEARCH_ENTRIES
 
-export function getTerminalPaneSearchEntries(isWindows: boolean): SettingsSearchEntry[] {
+export function getTerminalPaneSearchEntries(platform: {
+  isWindows: boolean
+  isMac: boolean
+}): SettingsSearchEntry[] {
   // Why: the settings search index must mirror the visible controls. Keeping
-  // the Windows-only paste toggle out of non-Windows search results prevents
+  // platform-only controls out of other platforms' search results prevents
   // users from landing on an option the UI intentionally hides.
   return [
     ...TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES,
     ...TERMINAL_CURSOR_SEARCH_ENTRIES,
     ...TERMINAL_PANE_STYLE_SEARCH_ENTRIES,
-    ...(isWindows ? TERMINAL_WINDOWS_SEARCH_ENTRIES : []),
+    ...(platform.isWindows ? TERMINAL_WINDOWS_SEARCH_ENTRIES : []),
     ...TERMINAL_DARK_THEME_SEARCH_ENTRIES,
     ...TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
-    ...TERMINAL_ADVANCED_SEARCH_ENTRIES
+    ...TERMINAL_ADVANCED_SEARCH_ENTRIES,
+    ...(platform.isMac ? TERMINAL_MAC_OPTION_SEARCH_ENTRIES : [])
   ]
 }

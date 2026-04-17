@@ -15,7 +15,7 @@ import type { OrcaHooks } from '../../../../shared/types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import { useAppStore } from '../../store'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
-import { isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
+import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import { SCROLLBACK_PRESETS_MB, getFallbackTerminalFonts } from './SettingsConstants'
 import { GeneralPane, GENERAL_PANE_SEARCH_ENTRIES } from './GeneralPane'
 import { AppearancePane, APPEARANCE_PANE_SEARCH_ENTRIES } from './AppearancePane'
@@ -82,12 +82,13 @@ function Settings(): React.JSX.Element {
   >({})
   const systemPrefersDark = useSystemPrefersDark()
   const isWindows = isWindowsUserAgent()
+  const isMac = isMacUserAgent()
   // Why: the Terminal settings section shares one search index with the
-  // sidebar. We trim Windows-only entries on other platforms so search never
+  // sidebar. We trim platform-only entries on other platforms so search never
   // reveals controls that the renderer will intentionally hide.
   const terminalPaneSearchEntries = useMemo(
-    () => getTerminalPaneSearchEntries(isWindows),
-    [isWindows]
+    () => getTerminalPaneSearchEntries({ isWindows, isMac }),
+    [isWindows, isMac]
   )
   const [scrollbackMode, setScrollbackMode] = useState<'preset' | 'custom'>('preset')
   const [prevScrollbackBytes, setPrevScrollbackBytes] = useState(settings?.terminalScrollbackBytes)

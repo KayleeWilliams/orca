@@ -1,11 +1,30 @@
 export type TerminalShortcutEvent = {
   key: string
   code?: string
+  location?: number
   metaKey: boolean
   ctrlKey: boolean
   altKey: boolean
   shiftKey: boolean
   repeat?: boolean
+}
+
+export type MacOptionAsAlt = 'true' | 'false' | 'left' | 'right'
+
+// Why: macOS composition replaces event.key for punctuation, so we map
+// event.code to the unmodified character for Esc+ sequences.
+const PUNCTUATION_CODE_MAP: Record<string, string> = {
+  Period: '.',
+  Comma: ',',
+  Slash: '/',
+  Backslash: '\\',
+  Semicolon: ';',
+  Quote: "'",
+  BracketLeft: '[',
+  BracketRight: ']',
+  Minus: '-',
+  Equal: '=',
+  Backquote: '`'
 }
 
 export type TerminalShortcutAction =
@@ -20,7 +39,8 @@ export type TerminalShortcutAction =
 
 export function resolveTerminalShortcutAction(
   event: TerminalShortcutEvent,
-  isMac: boolean
+  isMac: boolean,
+  macOptionAsAlt: MacOptionAsAlt = 'false'
 ): TerminalShortcutAction | null {
   const mod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
   if (!event.repeat && mod && !event.altKey) {
@@ -146,9 +166,55 @@ export function resolveTerminalShortcutAction(
     return { type: 'sendInput', data: event.key === 'ArrowLeft' ? '\x1bb' : '\x1bf' }
   }
 
-  // Why: the terminal shortcut layer is an explicit allowlist, not a generic
-  // "modifier means app shortcut" rule. Keeping this list narrow prevents Orca
-  // from swallowing readline/emacs control chords like Ctrl+R, Ctrl+U, Ctrl+E,
-  // Alt+B, Alt+F, and Alt+D when the shell owns terminal focus.
+  // Why: with macOptionIsMeta disabled (to let non-US keyboard layouts compose
+  // characters like @ and €), xterm.js no longer translates Option+letter into
+  // Esc+letter automatically. We match on event.code (physical key) rather than
+  // event.key because macOS composition replaces event.key with the composed
+  // character (e.g. Option+B reports key='∫', not key='b').
+  //
+  // The handling depends on the macOptionAsAlt setting (mirrors Ghostty):
+  // - 'true':  xterm handles all Option as Meta natively; nothing to do here.
+  // - 'false': compensate the three most critical readline shortcuts (B/F/D).
+  // - 'left'/'right': the designated Option key acts as full Meta (emit Esc+
+  //   for any single letter); the other key composes, with B/F/D compensated.
+  if (isMac && !event.metaKey && !event.ctrlKey && event.altKey && !event.shiftKey) {
+    // KeyboardEvent.location: 1 = LEFT, 2 = RIGHT
+    const isLeftOption = event.location === 1
+    const isRightOption = event.location === 2
+
+    const shouldActAsMeta =
+      (macOptionAsAlt === 'left' && isLeftOption) || (macOptionAsAlt === 'right' && isRightOption)
+
+    if (shouldActAsMeta) {
+      // Emit Esc+key for letter keys (e.g. Option+B → \x1bb)
+      if (event.code?.startsWith('Key') && event.code.length === 4) {
+        const letter = event.code.charAt(3).toLowerCase()
+        return { type: 'sendInput', data: `\x1b${letter}` }
+      }
+      // Emit Esc+digit for number keys (e.g. Option+1 → \x1b1)
+      if (event.code?.startsWith('Digit') && event.code.length === 6) {
+        return { type: 'sendInput', data: `\x1b${event.code.charAt(5)}` }
+      }
+      const punct = event.code ? PUNCTUATION_CODE_MAP[event.code] : undefined
+      if (punct) {
+        return { type: 'sendInput', data: `\x1b${punct}` }
+      }
+    }
+
+    // In 'false', 'left', or 'right' mode, the compose-side Option key still
+    // needs the three most critical readline shortcuts patched.
+    if (macOptionAsAlt !== 'true' && !shouldActAsMeta) {
+      if (event.code === 'KeyB') {
+        return { type: 'sendInput', data: '\x1bb' }
+      }
+      if (event.code === 'KeyF') {
+        return { type: 'sendInput', data: '\x1bf' }
+      }
+      if (event.code === 'KeyD') {
+        return { type: 'sendInput', data: '\x1bd' }
+      }
+    }
+  }
+
   return null
 }

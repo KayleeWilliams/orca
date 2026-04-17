@@ -26,12 +26,13 @@ import { SCROLLBACK_PRESETS_MB } from './SettingsConstants'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { useAppStore } from '../../store'
-import { isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
+import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import {
   TERMINAL_ADVANCED_SEARCH_ENTRIES,
   TERMINAL_CURSOR_SEARCH_ENTRIES,
   TERMINAL_DARK_THEME_SEARCH_ENTRIES,
   TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
+  TERMINAL_MAC_OPTION_SEARCH_ENTRIES,
   TERMINAL_PANE_STYLE_SEARCH_ENTRIES,
   TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY,
   TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES
@@ -57,6 +58,7 @@ export function TerminalPane({
 }: TerminalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
   const isWindows = isWindowsUserAgent()
+  const isMac = isMacUserAgent()
   const [themeSearchDark, setThemeSearchDark] = useState('')
   const [themeSearchLight, setThemeSearchLight] = useState('')
 
@@ -390,7 +392,8 @@ export function TerminalPane({
         lightPreviewAppearance={lightPreviewAppearance}
       />
     ) : null,
-    matchesSettingsSearch(searchQuery, TERMINAL_ADVANCED_SEARCH_ENTRIES) ? (
+    matchesSettingsSearch(searchQuery, TERMINAL_ADVANCED_SEARCH_ENTRIES) ||
+    (isMac && matchesSettingsSearch(searchQuery, TERMINAL_MAC_OPTION_SEARCH_ENTRIES)) ? (
       <section key="advanced" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Advanced</h3>
@@ -460,6 +463,59 @@ export function TerminalPane({
             />
           ) : null}
         </SearchableSetting>
+
+        {isMac ? (
+          <SearchableSetting
+            title="Option as Alt"
+            description="Controls whether the macOS Option key sends Alt/Esc sequences or composes characters. Mirrors Ghostty's macos-option-as-alt."
+            keywords={[
+              'terminal',
+              'option',
+              'alt',
+              'key',
+              'meta',
+              'compose',
+              'mac',
+              'macos',
+              'keyboard',
+              'german',
+              'international',
+              'readline',
+              'ghostty'
+            ]}
+            className="space-y-2"
+          >
+            <Label>Option as Alt</Label>
+            <div className="flex w-fit gap-1 rounded-md border border-border/50 p-1">
+              {(['true', 'left', 'right', 'false'] as const).map((option) => (
+                <button
+                  key={option}
+                  onClick={() => updateSettings({ terminalMacOptionAsAlt: option })}
+                  className={`rounded-sm px-3 py-1 text-sm transition-colors ${
+                    settings.terminalMacOptionAsAlt === option
+                      ? 'bg-accent font-medium text-accent-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {option === 'false'
+                    ? 'Off'
+                    : option === 'true'
+                      ? 'Both'
+                      : option === 'left'
+                        ? 'Left'
+                        : 'Right'}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {settings.terminalMacOptionAsAlt === 'false'
+                ? 'Option composes special characters for your keyboard layout. Core readline shortcuts (Option+B/F/D) are handled automatically.'
+                : settings.terminalMacOptionAsAlt === 'true'
+                  ? 'Both Option keys send Alt/Esc sequences for full readline and shell support. Special character input via Option is unavailable.'
+                  : `The ${settings.terminalMacOptionAsAlt} Option key sends Alt/Esc sequences; the other composes special characters.`}
+            </p>
+          </SearchableSetting>
+        ) : null}
       </section>
     ) : null
   ].filter(Boolean)

@@ -16,6 +16,7 @@ import { fitPanes, isWindowsUserAgent, shellEscapePath } from './pane-helpers'
 import { EMPTY_LAYOUT, paneLeafId, serializeTerminalLayout } from './layout-serialization'
 import { createExpandCollapseActions } from './expand-collapse'
 import { useTerminalKeyboardShortcuts, type SearchState } from './keyboard-handlers'
+import type { MacOptionAsAlt } from './terminal-shortcut-policy'
 import { useTerminalFontZoom } from './useTerminalFontZoom'
 import CloseTerminalDialog from './CloseTerminalDialog'
 import { TerminalErrorToast } from './TerminalErrorToast'
@@ -146,6 +147,8 @@ export default function TerminalPane({
 
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  const macOptionAsAltRef = useRef<MacOptionAsAlt>(settings?.terminalMacOptionAsAlt ?? 'false')
+  macOptionAsAltRef.current = settings?.terminalMacOptionAsAlt ?? 'false'
   const onPtyExitRef = useRef(onPtyExit)
   onPtyExitRef.current = onPtyExit
 
@@ -463,7 +466,8 @@ export default function TerminalPane({
     setSearchOpen,
     onRequestClosePane: handleRequestClosePane,
     searchOpenRef,
-    searchStateRef
+    searchStateRef,
+    macOptionAsAltRef
   })
 
   useTerminalPaneGlobalEffects({
