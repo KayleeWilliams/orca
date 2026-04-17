@@ -53,6 +53,14 @@ vi.mock('../git/worktree', () => ({
   removeWorktree: removeWorktreeMock
 }))
 
+vi.mock('../git/runner', () => ({
+  // Why: createLocalWorktree now fires `git fetch` via gitExecFileAsync in the
+  // background. Return a resolved promise so the fire-and-forget `.catch()`
+  // chain has a valid Promise to attach to.
+  gitExecFileAsync: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+  gitExecFileSync: vi.fn()
+}))
+
 vi.mock('../git/repo', () => ({
   getGitUsername: getGitUsernameMock,
   getDefaultBaseRef: getDefaultBaseRefMock,

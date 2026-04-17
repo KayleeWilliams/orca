@@ -180,6 +180,10 @@ describe('registerWorktreeHandlers', () => {
     getDefaultBaseRefMock.mockReturnValue('origin/main')
     getBranchConflictKindMock.mockResolvedValue(null)
     getPRForBranchMock.mockResolvedValue(null)
+    // Why: createLocalWorktree now fires `git fetch` in the background via
+    // gitExecFileAsync. The default mock must return a resolved promise so
+    // the fire-and-forget `.catch()` chain doesn't trip on undefined.
+    gitExecFileAsyncMock.mockResolvedValue({ stdout: '', stderr: '' })
     getEffectiveHooksMock.mockReturnValue(null)
     shouldRunSetupForCreateMock.mockReturnValue(false)
     createSetupRunnerScriptMock.mockReturnValue({
@@ -312,12 +316,19 @@ describe('registerWorktreeHandlers', () => {
     expect(listWorktreesMock).not.toHaveBeenCalled()
   })
 
-  it('auto-suffixes the branch name when the first choice already belongs to a PR', async () => {
-    // Why: reusing a historical PR head would make a fresh worktree inherit
-    // that old PR, so the loop suffixes past the name until it finds one that
-    // is not associated with any PR.
+  it('skips past a suffix that already belongs to a PR after an initial branch conflict', async () => {
+    // Why: `gh pr list` is network-bound and previously fired on every single
+    // create, adding 1–3s to the happy path. We now only probe PR conflicts
+    // from suffix=2 onward — once a local/remote branch collision has already
+    // forced us past the first candidate and uniqueness matters enough to
+    // justify the GitHub round-trip. This test covers that delayed path:
+    // suffix=1 is a branch conflict, suffix=2 is owned by an old PR, so the
+    // loop lands on suffix=3.
+    getBranchConflictKindMock.mockImplementation(async (_repoPath: string, branch: string) =>
+      branch === 'improve-dashboard' ? 'remote' : null
+    )
     getPRForBranchMock.mockImplementation(async (_repoPath: string, branch: string) =>
-      branch === 'improve-dashboard'
+      branch === 'improve-dashboard-2'
         ? {
             number: 3127,
             title: 'Existing PR',
@@ -331,9 +342,9 @@ describe('registerWorktreeHandlers', () => {
     )
     listWorktreesMock.mockResolvedValue([
       {
-        path: '/workspace/improve-dashboard-2',
+        path: '/workspace/improve-dashboard-3',
         head: 'abc123',
-        branch: 'improve-dashboard-2',
+        branch: 'improve-dashboard-3',
         isBare: false,
         isMainWorktree: false
       }
@@ -346,17 +357,40 @@ describe('registerWorktreeHandlers', () => {
 
     expect(addWorktreeMock).toHaveBeenCalledWith(
       '/workspace/repo',
-      '/workspace/improve-dashboard-2',
-      'improve-dashboard-2',
+      '/workspace/improve-dashboard-3',
+      'improve-dashboard-3',
       'origin/main',
       false
     )
     expect(result).toEqual({
       worktree: expect.objectContaining({
-        path: '/workspace/improve-dashboard-2',
-        branch: 'improve-dashboard-2'
+        path: '/workspace/improve-dashboard-3',
+        branch: 'improve-dashboard-3'
       })
     })
+  })
+
+  it('does not call `gh pr list` on the happy path (no branch conflict)', async () => {
+    // Why: guards the speed optimization. If a future refactor accidentally
+    // reintroduces the PR probe on the first iteration, the happy path will
+    // silently regain a 1–3s GitHub round-trip per click; this test fails
+    // loudly instead.
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/improve-dashboard',
+        head: 'abc123',
+        branch: 'improve-dashboard',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard'
+    })
+
+    expect(getPRForBranchMock).not.toHaveBeenCalled()
   })
 
   const createdWorktreeList = [

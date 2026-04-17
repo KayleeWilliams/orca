@@ -15,7 +15,7 @@ import type {
 import { getPRForBranch } from '../github/client'
 import { listWorktrees, addWorktree } from '../git/worktree'
 import { getGitUsername, getDefaultBaseRef, getBranchConflictKind } from '../git/repo'
-import { gitExecFileSync } from '../git/runner'
+import { gitExecFileAsync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { createSetupRunnerScript, getEffectiveHooks, shouldRunSetupForCreate } from '../hooks'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
@@ -29,7 +29,7 @@ import {
   mergeWorktree,
   areWorktreePathsEqual
 } from './worktree-logic'
-import { rebuildAuthorizedRootsCache } from './filesystem-auth'
+import { invalidateAuthorizedRootsCache } from './filesystem-auth'
 
 export function notifyWorktreesChanged(mainWindow: BrowserWindow, repoId: string): void {
   if (!mainWindow.isDestroyed()) {
@@ -177,17 +177,22 @@ export async function createLocalWorktree(
       continue
     }
 
-    // Why: the UI resolves PR status by branch name alone. Reusing a historical
-    // PR head name would make a fresh worktree inherit that old merged/closed PR
-    // immediately, so auto-suffix until we land on a fresh branch identity.
-    lastExistingPR = null
-    try {
-      lastExistingPR = await getPRForBranch(repo.path, branchName)
-    } catch {
-      // GitHub API may be unreachable, rate-limited, or token missing
-    }
-    if (lastExistingPR) {
-      continue
+    // Why: `gh pr list` is a network round-trip that previously ran on every
+    // create, adding ~1–3s to the happy path even when no conflict exists. We
+    // only probe PR conflicts once a local/remote branch collision has already
+    // forced us past the first suffix — at that point uniqueness matters
+    // enough to justify the GitHub call. The common case (brand-new branch
+    // name, no collisions) skips the network entirely.
+    if (suffix > 1) {
+      lastExistingPR = null
+      try {
+        lastExistingPR = await getPRForBranch(repo.path, branchName)
+      } catch {
+        // GitHub API may be unreachable, rate-limited, or token missing
+      }
+      if (lastExistingPR) {
+        continue
+      }
     }
 
     worktreePath = ensurePathWithinWorkspace(
@@ -229,13 +234,16 @@ export async function createLocalWorktree(
   // a real worktree on disk while the renderer reports "create failed".
   const shouldLaunchSetup = setupScript ? shouldRunSetupForCreate(repo, args.setupDecision) : false
 
-  // Fetch latest from remote so the worktree starts with up-to-date content
+  // Why: `git fetch` previously blocked worktree creation for 1–5s on every
+  // click, even though the fetch result isn't actually required — the
+  // subsequent `git worktree add` uses whatever local ref `baseBranch` points
+  // at. Kicking fetch off in parallel lets the worktree be created off the
+  // last-known tip while the fetch completes in the background; the next
+  // user action (pull, diff, PR create) will see the refreshed remote state.
   const remote = baseBranch.includes('/') ? baseBranch.split('/')[0] : 'origin'
-  try {
-    gitExecFileSync(['fetch', remote], { cwd: repo.path })
-  } catch {
+  void gitExecFileAsync(['fetch', remote], { cwd: repo.path }).catch(() => {
     // Fetch is best-effort — don't block worktree creation if offline
-  }
+  })
 
   await addWorktree(
     repo.path,
@@ -264,7 +272,12 @@ export async function createLocalWorktree(
   }
   const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
   const worktree = mergeWorktree(repo.id, created, meta)
-  await rebuildAuthorizedRootsCache(store)
+  // Why: the authorized-roots cache is consulted lazily on the next filesystem
+  // access (`ensureAuthorizedRootsCache` rebuilds on demand when dirty). We
+  // just invalidate the cache marker instead of blocking worktree creation on
+  // an immediate rebuild, which can spawn `git worktree list` per repo and
+  // adds 100ms+ to every create.
+  invalidateAuthorizedRootsCache()
 
   let setup: CreateWorktreeResult['setup']
   if (setupScript && shouldLaunchSetup) {
