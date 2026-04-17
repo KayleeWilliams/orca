@@ -319,14 +319,11 @@ export default function NewWorkspaceComposerCard({
           </div>
 
           <div className="flex flex-col rounded-[16px] border border-border/60 bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-            {/* Why: the `>` is rendered as a visual overlay so it's not part of
-                the submitted prompt value, but it must behave like the first
-                character of line 1 — staying inline with line 1's text and
-                scrolling out of view with it when the textarea scrolls.
-                `text-indent: 2ch` on the textarea reserves space for `> ` on
-                line 1 only (wrapped continuation lines start at col 0, directly
-                below the `>`), and the overlay's `translateY` is driven by the
-                textarea's `scrollTop` to keep it pinned to its original line. */}
+            {/* Why: the `>` is rendered as a visual overlay (aria-hidden) so
+                it's never part of the submitted prompt value. It must behave
+                like the first character of line 1 — inline with line 1's text
+                and scrolling out of view with it. See PromptPrefixTextarea for
+                how the shared-scroll-container approach avoids wobble. */}
             <PromptPrefixTextarea
               textareaRef={promptTextareaRef}
               value={agentPrompt}
