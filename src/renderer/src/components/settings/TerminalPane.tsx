@@ -436,6 +436,13 @@ export function TerminalPane({
             className="h-8 flex-wrap"
           >
             <ToggleGroupItem
+              value="new-tab"
+              className="h-8 px-3 text-xs"
+              aria-label="Run in a new tab"
+            >
+              New Tab
+            </ToggleGroupItem>
+            <ToggleGroupItem
               value="split-vertical"
               className="h-8 px-3 text-xs"
               aria-label="Split vertically"
@@ -448,13 +455,6 @@ export function TerminalPane({
               aria-label="Split horizontally"
             >
               Split Horizontally
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="new-tab"
-              className="h-8 px-3 text-xs"
-              aria-label="Run in a new tab"
-            >
-              New Tab
             </ToggleGroupItem>
           </ToggleGroup>
           <p className="text-xs text-muted-foreground">

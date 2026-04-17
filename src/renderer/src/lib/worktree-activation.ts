@@ -124,12 +124,12 @@ export function ensureWorktreeHasInitialTerminal(
   }
 
   // Why: the setup script launch location is user-configurable. The default
-  // 'split-vertical' preserves the historical behavior (right-side split so
-  // the main terminal stays immediately interactive); 'split-horizontal'
-  // swaps the split orientation; 'new-tab' creates a separate background
-  // tab titled "Setup" without stealing focus from the main terminal.
+  // 'new-tab' creates a separate background tab titled "Setup" without
+  // stealing focus from the main terminal, so setup output never crowds the
+  // primary pane; 'split-vertical' and 'split-horizontal' keep the setup
+  // output adjacent to the main terminal via a split.
   if (setup) {
-    const mode = useAppStore.getState().settings?.setupScriptLaunchMode ?? 'split-vertical'
+    const mode = useAppStore.getState().settings?.setupScriptLaunchMode ?? 'new-tab'
     const setupCommand = {
       command: buildSetupRunnerCommand(setup.runnerScriptPath),
       env: setup.envVars

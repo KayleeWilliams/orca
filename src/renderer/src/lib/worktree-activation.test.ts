@@ -6,7 +6,7 @@ import { useAppStore } from '@/store'
 function setSetupScriptLaunchMode(mode: SetupScriptLaunchMode | null): void {
   useAppStore.setState((state) => ({
     settings: state.settings
-      ? { ...state.settings, setupScriptLaunchMode: mode ?? 'split-vertical' }
+      ? { ...state.settings, setupScriptLaunchMode: mode ?? 'new-tab' }
       : mode !== null
         ? ({ setupScriptLaunchMode: mode } as unknown as typeof state.settings)
         : state.settings
@@ -14,7 +14,7 @@ function setSetupScriptLaunchMode(mode: SetupScriptLaunchMode | null): void {
 }
 
 afterEach(() => {
-  setSetupScriptLaunchMode('split-vertical')
+  setSetupScriptLaunchMode('new-tab')
 })
 
 function createMockStore(overrides: Record<string, unknown> = {}) {
@@ -32,8 +32,10 @@ function createMockStore(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ensureWorktreeHasInitialTerminal', () => {
-  it('creates a tab and queues a setup split for newly created worktrees', () => {
-    const store = createMockStore()
+  it('creates a background Setup tab for newly created worktrees by default', () => {
+    let createdIndex = 0
+    const createTab = vi.fn(() => ({ id: `tab-${++createdIndex}` }))
+    const store = createMockStore({ createTab })
 
     ensureWorktreeHasInitialTerminal(store, 'wt-1', undefined, {
       runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
@@ -43,17 +45,18 @@ describe('ensureWorktreeHasInitialTerminal', () => {
       }
     })
 
-    expect(store.createTab).toHaveBeenCalledWith('wt-1')
-    expect(store.setActiveTab).toHaveBeenCalledWith('tab-1')
-    expect(store.queueTabStartupCommand).not.toHaveBeenCalled()
-    expect(store.queueTabSetupSplit).toHaveBeenCalledWith('tab-1', {
+    expect(createTab).toHaveBeenCalledTimes(2)
+    expect(store.setActiveTab).toHaveBeenNthCalledWith(1, 'tab-1')
+    expect(store.setActiveTab).toHaveBeenLastCalledWith('tab-1')
+    expect(store.setTabCustomTitle).toHaveBeenCalledWith('tab-2', 'Setup')
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith('tab-2', {
       command: 'bash /tmp/repo/.git/orca/setup-runner.sh',
       env: {
         ORCA_ROOT_PATH: '/tmp/repo',
         ORCA_WORKTREE_PATH: '/tmp/worktrees/wt-1'
-      },
-      direction: 'vertical'
+      }
     })
+    expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
   })
 
   it('creates a single tab without setup split when no setup is provided', () => {
@@ -140,6 +143,7 @@ describe('ensureWorktreeHasInitialTerminal', () => {
   })
 
   it('queues both setup split and issue command split when both are provided', () => {
+    setSetupScriptLaunchMode('split-vertical')
     const store = createMockStore()
 
     ensureWorktreeHasInitialTerminal(
@@ -175,6 +179,22 @@ describe('ensureWorktreeHasInitialTerminal', () => {
 
     expect(store.queueTabStartupCommand).not.toHaveBeenCalled()
     expect(store.queueTabIssueCommandSplit).not.toHaveBeenCalled()
+  })
+
+  it('queues a vertical setup split when setupScriptLaunchMode is split-vertical', () => {
+    setSetupScriptLaunchMode('split-vertical')
+    const store = createMockStore()
+
+    ensureWorktreeHasInitialTerminal(store, 'wt-1', undefined, {
+      runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+      envVars: { ORCA_ROOT_PATH: '/tmp/repo' }
+    })
+
+    expect(store.queueTabSetupSplit).toHaveBeenCalledWith('tab-1', {
+      command: 'bash /tmp/repo/.git/orca/setup-runner.sh',
+      env: { ORCA_ROOT_PATH: '/tmp/repo' },
+      direction: 'vertical'
+    })
   })
 
   it('queues a horizontal setup split when setupScriptLaunchMode is split-horizontal', () => {

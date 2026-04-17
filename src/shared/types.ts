@@ -547,9 +547,9 @@ export type TuiAgent =
 export type TaskViewPresetId = 'all' | 'issues' | 'review' | 'my-issues' | 'my-prs' | 'prs'
 
 /** Where the repo setup script runs when a worktree is created.
- *  - 'split-vertical': split the initial terminal pane with a vertical divider (default).
- *  - 'split-horizontal': split the initial terminal pane with a horizontal divider.
- *  - 'new-tab': open a background tab titled "Setup" and leave focus on the first tab. */
+ *  - 'new-tab': open a background tab titled "Setup" and leave focus on the first tab (default).
+ *  - 'split-vertical': split the initial terminal pane with a vertical divider.
+ *  - 'split-horizontal': split the initial terminal pane with a horizontal divider. */
 export type SetupScriptLaunchMode = 'split-vertical' | 'split-horizontal' | 'new-tab'
 
 /** Direction used when the setup script launch mode is a split. */
@@ -584,7 +584,8 @@ export type GlobalSettings = {
   terminalRightClickToPaste: boolean
   terminalFocusFollowsMouse: boolean
   /** Where the repo setup script runs on workspace create. Defaults to a
-   *  vertical split so the user's main terminal stays immediately usable. */
+   *  background "Setup" tab so the user's main terminal stays immediately
+   *  usable without the setup output crowding the initial pane. */
   setupScriptLaunchMode: SetupScriptLaunchMode
   terminalScrollbackBytes: number
   /** Why: opening arbitrary links inside Orca uses an isolated guest browser surface.
