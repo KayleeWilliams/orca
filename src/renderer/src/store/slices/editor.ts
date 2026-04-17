@@ -98,6 +98,12 @@ export type OpenFile = {
   conflictReview?: ConflictReviewState
   isPreview?: boolean // preview tabs are replaced when another file is single-clicked
   isUntitled?: boolean // true for files created via "New Markdown" that haven't been renamed yet
+  // Why: when an external process (e.g. `git mv`, `rm`) removes the file on
+  // disk while it's open, we keep the tab around so the user can still see
+  // (and potentially save) their in-memory content. The tab surfaces this as
+  // a strikethrough label plus a "deleted"/"renamed" suffix. Cleared if the
+  // file reappears on disk at its original path.
+  externalMutation?: 'deleted' | 'renamed'
   mode: 'edit' | 'diff' | 'conflict-review'
 }
 
@@ -168,6 +174,7 @@ export type EditorSlice = {
   setActiveFile: (fileId: string) => void
   reorderFiles: (fileIds: string[]) => void
   markFileDirty: (fileId: string, dirty: boolean) => void
+  setExternalMutation: (fileId: string, mutation: 'deleted' | 'renamed' | null) => void
   clearUntitled: (fileId: string) => void
   openDiff: (
     worktreeId: string,
@@ -914,6 +921,21 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
             ? { ...f, isDirty: dirty, ...(needsPreviewClear ? { isPreview: undefined } : {}) }
             : f
         )
+      }
+    }),
+
+  setExternalMutation: (fileId, mutation) =>
+    set((s) => {
+      const file = s.openFiles.find((f) => f.id === fileId)
+      if (!file) {
+        return s
+      }
+      const next = mutation ?? undefined
+      if (file.externalMutation === next) {
+        return s
+      }
+      return {
+        openFiles: s.openFiles.map((f) => (f.id === fileId ? { ...f, externalMutation: next } : f))
       }
     }),
 

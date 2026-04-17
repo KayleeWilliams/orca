@@ -254,7 +254,7 @@ export default function EditorFileTab({
               />
             ) : (
               <span
-                className={`truncate max-w-[130px]${file.isPreview ? ' italic' : ''}`}
+                className={`truncate max-w-[130px]${file.isPreview ? ' italic' : ''}${file.externalMutation ? ' line-through' : ''}`}
                 style={tabStatusColor ? { color: tabStatusColor } : undefined}
                 onDoubleClick={(e) => {
                   // Why: the outer tab's onDoubleClick pins preview tabs. Scope
@@ -270,7 +270,12 @@ export default function EditorFileTab({
                 {getEditorDisplayLabel(file)}
               </span>
             )}
-            {tabStatus && !isRenaming && (
+            {file.externalMutation && !isRenaming && (
+              <span className="shrink-0 text-[10px] leading-none font-semibold tracking-wide text-muted-foreground">
+                {file.externalMutation}
+              </span>
+            )}
+            {tabStatus && !isRenaming && !file.externalMutation && (
               <span
                 className="shrink-0 text-[10px] leading-none font-semibold tracking-wide"
                 style={{ color: tabStatusColor }}

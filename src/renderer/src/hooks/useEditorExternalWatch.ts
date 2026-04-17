@@ -123,6 +123,50 @@ export function useEditorExternalWatch(): void {
         return
       }
 
+      // Why: when an external process removes (or `git mv`s) a file that's
+      // open in the editor, keep the tab alive and mark it as deleted/renamed
+      // so the user can see the mutation and still access their in-memory
+      // content. A paired create-event in the same batch signals a rename;
+      // a lone delete is a hard delete. Resurrection (same path comes back
+      // on disk) clears the mark further down.
+      const deletedOpenEditorIds = collectDeletedOpenEditorIds(payload, target.worktreeId)
+      const hasPairedCreate = payload.events.some(
+        (evt) => evt.kind === 'create' && evt.isDirectory !== true
+      )
+      if (deletedOpenEditorIds.length > 0) {
+        const setExternalMutation = useAppStore.getState().setExternalMutation
+        const mutation = hasPairedCreate ? 'renamed' : 'deleted'
+        for (const fileId of deletedOpenEditorIds) {
+          setExternalMutation(fileId, mutation)
+        }
+      }
+
+      // Why: if a previously-deleted file reappears at the same path (e.g.
+      // the user ran `git checkout`), clear the tombstone so the tab returns
+      // to its normal state and any non-dirty content gets reloaded below.
+      const createOrUpdatePaths = new Set<string>()
+      for (const evt of payload.events) {
+        if (evt.isDirectory === true) {
+          continue
+        }
+        if (evt.kind === 'create' || evt.kind === 'update') {
+          createOrUpdatePaths.add(normalizeAbsolutePath(evt.absolutePath))
+        }
+      }
+      if (createOrUpdatePaths.size > 0) {
+        const state = useAppStore.getState()
+        for (const file of state.openFiles) {
+          if (
+            file.worktreeId === target.worktreeId &&
+            file.mode === 'edit' &&
+            file.externalMutation &&
+            createOrUpdatePaths.has(normalizeAbsolutePath(file.filePath))
+          ) {
+            state.setExternalMutation(file.id, null)
+          }
+        }
+      }
+
       const changedFiles = new Set<string>()
       for (const evt of payload.events) {
         if (evt.kind === 'overflow') {
@@ -145,6 +189,14 @@ export function useEditorExternalWatch(): void {
         }
 
         if (evt.kind === 'update' && evt.isDirectory === true) {
+          continue
+        }
+
+        if (evt.kind === 'delete') {
+          // Why: delete events are already handled above by marking the tab
+          // as tombstoned. Feeding them into the reload pipeline would fire
+          // `readFile` against the ENOENT path and replace the in-memory
+          // content with "Error loading file..." — losing the user's view.
           continue
         }
 
@@ -224,4 +276,27 @@ export function useEditorExternalWatch(): void {
     // worktrees. Depending on `openFiles`/`worktreesByRepo` directly would
     // tear down and recreate subscriptions on every file-content edit.
   }, [targetsKey])
+}
+
+function collectDeletedOpenEditorIds(payload: FsChangedPayload, worktreeId: string): string[] {
+  const deletePaths = new Set<string>()
+  for (const evt of payload.events) {
+    if (evt.kind === 'delete') {
+      deletePaths.add(normalizeAbsolutePath(evt.absolutePath))
+    }
+  }
+  if (deletePaths.size === 0) {
+    return []
+  }
+  const openFilesNow = useAppStore.getState().openFiles
+  const result: string[] = []
+  for (const file of openFilesNow) {
+    if (file.worktreeId !== worktreeId || file.mode !== 'edit') {
+      continue
+    }
+    if (deletePaths.has(normalizeAbsolutePath(file.filePath))) {
+      result.push(file.id)
+    }
+  }
+  return result
 }
