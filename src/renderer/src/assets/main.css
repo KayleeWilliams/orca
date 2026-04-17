@@ -365,6 +365,15 @@
   cursor: pointer;
 }
 
+/* Why: the titlebar is a drag region, and descendant elements inherit that
+   region unless they opt out. Without this, hovering the dot/count spans
+   inside the badge showed the default cursor instead of pointer because the
+   drag region overrode the button's cursor. pointer-events: none forwards
+   hover/click hit-testing to the button, which already has no-drag set. */
+.titlebar-agent-badge > * {
+  pointer-events: none;
+}
+
 .titlebar-agent-badge:hover {
   background: var(--accent);
   border-color: var(--border);
