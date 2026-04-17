@@ -31,6 +31,7 @@ import { RateLimitService } from './rate-limits/service'
 import { attachMainWindowServices } from './window/attach-main-window-services'
 import { createMainWindow } from './window/createMainWindow'
 import { CodexAccountService } from './codex-accounts/service'
+import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
 import { openCodeHookService } from './opencode/hook-service'
 
 let mainWindow: BrowserWindow | null = null
@@ -43,6 +44,7 @@ let stats: StatsCollector | null = null
 let claudeUsage: ClaudeUsageStore | null = null
 let codexUsage: CodexUsageStore | null = null
 let codexAccounts: CodexAccountService | null = null
+let codexRuntimeHome: CodexRuntimeHomeService | null = null
 let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
@@ -85,6 +87,9 @@ function openMainWindow(): BrowserWindow {
   if (!codexAccounts) {
     throw new Error('Codex account service must be initialized before opening the main window')
   }
+  if (!codexRuntimeHome) {
+    throw new Error('Codex runtime home service must be initialized before opening the main window')
+  }
 
   const window = createMainWindow(store, {
     getIsQuitting: () => isQuitting,
@@ -102,9 +107,7 @@ function openMainWindow(): BrowserWindow {
     rateLimits,
     window.webContents.id
   )
-  attachMainWindowServices(window, store, runtime, () =>
-    codexAccounts!.getSelectedManagedHomePath()
-  )
+  attachMainWindowServices(window, store, runtime, () => codexRuntimeHome!.prepareForCodexLaunch())
   rateLimits.attach(window)
   rateLimits.start()
   window.on('closed', () => {
@@ -130,8 +133,9 @@ app.whenReady().then(async () => {
   claudeUsage = new ClaudeUsageStore(store)
   codexUsage = new CodexUsageStore(store)
   rateLimits = new RateLimitService()
-  codexAccounts = new CodexAccountService(store, rateLimits)
-  rateLimits.setCodexHomePathResolver(() => codexAccounts!.getSelectedManagedHomePath())
+  codexRuntimeHome = new CodexRuntimeHomeService(store)
+  codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome)
+  rateLimits.setCodexHomePathResolver(() => codexRuntimeHome!.prepareForRateLimitFetch())
   runtime = new OrcaRuntimeService(store, stats)
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   registerAppMenu({

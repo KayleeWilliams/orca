@@ -11,6 +11,22 @@ import type { PtyConnectionDeps } from './pty-connection-types'
 
 const pendingSpawnByTabId = new Map<string, Promise<string | null>>()
 
+function isCodexPaneStale(args: { tabId: string; panePtyId: string | null }): boolean {
+  const state = useAppStore.getState()
+  const { codexRestartNoticeByPtyId } = state
+  if (args.panePtyId && codexRestartNoticeByPtyId[args.panePtyId]) {
+    return true
+  }
+
+  const tabs = Object.values(state.tabsByWorktree ?? {}).flat()
+  const tab = tabs.find((entry) => entry.id === args.tabId)
+  if (tab?.ptyId && codexRestartNoticeByPtyId[tab.ptyId]) {
+    return true
+  }
+
+  return false
+}
+
 export function connectPanePty(
   pane: ManagedPane,
   manager: PaneManager,
@@ -163,6 +179,16 @@ export function connectPanePty(
   deps.paneTransportsRef.current.set(pane.id, transport)
 
   const onDataDisposable = pane.terminal.onData((data) => {
+    const currentPtyId = transport.getPtyId()
+    // Why: after a Codex account switch, the runtime auth has already moved to
+    // the newly selected account. Stale panes must not keep sending input until
+    // they restart, or work can execute under the wrong account while the UI
+    // still says the pane is stale. Fall back to the tab's persisted PTY ID so
+    // the block still holds during reconnect races before the live transport has
+    // updated its local PTY binding.
+    if (isCodexPaneStale({ tabId: deps.tabId, panePtyId: currentPtyId })) {
+      return
+    }
     transport.sendInput(data)
   })
 

@@ -1,0 +1,307 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { GlobalSettings } from '../../shared/types'
+
+const testState = { userDataDir: '', fakeHomeDir: '' }
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: () => testState.userDataDir
+  }
+}))
+
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof import('node:os')>('node:os') // eslint-disable-line @typescript-eslint/consistent-type-imports -- vi.importActual requires inline import()
+  return {
+    ...actual,
+    homedir: () => testState.fakeHomeDir
+  }
+})
+
+function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
+  return {
+    workspaceDir: testState.fakeHomeDir,
+    nestWorkspaces: false,
+    refreshLocalBaseRefOnWorktreeCreate: false,
+    branchPrefix: 'git-username',
+    branchPrefixCustom: '',
+    theme: 'system',
+    editorAutoSave: false,
+    editorAutoSaveDelayMs: 1000,
+    terminalFontSize: 14,
+    terminalFontFamily: 'JetBrains Mono',
+    terminalFontWeight: 500,
+    terminalCursorStyle: 'block',
+    terminalCursorBlink: false,
+    terminalThemeDark: 'orca-dark',
+    terminalDividerColorDark: '#000000',
+    terminalUseSeparateLightTheme: false,
+    terminalThemeLight: 'orca-light',
+    terminalDividerColorLight: '#ffffff',
+    terminalInactivePaneOpacity: 0.5,
+    terminalActivePaneOpacity: 1,
+    terminalPaneOpacityTransitionMs: 150,
+    terminalDividerThicknessPx: 1,
+    terminalRightClickToPaste: false,
+    terminalFocusFollowsMouse: false,
+    setupScriptLaunchMode: 'split-vertical',
+    terminalScrollbackBytes: 10_000_000,
+    openLinksInApp: false,
+    rightSidebarOpenByDefault: true,
+    showTitlebarAgentActivity: true,
+    diffDefaultView: 'inline',
+    notifications: {
+      enabled: true,
+      agentTaskComplete: true,
+      terminalBell: false,
+      suppressWhenFocused: true
+    },
+    promptCacheTimerEnabled: false,
+    promptCacheTtlMs: 300_000,
+    codexManagedAccounts: [],
+    activeCodexManagedAccountId: null,
+    terminalScopeHistoryByWorktree: true,
+    defaultTuiAgent: null,
+    defaultTaskViewPreset: 'all',
+    agentCmdOverrides: {},
+    terminalMacOptionAsAlt: 'false',
+    ...overrides
+  }
+}
+
+function createStore(settings: GlobalSettings) {
+  return {
+    getSettings: vi.fn(() => settings),
+    updateSettings: vi.fn((updates: Partial<GlobalSettings>) => {
+      settings = {
+        ...settings,
+        ...updates,
+        notifications: {
+          ...settings.notifications,
+          ...updates.notifications
+        }
+      }
+      return settings
+    })
+  }
+}
+
+function createManagedAuth(rootDir: string, accountId: string, auth: string): string {
+  const managedHomePath = join(rootDir, 'codex-accounts', accountId, 'home')
+  mkdirSync(managedHomePath, { recursive: true })
+  writeFileSync(join(managedHomePath, '.orca-managed-home'), `${accountId}\n`, 'utf-8')
+  writeFileSync(join(managedHomePath, 'auth.json'), auth, 'utf-8')
+  return managedHomePath
+}
+
+describe('CodexRuntimeHomeService', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    testState.userDataDir = mkdtempSync(join(tmpdir(), 'orca-runtime-home-'))
+    testState.fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-codex-home-'))
+    mkdirSync(join(testState.fakeHomeDir, '.codex'), { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(testState.userDataDir, { recursive: true, force: true })
+    rmSync(testState.fakeHomeDir, { recursive: true, force: true })
+  })
+
+  it('captures the existing ~/.codex auth as the system-default snapshot', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(
+      readFileSync(
+        join(testState.userDataDir, 'codex-runtime-home', 'system-default-auth.json'),
+        'utf-8'
+      )
+    ).toBe('{"account":"system"}\n')
+  })
+
+  it('materializes the active managed account auth into ~/.codex on startup', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const managedHomePath = createManagedAuth(
+      testState.userDataDir,
+      'account-1',
+      '{"account":"managed"}\n'
+    )
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          {
+            id: 'account-1',
+            email: 'user@example.com',
+            managedHomePath,
+            providerAccountId: null,
+            workspaceLabel: null,
+            workspaceAccountId: null,
+            createdAt: 1,
+            updatedAt: 1,
+            lastAuthenticatedAt: 1
+          }
+        ],
+        activeCodexManagedAccountId: 'account-1'
+      })
+    )
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"managed"}\n')
+    expect(
+      readFileSync(
+        join(testState.userDataDir, 'codex-runtime-home', 'system-default-auth.json'),
+        'utf-8'
+      )
+    ).toBe('{"account":"system"}\n')
+  })
+
+  it('restores the system-default snapshot when no managed account is selected', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const managedHomePath = createManagedAuth(
+      testState.userDataDir,
+      'account-1',
+      '{"account":"managed"}\n'
+    )
+    const settings = createSettings({
+      codexManagedAccounts: [
+        {
+          id: 'account-1',
+          email: 'user@example.com',
+          managedHomePath,
+          providerAccountId: null,
+          workspaceLabel: null,
+          workspaceAccountId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          lastAuthenticatedAt: 1
+        }
+      ],
+      activeCodexManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+    settings.activeCodexManagedAccountId = null
+    writeFileSync(runtimeAuthPath, '{"account":"managed"}\n', 'utf-8')
+
+    service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
+  })
+
+  it('clears an invalid active account selection and restores the system default snapshot', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const missingManagedHomePath = join(
+      testState.userDataDir,
+      'codex-accounts',
+      'account-1',
+      'home'
+    )
+    const settings = createSettings({
+      codexManagedAccounts: [
+        {
+          id: 'account-1',
+          email: 'user@example.com',
+          managedHomePath: missingManagedHomePath,
+          providerAccountId: null,
+          workspaceLabel: null,
+          workspaceAccountId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          lastAuthenticatedAt: 1
+        }
+      ],
+      activeCodexManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+    writeFileSync(runtimeAuthPath, '{"account":"managed"}\n', 'utf-8')
+
+    service.syncForCurrentSelection()
+
+    expect(store.updateSettings).toHaveBeenCalledWith({ activeCodexManagedAccountId: null })
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
+    expect(warnSpy).toHaveBeenCalled()
+  })
+
+  it('returns ~/.codex for Codex launch and rate-limit preparation', async () => {
+    const store = createStore(createSettings())
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+
+    expect(service.prepareForCodexLaunch()).toBe(join(testState.fakeHomeDir, '.codex'))
+    expect(service.prepareForRateLimitFetch()).toBe(join(testState.fakeHomeDir, '.codex'))
+    expect(existsSync(join(testState.fakeHomeDir, '.codex'))).toBe(true)
+  })
+
+  it('imports legacy managed-home history into the shared runtime history', async () => {
+    const runtimeHomePath = join(testState.fakeHomeDir, '.codex')
+    const runtimeHistoryPath = join(runtimeHomePath, 'history.jsonl')
+    writeFileSync(runtimeHistoryPath, '{"id":"shared-1"}\n', 'utf-8')
+    const managedHomePath = createManagedAuth(
+      testState.userDataDir,
+      'account-1',
+      '{"account":"managed"}\n'
+    )
+    writeFileSync(
+      join(managedHomePath, 'history.jsonl'),
+      '{"id":"shared-1"}\n{"id":"managed-2"}\n',
+      'utf-8'
+    )
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(runtimeHistoryPath, 'utf-8')).toBe(
+      '{"id":"shared-1"}\n{"id":"managed-2"}\n'
+    )
+    expect(existsSync(join(testState.userDataDir, 'codex-runtime-home', 'migration-v1.json'))).toBe(
+      true
+    )
+  })
+
+  it('preserves conflicting legacy session files under deterministic names', async () => {
+    const runtimeSessionsDir = join(testState.fakeHomeDir, '.codex', 'sessions')
+    mkdirSync(runtimeSessionsDir, { recursive: true })
+    writeFileSync(join(runtimeSessionsDir, 'session.json'), '{"turns":[1]}', 'utf-8')
+    const managedHomePath = createManagedAuth(
+      testState.userDataDir,
+      'account-1',
+      '{"account":"managed"}\n'
+    )
+    const legacySessionsDir = join(managedHomePath, 'sessions')
+    mkdirSync(legacySessionsDir, { recursive: true })
+    writeFileSync(join(legacySessionsDir, 'session.json'), '{"turns":[1,2]}', 'utf-8')
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(join(runtimeSessionsDir, 'session.json'), 'utf-8')).toBe('{"turns":[1]}')
+    expect(
+      readFileSync(join(runtimeSessionsDir, 'session.orca-legacy-account-1.json'), 'utf-8')
+    ).toBe('{"turns":[1,2]}')
+    expect(
+      readFileSync(
+        join(testState.userDataDir, 'codex-runtime-home', 'migration-diagnostics.jsonl'),
+        'utf-8'
+      )
+    ).toContain('"type":"session-conflict"')
+  })
+})

@@ -3,10 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type StoreState = {
   tabsByWorktree: Record<string, { id: string; ptyId: string | null }[]>
+  ptyIdsByTabId?: Record<string, string[]>
   worktreesByRepo: Record<string, { id: string; repoId: string; path: string }[]>
   repos: { id: string; connectionId?: string | null }[]
   cacheTimerByKey: Record<string, number | null>
   settings: { promptCacheTimerEnabled?: boolean; experimentalTerminalDaemon?: boolean } | null
+  codexRestartNoticeByPtyId: Record<
+    string,
+    { previousAccountLabel: string; nextAccountLabel: string }
+  >
   consumePendingColdRestore: ReturnType<typeof vi.fn>
   consumePendingSnapshot: ReturnType<typeof vi.fn>
 }
@@ -151,12 +156,16 @@ describe('connectPanePty', () => {
       tabsByWorktree: {
         'wt-1': [{ id: 'tab-1', ptyId: 'tab-pty' }]
       },
+      ptyIdsByTabId: {
+        'tab-1': ['tab-pty']
+      },
       worktreesByRepo: {
         repo1: [{ id: 'wt-1', repoId: 'repo1', path: '/tmp/wt-1' }]
       },
       repos: [{ id: 'repo1', connectionId: null }],
       cacheTimerByKey: {},
       settings: { promptCacheTimerEnabled: true },
+      codexRestartNoticeByPtyId: {},
       consumePendingColdRestore: vi.fn(() => null),
       consumePendingSnapshot: vi.fn(() => null)
     } as StoreState
@@ -218,6 +227,45 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalledWith(
       expect.stringContaining("claude 'say test'")
     )
+  })
+
+  it('blocks input to stale Codex panes until they restart', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+
+    const transport = createMockTransport('pty-codex-stale')
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: {
+        'wt-1': [{ id: 'tab-1', ptyId: 'pty-codex-stale' }]
+      },
+      ptyIdsByTabId: {
+        'tab-1': ['pty-codex-stale']
+      },
+      codexRestartNoticeByPtyId: {
+        'pty-codex-stale': { previousAccountLabel: 'A', nextAccountLabel: 'B' }
+      }
+    }
+
+    const pane = createPane(1)
+    let onDataHandler: ((data: string) => void) | null = null
+    pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
+      onDataHandler = handler
+      return { dispose: vi.fn() }
+    }) as typeof pane.terminal.onData)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    expect(onDataHandler).toBeDefined()
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
+    }
+    const sendTerminalInput = onDataHandler as (data: string) => void
+    sendTerminalInput('hello')
+
+    expect(transport.sendInput).not.toHaveBeenCalled()
   })
 
   it('sends startup command via sendInput for SSH connections (relay has no shell-ready mechanism)', async () => {

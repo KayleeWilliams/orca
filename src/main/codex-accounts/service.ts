@@ -3,14 +3,24 @@ account lifecycle, path safety, login, and identity parsing in one audited
 main-process module so the managed-account boundary stays explicit. */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
 import { app } from 'electron'
 import type {
   CodexManagedAccount,
   CodexManagedAccountSummary,
   CodexRateLimitAccountsState
 } from '../../shared/types'
+import type { CodexRuntimeHomeService } from './runtime-home-service'
 import { resolveCodexCommand } from '../codex-cli/command'
 import type { Store } from '../persistence'
 import type { RateLimitService } from '../rate-limits/service'
@@ -33,8 +43,11 @@ type ResolvedCodexIdentity = {
 export class CodexAccountService {
   constructor(
     private readonly store: Store,
-    private readonly rateLimits: RateLimitService
-  ) {}
+    private readonly rateLimits: RateLimitService,
+    private readonly runtimeHome: CodexRuntimeHomeService
+  ) {
+    this.safeSyncCanonicalConfigToManagedHomes()
+  }
 
   listAccounts(): CodexRateLimitAccountsState {
     this.normalizeActiveSelection()
@@ -46,6 +59,7 @@ export class CodexAccountService {
     const managedHomePath = this.createManagedHome(accountId)
 
     try {
+      this.safeSyncCanonicalConfigIntoManagedHome(managedHomePath)
       await this.runCodexLogin(managedHomePath)
       const identity = this.readIdentityFromHome(managedHomePath)
       if (!identity.email) {
@@ -70,6 +84,8 @@ export class CodexAccountService {
         codexManagedAccounts: [...settings.codexManagedAccounts, account],
         activeCodexManagedAccountId: account.id
       })
+      this.safeSyncCanonicalConfigToManagedHomes()
+      this.runtimeHome.syncForCurrentSelection()
 
       await this.rateLimits.refreshForCodexAccountChange()
       return this.getSnapshot()
@@ -108,6 +124,8 @@ export class CodexAccountService {
     this.store.updateSettings({
       codexManagedAccounts: updatedAccounts
     })
+    this.safeSyncCanonicalConfigToManagedHomes()
+    this.runtimeHome.syncForCurrentSelection()
 
     // Why: re-auth can change which actual Codex identity the managed home
     // points at. Force a fresh read immediately so the status bar cannot keep
@@ -129,6 +147,7 @@ export class CodexAccountService {
       codexManagedAccounts: nextAccounts,
       activeCodexManagedAccountId: nextActiveId
     })
+    this.runtimeHome.syncForCurrentSelection()
 
     this.safeRemoveManagedHome(account.managedHomePath)
     await this.rateLimits.refreshForCodexAccountChange()
@@ -143,27 +162,11 @@ export class CodexAccountService {
     this.store.updateSettings({
       activeCodexManagedAccountId: accountId
     })
+    this.safeSyncCanonicalConfigToManagedHomes()
+    this.runtimeHome.syncForCurrentSelection()
 
     await this.rateLimits.refreshForCodexAccountChange()
     return this.getSnapshot()
-  }
-
-  getSelectedManagedHomePath(): string | null {
-    const account = this.getActiveAccount()
-    if (!account) {
-      return null
-    }
-
-    try {
-      return this.assertManagedHomePath(account.managedHomePath)
-    } catch (error) {
-      // Why: if the selected managed home was deleted or tampered with outside
-      // Orca, the safest recovery is to fall back to the ambient system Codex
-      // login immediately rather than keeping a broken active selection around.
-      this.store.updateSettings({ activeCodexManagedAccountId: null })
-      console.warn('[codex-accounts] Ignoring invalid managed home path:', error)
-      return null
-    }
   }
 
   private getSnapshot(): CodexRateLimitAccountsState {
@@ -174,19 +177,6 @@ export class CodexAccountService {
         .sort((a, b) => b.updatedAt - a.updatedAt),
       activeAccountId: settings.activeCodexManagedAccountId
     }
-  }
-
-  private getActiveAccount(): CodexManagedAccount | null {
-    this.normalizeActiveSelection()
-    const settings = this.store.getSettings()
-    if (!settings.activeCodexManagedAccountId) {
-      return null
-    }
-    return (
-      settings.codexManagedAccounts.find(
-        (entry) => entry.id === settings.activeCodexManagedAccountId
-      ) ?? null
-    )
   }
 
   private toSummary(account: CodexManagedAccount): CodexManagedAccountSummary {
@@ -232,6 +222,87 @@ export class CodexAccountService {
     // prove the path belongs to Orca before deleting anything.
     writeFileSync(join(managedHomePath, '.orca-managed-home'), `${accountId}\n`, 'utf-8')
     return this.assertManagedHomePath(managedHomePath)
+  }
+
+  private safeSyncCanonicalConfigToManagedHomes(): void {
+    try {
+      this.syncCanonicalConfigToManagedHomes()
+    } catch (error) {
+      console.warn('[codex-accounts] Failed to sync canonical config:', error)
+    }
+  }
+
+  private safeSyncCanonicalConfigIntoManagedHome(managedHomePath: string): void {
+    try {
+      this.syncCanonicalConfigIntoManagedHome(managedHomePath)
+    } catch (error) {
+      console.warn('[codex-accounts] Failed to seed managed config:', error)
+    }
+  }
+
+  private syncCanonicalConfigToManagedHomes(): void {
+    const canonicalConfig = this.readCanonicalConfig()
+    if (canonicalConfig === null) {
+      return
+    }
+
+    const settings = this.store.getSettings()
+    for (const account of settings.codexManagedAccounts) {
+      try {
+        this.syncCanonicalConfigIntoManagedHome(account.managedHomePath, canonicalConfig)
+      } catch (error) {
+        console.warn('[codex-accounts] Failed to sync managed config:', error)
+      }
+    }
+  }
+
+  private syncCanonicalConfigIntoManagedHome(
+    managedHomePath: string,
+    canonicalConfig = this.readCanonicalConfig()
+  ): void {
+    if (canonicalConfig === null) {
+      return
+    }
+
+    const trustedManagedHomePath = this.assertManagedHomePath(managedHomePath)
+    // Why: Orca account switching is meant to swap Codex credentials and quota
+    // identity, not silently fork the user's sandbox/config defaults. Syncing
+    // one canonical config into every managed home keeps auth isolated per
+    // account while preserving consistent Codex behavior.
+    this.writeManagedConfig(trustedManagedHomePath, canonicalConfig)
+  }
+
+  private readCanonicalConfig(): string | null {
+    const primaryConfigPath = join(homedir(), '.codex', 'config.toml')
+    if (existsSync(primaryConfigPath)) {
+      try {
+        return readFileSync(primaryConfigPath, 'utf-8')
+      } catch (error) {
+        console.warn('[codex-accounts] Failed to read canonical config:', error)
+      }
+    }
+
+    const settings = this.store.getSettings()
+    for (const account of settings.codexManagedAccounts) {
+      try {
+        const managedHomePath = this.assertManagedHomePath(account.managedHomePath)
+        const configPath = join(managedHomePath, 'config.toml')
+        if (existsSync(configPath)) {
+          return readFileSync(configPath, 'utf-8')
+        }
+      } catch (error) {
+        console.warn('[codex-accounts] Failed to read fallback managed config:', error)
+      }
+    }
+
+    return null
+  }
+
+  private writeManagedConfig(managedHomePath: string, contents: string): void {
+    const configPath = join(managedHomePath, 'config.toml')
+    const tmpPath = `${configPath}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmpPath, contents, 'utf-8')
+    renameSync(tmpPath, configPath)
   }
 
   private getManagedAccountsRoot(): string {
