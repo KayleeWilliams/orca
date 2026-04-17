@@ -186,13 +186,26 @@ async function killStaleDaemon(runtimeDir: string, socketPath: string): Promise<
       // released. Without this, the new daemon's listen() can fail with
       // EADDRINUSE on Windows where named pipes can't be unlinked.
       const deadline = Date.now() + KILL_WAIT_MS
+      let exited = false
       while (Date.now() < deadline) {
         try {
           process.kill(pid, 0)
         } catch {
+          exited = true
           break
         }
         await new Promise((r) => setTimeout(r, KILL_POLL_MS))
+      }
+
+      // Why: if the daemon's event loop is wedged, SIGTERM never runs the
+      // JS handler. Escalate to SIGKILL to guarantee the process dies and
+      // releases the socket/pipe.
+      if (!exited) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // Already dead
+        }
       }
     }
   } catch {
