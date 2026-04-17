@@ -2,6 +2,12 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+// Why: Electron-based hosts (e.g. Claude Code, VS Code) set
+// ELECTRON_RUN_AS_NODE=1 in their terminal environment. If this leaks into
+// the electron-vite spawn, the Electron binary boots as plain Node and
+// require('electron') returns the npm stub instead of the built-in API.
+delete process.env.ELECTRON_RUN_AS_NODE
+
 const require = createRequire(import.meta.url)
 // Why: tests inject a tiny fake CLI here so they can verify Ctrl+C tears down
 // the full child tree without depending on a real electron-vite install.
