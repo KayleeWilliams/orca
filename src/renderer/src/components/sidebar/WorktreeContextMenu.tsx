@@ -37,6 +37,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   const repos = useAppStore((s) => s.repos)
   const skipDeleteConfirm = useAppStore((s) => s.settings?.skipDeleteWorktreeConfirm ?? false)
   const shutdownWorktreeTerminals = useAppStore((s) => s.shutdownWorktreeTerminals)
+  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
+  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const clearWorktreeDeleteState = useAppStore((s) => s.clearWorktreeDeleteState)
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)

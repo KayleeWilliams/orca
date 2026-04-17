@@ -162,7 +162,11 @@ describe('removeWorktree cascade', () => {
     // State NOT cleaned up
     expect(s.worktreesByRepo['repo1']).toHaveLength(1)
     expect(s.tabsByWorktree[worktreeId]).toHaveLength(1)
-    expect(s.activeWorktreeId).toBe(worktreeId)
+    // Why: shutdownWorktreeTerminals now clears the active worktree
+    // synchronously to prevent Terminal from auto-creating a replacement tab
+    // during async teardown. A later git-remove failure should not silently
+    // reactivate the worktree.
+    expect(s.activeWorktreeId).toBeNull()
   })
 
   it('sets canForceDelete=false when force=true removal fails', async () => {
@@ -401,7 +405,7 @@ describe('setActiveWorktree', () => {
 
     const worktrees = [...store.getState().worktreesByRepo.repo1]
     const repoMap = new Map(store.getState().repos.map((repo) => [repo.id, repo]))
-    worktrees.sort(buildWorktreeComparator('smart', {}, repoMap, null, now))
+    worktrees.sort(buildWorktreeComparator('smart', {}, null, repoMap, null, now))
 
     expect(worktrees.map((worktree) => worktree.id)).toEqual([backgroundId, focusedId])
   })

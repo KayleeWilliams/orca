@@ -855,7 +855,11 @@ describe('reconnectPersistedTerminals', () => {
     expect(store.getState().pendingReconnectWorktreeIds).toEqual([wt1])
 
     await store.getState().reconnectPersistedTerminals()
-    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('pty-1')
+    // Why: main now preserves daemon session ids across restart and restores
+    // them onto the tab during deferred reattach. The upgrade fallback should
+    // still reconnect only the last active worktree, but the resumed tab keeps
+    // its previous session id until TerminalPane fully reattaches.
+    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('old-pty-1')
     expect(store.getState().tabsByWorktree[wt2][0].ptyId).toBeNull()
   })
 

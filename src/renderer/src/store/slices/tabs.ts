@@ -1194,9 +1194,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
           })
         : groups
     const liveTerminalIds = new Set(
-      runtimeTerminalTabs
-        .filter((tab) => hasLivePtyForTab(tab, state.ptyIdsByTabId))
-        .map((tab) => tab.id)
+      runtimeTerminalTabs.filter((tab) => !orphanTerminalIds.has(tab.id)).map((tab) => tab.id)
     )
     const liveEditorIds = new Set(
       state.openFiles.filter((file) => file.worktreeId === worktreeId).map((file) => file.id)
