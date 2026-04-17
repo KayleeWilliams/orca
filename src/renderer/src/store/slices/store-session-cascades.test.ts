@@ -648,7 +648,8 @@ describe('terminal slice behaviors', () => {
 // Mock pty-transport's eager buffer registration
 vi.mock('@/components/terminal-pane/pty-transport', () => ({
   registerEagerPtyBuffer: vi.fn().mockReturnValue({ flush: () => '', dispose: () => {} }),
-  ensurePtyDispatcher: vi.fn()
+  ensurePtyDispatcher: vi.fn(),
+  unregisterPtyDataHandlers: vi.fn()
 }))
 
 describe('reconnectPersistedTerminals', () => {
@@ -1010,6 +1011,48 @@ describe('reconnectPersistedTerminals', () => {
       'pane:3': 'daemon-session-B'
     })
     expect(s.workspaceSessionReady).toBe(true)
+  })
+})
+
+describe('shutdownWorktreeTerminals', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('clears the active worktree before PTY kills resolve', async () => {
+    const store = createTestStore()
+    const wt1 = 'repo1::/path/wt1'
+    let resolveKill: (() => void) | null = null
+
+    mockApi.pty.kill.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveKill = resolve
+        })
+    )
+
+    store.setState({
+      activeWorktreeId: wt1,
+      tabsByWorktree: {
+        [wt1]: [makeTab({ id: 'tab1', worktreeId: wt1, ptyId: 'pty-1' })]
+      },
+      ptyIdsByTabId: {
+        tab1: ['pty-1']
+      },
+      terminalLayoutsByTabId: {
+        tab1: makeLayout()
+      }
+    })
+
+    const shutdownPromise = store.getState().shutdownWorktreeTerminals(wt1)
+    const intermediate = store.getState()
+
+    expect(intermediate.activeWorktreeId).toBeNull()
+    expect(intermediate.tabsByWorktree[wt1][0].ptyId).toBeNull()
+    expect(intermediate.ptyIdsByTabId.tab1).toEqual([])
+
+    resolveKill?.()
+    await shutdownPromise
   })
 })
 
