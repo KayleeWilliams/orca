@@ -824,6 +824,79 @@ describe('reconnectPersistedTerminals', () => {
     expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('old-pty')
   })
 
+  it('upgrade fallback only reconnects the last active worktree', async () => {
+    const store = createTestStore()
+    const wt1 = 'repo1::/path/wt1'
+    const wt2 = 'repo1::/path/wt2'
+
+    store.setState({
+      repos: [
+        { id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }
+      ],
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({ id: wt1, repoId: 'repo1', path: '/path/wt1' }),
+          makeWorktree({ id: wt2, repoId: 'repo1', path: '/path/wt2' })
+        ]
+      }
+    })
+
+    store.getState().hydrateWorkspaceSession({
+      activeRepoId: 'repo1',
+      activeWorktreeId: wt1,
+      activeTabId: 'tab1',
+      tabsByWorktree: {
+        [wt1]: [makeTab({ id: 'tab1', worktreeId: wt1, ptyId: 'old-pty-1' })],
+        [wt2]: [makeTab({ id: 'tab2', worktreeId: wt2, ptyId: 'old-pty-2' })]
+      },
+      terminalLayoutsByTabId: { tab1: makeLayout(), tab2: makeLayout() }
+    })
+
+    expect(store.getState().pendingReconnectWorktreeIds).toEqual([wt1])
+
+    await store.getState().reconnectPersistedTerminals()
+    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('pty-1')
+    expect(store.getState().tabsByWorktree[wt2][0].ptyId).toBeNull()
+  })
+
+  it('filters stale explicit reconnect worktrees by recency', async () => {
+    const store = createTestStore()
+    const now = 1_000_000
+    const recent = 'repo1::/path/recent'
+    const stale = 'repo1::/path/stale'
+
+    store.setState({
+      repos: [
+        { id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }
+      ],
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({ id: recent, repoId: 'repo1', path: '/path/recent', lastActivityAt: now }),
+          makeWorktree({
+            id: stale,
+            repoId: 'repo1',
+            path: '/path/stale',
+            lastActivityAt: now - 7 * 60 * 60 * 1000
+          })
+        ]
+      }
+    })
+
+    store.getState().hydrateWorkspaceSession({
+      activeRepoId: 'repo1',
+      activeWorktreeId: recent,
+      activeTabId: 'tab1',
+      tabsByWorktree: {
+        [recent]: [makeTab({ id: 'tab1', worktreeId: recent, ptyId: 'old-pty-1' })],
+        [stale]: [makeTab({ id: 'tab2', worktreeId: stale, ptyId: 'old-pty-2' })]
+      },
+      terminalLayoutsByTabId: { tab1: makeLayout(), tab2: makeLayout() },
+      activeWorktreeIdsOnShutdown: [recent, stale]
+    })
+
+    expect(store.getState().pendingReconnectWorktreeIds).toEqual([recent])
+  })
+
   it('reconnects the correct tab per worktree (not always tabs[0])', async () => {
     const store = createDaemonEnabledStore()
     const wt1 = 'repo1::/path/wt1'
@@ -1022,14 +1095,12 @@ describe('shutdownWorktreeTerminals', () => {
   it('clears the active worktree before PTY kills resolve', async () => {
     const store = createTestStore()
     const wt1 = 'repo1::/path/wt1'
-    let resolveKill: (() => void) | null = null
+    let resolveKill!: () => void
+    const killPromise = new Promise<void>((resolve) => {
+      resolveKill = resolve
+    })
 
-    mockApi.pty.kill.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveKill = resolve
-        })
-    )
+    mockApi.pty.kill.mockImplementation(() => killPromise)
 
     store.setState({
       activeWorktreeId: wt1,
@@ -1051,7 +1122,7 @@ describe('shutdownWorktreeTerminals', () => {
     expect(intermediate.tabsByWorktree[wt1][0].ptyId).toBeNull()
     expect(intermediate.ptyIdsByTabId.tab1).toEqual([])
 
-    resolveKill?.()
+    resolveKill()
     await shutdownPromise
   })
 })

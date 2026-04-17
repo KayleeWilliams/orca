@@ -81,7 +81,18 @@ describe('computeVisibleWorktreeIds', () => {
       searchQuery: '',
       showActiveOnly: true,
       tabsByWorktree: {
-        [wt.id]: [{ id: 'tab-1', title: 'shell', ptyId: 'stale', worktreeId: wt.id }]
+        [wt.id]: [
+          {
+            id: 'tab-1',
+            title: 'shell',
+            ptyId: 'stale',
+            worktreeId: wt.id,
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 0
+          }
+        ]
       },
       ptyIdsByTabId: { 'tab-1': [] },
       browserTabsByWorktree: {},

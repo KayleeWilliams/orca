@@ -153,6 +153,8 @@ export type TerminalSlice = {
   reconnectPersistedTerminals: (signal?: AbortSignal) => Promise<void>
 }
 
+const MAX_RECONNECT_ACTIVITY_AGE_MS = 6 * 60 * 60 * 1000
+
 export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> = (set, get) => ({
   tabsByWorktree: {},
   activeTabId: null,
@@ -1042,21 +1044,50 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         session.activeRepoId && s.repos.some((repo) => repo.id === session.activeRepoId)
           ? session.activeRepoId
           : null
+      const worktreeMap = new Map(
+        Object.values(s.worktreesByRepo)
+          .flat()
+          .map((w) => [w.id, w])
+      )
 
       // Why: workspaceSessionReady stays false here. It is set to true in
       // reconnectPersistedTerminals() after all eager PTY spawns complete.
       // This prevents TerminalPane from mounting and spawning duplicate PTYs
       // before the reconnect phase has set ptyId on each tab.
-      // Why: fall back to deriving the list from tabsByWorktree ptyIds when
-      // activeWorktreeIdsOnShutdown is absent (upgrade from older build).
-      // The raw tabs still carry ptyId values before clearTransientTerminalState
-      // nulls them, so we can infer which worktrees had active terminals.
-      const shutdownIds =
-        session.activeWorktreeIdsOnShutdown ??
-        Object.entries(session.tabsByWorktree)
-          .filter(([, tabs]) => tabs.some((t) => t.ptyId))
-          .map(([wId]) => wId)
-      const pendingReconnectWorktreeIds = shutdownIds.filter((id) => validWorktreeIds.has(id))
+      // Why: older sessions lack activeWorktreeIdsOnShutdown, but raw
+      // tab.ptyId was an over-broad liveness signal that could preserve
+      // stale background worktrees forever. On upgrade, only infer reconnect
+      // eligibility for the last active worktree; newer sessions carry the
+      // explicit activeWorktreeIdsOnShutdown field for multi-worktree restore.
+      const legacyUpgradeReconnectIds =
+        activeWorktreeId &&
+        (session.tabsByWorktree[activeWorktreeId] ?? []).some((tab) => tab.ptyId)
+          ? [activeWorktreeId]
+          : []
+      const rawShutdownIds = (
+        session.activeWorktreeIdsOnShutdown ?? legacyUpgradeReconnectIds
+      ).filter((id) => validWorktreeIds.has(id))
+      const newestReconnectActivity = rawShutdownIds.reduce((latest, worktreeId) => {
+        return Math.max(latest, worktreeMap.get(worktreeId)?.lastActivityAt ?? 0)
+      }, 0)
+      const pendingReconnectWorktreeIds = rawShutdownIds.filter((worktreeId) => {
+        if (worktreeId === activeWorktreeId) {
+          return true
+        }
+        if (session.activeWorktreeIdsOnShutdown == null) {
+          return true
+        }
+        const lastActivityAt = worktreeMap.get(worktreeId)?.lastActivityAt ?? 0
+        // Why: older corrupted sessions can preserve activeWorktreeIdsOnShutdown
+        // entries for worktrees that have not been touched in days or weeks.
+        // Bound eager restore to worktrees whose recent activity is plausibly
+        // part of the just-closed session, while always preserving the last
+        // active worktree and the explicit legacy-upgrade fallback above.
+        return (
+          newestReconnectActivity === 0 ||
+          newestReconnectActivity - lastActivityAt <= MAX_RECONNECT_ACTIVITY_AGE_MS
+        )
+      })
 
       // Why: capture which specific tabs had live PTYs per worktree from the
       // raw session data BEFORE clearTransientTerminalState nulled the ptyIds.

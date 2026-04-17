@@ -1028,5 +1028,101 @@ describe('TabsSlice', () => {
         groupId: restoredGroup?.id
       })
     })
+
+    it('ignores stale legacy ptyIds when the PTY map is empty', () => {
+      const runtimeTerminalId = 'runtime-terminal-stale'
+
+      store.setState({
+        tabsByWorktree: {
+          [WT]: [
+            {
+              id: runtimeTerminalId,
+              ptyId: 'stale-pty',
+              worktreeId: WT,
+              title: 'Terminal 1',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        ptyIdsByTabId: {
+          [runtimeTerminalId]: []
+        },
+        unifiedTabsByWorktree: {
+          [WT]: []
+        },
+        groupsByWorktree: {
+          [WT]: []
+        },
+        activeGroupIdByWorktree: {}
+      })
+
+      const result = store.getState().reconcileWorktreeTabModel(WT)
+
+      expect(result.renderableTabCount).toBe(0)
+      expect(result.activeRenderableTabId).toBeNull()
+      expect(store.getState().unifiedTabsByWorktree[WT]).toEqual([])
+    })
+
+    it('drops stale unified terminal tabs whose only liveness signal is tab.ptyId', () => {
+      const groupId = 'g-stale'
+      const staleTerminalId = 'stale-terminal'
+
+      store.setState({
+        unifiedTabsByWorktree: {
+          [WT]: [
+            {
+              id: staleTerminalId,
+              entityId: staleTerminalId,
+              groupId,
+              worktreeId: WT,
+              contentType: 'terminal',
+              label: 'Terminal 1',
+              customLabel: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        groupsByWorktree: {
+          [WT]: [
+            {
+              id: groupId,
+              worktreeId: WT,
+              activeTabId: staleTerminalId,
+              tabOrder: [staleTerminalId]
+            }
+          ]
+        },
+        activeGroupIdByWorktree: { [WT]: groupId },
+        tabsByWorktree: {
+          [WT]: [
+            {
+              id: staleTerminalId,
+              ptyId: 'stale-pty',
+              worktreeId: WT,
+              title: 'Terminal 1',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        ptyIdsByTabId: {
+          [staleTerminalId]: []
+        }
+      })
+
+      const result = store.getState().reconcileWorktreeTabModel(WT)
+
+      expect(result.renderableTabCount).toBe(0)
+      expect(result.activeRenderableTabId).toBeNull()
+      expect(store.getState().unifiedTabsByWorktree[WT]).toEqual([])
+      expect(store.getState().groupsByWorktree[WT][0].tabOrder).toEqual([])
+    })
   })
 })

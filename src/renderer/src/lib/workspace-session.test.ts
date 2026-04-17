@@ -92,7 +92,18 @@ describe('buildWorkspaceSessionPayload', () => {
     const payload = buildWorkspaceSessionPayload(
       createSnapshot({
         tabsByWorktree: {
-          'wt-1': [{ id: 'tab-1', title: 'shell', ptyId: 'stale-pty', worktreeId: 'wt-1' }]
+          'wt-1': [
+            {
+              id: 'tab-1',
+              title: 'shell',
+              ptyId: 'stale-pty',
+              worktreeId: 'wt-1',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 0
+            }
+          ]
         },
         ptyIdsByTabId: {
           'tab-1': []

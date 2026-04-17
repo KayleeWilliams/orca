@@ -94,6 +94,19 @@ describe('countWorkingAgents', () => {
     ).toBe(0)
   })
 
+  it('ignores stale legacy ptyIds when the authoritative PTY map is empty', () => {
+    expect(
+      countWorkingAgents({
+        tabsByWorktree: {
+          'wt-1': [makeTab({ id: 'tab-1', title: '⠂ Claude Code', ptyId: 'stale-pty' })]
+        },
+        runtimePaneTitlesByTabId: {},
+        worktreesByRepo: worktrees('wt-1'),
+        ptyIdsByTabId: { 'tab-1': [] }
+      })
+    ).toBe(0)
+  })
+
   it('prefers pane-level titles over the coarse tab title when available', () => {
     expect(
       countWorkingAgents({
@@ -166,5 +179,18 @@ describe('getWorkingAgentsPerWorktree', () => {
         agents: [{ label: 'Claude Code', status: 'working', tabId: 'tab-1', paneId: null }]
       }
     })
+  })
+
+  it('omits stale legacy ptyIds when the authoritative PTY map is empty', () => {
+    expect(
+      getWorkingAgentsPerWorktree({
+        tabsByWorktree: {
+          'wt-1': [makeTab({ id: 'tab-1', title: '⠂ Claude Code', ptyId: 'stale-pty' })]
+        },
+        runtimePaneTitlesByTabId: {},
+        worktreesByRepo: worktrees('wt-1'),
+        ptyIdsByTabId: { 'tab-1': [] }
+      })
+    ).toEqual({})
   })
 })

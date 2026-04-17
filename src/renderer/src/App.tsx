@@ -104,7 +104,8 @@ function App(): React.JSX.Element {
     useShallow((s) => ({
       tabsByWorktree: s.tabsByWorktree,
       runtimePaneTitlesByTabId: s.runtimePaneTitlesByTabId,
-      worktreesByRepo: s.worktreesByRepo
+      worktreesByRepo: s.worktreesByRepo,
+      ptyIdsByTabId: s.ptyIdsByTabId
     }))
   )
   const activeAgentCount = useMemo(() => countWorkingAgents(agentInputs), [agentInputs])

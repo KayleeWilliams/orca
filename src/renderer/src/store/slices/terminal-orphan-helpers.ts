@@ -1,4 +1,5 @@
 import type { AppState } from '../types'
+import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 
 type OrphanTerminalDetectionState = Pick<
   AppState,
@@ -39,8 +40,7 @@ export function getOrphanTerminalIds(
         if (unifiedTerminalEntityIds.has(tab.id)) {
           return false
         }
-        const livePtyIds = state.ptyIdsByTabId[tab.id] ?? []
-        return livePtyIds.length === 0 && tab.ptyId == null
+        return !hasLivePtyForTab(tab, state.ptyIdsByTabId)
       })
       .map((tab) => tab.id)
   )

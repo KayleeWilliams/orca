@@ -13,6 +13,7 @@ import type { RateLimitState } from '../../../shared/rate-limit-types'
 import type { SshConnectionState } from '../../../shared/ssh-types'
 import { zoomLevelToPercent, ZOOM_MIN, ZOOM_MAX } from '@/components/settings/SettingsConstants'
 import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
+import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
@@ -317,10 +318,11 @@ export function useIpcEvents(): void {
               .map((w) => w.id)
           )
           for (const worktreeId of remoteWorktreeIds) {
-            const tabs = useAppStore.getState().tabsByWorktree[worktreeId] ?? []
+            const freshStore = useAppStore.getState()
+            const tabs = freshStore.tabsByWorktree[worktreeId] ?? []
             for (const tab of tabs) {
-              if (tab.ptyId) {
-                useAppStore.getState().clearTabPtyId(tab.id)
+              if (hasLivePtyForTab(tab, freshStore.ptyIdsByTabId)) {
+                freshStore.clearTabPtyId(tab.id)
               }
             }
           }
@@ -340,13 +342,15 @@ export function useIpcEvents(): void {
 
             for (const worktreeId of worktreeIds) {
               const tabs = freshStore.tabsByWorktree[worktreeId] ?? []
-              const hasDead = tabs.some((t) => !t.ptyId)
+              const hasDead = tabs.some((t) => !hasLivePtyForTab(t, freshStore.ptyIdsByTabId))
               if (hasDead) {
                 useAppStore.setState((s) => ({
                   tabsByWorktree: {
                     ...s.tabsByWorktree,
                     [worktreeId]: (s.tabsByWorktree[worktreeId] ?? []).map((t) =>
-                      t.ptyId ? t : { ...t, generation: (t.generation ?? 0) + 1 }
+                      hasLivePtyForTab(t, s.ptyIdsByTabId)
+                        ? t
+                        : { ...t, generation: (t.generation ?? 0) + 1 }
                     )
                   }
                 }))

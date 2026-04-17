@@ -25,6 +25,7 @@ import {
 } from './tabs-helpers'
 import { buildHydratedTabState } from './tabs-hydration'
 import { buildOrphanTerminalCleanupPatch, getOrphanTerminalIds } from './terminal-orphan-helpers'
+import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 
 export type TabSplitDirection = 'left' | 'right' | 'up' | 'down'
 
@@ -1142,8 +1143,10 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       if (unifiedTerminalEntityIds.has(tab.id)) {
         return false
       }
-      const livePtyIds = state.ptyIdsByTabId[tab.id] ?? []
-      return livePtyIds.length > 0 || tab.ptyId != null
+      // Why: unified-tab reconciliation runs against live renderer state, so
+      // stale legacy tab.ptyId values must not keep dead terminals in the
+      // renderable model after shutdown or failed reconnect.
+      return hasLivePtyForTab(tab, state.ptyIdsByTabId)
     })
     const orphanTerminalIds = getOrphanTerminalIds(state, worktreeId)
     const ensuredGroupState =
@@ -1191,7 +1194,9 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
           })
         : groups
     const liveTerminalIds = new Set(
-      runtimeTerminalTabs.filter((tab) => !orphanTerminalIds.has(tab.id)).map((tab) => tab.id)
+      runtimeTerminalTabs
+        .filter((tab) => hasLivePtyForTab(tab, state.ptyIdsByTabId))
+        .map((tab) => tab.id)
     )
     const liveEditorIds = new Set(
       state.openFiles.filter((file) => file.worktreeId === worktreeId).map((file) => file.id)

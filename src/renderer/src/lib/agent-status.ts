@@ -1,4 +1,5 @@
 import type { TerminalTab, Worktree } from '../../../shared/types'
+import { hasLivePtyForTab } from './terminal-liveness'
 
 // Re-export from shared module so existing renderer imports continue to work.
 // Why: the main process now needs the same agent detection logic for stat
@@ -23,6 +24,7 @@ type AgentQueryArgs = {
   tabsByWorktree: Record<string, TerminalTab[]>
   runtimePaneTitlesByTabId: Record<string, Record<number, string>>
   worktreesByRepo: Record<string, Worktree[]>
+  ptyIdsByTabId?: Record<string, string[]>
 }
 
 export type WorkingAgentEntry = {
@@ -39,7 +41,8 @@ export type WorktreeAgents = {
 export function getWorkingAgentsPerWorktree({
   tabsByWorktree,
   runtimePaneTitlesByTabId,
-  worktreesByRepo
+  worktreesByRepo,
+  ptyIdsByTabId
 }: AgentQueryArgs): Record<string, WorktreeAgents> {
   const validIds = collectWorktreeIds(worktreesByRepo)
   const result: Record<string, WorktreeAgents> = {}
@@ -70,7 +73,10 @@ export function getWorkingAgentsPerWorktree({
             }
           }
         }
-      } else if (tab.ptyId && detectAgentStatusFromTitle(tab.title) === 'working') {
+      } else if (
+        hasLivePtyForTab(tab, ptyIdsByTabId) &&
+        detectAgentStatusFromTitle(tab.title) === 'working'
+      ) {
         const label = getAgentLabel(tab.title)
         if (label) {
           agents.push({ label, status: 'working', tabId: tab.id, paneId: null })
@@ -89,7 +95,8 @@ export function getWorkingAgentsPerWorktree({
 export function countWorkingAgents({
   tabsByWorktree,
   runtimePaneTitlesByTabId,
-  worktreesByRepo
+  worktreesByRepo,
+  ptyIdsByTabId
 }: AgentQueryArgs): number {
   const validIds = collectWorktreeIds(worktreesByRepo)
   let count = 0
@@ -99,7 +106,7 @@ export function countWorkingAgents({
       continue
     }
     for (const tab of tabs) {
-      count += countWorkingAgentsForTab(tab, runtimePaneTitlesByTabId)
+      count += countWorkingAgentsForTab(tab, runtimePaneTitlesByTabId, ptyIdsByTabId)
     }
   }
 
@@ -118,7 +125,8 @@ function collectWorktreeIds(worktreesByRepo: Record<string, Worktree[]>): Set<st
 
 function countWorkingAgentsForTab(
   tab: TerminalTab,
-  runtimePaneTitlesByTabId: Record<string, Record<number, string>>
+  runtimePaneTitlesByTabId: Record<string, Record<number, string>>,
+  ptyIdsByTabId?: Record<string, string[]>
 ): number {
   let count = 0
   const paneTitles = runtimePaneTitlesByTabId[tab.id]
@@ -139,7 +147,7 @@ function countWorkingAgentsForTab(
   // PTY reconnects (or after the PTY is gone). Count only live PTY-backed
   // tab fallbacks so the titlebar matches the sidebar's notion of
   // "actively running" instead of surfacing stale pre-shutdown state.
-  if (tab.ptyId && detectAgentStatusFromTitle(tab.title) === 'working') {
+  if (hasLivePtyForTab(tab, ptyIdsByTabId) && detectAgentStatusFromTitle(tab.title) === 'working') {
     count += 1
   }
   return count

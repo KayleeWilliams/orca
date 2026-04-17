@@ -8,6 +8,7 @@ import {
   getRepoIdFromWorktreeId,
   type WorktreeSlice
 } from './worktree-helpers'
+import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 
 function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
@@ -546,7 +547,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     // bump generation so TerminalPanes remount with fresh PTY connections.
     if (worktreeId) {
       const tabs = get().tabsByWorktree[worktreeId] ?? []
-      const allDead = tabs.length > 0 && tabs.every((tab) => !tab.ptyId)
+      const ptyIdsByTabId = get().ptyIdsByTabId
+      const allDead = tabs.length > 0 && tabs.every((tab) => !hasLivePtyForTab(tab, ptyIdsByTabId))
       if (allDead) {
         set((s) => ({
           tabsByWorktree: {
