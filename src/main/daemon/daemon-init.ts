@@ -57,19 +57,21 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
       return
     }
 
-    const timer = setTimeout(() => {
-      sock.destroy()
-      resolve(false)
-    }, HEALTH_CHECK_TIMEOUT_MS)
-
-    const fail = (): void => {
+    let settled = false
+    const settle = (result: boolean): void => {
+      if (settled) {
+        return
+      }
+      settled = true
       clearTimeout(timer)
       sock.destroy()
-      resolve(false)
+      resolve(result)
     }
 
+    const timer = setTimeout(() => settle(false), HEALTH_CHECK_TIMEOUT_MS)
+
     const sock: Socket = connect({ path: socketPath })
-    sock.on('error', fail)
+    sock.on('error', () => settle(false))
 
     sock.on('connect', () => {
       const hello: HelloMessage = {
@@ -83,6 +85,9 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
 
       let buffer = ''
       sock.on('data', (chunk: Buffer) => {
+        if (settled) {
+          return
+        }
         buffer += chunk.toString()
         let newlineIdx: number
         while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
@@ -96,13 +101,13 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
           try {
             msg = JSON.parse(line) as Record<string, unknown>
           } catch {
-            fail()
+            settle(false)
             return
           }
 
           if (msg.type === 'hello') {
             if (!(msg as HelloResponse).ok) {
-              fail()
+              settle(false)
               return
             }
             sock.write(encodeNdjson({ id: 'health-1', type: 'ping' }))
@@ -110,12 +115,10 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
           }
 
           if (msg.id === 'health-1') {
-            clearTimeout(timer)
-            sock.destroy()
             // Why: treat any coherent RPC response as healthy, even
             // { ok: false } from an older daemon that doesn't know "ping".
             // The daemon parsed, routed, and replied — it's alive.
-            resolve(msg.id !== undefined)
+            settle(true)
             return
           }
         }
@@ -124,75 +127,12 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
   })
 }
 
-// Why: asks the stale daemon to shut down gracefully via an authenticated
-// shutdown RPC, then removes the socket file. If the daemon is unresponsive
-// (the reason we're killing it), the timeout ensures we don't block forever
-// and the socket removal lets a new daemon bind regardless.
-async function killStaleDaemon(socketPath: string, tokenPath: string): Promise<void> {
-  try {
-    let token: string
-    try {
-      token = readFileSync(tokenPath, 'utf-8').trim()
-    } catch {
-      // No token file — daemon can't be authenticated, just clean socket
-      removeStaleDaemonSocket(socketPath)
-      return
-    }
-
-    const sock = connect({ path: socketPath })
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        sock.destroy()
-        resolve()
-      }, 2000)
-
-      sock.on('error', () => {
-        clearTimeout(timer)
-        resolve()
-      })
-
-      sock.on('connect', () => {
-        const hello: HelloMessage = {
-          type: 'hello',
-          version: PROTOCOL_VERSION,
-          token,
-          clientId: 'shutdown-probe',
-          role: 'control'
-        }
-        sock.write(encodeNdjson(hello))
-
-        // Why: must wait for the hello ack before sending the shutdown RPC.
-        // If both messages arrive in the same TCP chunk, the daemon's pre-auth
-        // parser consumes both lines — the second is rejected as "Expected hello"
-        // and the connection is destroyed without processing shutdown.
-        let buffer = ''
-        sock.on('data', (chunk: Buffer) => {
-          buffer += chunk.toString()
-          if (!buffer.includes('\n')) {
-            return
-          }
-          sock.write(
-            encodeNdjson({ id: 'shutdown-1', type: 'shutdown', payload: { killSessions: false } })
-          )
-          // Why: give the daemon a moment to process the shutdown before
-          // tearing down the connection. The daemon calls process.nextTick
-          // on shutdown, so a small delay lets it start cleanup.
-          setTimeout(() => {
-            clearTimeout(timer)
-            sock.destroy()
-            resolve()
-          }, 500)
-        })
-      })
-    })
-  } catch {
-    // Best-effort
-  }
-
-  removeStaleDaemonSocket(socketPath)
-}
-
-function removeStaleDaemonSocket(socketPath: string): void {
+// Why: only removes the stale socket file so a new daemon can bind.
+// We intentionally do NOT send a shutdown RPC because DaemonServer.shutdown()
+// unconditionally kills all PTY sessions — sending it would destroy
+// warm-reattach terminals. The orphaned daemon process will exit naturally
+// when its socket is unlinked (new connections fail, existing ones close).
+function cleanupStaleDaemonSocket(socketPath: string): void {
   if (process.platform !== 'win32' && existsSync(socketPath)) {
     try {
       unlinkSync(socketPath)
@@ -213,7 +153,7 @@ function createOutOfProcessLauncher(): DaemonLauncher {
 
     // Why: health check failed — either no daemon, crashed daemon with
     // stale socket, or alive-but-broken daemon. Clean up before spawning.
-    await killStaleDaemon(socketPath, tokenPath)
+    cleanupStaleDaemonSocket(socketPath)
 
     const entryPath = getDaemonEntryPath()
     const child = fork(entryPath, ['--socket', socketPath, '--token', tokenPath], {
