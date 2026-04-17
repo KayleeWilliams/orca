@@ -318,7 +318,7 @@ function Settings(): React.JSX.Element {
 
     if (scrollTargetId && pendingNavSectionId && visibleIds.has(pendingNavSectionId)) {
       const target = document.getElementById(scrollTargetId)
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      target?.scrollIntoView({ block: 'start' })
       setActiveSectionId(pendingNavSectionId)
       pendingNavSectionRef.current = null
       pendingScrollTargetRef.current = null
@@ -385,7 +385,7 @@ function Settings(): React.JSX.Element {
     if (!target) {
       return
     }
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    target.scrollIntoView({ block: 'start' })
     setActiveSectionId(sectionId)
   }, [])
 
