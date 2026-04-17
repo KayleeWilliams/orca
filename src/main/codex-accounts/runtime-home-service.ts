@@ -283,13 +283,48 @@ export class CodexRuntimeHomeService {
   }
 
   private writeRuntimeAuth(contents: string): void {
-    this.writeFileAtomically(this.getRuntimeAuthPath(), contents)
+    // Why: auth.json contains sensitive credentials. Restrict to owner-only
+    // so other users on a shared Linux/macOS machine cannot read it.
+    this.writeFileAtomically(this.getRuntimeAuthPath(), contents, { mode: 0o600 })
   }
 
-  private writeFileAtomically(targetPath: string, contents: string): void {
+  private writeFileAtomically(
+    targetPath: string,
+    contents: string,
+    options?: { mode?: number }
+  ): void {
     const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`
-    writeFileSync(tmpPath, contents, 'utf-8')
-    renameSync(tmpPath, targetPath)
+    try {
+      writeFileSync(tmpPath, contents, { encoding: 'utf-8', mode: options?.mode })
+      this.renameWithRetry(tmpPath, targetPath)
+    } catch (error) {
+      rmSync(tmpPath, { force: true })
+      throw error
+    }
+  }
+
+  // Why: on Windows, renameSync can fail with EPERM/EACCES if another process
+  // (antivirus, Codex CLI) holds the target file open. A short retry avoids
+  // transient failures without masking real permission errors.
+  private renameWithRetry(source: string, target: string): void {
+    const maxAttempts = process.platform === 'win32' ? 3 : 1
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        renameSync(source, target)
+        return
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (attempt < maxAttempts && (code === 'EPERM' || code === 'EACCES')) {
+          const delayMs = attempt * 50
+          const until = Date.now() + delayMs
+          while (Date.now() < until) {
+            /* busy-wait: setTimeout is async and this method must stay sync */
+          }
+          continue
+        }
+        throw error
+      }
+    }
   }
 
   clearSystemDefaultSnapshot(): void {

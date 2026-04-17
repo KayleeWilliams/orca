@@ -274,35 +274,52 @@ export class CodexAccountService {
 
   private readCanonicalConfig(): string | null {
     const primaryConfigPath = join(homedir(), '.codex', 'config.toml')
-    if (existsSync(primaryConfigPath)) {
-      try {
-        return readFileSync(primaryConfigPath, 'utf-8')
-      } catch (error) {
-        console.warn('[codex-accounts] Failed to read canonical config:', error)
-      }
+    if (!existsSync(primaryConfigPath)) {
+      return null
     }
 
-    const settings = this.store.getSettings()
-    for (const account of settings.codexManagedAccounts) {
-      try {
-        const managedHomePath = this.assertManagedHomePath(account.managedHomePath)
-        const configPath = join(managedHomePath, 'config.toml')
-        if (existsSync(configPath)) {
-          return readFileSync(configPath, 'utf-8')
-        }
-      } catch (error) {
-        console.warn('[codex-accounts] Failed to read fallback managed config:', error)
-      }
+    try {
+      return readFileSync(primaryConfigPath, 'utf-8')
+    } catch (error) {
+      console.warn('[codex-accounts] Failed to read canonical config:', error)
+      return null
     }
-
-    return null
   }
 
   private writeManagedConfig(managedHomePath: string, contents: string): void {
     const configPath = join(managedHomePath, 'config.toml')
     const tmpPath = `${configPath}.${process.pid}.${Date.now()}.tmp`
-    writeFileSync(tmpPath, contents, 'utf-8')
-    renameSync(tmpPath, configPath)
+    try {
+      writeFileSync(tmpPath, contents, 'utf-8')
+      this.renameWithRetry(tmpPath, configPath)
+    } catch (error) {
+      rmSync(tmpPath, { force: true })
+      throw error
+    }
+  }
+
+  // Why: on Windows, renameSync can fail with EPERM/EACCES if another process
+  // (antivirus, Codex CLI) holds the target file open. A short retry avoids
+  // transient failures without masking real permission errors.
+  private renameWithRetry(source: string, target: string): void {
+    const maxAttempts = process.platform === 'win32' ? 3 : 1
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        renameSync(source, target)
+        return
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (attempt < maxAttempts && (code === 'EPERM' || code === 'EACCES')) {
+          const delayMs = attempt * 50
+          const until = Date.now() + delayMs
+          while (Date.now() < until) {
+            /* busy-wait: setTimeout is async and this method must stay sync */
+          }
+          continue
+        }
+        throw error
+      }
+    }
   }
 
   private getManagedAccountsRoot(): string {

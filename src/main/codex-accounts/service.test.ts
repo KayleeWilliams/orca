@@ -168,7 +168,7 @@ describe('CodexAccountService config sync', () => {
     )
   })
 
-  it('falls back to the first managed config when ~/.codex/config.toml is missing', async () => {
+  it('does not sync configs when ~/.codex/config.toml is missing', async () => {
     const firstManagedHomePath = createManagedHome(
       testState.userDataDir,
       'account-1',
@@ -218,10 +218,7 @@ describe('CodexAccountService config sync', () => {
       'sandbox_mode = "danger-full-access"\n'
     )
     expect(readFileSync(join(secondManagedHomePath, 'config.toml'), 'utf-8')).toBe(
-      'sandbox_mode = "danger-full-access"\n'
-    )
-    expect(readFileSync(join(secondManagedHomePath, 'auth.json'), 'utf-8')).toBe(
-      '{"account":"two"}\n'
+      'sandbox_mode = "workspace-write"\n'
     )
   })
 
