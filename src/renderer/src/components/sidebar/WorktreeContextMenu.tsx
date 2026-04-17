@@ -98,10 +98,17 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
   const handleCloseTerminals = useCallback(async () => {
-    await shutdownWorktreeTerminals(worktree.id)
+    // Why: shutting down the currently active worktree while its TerminalPane
+    // is still visible causes a visible "reboot" flicker and can crash the
+    // pane. clearTransientTerminalState nulls each tab's ptyId in place
+    // without bumping generation, so TerminalPane stays mounted while its
+    // PTYs are being killed; PTY exit callbacks then race against the live
+    // xterm instance. Boot the user to the landing page FIRST so the visible
+    // surface is detached before the async teardown runs.
     if (activeWorktreeId === worktree.id) {
       setActiveWorktree(null)
     }
+    await shutdownWorktreeTerminals(worktree.id)
   }, [worktree.id, shutdownWorktreeTerminals, activeWorktreeId, setActiveWorktree])
 
   const handleDelete = useCallback(() => {
