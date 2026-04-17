@@ -101,6 +101,23 @@ export function useTerminalKeyboardShortcuts({
     }
 
     const isMac = navigator.userAgent.includes('Mac')
+
+    // Why: KeyboardEvent.location on a character key (e.g. Period) always
+    // reports that key's own position (0 = standard), not which modifier is
+    // held. To distinguish left vs right Option, we record the Option key's
+    // location from its own keydown event and clear it on keyup.
+    let optionKeyLocation = 0
+    const onModifierDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Alt') {
+        optionKeyLocation = e.location
+      }
+    }
+    const onModifierUp = (e: KeyboardEvent): void => {
+      if (e.key === 'Alt') {
+        optionKeyLocation = 0
+      }
+    }
+
     const onKeyDown = (e: KeyboardEvent): void => {
       const manager = managerRef.current
       if (!manager) {
@@ -136,7 +153,12 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
-      const action = resolveTerminalShortcutAction(e, isMac, macOptionAsAltRef.current)
+      const action = resolveTerminalShortcutAction(
+        e,
+        isMac,
+        macOptionAsAltRef.current,
+        optionKeyLocation
+      )
       if (!action) {
         return
       }
@@ -275,8 +297,12 @@ export function useTerminalKeyboardShortcuts({
       }
     }
 
+    window.addEventListener('keydown', onModifierDown, { capture: true })
+    window.addEventListener('keyup', onModifierUp, { capture: true })
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => {
+      window.removeEventListener('keydown', onModifierDown, { capture: true })
+      window.removeEventListener('keyup', onModifierUp, { capture: true })
       window.removeEventListener('keydown', onKeyDown, { capture: true })
     }
   }, [

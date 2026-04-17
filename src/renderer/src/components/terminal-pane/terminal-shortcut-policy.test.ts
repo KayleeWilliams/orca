@@ -221,64 +221,71 @@ describe('resolveTerminalShortcutAction', () => {
   })
 
   it('sends Esc+letter for any Option+letter when left Option acts as alt', () => {
-    // Left Option (location=1) in 'left' mode: full Meta for any letter key
+    // Left Option (optionKeyLocation=1) in 'left' mode: full Meta for any letter key
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '¬', code: 'KeyL', altKey: true, location: 1 }),
+        event({ key: '¬', code: 'KeyL', altKey: true }),
         true,
-        'left'
+        'left',
+        1
       )
     ).toEqual({ type: 'sendInput', data: '\x1bl' })
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '†', code: 'KeyT', altKey: true, location: 1 }),
+        event({ key: '†', code: 'KeyT', altKey: true }),
         true,
-        'left'
+        'left',
+        1
       )
     ).toEqual({ type: 'sendInput', data: '\x1bt' })
 
-    // Right Option (location=2) in 'left' mode: compose side, only B/F/D patched
+    // Right Option (optionKeyLocation=2) in 'left' mode: compose side, only B/F/D patched
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '∫', code: 'KeyB', altKey: true, location: 2 }),
+        event({ key: '∫', code: 'KeyB', altKey: true }),
         true,
-        'left'
+        'left',
+        2
       )
     ).toEqual({ type: 'sendInput', data: '\x1bb' })
     // Right Option+L should pass through (compose character)
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '¬', code: 'KeyL', altKey: true, location: 2 }),
+        event({ key: '¬', code: 'KeyL', altKey: true }),
         true,
-        'left'
+        'left',
+        2
       )
     ).toBeNull()
   })
 
   it('sends Esc+letter for any Option+letter when right Option acts as alt', () => {
-    // Right Option (location=2) in 'right' mode: full Meta, including punctuation
+    // Right Option (optionKeyLocation=2) in 'right' mode: full Meta, including punctuation
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '≥', code: 'Period', altKey: true, location: 2 }),
+        event({ key: '≥', code: 'Period', altKey: true }),
         true,
-        'right'
+        'right',
+        2
       )
     ).toEqual({ type: 'sendInput', data: '\x1b.' })
 
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '¬', code: 'KeyL', altKey: true, location: 2 }),
+        event({ key: '¬', code: 'KeyL', altKey: true }),
         true,
-        'right'
+        'right',
+        2
       )
     ).toEqual({ type: 'sendInput', data: '\x1bl' })
 
-    // Left Option (location=1) in 'right' mode: compose side, only B/F/D patched
+    // Left Option (optionKeyLocation=1) in 'right' mode: compose side, only B/F/D patched
     expect(
       resolveTerminalShortcutAction(
-        event({ key: '¬', code: 'KeyL', altKey: true, location: 1 }),
+        event({ key: '¬', code: 'KeyL', altKey: true }),
         true,
-        'right'
+        'right',
+        1
       )
     ).toBeNull()
   })

@@ -1,7 +1,6 @@
 export type TerminalShortcutEvent = {
   key: string
   code?: string
-  location?: number
   metaKey: boolean
   ctrlKey: boolean
   altKey: boolean
@@ -40,7 +39,8 @@ export type TerminalShortcutAction =
 export function resolveTerminalShortcutAction(
   event: TerminalShortcutEvent,
   isMac: boolean,
-  macOptionAsAlt: MacOptionAsAlt = 'false'
+  macOptionAsAlt: MacOptionAsAlt = 'false',
+  optionKeyLocation: number = 0
 ): TerminalShortcutAction | null {
   const mod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
   if (!event.repeat && mod && !event.altKey) {
@@ -178,9 +178,11 @@ export function resolveTerminalShortcutAction(
   // - 'left'/'right': the designated Option key acts as full Meta (emit Esc+
   //   for any single letter); the other key composes, with B/F/D compensated.
   if (isMac && !event.metaKey && !event.ctrlKey && event.altKey && !event.shiftKey) {
-    // KeyboardEvent.location: 1 = LEFT, 2 = RIGHT
-    const isLeftOption = event.location === 1
-    const isRightOption = event.location === 2
+    // Why: event.location on a character key reports that key's position (always
+    // 0 for standard keys), NOT which modifier is held. The caller must track
+    // the Option key's own keydown location and pass it as optionKeyLocation.
+    const isLeftOption = optionKeyLocation === 1
+    const isRightOption = optionKeyLocation === 2
 
     const shouldActAsMeta =
       (macOptionAsAlt === 'left' && isLeftOption) || (macOptionAsAlt === 'right' && isRightOption)
