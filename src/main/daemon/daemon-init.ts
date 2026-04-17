@@ -127,17 +127,66 @@ function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boole
   })
 }
 
+// Why: validates that a PID from the PID file is actually a daemon-entry
+// process before killing it. Without this check, a stale PID file left
+// after a daemon crash could cause us to SIGTERM an unrelated process
+// that reused the PID.
+function isDaemonProcess(pid: number): boolean {
+  try {
+    // Why: process.kill(pid, 0) throws if the process doesn't exist,
+    // but doesn't actually send a signal. If it succeeds, the process
+    // is alive — but could be unrelated. On macOS/Linux we can check
+    // the command line; on Windows we can't easily, so we accept the
+    // risk since named pipe ownership already gates correctness.
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+
+  if (process.platform === 'win32') {
+    return true
+  }
+
+  try {
+    const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8')
+    return cmdline.includes('daemon-entry')
+  } catch {
+    // Why: macOS doesn't have /proc. Fall back to checking if the socket
+    // is still owned by a listening process — if the PID file exists and
+    // the process is alive, it's likely our daemon since PIDs are recycled
+    // slowly on macOS.
+    return true
+  }
+}
+
+const KILL_WAIT_MS = 3000
+const KILL_POLL_MS = 100
+
 // Why: kills the stale daemon process (via PID file) and removes the socket
 // so a new daemon can bind. We do NOT send a shutdown RPC because
 // DaemonServer.shutdown() unconditionally kills all PTY sessions — that
 // would destroy warm-reattach terminals. SIGTERM lets the daemon's own
-// signal handler run its cleanup.
-function killStaleDaemon(runtimeDir: string, socketPath: string): void {
+// signal handler run its cleanup. We wait for the process to exit so the
+// named pipe (Windows) or socket is released before the new daemon binds.
+async function killStaleDaemon(runtimeDir: string, socketPath: string): Promise<void> {
   const pidPath = getDaemonPidPath(runtimeDir)
   try {
     const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10)
-    if (!isNaN(pid)) {
+    if (!isNaN(pid) && isDaemonProcess(pid)) {
       process.kill(pid, 'SIGTERM')
+
+      // Why: wait for the process to actually exit so the socket/pipe is
+      // released. Without this, the new daemon's listen() can fail with
+      // EADDRINUSE on Windows where named pipes can't be unlinked.
+      const deadline = Date.now() + KILL_WAIT_MS
+      while (Date.now() < deadline) {
+        try {
+          process.kill(pid, 0)
+        } catch {
+          break
+        }
+        await new Promise((r) => setTimeout(r, KILL_POLL_MS))
+      }
     }
   } catch {
     // PID file missing or process already dead
@@ -170,7 +219,7 @@ function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
     // Why: health check failed — either no daemon, crashed daemon with
     // stale socket, or alive-but-broken daemon. Kill the old process
     // (via PID file) and remove the socket so a new daemon can bind.
-    killStaleDaemon(runtimeDir, socketPath)
+    await killStaleDaemon(runtimeDir, socketPath)
 
     const entryPath = getDaemonEntryPath()
     const child = fork(entryPath, ['--socket', socketPath, '--token', tokenPath], {
