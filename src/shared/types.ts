@@ -376,6 +376,34 @@ export type GitHubWorkItem = {
   baseRefName?: string
 }
 
+export type GitHubPRFile = {
+  path: string
+  oldPath?: string
+  status: 'added' | 'modified' | 'removed' | 'renamed' | 'copied' | 'changed' | 'unchanged'
+  additions: number
+  deletions: number
+  /** GitHub marks files above its diff size limit as binary-like; we skip content fetches for these. */
+  isBinary: boolean
+}
+
+export type GitHubPRFileContents = {
+  original: string
+  modified: string
+  originalIsBinary: boolean
+  modifiedIsBinary: boolean
+}
+
+export type GitHubWorkItemDetails = {
+  item: GitHubWorkItem
+  body: string
+  comments: PRComment[]
+  /** Only set for PRs. Head/base SHAs used by the Files tab to fetch per-file content. */
+  headSha?: string
+  baseSha?: string
+  checks?: PRCheckDetail[]
+  files?: GitHubPRFile[]
+}
+
 // ─── Hooks (orca.yaml) ──────────────────────────────────────────────
 export type OrcaHooks = {
   scripts: {
@@ -518,6 +546,15 @@ export type TuiAgent =
 
 export type TaskViewPresetId = 'all' | 'issues' | 'review' | 'my-issues' | 'my-prs' | 'prs'
 
+/** Where the repo setup script runs when a worktree is created.
+ *  - 'split-vertical': split the initial terminal pane with a vertical divider (default).
+ *  - 'split-horizontal': split the initial terminal pane with a horizontal divider.
+ *  - 'new-tab': open a background tab titled "Setup" and leave focus on the first tab. */
+export type SetupScriptLaunchMode = 'split-vertical' | 'split-horizontal' | 'new-tab'
+
+/** Direction used when the setup script launch mode is a split. */
+export type SetupSplitDirection = 'vertical' | 'horizontal'
+
 export type GlobalSettings = {
   workspaceDir: string
   nestWorkspaces: boolean
@@ -546,6 +583,9 @@ export type GlobalSettings = {
    *  menu behavior and users can still reach the menu with Ctrl+right-click. */
   terminalRightClickToPaste: boolean
   terminalFocusFollowsMouse: boolean
+  /** Where the repo setup script runs on workspace create. Defaults to a
+   *  vertical split so the user's main terminal stays immediately usable. */
+  setupScriptLaunchMode: SetupScriptLaunchMode
   terminalScrollbackBytes: number
   /** Why: opening arbitrary links inside Orca uses an isolated guest browser surface.
    *  The setting stays opt-in so existing workflows continue to use the system browser

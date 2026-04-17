@@ -3,6 +3,7 @@ import { AlertTriangle, ExternalLink, FolderPlus, GitBranchPlus, Star } from 'lu
 import { cn } from '../lib/utils'
 import { useAppStore } from '../store'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { getTaskPresetQuery } from '../lib/new-workspace'
 import { ShortcutKeyCombo } from './ShortcutKeyCombo'
 import logo from '../../../../resources/logo.svg'
 
@@ -150,8 +151,23 @@ export default function Landing(): React.JSX.Element {
   const repos = useAppStore((s) => s.repos)
   const openNewWorkspacePage = useAppStore((s) => s.openNewWorkspacePage)
   const openModal = useAppStore((s) => s.openModal)
+  const prefetchWorkItems = useAppStore((s) => s.prefetchWorkItems)
+  const defaultTaskViewPreset = useAppStore((s) => s.settings?.defaultTaskViewPreset ?? 'all')
 
   const canCreateWorktree = repos.some((repo) => isGitRepoKind(repo))
+
+  // Why: warm the exact cache key NewWorkspacePage will read on mount — the
+  // default-preset query must match or the page pays a full round-trip after
+  // click.
+  const handlePrefetchNewWorkspace = (): void => {
+    if (!canCreateWorktree) {
+      return
+    }
+    const firstGit = repos.find((r) => isGitRepoKind(r))
+    if (firstGit?.path) {
+      prefetchWorkItems(firstGit.path, 36, getTaskPresetQuery(defaultTaskViewPreset))
+    }
+  }
 
   const [preflightIssues, setPreflightIssues] = useState<PreflightIssue[]>([])
 
@@ -249,6 +265,8 @@ export default function Landing(): React.JSX.Element {
               disabled={!canCreateWorktree}
               title={!canCreateWorktree ? 'Add a Git repo first' : undefined}
               onClick={() => openNewWorkspacePage()}
+              onPointerEnter={handlePrefetchNewWorkspace}
+              onFocus={handlePrefetchNewWorkspace}
             >
               <GitBranchPlus className="size-3.5" />
               Create Worktree

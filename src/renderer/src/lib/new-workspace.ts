@@ -1,7 +1,26 @@
 import { useAppStore } from '@/store'
 import type { AgentStartupPlan } from '@/lib/tui-agent-startup'
 import { isShellProcess } from '@/lib/tui-agent-startup'
-import type { GitHubWorkItem, OrcaHooks } from '../../../shared/types'
+import type { GitHubWorkItem, OrcaHooks, TaskViewPresetId } from '../../../shared/types'
+
+/**
+ * Why: the NewWorkspacePage's preset buttons and the openNewWorkspacePage
+ * prefetcher both need to compute the same GitHub query string for a given
+ * preset id. Keep the mapping here so the prefetch warms exactly the cache
+ * key the page will look up on mount.
+ */
+export function getTaskPresetQuery(presetId: TaskViewPresetId | null): string {
+  switch (presetId) {
+    case 'my-issues':
+      return 'assignee:@me is:open'
+    case 'review':
+      return 'review-requested:@me is:open'
+    case 'my-prs':
+      return 'author:@me is:open'
+    default:
+      return 'is:open'
+  }
+}
 
 export const IS_MAC = navigator.userAgent.includes('Mac')
 export const ADD_ATTACHMENT_SHORTCUT = IS_MAC ? '⌘U' : 'Ctrl+U'

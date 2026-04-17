@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { cn } from '@/lib/utils'
 
 type LightRaysProps = {
@@ -68,7 +68,11 @@ function Ray({
 
   return (
     <div
-      className="pointer-events-none absolute -top-[12%] h-[var(--light-rays-length)] origin-top -translate-x-1/2 rounded-full bg-linear-to-b from-[color-mix(in_srgb,var(--light-rays-color)_70%,transparent)] to-transparent mix-blend-screen blur-[var(--light-rays-blur)]"
+      // Why: dropped mix-blend-screen — it forced an extra offscreen
+      // compositing pass over each ray's bounding region every frame. The
+      // additive glow look is approximated by slightly boosting the gradient
+      // alpha and keeping willChange on so the layer stays on the compositor.
+      className="pointer-events-none absolute -top-[12%] h-[var(--light-rays-length)] origin-top -translate-x-1/2 rounded-full bg-linear-to-b from-[color-mix(in_srgb,var(--light-rays-color)_85%,transparent)] to-transparent blur-[var(--light-rays-blur)]"
       style={
         {
           left: `${left}%`,
@@ -77,7 +81,12 @@ function Ray({
           '--ray-swing': `${swing}deg`,
           '--ray-rotate': `${rotate}deg`,
           animation: `${animName} ${duration}s ease-in-out ${delay}s infinite`,
-          transform: `translateX(-50%) rotate(${rotate}deg)`
+          transform: `translateX(-50%) rotate(${rotate}deg)`,
+          // Why: promote each ray to its own compositor layer so the
+          // keyframe animation runs off the main thread. Without this,
+          // Chromium rasterizes every swing tick on the UI thread which
+          // stalls React renders while the NewWorkspace page mounts.
+          willChange: 'transform, opacity'
         } as CSSProperties
       }
     />
@@ -95,12 +104,23 @@ export function LightRays({
   ref,
   ...props
 }: LightRaysProps): React.JSX.Element {
+  // Why: users with prefers-reduced-motion should get a static backdrop
+  // instead of an animated composite layer — both an accessibility and a
+  // perf win on low-end GPUs.
+  const prefersReducedMotion = useMemo(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false
+    }
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }, [])
+
+  const effectiveCount = prefersReducedMotion ? 0 : count
   const [rays, setRays] = useState<LightRay[]>([])
   const cycleDuration = Math.max(speed, 0.1)
 
   useEffect(() => {
-    setRays(createRays(count, cycleDuration))
-  }, [count, cycleDuration])
+    setRays(createRays(effectiveCount, cycleDuration))
+  }, [effectiveCount, cycleDuration])
 
   return (
     <div

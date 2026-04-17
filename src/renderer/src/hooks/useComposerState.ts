@@ -4,6 +4,7 @@ and the global quick-composer modal can consume a single unified source of
 truth without duplicating effects, derivation, or the create side-effect. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
 import { parseGitHubIssueOrPRNumber, normalizeGitHubLinkQuery } from '@/lib/github-links'
@@ -106,6 +107,28 @@ export type UseComposerStateResult = {
   createDisabled: boolean
 }
 
+// Why: agent detection runs `which` for every agent binary on PATH — an IPC
+// round-trip that takes 50–200ms. The set of installed agents doesn't change
+// within a session, so cache the promise at module scope to collapse all
+// mounts (page + modal, reopen, etc.) onto a single resolve.
+let detectAgentsPromise: Promise<TuiAgent[]> | null = null
+function detectAgentsCached(): Promise<TuiAgent[]> {
+  if (detectAgentsPromise) {
+    return detectAgentsPromise
+  }
+  const pending = window.api.preflight
+    .detectAgents()
+    .then((ids) => ids as TuiAgent[])
+    .catch(() => {
+      // Allow a retry on the next mount if detection blew up (e.g. IPC
+      // timeout during cold start).
+      detectAgentsPromise = null
+      return [] as TuiAgent[]
+    })
+  detectAgentsPromise = pending
+  return pending
+}
+
 export function useComposerState(options: UseComposerStateOptions): UseComposerStateResult {
   const {
     initialRepoId,
@@ -118,19 +141,39 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     onRepoIdOverrideChange
   } = options
 
+  // Why: each `useAppStore(s => s.someAction)` registers its own equality
+  // check that React has to re-run on every store mutation. Consolidating
+  // all stable actions into a single useShallow subscription turns 11 checks
+  // per store update into one.
+  const actions = useAppStore(
+    useShallow((s) => ({
+      setNewWorkspaceDraft: s.setNewWorkspaceDraft,
+      clearNewWorkspaceDraft: s.clearNewWorkspaceDraft,
+      createWorktree: s.createWorktree,
+      updateWorktreeMeta: s.updateWorktreeMeta,
+      setSidebarOpen: s.setSidebarOpen,
+      setRightSidebarOpen: s.setRightSidebarOpen,
+      setRightSidebarTab: s.setRightSidebarTab,
+      openSettingsPage: s.openSettingsPage,
+      openSettingsTarget: s.openSettingsTarget
+    }))
+  )
+  const {
+    setNewWorkspaceDraft,
+    clearNewWorkspaceDraft,
+    createWorktree,
+    updateWorktreeMeta,
+    setSidebarOpen,
+    setRightSidebarOpen,
+    setRightSidebarTab,
+    openSettingsPage,
+    openSettingsTarget
+  } = actions
+
   const repos = useAppStore((s) => s.repos)
   const activeRepoId = useAppStore((s) => s.activeRepoId)
   const settings = useAppStore((s) => s.settings)
   const newWorkspaceDraft = useAppStore((s) => s.newWorkspaceDraft)
-  const setNewWorkspaceDraft = useAppStore((s) => s.setNewWorkspaceDraft)
-  const clearNewWorkspaceDraft = useAppStore((s) => s.clearNewWorkspaceDraft)
-  const createWorktree = useAppStore((s) => s.createWorktree)
-  const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
-  const setSidebarOpen = useAppStore((s) => s.setSidebarOpen)
-  const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen)
-  const setRightSidebarTab = useAppStore((s) => s.setRightSidebarTab)
-  const openSettingsPage = useAppStore((s) => s.openSettingsPage)
-  const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
 
   const eligibleRepos = useMemo(() => repos.filter((repo) => isGitRepoKind(repo)), [repos])
   const draftRepoId = persistDraft ? (newWorkspaceDraft?.repoId ?? null) : null
@@ -199,7 +242,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const [issueCommandTemplate, setIssueCommandTemplate] = useState('')
   const [hasLoadedIssueCommand, setHasLoadedIssueCommand] = useState(false)
   const [setupDecision, setSetupDecision] = useState<'run' | 'skip' | null>(null)
-  const [runIssueAutomation, setRunIssueAutomation] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(
@@ -234,7 +276,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const setupPolicy: SetupRunPolicy = selectedRepo?.hookSettings?.setupRunPolicy ?? 'run-by-default'
   const hasIssueAutomationConfig = issueCommandTemplate.length > 0
   const canOfferIssueAutomation = parsedLinkedIssueNumber !== null && hasIssueAutomationConfig
-  const shouldRunIssueAutomation = canOfferIssueAutomation && runIssueAutomation
+  const shouldRunIssueAutomation = canOfferIssueAutomation
   const shouldWaitForIssueAutomationCheck =
     parsedLinkedIssueNumber !== null && !hasLoadedIssueCommand
   const requiresExplicitSetupChoice = Boolean(setupConfig) && setupPolicy === 'ask'
@@ -335,14 +377,15 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
   }, [eligibleRepos, repoId, setRepoId])
 
-  // Detect installed agents once on mount.
+  // Detect installed agents once on mount (cached at module scope so the
+  // page composer and quick-composer modal share a single IPC round-trip).
   useEffect(() => {
-    void window.api.preflight.detectAgents().then((ids) => {
-      // Why: detectAgents returns agent IDs as strings, but AGENT_CATALOG + the
-      // dropdown consume the narrower TuiAgent union. Cast once at the boundary
-      // so downstream consumers keep their precise types without leaking an
-      // `as unknown` through the card props.
-      setDetectedAgentIds(new Set(ids as TuiAgent[]))
+    let cancelled = false
+    void detectAgentsCached().then((ids) => {
+      if (cancelled) {
+        return
+      }
+      setDetectedAgentIds(new Set(ids))
       if (!newWorkspaceDraft?.agent && !settings?.defaultTuiAgent && ids.length > 0) {
         const firstInCatalogOrder = AGENT_CATALOG.find((a) => ids.includes(a.id))
         if (firstInCatalogOrder) {
@@ -350,6 +393,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         }
       }
     })
+    return () => {
+      cancelled = true
+    }
     // Why: intentionally run only once on mount — detection is a best-effort
     // PATH snapshot and does not need to re-run when the draft or settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -444,14 +490,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
     setSetupDecision(setupPolicy === 'run-by-default' ? 'run' : 'skip')
   }, [setupConfig, setupPolicy, shouldWaitForSetupCheck])
-
-  useEffect(() => {
-    if (!canOfferIssueAutomation) {
-      setRunIssueAutomation(false)
-      return
-    }
-    setRunIssueAutomation(true)
-  }, [canOfferIssueAutomation])
 
   // Link popover: debounce + load recent items + resolve direct number.
   useEffect(() => {

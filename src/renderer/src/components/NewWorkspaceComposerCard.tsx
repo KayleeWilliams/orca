@@ -106,6 +106,68 @@ type NewWorkspaceComposerCardProps = {
   createError: string | null
 }
 
+function PromptPrefixTextarea({
+  textareaRef,
+  value,
+  onChange,
+  onKeyDown
+}: {
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
+  value: string
+  onChange: (value: string) => void
+  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
+}): React.JSX.Element {
+  const internalRef = React.useRef<HTMLTextAreaElement | null>(null)
+
+  const setRefs = React.useCallback(
+    (node: HTMLTextAreaElement | null) => {
+      internalRef.current = node
+      if (textareaRef) {
+        textareaRef.current = node
+      }
+    },
+    [textareaRef]
+  )
+
+  // Why: auto-size the textarea to its content and hoist scrolling onto the
+  // outer wrapper. Any JS-driven overlay sync (listening to `scroll`, updating
+  // `translateY`) always paints a frame behind the textarea's own scroll — on
+  // momentum scroll that shows up as visible wobble between the `>` and the
+  // typed text. Putting both elements inside the same native scroll container
+  // makes them move in lockstep with zero JS and no cross-layer paint delay.
+  React.useLayoutEffect(() => {
+    const el = internalRef.current
+    if (!el) {
+      return
+    }
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+
+  return (
+    <div className="scrollbar-sleek h-[110px] overflow-auto">
+      <div className="relative">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-4 top-4 select-none font-mono text-[15px] leading-7 font-bold text-foreground"
+        >
+          {'>'}
+        </span>
+        <textarea
+          ref={setRefs}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Describe a task to start an agent, or leave blank..."
+          className="block min-h-[110px] w-full resize-none overflow-hidden bg-transparent py-4 pl-4 pr-4 font-mono text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50"
+          style={{ textIndent: '2ch' }}
+          spellCheck={false}
+        />
+      </div>
+    </div>
+  )
+}
+
 function LinearIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className={className} fill="currentColor">
@@ -257,20 +319,17 @@ export default function NewWorkspaceComposerCard({
           </div>
 
           <div className="flex flex-col rounded-[16px] border border-border/60 bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-            <div className="flex items-start">
-              <span className="select-none pl-4 pt-4 font-mono text-[15px] leading-7 font-bold text-foreground">
-                {'>'}
-              </span>
-              <textarea
-                ref={promptTextareaRef}
-                value={agentPrompt}
-                onChange={(event) => onAgentPromptChange(event.target.value)}
-                onKeyDown={onPromptKeyDown}
-                placeholder="Describe a task to start an agent, or leave blank..."
-                className="min-h-[110px] w-full resize-none bg-transparent py-4 pl-3 pr-4 font-mono text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50"
-                spellCheck={false}
-              />
-            </div>
+            {/* Why: the `>` is rendered as a visual overlay (aria-hidden) so
+                it's never part of the submitted prompt value. It must behave
+                like the first character of line 1 — inline with line 1's text
+                and scrolling out of view with it. See PromptPrefixTextarea for
+                how the shared-scroll-container approach avoids wobble. */}
+            <PromptPrefixTextarea
+              textareaRef={promptTextareaRef}
+              value={agentPrompt}
+              onChange={onAgentPromptChange}
+              onKeyDown={onPromptKeyDown}
+            />
 
             {attachmentPaths.length > 0 || linkedWorkItem ? (
               <div className="flex flex-wrap gap-2 px-3">

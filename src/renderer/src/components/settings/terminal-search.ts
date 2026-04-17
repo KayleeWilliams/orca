@@ -112,6 +112,26 @@ export const TERMINAL_MAC_OPTION_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Setup Script Location',
+    description:
+      "Where the repository setup script runs when a new workspace is created: a vertical split (default), a horizontal split, or a background tab titled 'Setup'.",
+    keywords: [
+      'setup',
+      'script',
+      'workspace',
+      'split',
+      'horizontal',
+      'vertical',
+      'tab',
+      'new',
+      'location',
+      'launch'
+    ]
+  }
+]
+
 export const TERMINAL_WINDOWS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Right-click to paste',
@@ -137,6 +157,7 @@ export function getTerminalPaneSearchEntries(platform: {
     ...(platform.isWindows ? TERMINAL_WINDOWS_SEARCH_ENTRIES : []),
     ...TERMINAL_DARK_THEME_SEARCH_ENTRIES,
     ...TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
+    ...TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES,
     ...TERMINAL_ADVANCED_SEARCH_ENTRIES,
     ...(platform.isMac ? TERMINAL_MAC_OPTION_SEARCH_ENTRIES : [])
   ]

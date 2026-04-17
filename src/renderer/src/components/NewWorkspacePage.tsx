@@ -2,7 +2,7 @@
 task source controls, and GitHub task list co-located so the wiring between the
 selected repo, the draft composer, and the work-item list stays readable in one
 place while this surface is still evolving. */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   CircleDot,
@@ -28,10 +28,11 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
+import GitHubItemDrawer from '@/components/GitHubItemDrawer'
 import { cn } from '@/lib/utils'
 import { LightRays } from '@/components/ui/light-rays'
 import { useComposerState } from '@/hooks/useComposerState'
-import { getLinkedWorkItemSuggestedName } from '@/lib/new-workspace'
+import { getLinkedWorkItemSuggestedName, getTaskPresetQuery } from '@/lib/new-workspace'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
 import type { GitHubWorkItem, TaskViewPresetId } from '../../../shared/types'
 
@@ -71,26 +72,21 @@ const SOURCE_OPTIONS: SourceOption[] = [
 ]
 
 const TASK_QUERY_PRESETS: TaskQueryPreset[] = [
-  { id: 'all', label: 'All', query: 'is:open' },
-  { id: 'issues', label: 'Issues', query: 'is:open' },
-  { id: 'my-issues', label: 'My Issues', query: 'assignee:@me is:open' },
-  {
-    id: 'review',
-    label: 'Needs My Review',
-    query: 'review-requested:@me is:open'
-  },
-  { id: 'prs', label: 'PRs', query: 'is:open' },
-  { id: 'my-prs', label: 'My PRs', query: 'author:@me is:open' }
+  { id: 'all', label: 'All', query: getTaskPresetQuery('all') },
+  { id: 'issues', label: 'Issues', query: getTaskPresetQuery('issues') },
+  { id: 'my-issues', label: 'My Issues', query: getTaskPresetQuery('my-issues') },
+  { id: 'review', label: 'Needs My Review', query: getTaskPresetQuery('review') },
+  { id: 'prs', label: 'PRs', query: getTaskPresetQuery('prs') },
+  { id: 'my-prs', label: 'My PRs', query: getTaskPresetQuery('my-prs') }
 ]
 
-function getTaskPresetQuery(presetId: TaskViewPresetId | null): string {
-  if (!presetId) {
-    return 'is:open'
-  }
-  return TASK_QUERY_PRESETS.find((preset) => preset.id === presetId)?.query ?? 'is:open'
-}
-
 const TASK_SEARCH_DEBOUNCE_MS = 300
+const WORK_ITEM_LIMIT = 36
+
+// Why: Intl.RelativeTimeFormat allocation is non-trivial, and previously we
+// built a new formatter per work-item row render. Hoisting to module scope
+// means all rows share one instance — zero per-row allocation cost.
+const relativeTimeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
 function formatRelativeTime(input: string): string {
   const date = new Date(input)
@@ -100,19 +96,18 @@ function formatRelativeTime(input: string): string {
 
   const diffMs = date.getTime() - Date.now()
   const diffMinutes = Math.round(diffMs / 60_000)
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
   if (Math.abs(diffMinutes) < 60) {
-    return formatter.format(diffMinutes, 'minute')
+    return relativeTimeFormatter.format(diffMinutes, 'minute')
   }
 
   const diffHours = Math.round(diffMinutes / 60)
   if (Math.abs(diffHours) < 24) {
-    return formatter.format(diffHours, 'hour')
+    return relativeTimeFormatter.format(diffHours, 'hour')
   }
 
   const diffDays = Math.round(diffHours / 24)
-  return formatter.format(diffDays, 'day')
+  return relativeTimeFormatter.format(diffDays, 'day')
 }
 
 function getTaskStatusLabel(item: GitHubWorkItem): string {
@@ -143,6 +138,8 @@ export default function NewWorkspacePage(): React.JSX.Element {
   const activeModal = useAppStore((s) => s.activeModal)
   const openModal = useAppStore((s) => s.openModal)
   const updateSettings = useAppStore((s) => s.updateSettings)
+  const fetchWorkItems = useAppStore((s) => s.fetchWorkItems)
+  const getCachedWorkItems = useAppStore((s) => s.getCachedWorkItems)
 
   const { cardProps, composerRef, promptTextareaRef, submit, createDisabled } = useComposerState({
     persistDraft: true,
@@ -157,16 +154,40 @@ export default function NewWorkspacePage(): React.JSX.Element {
   const { repoId, eligibleRepos, onRepoChange } = cardProps
   const selectedRepo = eligibleRepos.find((repo) => repo.id === repoId)
 
+  // Why: seed the preset + query from the user's saved default synchronously
+  // so the first fetch effect issues exactly one request keyed to the final
+  // query. Previously a separate effect "re-seeded" these after mount, which
+  // caused a throwaway empty-query fetch followed by a second fetch for the
+  // real default — doubling the time-to-first-paint of the list.
+  const defaultTaskViewPreset = settings?.defaultTaskViewPreset ?? 'all'
+  const initialTaskQuery = getTaskPresetQuery(defaultTaskViewPreset)
+
   const [taskSource, setTaskSource] = useState<TaskSource>('github')
-  const [taskSearchInput, setTaskSearchInput] = useState('')
-  const [appliedTaskSearch, setAppliedTaskSearch] = useState('')
-  const [activeTaskPreset, setActiveTaskPreset] = useState<TaskViewPresetId | null>('all')
+  const [taskSearchInput, setTaskSearchInput] = useState(initialTaskQuery)
+  const [appliedTaskSearch, setAppliedTaskSearch] = useState(initialTaskQuery)
+  const [activeTaskPreset, setActiveTaskPreset] = useState<TaskViewPresetId | null>(
+    defaultTaskViewPreset
+  )
   const [tasksLoading, setTasksLoading] = useState(false)
   const [tasksError, setTasksError] = useState<string | null>(null)
   const [taskRefreshNonce, setTaskRefreshNonce] = useState(0)
-  const [workItems, setWorkItems] = useState<GitHubWorkItem[]>([])
-
-  const defaultTaskViewPreset = settings?.defaultTaskViewPreset ?? 'all'
+  // Why: the fetch effect uses this to detect when a nonce bump is from the
+  // user clicking the refresh button (force=true) vs. re-running for any
+  // other reason — e.g. a repo change while the nonce happens to be > 0.
+  const lastFetchedNonceRef = useRef(-1)
+  // Why: seed from the SWR cache so revisiting the page (or opening it after
+  // a hover-prefetch) shows the list instantly while the background revalidate
+  // keeps it current. Falls back to [] when nothing is cached yet.
+  const [workItems, setWorkItems] = useState<GitHubWorkItem[]>(() => {
+    if (!selectedRepo) {
+      return []
+    }
+    return getCachedWorkItems(selectedRepo.path, WORK_ITEM_LIMIT, initialTaskQuery.trim()) ?? []
+  })
+  // Why: clicking a GitHub row opens this drawer for a read-only preview.
+  // The composer modal is only opened by the drawer's "Use" button, which
+  // calls the same handleSelectWorkItem as the old direct row-click flow.
+  const [drawerWorkItem, setDrawerWorkItem] = useState<GitHubWorkItem | null>(null)
 
   const filteredWorkItems = useMemo(() => {
     if (!activeTaskPreset) {
@@ -210,21 +231,38 @@ export default function NewWorkspacePage(): React.JSX.Element {
       return
     }
 
+    const trimmedQuery = appliedTaskSearch.trim()
+    const repoPath = selectedRepo.path
+
+    // Why: SWR — render cached items instantly, then revalidate in the
+    // background. Only show the spinner when we have nothing cached, so
+    // repeat visits feel instant instead of flashing a loading state.
+    const cached = getCachedWorkItems(repoPath, WORK_ITEM_LIMIT, trimmedQuery)
+    if (cached) {
+      setWorkItems(cached)
+      setTasksError(null)
+      setTasksLoading(false)
+    } else {
+      setTasksLoading(true)
+      setTasksError(null)
+    }
+
     let cancelled = false
-    setTasksLoading(true)
-    setTasksError(null)
+    // Why: force a refetch only when the nonce has incremented since the last
+    // fetch (i.e. the user hit the refresh button or clicked a preset). Other
+    // triggers — repo changes, search-box edits — should respect the SWR
+    // cache's TTL instead of hammering `gh` on every keystroke.
+    const forceRefresh = taskRefreshNonce !== lastFetchedNonceRef.current
+    lastFetchedNonceRef.current = taskRefreshNonce
 
     // Why: the buttons below populate the same search bar the user can edit by
     // hand, so the fetch path has to honor both the preset GitHub query and any
     // ad-hoc qualifiers the user types (for example assignee:@me). The fetch is
     // debounced through `appliedTaskSearch` so backspacing all the way to empty
     // refires the query without spamming GitHub on every keystroke.
-    void window.api.gh
-      .listWorkItems({
-        repoPath: selectedRepo.path,
-        limit: 36,
-        query: appliedTaskSearch.trim() || undefined
-      })
+    void fetchWorkItems(repoPath, WORK_ITEM_LIMIT, trimmedQuery, {
+      force: forceRefresh && taskRefreshNonce > 0
+    })
       .then((items) => {
         if (!cancelled) {
           setWorkItems(items)
@@ -233,7 +271,9 @@ export default function NewWorkspacePage(): React.JSX.Element {
       .catch((error) => {
         if (!cancelled) {
           setTasksError(error instanceof Error ? error.message : 'Failed to load GitHub work.')
-          setWorkItems([])
+          if (!cached) {
+            setWorkItems([])
+          }
         }
       })
       .finally(() => {
@@ -245,27 +285,10 @@ export default function NewWorkspacePage(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [appliedTaskSearch, selectedRepo, taskRefreshNonce, taskSource])
-
-  useEffect(() => {
-    // Why: the composer should reflect the user's saved default once on mount
-    // and after clearing a custom query, but only when there's no active custom
-    // search to avoid clobbering their typed text.
-    if (taskSearchInput.trim() || appliedTaskSearch.trim()) {
-      return
-    }
-
-    const query = getTaskPresetQuery(defaultTaskViewPreset)
-    if (activeTaskPreset !== defaultTaskViewPreset) {
-      setActiveTaskPreset(defaultTaskViewPreset)
-    }
-    if (taskSearchInput !== query) {
-      setTaskSearchInput(query)
-    }
-    if (appliedTaskSearch !== query) {
-      setAppliedTaskSearch(query)
-    }
-  }, [activeTaskPreset, appliedTaskSearch, defaultTaskViewPreset, taskSearchInput])
+    // Why: getCachedWorkItems is a stable zustand selector; depending on it
+    // would cause unnecessary effect re-runs on unrelated store updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedTaskSearch, selectedRepo, taskRefreshNonce, taskSource, fetchWorkItems])
 
   const handleApplyTaskSearch = useCallback((): void => {
     const trimmed = taskSearchInput.trim()
@@ -388,10 +411,14 @@ export default function NewWorkspacePage(): React.JSX.Element {
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background dark:bg-[#1a1a1a] text-foreground">
+      {/* Why: 3 rays at blur=20 looks visually equivalent to 6 at 44 while
+          cutting the compositor cost of the backdrop roughly 3x — the large
+          blur radius + mix-blend-screen pass dominated paint time during
+          page mount on integrated GPUs. */}
       <LightRays
-        count={6}
+        count={3}
         color="rgba(120, 160, 255, 0.15)"
-        blur={44}
+        blur={20}
         speed={16}
         length="60vh"
         className="z-0"
@@ -407,7 +434,9 @@ export default function NewWorkspacePage(): React.JSX.Element {
       )}
 
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-        <div className="flex-none flex items-center justify-end px-5 py-3 md:px-8 md:py-4">
+        {/* Why: the Esc/discard button is left-aligned to avoid colliding with the
+            right-docked GitHub drawer and app sidebar, which also live on the right edge. */}
+        <div className="flex-none flex items-center justify-start px-5 py-3 md:px-8 md:py-4">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -603,7 +632,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => handleSelectWorkItem(item)}
+                        onClick={() => setDrawerWorkItem(item)}
                         className="grid w-full gap-4 px-4 py-4 text-left transition hover:bg-muted/40 lg:grid-cols-[96px_minmax(0,1.8fr)_minmax(140px,1fr)_150px_120px_90px]"
                       >
                         <div className="flex items-center">
@@ -709,6 +738,16 @@ export default function NewWorkspacePage(): React.JSX.Element {
           )}
         </div>
       </div>
+
+      <GitHubItemDrawer
+        workItem={drawerWorkItem}
+        repoPath={selectedRepo?.path ?? null}
+        onUse={(item) => {
+          setDrawerWorkItem(null)
+          handleSelectWorkItem(item)
+        }}
+        onClose={() => setDrawerWorkItem(null)}
+      />
     </div>
   )
 }

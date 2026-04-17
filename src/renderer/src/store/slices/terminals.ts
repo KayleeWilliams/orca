@@ -2,6 +2,7 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type {
+  SetupSplitDirection,
   TerminalLayoutSnapshot,
   TerminalTab,
   WorkspaceSessionState
@@ -63,9 +64,13 @@ export type TerminalSlice = {
   terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot>
   pendingStartupByTabId: Record<string, { command: string; env?: Record<string, string> }>
   /** Queued setup-split requests — when present, TerminalPane creates the
-   *  initial pane clean, then splits right and runs the command in the new pane
-   *  so the main terminal stays immediately interactive. */
-  pendingSetupSplitByTabId: Record<string, { command: string; env?: Record<string, string> }>
+   *  initial pane clean, then splits (vertical or horizontal per user setting)
+   *  and runs the command in the new pane so the main terminal stays
+   *  immediately interactive. */
+  pendingSetupSplitByTabId: Record<
+    string,
+    { command: string; env?: Record<string, string>; direction: SetupSplitDirection }
+  >
   /** Queued issue-command-split requests — similar to setup splits but triggered
    *  when an issue is linked during worktree creation and the repo's issue
    *  automation command is enabled. */
@@ -107,9 +112,11 @@ export type TerminalSlice = {
   ) => { command: string; env?: Record<string, string> } | null
   queueTabSetupSplit: (
     tabId: string,
-    startup: { command: string; env?: Record<string, string> }
+    startup: { command: string; env?: Record<string, string>; direction: SetupSplitDirection }
   ) => void
-  consumeTabSetupSplit: (tabId: string) => { command: string; env?: Record<string, string> } | null
+  consumeTabSetupSplit: (
+    tabId: string
+  ) => { command: string; env?: Record<string, string>; direction: SetupSplitDirection } | null
   queueTabIssueCommandSplit: (
     tabId: string,
     issueCommand: { command: string; env?: Record<string, string> }
@@ -552,7 +559,23 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         if (found) {
           worktreeId = wId
         }
-        next[wId] = next[wId].map((t) => (t.id === tabId ? { ...t, ptyId } : t))
+        next[wId] = next[wId].map((t) => {
+          if (t.id !== tabId) {
+            return t
+          }
+          const existingPtyIds = s.ptyIdsByTabId[tabId] ?? []
+          const nextPtyIds = existingPtyIds.includes(ptyId)
+            ? existingPtyIds
+            : [...existingPtyIds, ptyId]
+          return {
+            ...t,
+            // Why: tab.ptyId is the single-pane fallback used by legacy attach
+            // paths. In split panes, later pane spawns must not steal that
+            // primary binding from the original pane or remount/close flows can
+            // reattach the tab to the wrong PTY and appear to "reset" panes.
+            ptyId: t.ptyId ?? nextPtyIds[0] ?? null
+          }
+        })
       }
       const existingPtyIds = s.ptyIdsByTabId[tabId] ?? []
       // Why: when a brand-new tab in the active worktree receives its first

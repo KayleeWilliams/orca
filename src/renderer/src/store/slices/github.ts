@@ -7,7 +7,8 @@ import type {
   IssueInfo,
   PRCheckDetail,
   PRComment,
-  Worktree
+  Worktree,
+  GitHubWorkItem
 } from '../../../../shared/types'
 import { syncPRChecksStatus } from './github-checks'
 
@@ -22,6 +23,10 @@ type FetchOptions = {
 
 const CACHE_TTL = 300_000 // 5 minutes (stale data shown instantly, then refreshed)
 const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
+// Why: the NewWorkspace page's work-item list is a browse surface, not a
+// source of truth, so 60s staleness is fine — stale data renders instantly
+// while a background refresh keeps it current.
+const WORK_ITEMS_CACHE_TTL = 60_000
 
 const inflightPRRequests = new Map<
   string,
@@ -30,7 +35,12 @@ const inflightPRRequests = new Map<
 const inflightIssueRequests = new Map<string, Promise<IssueInfo | null>>()
 const inflightChecksRequests = new Map<string, Promise<PRCheckDetail[]>>()
 const inflightCommentsRequests = new Map<string, Promise<PRComment[]>>()
+const inflightWorkItemsRequests = new Map<string, Promise<GitHubWorkItem[]>>()
 const prRequestGenerations = new Map<string, number>()
+
+function workItemsCacheKey(repoPath: string, limit: number, query: string): string {
+  return `${repoPath}::${limit}::${query}`
+}
 
 // Why: 500 entries is generous enough that active developers will never hit it
 // during normal use, but prevents the cache from growing without bound across
@@ -86,6 +96,10 @@ export type GitHubSlice = {
   issueCache: Record<string, CacheEntry<IssueInfo>>
   checksCache: Record<string, CacheEntry<PRCheckDetail[]>>
   commentsCache: Record<string, CacheEntry<PRComment[]>>
+  // Why: keyed by repoPath + limit + query so the NewWorkspace page can render
+  // from cache instantly on mount (and on hover-prefetch from sidebar buttons)
+  // while a background refresh keeps the list fresh.
+  workItemsCache: Record<string, CacheEntry<GitHubWorkItem[]>>
   fetchPRForBranch: (
     repoPath: string,
     branch: string,
@@ -114,6 +128,23 @@ export type GitHubSlice = {
   refreshAllGitHub: () => void
   refreshGitHubForWorktree: (worktreeId: string) => void
   refreshGitHubForWorktreeIfStale: (worktreeId: string) => void
+  /**
+   * Why: returns cached work items immediately (null if none) and fires a
+   * background refresh when stale. Callers can render the cached list while
+   * the SWR revalidate hydrates the latest.
+   */
+  getCachedWorkItems: (repoPath: string, limit: number, query: string) => GitHubWorkItem[] | null
+  fetchWorkItems: (
+    repoPath: string,
+    limit: number,
+    query: string,
+    options?: FetchOptions
+  ) => Promise<GitHubWorkItem[]>
+  /**
+   * Fire-and-forget prefetch used by UI entry points (hover/focus of the
+   * "new workspace" buttons) to warm the cache before the page mounts.
+   */
+  prefetchWorkItems: (repoPath: string, limit?: number, query?: string) => void
 }
 
 export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (set, get) => ({
@@ -121,6 +152,64 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
   issueCache: {},
   checksCache: {},
   commentsCache: {},
+  workItemsCache: {},
+
+  getCachedWorkItems: (repoPath, limit, query) => {
+    const key = workItemsCacheKey(repoPath, limit, query)
+    return get().workItemsCache[key]?.data ?? null
+  },
+
+  fetchWorkItems: async (repoPath, limit, query, options): Promise<GitHubWorkItem[]> => {
+    const key = workItemsCacheKey(repoPath, limit, query)
+    const cached = get().workItemsCache[key]
+    if (!options?.force && isFresh(cached, WORK_ITEMS_CACHE_TTL)) {
+      return cached.data ?? []
+    }
+
+    const inflight = inflightWorkItemsRequests.get(key)
+    if (inflight) {
+      return inflight
+    }
+
+    const request = (async () => {
+      try {
+        const items = (await window.api.gh.listWorkItems({
+          repoPath,
+          limit,
+          query: query || undefined
+        })) as GitHubWorkItem[]
+        set((s) => ({
+          workItemsCache: {
+            ...s.workItemsCache,
+            [key]: { data: items, fetchedAt: Date.now() }
+          }
+        }))
+        return items
+      } catch (err) {
+        // Why: surface the error to the caller; keep stale cache entry so the
+        // UI can continue to render something useful while the user retries.
+        console.error('Failed to fetch GitHub work items:', err)
+        throw err
+      } finally {
+        inflightWorkItemsRequests.delete(key)
+      }
+    })()
+
+    inflightWorkItemsRequests.set(key, request)
+    return request
+  },
+
+  prefetchWorkItems: (repoPath, limit = 36, query = '') => {
+    const key = workItemsCacheKey(repoPath, limit, query)
+    const cached = get().workItemsCache[key]
+    // Skip when the cache is fresh or a request is already in flight.
+    if (isFresh(cached, WORK_ITEMS_CACHE_TTL) || inflightWorkItemsRequests.has(key)) {
+      return
+    }
+    void get()
+      .fetchWorkItems(repoPath, limit, query)
+      .catch(() => {})
+  },
 
   initGitHubCache: async () => {
     try {
