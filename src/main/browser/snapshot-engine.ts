@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: snapshot building, AX tree walking, ref mapping, and cursor-interactive detection are tightly coupled and belong in one module. */
 import type { BrowserSnapshotRef } from '../../shared/runtime-types'
 
 export type CdpCommandSender = (
@@ -28,6 +29,10 @@ export type RefEntry = {
   role: string
   name: string
   sessionId?: string
+  // Why: when multiple elements share the same role+name, nth tracks which
+  // occurrence this ref represents (1-indexed). Used during stale ref recovery
+  // to disambiguate duplicates.
+  nth?: number
 }
 
 export type SnapshotResult = {
@@ -93,6 +98,17 @@ export async function buildSnapshot(
 
   walkTree(root, nodeById, 0, entries, () => refCounter++)
 
+  // Why: many modern SPAs use styled <div>s, <span>s, and custom elements as
+  // interactive controls without proper ARIA roles. These elements are invisible
+  // to the accessibility tree walk above but are clearly interactive (cursor:pointer,
+  // onclick, tabindex, contenteditable). This DOM query pass discovers them and
+  // promotes them to interactive refs so the agent can interact with them.
+  const cursorInteractiveEntries = await findCursorInteractiveElements(sendCommand, entries)
+  for (const cie of cursorInteractiveEntries) {
+    cie.ref = `@e${refCounter++}`
+    entries.push(cie)
+  }
+
   // Why: cross-origin iframes have their own AX trees accessible only through
   // their dedicated CDP session. Append their elements after the parent tree
   // so the agent can see and interact with iframe content.
@@ -148,12 +164,10 @@ export async function buildSnapshot(
       const key = `${entry.role}:${entry.name}`
       const total = nameCounts.get(key) ?? 1
       let displayName = entry.name
-      if (total > 1) {
-        const nth = (nameOccurrence.get(key) ?? 0) + 1
-        nameOccurrence.set(key, nth)
-        if (nth > 1) {
-          displayName = `${entry.name} (${ordinal(nth)})`
-        }
+      const nth = (nameOccurrence.get(key) ?? 0) + 1
+      nameOccurrence.set(key, nth)
+      if (total > 1 && nth > 1) {
+        displayName = `${entry.name} (${ordinal(nth)})`
       }
       lines.push(`${indent}[${entry.ref}] ${entry.role} "${displayName}"`)
       refs.push({ ref: entry.ref, role: entry.role, name: displayName })
@@ -162,7 +176,8 @@ export async function buildSnapshot(
         backendDOMNodeId: entry.backendDOMNodeId,
         role: entry.role,
         name: entry.name,
-        sessionId: iframeSession?.sessionId
+        sessionId: iframeSession?.sessionId,
+        nth: total > 1 ? nth : undefined
       })
     } else {
       lines.push(`${indent}${entry.role} "${entry.name}"`)
@@ -333,4 +348,99 @@ function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd']
   const v = n % 100
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`
+}
+
+// Why: finds DOM elements that are visually interactive (cursor:pointer, onclick,
+// tabindex, contenteditable) but lack standard ARIA roles. These are common in
+// modern SPAs where styled <div>s act as buttons. Returns them as a JS array of
+// remote object references that we can resolve to backendNodeIds via CDP.
+async function findCursorInteractiveElements(
+  sendCommand: CdpCommandSender,
+  existingEntries: SnapshotEntry[]
+): Promise<SnapshotEntry[]> {
+  const existingNodeIds = new Set(existingEntries.map((e) => e.backendDOMNodeId))
+  const results: SnapshotEntry[] = []
+
+  try {
+    // Single evaluate call that finds interactive elements and returns their info
+    // along with a way to reference them by index
+    const { result } = (await sendCommand('Runtime.evaluate', {
+      expression: `(() => {
+        const SKIP_ROLES = new Set(['button','link','textbox','checkbox','radio','tab',
+          'menuitem','option','switch','slider','combobox','searchbox','spinbutton','treeitem',
+          'menuitemcheckbox','menuitemradio']);
+        const SKIP_TAGS = new Set(['input','button','select','textarea','a']);
+        const seen = new Set();
+        const found = [];
+
+        function check(el) {
+          if (seen.has(el)) return;
+          seen.add(el);
+          const tag = el.tagName.toLowerCase();
+          if (SKIP_TAGS.has(tag)) return;
+          const role = el.getAttribute('role');
+          if (role && SKIP_ROLES.has(role)) return;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return;
+          const text = (el.ariaLabel || el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 80);
+          if (!text) return;
+          found.push({ text, tag });
+        }
+
+        document.querySelectorAll('[onclick], [tabindex]:not([tabindex="-1"]), [contenteditable="true"]').forEach(check);
+        document.querySelectorAll('div, span, li, td, img, svg, label').forEach(el => {
+          try {
+            if (window.getComputedStyle(el).cursor === 'pointer') check(el);
+          } catch {}
+        });
+
+        // Store elements globally so we can resolve them by index
+        window.__orcaCursorInteractive = [...seen].filter((_, i) => i < found.length);
+        return JSON.stringify(found.slice(0, 50));
+      })()`,
+      returnByValue: true
+    })) as { result: { value: string } }
+
+    const elements = JSON.parse(result.value) as { text: string; tag: string }[]
+
+    for (let i = 0; i < elements.length; i++) {
+      try {
+        const { result: objResult } = (await sendCommand('Runtime.evaluate', {
+          expression: `window.__orcaCursorInteractive[${i}]`
+        })) as { result: { objectId?: string } }
+
+        if (!objResult.objectId) {
+          continue
+        }
+
+        const { node } = (await sendCommand('DOM.describeNode', {
+          objectId: objResult.objectId
+        })) as { node: { backendNodeId: number } }
+
+        if (existingNodeIds.has(node.backendNodeId)) {
+          continue
+        }
+
+        results.push({
+          ref: '',
+          role: 'clickable',
+          name: elements[i].text,
+          backendDOMNodeId: node.backendNodeId,
+          depth: 0
+        })
+      } catch {
+        continue
+      }
+    }
+
+    // Clean up
+    await sendCommand('Runtime.evaluate', {
+      expression: 'delete window.__orcaCursorInteractive',
+      returnByValue: true
+    })
+  } catch {
+    // DOM query failed — not critical, just return empty
+  }
+
+  return results
 }

@@ -342,9 +342,20 @@ export class CdpBridge {
         object: { objectId: string }
       }
 
+      // Why: agent-browser matches by both .value AND .textContent.trim() so
+      // the agent can select options by their displayed label, not just the
+      // underlying value attribute which may be an opaque ID.
       await refSender('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: `function(val) {
+          for (const opt of this.options) {
+            if (opt.value === val || opt.textContent.trim() === val) {
+              this.value = opt.value;
+              this.dispatchEvent(new Event('input', { bubbles: true }));
+              this.dispatchEvent(new Event('change', { bubbles: true }));
+              return;
+            }
+          }
           this.value = val;
           this.dispatchEvent(new Event('input', { bubbles: true }));
           this.dispatchEvent(new Event('change', { bubbles: true }));
@@ -429,6 +440,22 @@ export class CdpBridge {
           button: 'left',
           clickCount: 1
         })
+
+        // Why: custom checkbox patterns (label wrapping hidden input, overlays)
+        // may not toggle from coordinate-based clicking. Verify state changed
+        // and fall back to programmatic .click() if needed.
+        const { result: afterState } = (await refSender('Runtime.callFunctionOn', {
+          objectId: object.objectId,
+          functionDeclaration: 'function() { return this.checked; }',
+          returnByValue: true
+        })) as { result: { value: boolean } }
+
+        if (afterState.value !== checked) {
+          await refSender('Runtime.callFunctionOn', {
+            objectId: object.objectId,
+            functionDeclaration: 'function() { this.click(); }'
+          })
+        }
       }
 
       return { checked }
@@ -1423,26 +1450,34 @@ export class CdpBridge {
     return { cx: localCx + offsetX, cy: localCy + offsetY }
   }
 
-  private async tryRecoverRef(
-    sender: CdpCommandSender,
-    entry: { backendDOMNodeId: number; role: string; name: string }
-  ): Promise<number | null> {
+  // Why: uses nth-index to pick the correct duplicate when multiple elements
+  // share the same role+name. Without this, recovery always returns the first
+  // match which may not be the element the ref originally pointed to.
+  private async tryRecoverRef(sender: CdpCommandSender, entry: RefEntry): Promise<number | null> {
     try {
       const { nodes } = (await sender('Accessibility.getFullAXTree')) as {
         nodes: { role?: { value: string }; name?: { value: string }; backendDOMNodeId?: number }[]
       }
+      const matches: number[] = []
       for (const node of nodes) {
         if (
           node.role?.value === entry.role &&
           node.name?.value === entry.name &&
           node.backendDOMNodeId
         ) {
-          try {
-            await sender('DOM.describeNode', { backendNodeId: node.backendDOMNodeId })
-            return node.backendDOMNodeId
-          } catch {
-            continue
-          }
+          matches.push(node.backendDOMNodeId)
+        }
+      }
+
+      const targetIndex = (entry.nth ?? 1) - 1
+      const candidates = targetIndex < matches.length ? [matches[targetIndex], ...matches] : matches
+
+      for (const backendNodeId of candidates) {
+        try {
+          await sender('DOM.describeNode', { backendNodeId })
+          return backendNodeId
+        } catch {
+          continue
         }
       }
     } catch {
