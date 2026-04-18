@@ -282,6 +282,7 @@ export function AgentIcon({
         alt=""
         aria-hidden
         style={{ borderRadius: 2 }}
+        className={agent === 'copilot' ? 'dark:invert' : undefined}
       />
     )
   }
