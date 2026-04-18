@@ -67,9 +67,12 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     activeCodexManagedAccountId: null,
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
+    skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
     agentCmdOverrides: {},
     terminalMacOptionAsAlt: 'false',
+    experimentalTerminalDaemon: false,
+    experimentalTerminalDaemonNoticeShown: false,
     ...overrides
   }
 }
