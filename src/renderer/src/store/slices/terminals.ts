@@ -733,10 +733,24 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // is later remounted.
       const nextPendingSetupSplitByTabId = { ...s.pendingSetupSplitByTabId }
       const nextPendingIssueCommandSplitByTabId = { ...s.pendingIssueCommandSplitByTabId }
+      // Why: layout snapshots carry `ptyIdsByLeafId` so in-session remounts
+      // (e.g. tab-group moves) can reattach to live PTYs. After shutdown these
+      // bindings point at killed PTY IDs; if we leave them, the next remount
+      // takes the reattach branch in connectPanePty and produces a visible
+      // but non-interactive "zombie" pane. Clearing the per-leaf binding
+      // forces a fresh spawn when the user returns to the worktree.
+      const nextTerminalLayoutsByTabId = { ...s.terminalLayoutsByTabId }
       for (const tab of tabs) {
         delete nextRuntimePaneTitlesByTabId[tab.id]
         delete nextPendingSetupSplitByTabId[tab.id]
         delete nextPendingIssueCommandSplitByTabId[tab.id]
+        const existingLayout = nextTerminalLayoutsByTabId[tab.id]
+        if (existingLayout?.ptyIdsByLeafId) {
+          nextTerminalLayoutsByTabId[tab.id] = {
+            ...existingLayout,
+            ptyIdsByLeafId: {}
+          }
+        }
       }
 
       // Why: browser tabs are factored into getWorktreeStatus — leaving them
@@ -766,6 +780,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId,
         pendingSetupSplitByTabId: nextPendingSetupSplitByTabId,
         pendingIssueCommandSplitByTabId: nextPendingIssueCommandSplitByTabId,
+        terminalLayoutsByTabId: nextTerminalLayoutsByTabId,
         browserTabsByWorktree: nextBrowserTabsByWorktree,
         activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
         ...(shouldResetGlobalBrowser
