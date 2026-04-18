@@ -1255,6 +1255,30 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
               }
             }
           })
+        } else if (supportsDeferredReattach) {
+          // Why: without the daemon, there is no real session ID to restore.
+          // Remove the tab's entry from ptyIdsByTabId so hasLivePtyForTab
+          // falls back to tab.ptyId for status badges. Set a sentinel on
+          // tab.ptyId so the fallback reports "live" until TerminalPane
+          // mounts and registers the real PTY via registerPtyId. Unlike
+          // putting the sentinel in the map, this approach keeps the map
+          // clean — shutdown's pty.kill loop won't try to kill a fake ID,
+          // and registerPtyId won't accumulate stale entries.
+          set((s) => {
+            const next = { ...s.tabsByWorktree }
+            if (!next[worktreeId]) {
+              return {}
+            }
+            next[worktreeId] = next[worktreeId].map((t) =>
+              t.id === tabId ? { ...t, ptyId: 'pending-reconnect' } : t
+            )
+            const nextPtyMap = { ...s.ptyIdsByTabId }
+            delete nextPtyMap[tabId]
+            return {
+              tabsByWorktree: next,
+              ptyIdsByTabId: nextPtyMap
+            }
+          })
         }
       }
     }

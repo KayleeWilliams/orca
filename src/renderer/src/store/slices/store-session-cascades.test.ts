@@ -855,11 +855,11 @@ describe('reconnectPersistedTerminals', () => {
     expect(store.getState().pendingReconnectWorktreeIds).toEqual([wt1])
 
     await store.getState().reconnectPersistedTerminals()
-    // Why: the daemon reattach path is gated behind experimentalTerminalDaemon.
-    // Without it enabled, reconnect marks the worktree for deferred mount but
-    // does not restore the tab-level ptyId. The upgrade fallback should still
-    // scope reconnect to the last active worktree only.
-    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBeNull()
+    // Why: without the daemon, reconnect sets a sentinel on tab.ptyId and
+    // removes the tab from ptyIdsByTabId so hasLivePtyForTab falls back to
+    // the sentinel. This shows green status without contaminating the map.
+    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('pending-reconnect')
+    expect(store.getState().ptyIdsByTabId).not.toHaveProperty('tab1')
     expect(store.getState().tabsByWorktree[wt2][0].ptyId).toBeNull()
   })
 
