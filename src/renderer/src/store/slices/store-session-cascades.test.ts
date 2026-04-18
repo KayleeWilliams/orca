@@ -855,50 +855,12 @@ describe('reconnectPersistedTerminals', () => {
     expect(store.getState().pendingReconnectWorktreeIds).toEqual([wt1])
 
     await store.getState().reconnectPersistedTerminals()
-    // Why: main now preserves daemon session ids across restart and restores
-    // them onto the tab during deferred reattach. The upgrade fallback should
-    // still reconnect only the last active worktree, but the resumed tab keeps
-    // its previous session id until TerminalPane fully reattaches.
-    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBe('old-pty-1')
+    // Why: the daemon reattach path is gated behind experimentalTerminalDaemon.
+    // Without it enabled, reconnect marks the worktree for deferred mount but
+    // does not restore the tab-level ptyId. The upgrade fallback should still
+    // scope reconnect to the last active worktree only.
+    expect(store.getState().tabsByWorktree[wt1][0].ptyId).toBeNull()
     expect(store.getState().tabsByWorktree[wt2][0].ptyId).toBeNull()
-  })
-
-  it('filters stale explicit reconnect worktrees by recency', async () => {
-    const store = createTestStore()
-    const now = 1_000_000
-    const recent = 'repo1::/path/recent'
-    const stale = 'repo1::/path/stale'
-
-    store.setState({
-      repos: [
-        { id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }
-      ],
-      worktreesByRepo: {
-        repo1: [
-          makeWorktree({ id: recent, repoId: 'repo1', path: '/path/recent', lastActivityAt: now }),
-          makeWorktree({
-            id: stale,
-            repoId: 'repo1',
-            path: '/path/stale',
-            lastActivityAt: now - 7 * 60 * 60 * 1000
-          })
-        ]
-      }
-    })
-
-    store.getState().hydrateWorkspaceSession({
-      activeRepoId: 'repo1',
-      activeWorktreeId: recent,
-      activeTabId: 'tab1',
-      tabsByWorktree: {
-        [recent]: [makeTab({ id: 'tab1', worktreeId: recent, ptyId: 'old-pty-1' })],
-        [stale]: [makeTab({ id: 'tab2', worktreeId: stale, ptyId: 'old-pty-2' })]
-      },
-      terminalLayoutsByTabId: { tab1: makeLayout(), tab2: makeLayout() },
-      activeWorktreeIdsOnShutdown: [recent, stale]
-    })
-
-    expect(store.getState().pendingReconnectWorktreeIds).toEqual([recent])
   })
 
   it('reconnects the correct tab per worktree (not always tabs[0])', async () => {

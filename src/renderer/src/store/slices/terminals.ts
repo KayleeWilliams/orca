@@ -153,8 +153,6 @@ export type TerminalSlice = {
   reconnectPersistedTerminals: (signal?: AbortSignal) => Promise<void>
 }
 
-const MAX_RECONNECT_ACTIVITY_AGE_MS = 6 * 60 * 60 * 1000
-
 export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> = (set, get) => ({
   tabsByWorktree: {},
   activeTabId: null,
@@ -1062,12 +1060,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         session.activeRepoId && s.repos.some((repo) => repo.id === session.activeRepoId)
           ? session.activeRepoId
           : null
-      const worktreeMap = new Map(
-        Object.values(s.worktreesByRepo)
-          .flat()
-          .map((w) => [w.id, w])
-      )
-
       // Why: workspaceSessionReady stays false here. It is set to true in
       // reconnectPersistedTerminals() after all eager PTY spawns complete.
       // This prevents TerminalPane from mounting and spawning duplicate PTYs
@@ -1082,30 +1074,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         (session.tabsByWorktree[activeWorktreeId] ?? []).some((tab) => tab.ptyId)
           ? [activeWorktreeId]
           : []
-      const rawShutdownIds = (
+      const pendingReconnectWorktreeIds = (
         session.activeWorktreeIdsOnShutdown ?? legacyUpgradeReconnectIds
       ).filter((id) => validWorktreeIds.has(id))
-      const newestReconnectActivity = rawShutdownIds.reduce((latest, worktreeId) => {
-        return Math.max(latest, worktreeMap.get(worktreeId)?.lastActivityAt ?? 0)
-      }, 0)
-      const pendingReconnectWorktreeIds = rawShutdownIds.filter((worktreeId) => {
-        if (worktreeId === activeWorktreeId) {
-          return true
-        }
-        if (session.activeWorktreeIdsOnShutdown == null) {
-          return true
-        }
-        const lastActivityAt = worktreeMap.get(worktreeId)?.lastActivityAt ?? 0
-        // Why: older corrupted sessions can preserve activeWorktreeIdsOnShutdown
-        // entries for worktrees that have not been touched in days or weeks.
-        // Bound eager restore to worktrees whose recent activity is plausibly
-        // part of the just-closed session, while always preserving the last
-        // active worktree and the explicit legacy-upgrade fallback above.
-        return (
-          newestReconnectActivity === 0 ||
-          newestReconnectActivity - lastActivityAt <= MAX_RECONNECT_ACTIVITY_AGE_MS
-        )
-      })
 
       // Why: capture which specific tabs had live PTYs per worktree from the
       // raw session data BEFORE clearTransientTerminalState nulled the ptyIds.
