@@ -879,14 +879,25 @@ function Terminal(): React.JSX.Element | null {
         </div>
       ) : null}
 
-      {!effectiveActiveLayout && (
+      {!effectiveActiveLayout && !anyMountedWorktreeHasLayout && (
         <>
           {/* Why: split-group layouts render their own terminal/browser/editor
               surfaces inside TabGroupPanel. Keeping the legacy workspace-level
               panes mounted underneath as hidden DOM creates duplicate
               TerminalPane/BrowserPane instances for the same tab, which lets
               two React trees race over one PTY or webview. Render only one
-              surface model at a time. */}
+              surface model at a time.
+
+              Also gate on !anyMountedWorktreeHasLayout: when the active
+              worktree goes null (e.g. during shutdown-from-focused, which
+              calls setActiveWorktree(null) before shutdownWorktreeTerminals)
+              effectiveActiveLayout becomes undefined but other mounted
+              worktrees still have layouts. Without this guard, the legacy
+              branch mounts fresh TerminalPanes for every worktree in
+              mountedWorktreeIdsRef, each running connectPanePty →
+              startFreshSpawn → new PTY. That respawn is exactly what flips
+              getWorktreeStatus back to 'active' and re-lights the sidebar
+              dot green moments after the user clicked Shutdown. */}
           {/* Terminal panes container - hidden when editor tab active */}
           <div
             className={`relative flex-1 min-h-0 overflow-hidden ${
