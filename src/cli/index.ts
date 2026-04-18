@@ -800,15 +800,11 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['pdf'])) {
       const result = await client.call<BrowserPdfResult>('browser.pdf')
-      return printResult(
-        result,
-        json,
-        () => `PDF exported (${result.result.data.length} bytes base64)`
-      )
+      return printResult(result, json, (v) => `PDF exported (${v.data.length} bytes base64)`)
     }
 
     if (matches(commandPath, ['full-screenshot'])) {
-      const format = (parsed.flags.get('format') as string) === 'jpeg' ? 'jpeg' : 'png'
+      const format = getOptionalStringFlag(parsed.flags, 'format') === 'jpeg' ? 'jpeg' : 'png'
       const result = await client.call<BrowserScreenshotResult>('browser.fullScreenshot', {
         format
       })
@@ -899,12 +895,16 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Viewport ──
 
     if (matches(commandPath, ['viewport'])) {
-      const width = Number(getRequiredStringFlag(parsed.flags, 'width'))
-      const height = Number(getRequiredStringFlag(parsed.flags, 'height'))
+      const width = getRequiredPositiveNumber(parsed.flags, 'width')
+      const height = getRequiredPositiveNumber(parsed.flags, 'height')
       const params: Record<string, unknown> = { width, height }
       const scale = getOptionalStringFlag(parsed.flags, 'scale')
       if (scale) {
-        params.deviceScaleFactor = Number(scale)
+        const n = Number(scale)
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new RuntimeClientError('invalid_argument', '--scale must be a positive number')
+        }
+        params.deviceScaleFactor = n
       }
       if (parsed.flags.has('mobile')) {
         params.mobile = true
@@ -920,12 +920,16 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Geolocation/timezone/locale ──
 
     if (matches(commandPath, ['geolocation'])) {
-      const latitude = Number(getRequiredStringFlag(parsed.flags, 'latitude'))
-      const longitude = Number(getRequiredStringFlag(parsed.flags, 'longitude'))
+      const latitude = getRequiredFiniteNumber(parsed.flags, 'latitude')
+      const longitude = getRequiredFiniteNumber(parsed.flags, 'longitude')
       const params: Record<string, unknown> = { latitude, longitude }
       const accuracy = getOptionalStringFlag(parsed.flags, 'accuracy')
       if (accuracy) {
-        params.accuracy = Number(accuracy)
+        const n = Number(accuracy)
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new RuntimeClientError('invalid_argument', '--accuracy must be a positive number')
+        }
+        params.accuracy = n
       }
       const result = await client.call<BrowserGeolocationResult>('browser.geolocation', params)
       return printResult(result, json, (v) => `Geolocation set to ${v.latitude}, ${v.longitude}`)
@@ -1032,9 +1036,9 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['console'])) {
       const params: Record<string, unknown> = {}
-      const limit = getOptionalStringFlag(parsed.flags, 'limit')
-      if (limit) {
-        params.limit = Number(limit)
+      const limit = getOptionalPositiveIntegerFlag(parsed.flags, 'limit')
+      if (limit !== undefined) {
+        params.limit = limit
       }
       const result = await client.call<BrowserConsoleResult>('browser.console', params)
       return printResult(result, json, (v) => {
@@ -1047,9 +1051,9 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['network'])) {
       const params: Record<string, unknown> = {}
-      const limit = getOptionalStringFlag(parsed.flags, 'limit')
-      if (limit) {
-        params.limit = Number(limit)
+      const limit = getOptionalPositiveIntegerFlag(parsed.flags, 'limit')
+      if (limit !== undefined) {
+        params.limit = limit
       }
       const result = await client.call<BrowserNetworkLogResult>('browser.network', params)
       return printResult(result, json, (v) => {
@@ -1145,7 +1149,10 @@ export function findCommandSpec(commandPath: string[]): CommandSpec | undefined 
 
 function isCommandGroup(commandPath: string[]): boolean {
   return (
-    commandPath.length === 1 && ['repo', 'worktree', 'terminal', 'tab'].includes(commandPath[0])
+    commandPath.length === 1 &&
+    ['repo', 'worktree', 'terminal', 'tab', 'cookie', 'intercept', 'capture'].includes(
+      commandPath[0]
+    )
   )
 }
 
@@ -1272,6 +1279,24 @@ function getOptionalNonNegativeIntegerFlag(
   }
   if (!Number.isInteger(value) || value < 0) {
     throw new RuntimeClientError('invalid_argument', `Invalid non-negative integer for --${name}`)
+  }
+  return value
+}
+
+function getRequiredPositiveNumber(flags: Map<string, string | boolean>, name: string): number {
+  const raw = getRequiredStringFlag(flags, name)
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RuntimeClientError('invalid_argument', `--${name} must be a positive number`)
+  }
+  return value
+}
+
+function getRequiredFiniteNumber(flags: Map<string, string | boolean>, name: string): number {
+  const raw = getRequiredStringFlag(flags, name)
+  const value = Number(raw)
+  if (!Number.isFinite(value)) {
+    throw new RuntimeClientError('invalid_argument', `--${name} must be a valid number`)
   }
   return value
 }

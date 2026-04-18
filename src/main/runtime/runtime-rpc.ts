@@ -939,7 +939,8 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.wait') {
       try {
         const params = this.extractParams(request)
-        const timeout = typeof params?.timeout === 'number' ? params.timeout : undefined
+        const raw = typeof params?.timeout === 'number' ? params.timeout : undefined
+        const timeout = raw !== undefined && raw > 0 ? raw : undefined
         const result = await this.runtime.browserWait({ timeout })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1100,8 +1101,12 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const width = typeof params?.width === 'number' ? params.width : null
         const height = typeof params?.height === 'number' ? params.height : null
-        if (!width || !height) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing width or height')
+        if (width === null || height === null || width <= 0 || height <= 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_params',
+            'Width and height must be positive numbers'
+          )
         }
         const result = await this.runtime.browserSetViewport({
           width,
@@ -1173,8 +1178,12 @@ export class OrcaRuntimeRpcServer {
         const permissions = Array.isArray(params?.permissions)
           ? (params.permissions as string[])
           : null
-        if (!permissions) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing permissions array')
+        if (!permissions || permissions.length === 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_params',
+            'Permissions array must not be empty'
+          )
         }
         const result = await this.runtime.browserGrantPermissions({
           permissions,

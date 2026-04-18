@@ -443,18 +443,23 @@ export class CdpBridge {
 
         // Why: custom checkbox patterns (label wrapping hidden input, overlays)
         // may not toggle from coordinate-based clicking. Verify state changed
-        // and fall back to programmatic .click() if needed.
-        const { result: afterState } = (await refSender('Runtime.callFunctionOn', {
-          objectId: object.objectId,
-          functionDeclaration: 'function() { return this.checked; }',
-          returnByValue: true
-        })) as { result: { value: boolean } }
-
-        if (afterState.value !== checked) {
-          await refSender('Runtime.callFunctionOn', {
+        // and fall back to programmatic .click() if needed. Wrapped in try/catch
+        // because the click may have triggered a re-render that invalidated objectId.
+        try {
+          const { result: afterState } = (await refSender('Runtime.callFunctionOn', {
             objectId: object.objectId,
-            functionDeclaration: 'function() { this.click(); }'
-          })
+            functionDeclaration: 'function() { return this.checked; }',
+            returnByValue: true
+          })) as { result: { value: boolean } }
+
+          if (afterState.value !== checked) {
+            await refSender('Runtime.callFunctionOn', {
+              objectId: object.objectId,
+              functionDeclaration: 'function() { this.click(); }'
+            })
+          }
+        } catch {
+          // objectId stale after re-render — click was dispatched, accept the result
         }
       }
 
@@ -1257,15 +1262,17 @@ export class CdpBridge {
       // Why: Electron's CDP sendCommand can hang indefinitely if the debugger
       // session is stale (e.g. after a renderer process swap that wasn't detected).
       // A 10s timeout prevents the RPC from blocking until the CLI's socket timeout.
+      // The timer is cancelled on success/failure to avoid dangling timer accumulation.
+      let timer: ReturnType<typeof setTimeout>
       return Promise.race([
-        command,
-        new Promise<never>((_, reject) =>
-          setTimeout(
+        command.finally(() => clearTimeout(timer)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
             () =>
               reject(new BrowserError('browser_cdp_error', `CDP command "${method}" timed out`)),
             10_000
           )
-        )
+        })
       ])
     }
   }
