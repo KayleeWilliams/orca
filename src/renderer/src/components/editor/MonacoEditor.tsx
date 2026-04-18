@@ -17,6 +17,11 @@ import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { useContextualCopySetup } from './useContextualCopySetup'
 import { performReveal } from './monaco-reveal'
 import { syncContentOnMount, syncContentUpdate } from './monaco-content-sync'
+import {
+  beginProgrammaticContentSync,
+  endProgrammaticContentSync,
+  shouldIgnoreMonacoContentChange
+} from './monaco-programmatic-sync'
 
 type MonacoEditorProps = {
   filePath: string
@@ -29,28 +34,6 @@ type MonacoEditorProps = {
   revealLine?: number
   revealColumn?: number
   revealMatchLength?: number
-}
-
-const programmaticContentSyncDepthByFilePath = new Map<string, number>()
-
-function beginProgrammaticContentSync(filePath: string): void {
-  programmaticContentSyncDepthByFilePath.set(
-    filePath,
-    (programmaticContentSyncDepthByFilePath.get(filePath) ?? 0) + 1
-  )
-}
-
-function endProgrammaticContentSync(filePath: string): void {
-  const depth = programmaticContentSyncDepthByFilePath.get(filePath) ?? 0
-  if (depth <= 1) {
-    programmaticContentSyncDepthByFilePath.delete(filePath)
-    return
-  }
-  programmaticContentSyncDepthByFilePath.set(filePath, depth - 1)
-}
-
-function isProgrammaticContentSyncInFlight(filePath: string): boolean {
-  return (programmaticContentSyncDepthByFilePath.get(filePath) ?? 0) > 0
 }
 
 export default function MonacoEditor({
@@ -290,9 +273,12 @@ export default function MonacoEditor({
         // or they'll treat the programmatic sync as a user edit and mark the
         // shared file dirty.
         if (
-          isApplyingProgrammaticContentRef.current ||
-          isProgrammaticContentSyncInFlight(filePath) ||
-          value === contentRef.current
+          shouldIgnoreMonacoContentChange({
+            filePath,
+            value,
+            propContent: contentRef.current,
+            isApplyingProgrammaticContent: isApplyingProgrammaticContentRef.current
+          })
         ) {
           return
         }
