@@ -178,6 +178,21 @@ export class Session {
     if (this._disposed) {
       return
     }
+
+    // Why: if kill() was called but the subprocess hasn't exited yet, our
+    // killTimer is the only thing that would forceKill a stuck subprocess.
+    // Clearing it below without force-killing would leak an orphaned process,
+    // so mirror forceDispose(): issue the force-kill, notify attached clients
+    // (handleSubprocessExit is guarded by _disposed and won't broadcast later),
+    // and clear the terminating flag for a consistent final state.
+    const wasTerminating = this._isTerminating && this._state !== 'exited'
+    const clientsToNotify = wasTerminating ? this.attachedClients.slice() : []
+    if (wasTerminating) {
+      this.subprocess.forceKill()
+      this._exitCode = -1
+      this._isTerminating = false
+    }
+
     this._disposed = true
     this._state = 'exited'
 
@@ -193,6 +208,10 @@ export class Session {
     this.attachedClients = []
     this.preReadyStdinQueue = []
     this.emulator.dispose()
+
+    for (const client of clientsToNotify) {
+      client.onExit(-1)
+    }
   }
 
   private handleSubprocessData(data: string): void {

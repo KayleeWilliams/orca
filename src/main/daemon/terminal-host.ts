@@ -46,7 +46,12 @@ export class TerminalHost {
   async createOrAttach(opts: CreateOrAttachOptions): Promise<CreateOrAttachResult> {
     const existing = this.sessions.get(opts.sessionId)
 
-    if (existing && existing.isAlive) {
+    // Why: a session that has been asked to terminate (kill() called but the
+    // subprocess hasn't exited yet) must not be reattached. Reattaching would
+    // hand the caller a handle that races with the in-flight exit, and any
+    // subsequent operation (write/kill/resize) would fail once the subprocess
+    // finally exits. Treat terminating sessions the same as fully-exited ones.
+    if (existing && existing.isAlive && !existing.isTerminating) {
       const snapshot = existing.getSnapshot()
       existing.detachAllClients()
       const token = existing.attachClient(opts.streamClient)
