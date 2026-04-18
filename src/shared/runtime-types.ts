@@ -227,6 +227,46 @@ export type BrowserTabSwitchResult = {
   switched: number
 }
 
+export type BrowserHoverResult = {
+  hovered: string
+}
+
+export type BrowserDragResult = {
+  dragged: { from: string; to: string }
+}
+
+export type BrowserUploadResult = {
+  uploaded: number
+}
+
+export type BrowserWaitResult = {
+  waited: boolean
+}
+
+export type BrowserCheckResult = {
+  checked: boolean
+}
+
+export type BrowserFocusResult = {
+  focused: string
+}
+
+export type BrowserClearResult = {
+  cleared: string
+}
+
+export type BrowserSelectAllResult = {
+  selected: string
+}
+
+export type BrowserKeypressResult = {
+  pressed: string
+}
+
+export type BrowserPdfResult = {
+  data: string
+}
+
 export type BrowserErrorCode =
   | 'browser_no_tab'
   | 'browser_tab_not_found'

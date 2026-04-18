@@ -36,7 +36,17 @@ import type {
   BrowserScreenshotResult,
   BrowserEvalResult,
   BrowserTabListResult,
-  BrowserTabSwitchResult
+  BrowserTabSwitchResult,
+  BrowserHoverResult,
+  BrowserDragResult,
+  BrowserUploadResult,
+  BrowserWaitResult,
+  BrowserCheckResult,
+  BrowserFocusResult,
+  BrowserClearResult,
+  BrowserSelectAllResult,
+  BrowserKeypressResult,
+  BrowserPdfResult
 } from '../../shared/runtime-types'
 import type { CdpBridge } from '../browser/cdp-bridge'
 import { getPRForBranch } from '../github/client'
@@ -1195,6 +1205,52 @@ export class OrcaRuntimeService {
 
   async browserTabSwitch(params: { index: number }): Promise<BrowserTabSwitchResult> {
     return this.requireCdpBridge().tabSwitch(params.index)
+  }
+
+  async browserHover(params: { element: string }): Promise<BrowserHoverResult> {
+    return this.requireCdpBridge().hover(params.element)
+  }
+
+  async browserDrag(params: { from: string; to: string }): Promise<BrowserDragResult> {
+    return this.requireCdpBridge().drag(params.from, params.to)
+  }
+
+  async browserUpload(params: { element: string; files: string[] }): Promise<BrowserUploadResult> {
+    return this.requireCdpBridge().uploadFile(params.element, params.files)
+  }
+
+  async browserWait(params: { timeout?: number }): Promise<BrowserWaitResult> {
+    return this.requireCdpBridge().wait(params.timeout)
+  }
+
+  async browserCheck(params: { element: string; checked: boolean }): Promise<BrowserCheckResult> {
+    return this.requireCdpBridge().check(params.element, params.checked)
+  }
+
+  async browserFocus(params: { element: string }): Promise<BrowserFocusResult> {
+    return this.requireCdpBridge().focus(params.element)
+  }
+
+  async browserClear(params: { element: string }): Promise<BrowserClearResult> {
+    return this.requireCdpBridge().clear(params.element)
+  }
+
+  async browserSelectAll(params: { element: string }): Promise<BrowserSelectAllResult> {
+    return this.requireCdpBridge().selectAll(params.element)
+  }
+
+  async browserKeypress(params: { key: string }): Promise<BrowserKeypressResult> {
+    return this.requireCdpBridge().keypress(params.key)
+  }
+
+  async browserPdf(): Promise<BrowserPdfResult> {
+    return this.requireCdpBridge().pdf()
+  }
+
+  async browserFullScreenshot(params: {
+    format?: 'png' | 'jpeg'
+  }): Promise<BrowserScreenshotResult> {
+    return this.requireCdpBridge().fullPageScreenshot(params.format)
   }
 }
 

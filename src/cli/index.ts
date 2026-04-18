@@ -26,7 +26,17 @@ import type {
   BrowserScreenshotResult,
   BrowserEvalResult,
   BrowserTabListResult,
-  BrowserTabSwitchResult
+  BrowserTabSwitchResult,
+  BrowserHoverResult,
+  BrowserDragResult,
+  BrowserUploadResult,
+  BrowserWaitResult,
+  BrowserCheckResult,
+  BrowserFocusResult,
+  BrowserClearResult,
+  BrowserSelectAllResult,
+  BrowserKeypressResult,
+  BrowserPdfResult
 } from '../shared/runtime-types'
 import {
   RuntimeClient,
@@ -249,6 +259,72 @@ export const COMMAND_SPECS: CommandSpec[] = [
     summary: 'Evaluate JavaScript in the browser page context',
     usage: 'orca eval --expression <js> [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'expression']
+  },
+  {
+    path: ['wait'],
+    summary: 'Wait for network idle',
+    usage: 'orca wait [--timeout <ms>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'timeout']
+  },
+  {
+    path: ['check'],
+    summary: 'Check or uncheck a checkbox/radio by ref',
+    usage: 'orca check --element <ref> [--uncheck] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'uncheck']
+  },
+  {
+    path: ['focus'],
+    summary: 'Focus a browser element by ref',
+    usage: 'orca focus --element <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element']
+  },
+  {
+    path: ['clear'],
+    summary: 'Clear an input element by ref',
+    usage: 'orca clear --element <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element']
+  },
+  {
+    path: ['select-all'],
+    summary: 'Select all text in an input by ref',
+    usage: 'orca select-all --element <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element']
+  },
+  {
+    path: ['keypress'],
+    summary: 'Press a key (Enter, Tab, Escape, ArrowDown, etc.)',
+    usage: 'orca keypress --key <name> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key']
+  },
+  {
+    path: ['pdf'],
+    summary: 'Export the active browser tab as PDF',
+    usage: 'orca pdf [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['full-screenshot'],
+    summary: 'Capture a full-page screenshot (beyond viewport)',
+    usage: 'orca full-screenshot [--format <png|jpeg>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'format']
+  },
+  {
+    path: ['hover'],
+    summary: 'Hover over a browser element by ref',
+    usage: 'orca hover --element <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element']
+  },
+  {
+    path: ['drag'],
+    summary: 'Drag from one element to another',
+    usage: 'orca drag --from <ref> --to <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'from', 'to']
+  },
+  {
+    path: ['upload'],
+    summary: 'Upload files to a file input element',
+    usage: 'orca upload --element <ref> --files <path,...> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'files']
   },
   {
     path: ['tab', 'list'],
@@ -542,6 +618,86 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       }
       const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', { index })
       return printResult(result, json, (v) => `Switched to tab ${v.switched}`)
+    }
+
+    if (matches(commandPath, ['wait'])) {
+      const timeout = getOptionalPositiveIntegerFlag(parsed.flags, 'timeout')
+      const result = await client.call<BrowserWaitResult>('browser.wait', { timeout })
+      return printResult(result, json, () => 'Network idle')
+    }
+
+    if (matches(commandPath, ['check'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const uncheck = parsed.flags.has('uncheck')
+      const result = await client.call<BrowserCheckResult>('browser.check', {
+        element,
+        checked: !uncheck
+      })
+      return printResult(result, json, (v) =>
+        v.checked ? `Checked ${element}` : `Unchecked ${element}`
+      )
+    }
+
+    if (matches(commandPath, ['focus'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const result = await client.call<BrowserFocusResult>('browser.focus', { element })
+      return printResult(result, json, (v) => `Focused ${v.focused}`)
+    }
+
+    if (matches(commandPath, ['clear'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const result = await client.call<BrowserClearResult>('browser.clear', { element })
+      return printResult(result, json, (v) => `Cleared ${v.cleared}`)
+    }
+
+    if (matches(commandPath, ['select-all'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const result = await client.call<BrowserSelectAllResult>('browser.selectAll', { element })
+      return printResult(result, json, (v) => `Selected all in ${v.selected}`)
+    }
+
+    if (matches(commandPath, ['keypress'])) {
+      const key = getRequiredStringFlag(parsed.flags, 'key')
+      const result = await client.call<BrowserKeypressResult>('browser.keypress', { key })
+      return printResult(result, json, (v) => `Pressed ${v.pressed}`)
+    }
+
+    if (matches(commandPath, ['pdf'])) {
+      const result = await client.call<BrowserPdfResult>('browser.pdf')
+      return printResult(
+        result,
+        json,
+        () => `PDF exported (${result.result.data.length} bytes base64)`
+      )
+    }
+
+    if (matches(commandPath, ['full-screenshot'])) {
+      const format = (parsed.flags.get('format') as string) === 'jpeg' ? 'jpeg' : 'png'
+      const result = await client.call<BrowserScreenshotResult>('browser.fullScreenshot', {
+        format
+      })
+      return printResult(result, json, (v) => `Full-page screenshot captured (${v.format})`)
+    }
+
+    if (matches(commandPath, ['hover'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const result = await client.call<BrowserHoverResult>('browser.hover', { element })
+      return printResult(result, json, (v) => `Hovered ${v.hovered}`)
+    }
+
+    if (matches(commandPath, ['drag'])) {
+      const from = getRequiredStringFlag(parsed.flags, 'from')
+      const to = getRequiredStringFlag(parsed.flags, 'to')
+      const result = await client.call<BrowserDragResult>('browser.drag', { from, to })
+      return printResult(result, json, (v) => `Dragged ${v.dragged.from} → ${v.dragged.to}`)
+    }
+
+    if (matches(commandPath, ['upload'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const filesStr = getRequiredStringFlag(parsed.flags, 'files')
+      const files = filesStr.split(',').map((f) => f.trim())
+      const result = await client.call<BrowserUploadResult>('browser.upload', { element, files })
+      return printResult(result, json, (v) => `Uploaded ${v.uploaded} file(s)`)
     }
 
     throw new RuntimeClientError('invalid_argument', `Unknown command: ${commandPath.join(' ')}`)

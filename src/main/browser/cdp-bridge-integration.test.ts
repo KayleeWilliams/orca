@@ -115,6 +115,12 @@ function createMockGuest(id: number, url: string, title: string) {
         if (expr.includes('innerWidth')) {
           return { result: { value: JSON.stringify({ w: 1280, h: 720 }) } }
         }
+        if (expr.includes('scrollBy')) {
+          return { result: { value: undefined } }
+        }
+        if (expr.includes('dispatchEvent')) {
+          return { result: { value: undefined } }
+        }
         // eslint-disable-next-line no-eval
         return { result: { value: String(eval(expr)), type: 'string' } }
       }
@@ -138,11 +144,19 @@ function createMockGuest(id: number, url: string, title: string) {
         return { object: { objectId: 'obj-1' } }
       case 'Runtime.callFunctionOn':
         return { result: { value: undefined } }
+      case 'DOM.setFileInputFiles':
+        return {}
       case 'Page.captureScreenshot':
         return {
           data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
         }
       case 'Page.reload':
+        return {}
+      case 'Network.enable':
+        return {}
+      case 'Target.setAutoAttach':
+        return {}
+      case 'Runtime.enable':
         return {}
       default:
         throw new Error(`Unexpected CDP method: ${method}`)
@@ -169,6 +183,13 @@ function createMockGuest(id: number, url: string, title: string) {
         const handlers = debuggerListeners.get(event) ?? []
         handlers.push(handler)
         debuggerListeners.set(event, handlers)
+      }),
+      removeListener: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        const handlers = debuggerListeners.get(event) ?? []
+        const idx = handlers.indexOf(handler)
+        if (idx >= 0) {
+          handlers.splice(idx, 1)
+        }
       }),
       off: vi.fn()
     }

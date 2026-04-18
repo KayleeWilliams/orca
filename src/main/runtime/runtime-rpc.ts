@@ -884,6 +884,160 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
+    if (request.method === 'browser.hover') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserHover({ element })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.drag') {
+      try {
+        const params = this.extractParams(request)
+        const from = typeof params?.from === 'string' ? params.from : null
+        const to = typeof params?.to === 'string' ? params.to : null
+        if (!from || !to) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --from and --to element refs'
+          )
+        }
+        const result = await this.runtime.browserDrag({ from, to })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.upload') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const files = Array.isArray(params?.files) ? (params.files as string[]) : null
+        if (!element || !files || files.length === 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --element and --files'
+          )
+        }
+        const result = await this.runtime.browserUpload({ element, files })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.wait') {
+      try {
+        const params = this.extractParams(request)
+        const timeout = typeof params?.timeout === 'number' ? params.timeout : undefined
+        const result = await this.runtime.browserWait({ timeout })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.check') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const checked = params?.checked !== false
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserCheck({ element, checked })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.focus') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserFocus({ element })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.clear') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserClear({ element })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.selectAll') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserSelectAll({ element })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.keypress') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const result = await this.runtime.browserKeypress({ key })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.pdf') {
+      try {
+        const result = await this.runtime.browserPdf()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.fullScreenshot') {
+      try {
+        const params = this.extractParams(request)
+        const format = params?.format === 'jpeg' ? ('jpeg' as const) : ('png' as const)
+        const result = await this.runtime.browserFullScreenshot({ format })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
     return this.errorResponse(request.id, 'method_not_found', `Unknown method: ${request.method}`)
   }
 

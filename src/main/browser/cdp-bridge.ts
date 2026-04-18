@@ -1,20 +1,35 @@
 /* eslint-disable max-lines -- Why: the CDP bridge owns debugger lifecycle, ref map management, command serialization, and all browser interaction logic in one module so the browser automation boundary stays coherent. */
 import { webContents } from 'electron'
 import type {
+  BrowserCheckResult,
+  BrowserClearResult,
   BrowserClickResult,
+  BrowserDragResult,
   BrowserEvalResult,
   BrowserFillResult,
+  BrowserFocusResult,
   BrowserGotoResult,
+  BrowserHoverResult,
+  BrowserKeypressResult,
+  BrowserPdfResult,
   BrowserScreenshotResult,
   BrowserScrollResult,
+  BrowserSelectAllResult,
   BrowserSelectResult,
   BrowserSnapshotResult,
   BrowserTabInfo,
   BrowserTabListResult,
   BrowserTabSwitchResult,
-  BrowserTypeResult
+  BrowserTypeResult,
+  BrowserUploadResult,
+  BrowserWaitResult
 } from '../../shared/runtime-types'
-import { buildSnapshot, type CdpCommandSender, type SnapshotResult } from './snapshot-engine'
+import {
+  buildSnapshot,
+  type CdpCommandSender,
+  type RefEntry,
+  type SnapshotResult
+} from './snapshot-engine'
 import type { BrowserManager } from './browser-manager'
 
 export class BrowserError extends Error {
@@ -30,6 +45,7 @@ type TabState = {
   navigationId: string | null
   snapshotResult: SnapshotResult | null
   debuggerAttached: boolean
+  iframeSessions: Map<string, string>
 }
 
 type QueuedCommand = {
@@ -63,10 +79,12 @@ export class CdpBridge {
       const sender = this.makeCdpSender(guest)
       await this.ensureDebuggerAttached(guest)
 
-      const result = await buildSnapshot(sender)
       const tabId = this.resolveTabId(guest.id)
-
       const state = this.getOrCreateTabState(tabId)
+
+      const result = await buildSnapshot(sender, state.iframeSessions, (sessionId) =>
+        this.makeCdpSender(guest, sessionId)
+      )
       state.snapshotResult = result
 
       const navId = await this.getNavigationId(sender)
@@ -88,16 +106,16 @@ export class CdpBridge {
       await this.ensureDebuggerAttached(guest)
 
       const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
 
-      await sender('DOM.scrollIntoViewIfNeeded', { backendNodeId: node.backendDOMNodeId })
-      const { model } = (await sender('DOM.getBoxModel', {
-        backendNodeId: node.backendDOMNodeId
-      })) as { model: { content: number[] } }
+      await this.scrollIntoView(refSender, node.backendDOMNodeId)
+      const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
 
-      const [x1, y1, , , x3, y3] = model.content
-      const cx = (x1 + x3) / 2
-      const cy = (y1 + y3) / 2
-
+      // Why: mouseMoved fires mouseenter/mouseover which some sites need to
+      // reveal hover-dependent menus or clickable areas before the click lands.
+      // Input events go to the parent session — Chrome routes them to the
+      // correct frame based on coordinates.
+      await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy })
       await sender('Input.dispatchMouseEvent', {
         type: 'mousePressed',
         x: cx,
@@ -117,6 +135,85 @@ export class CdpBridge {
     })
   }
 
+  async hover(element: string): Promise<BrowserHoverResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+      await this.scrollIntoView(refSender, node.backendDOMNodeId)
+      const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
+
+      await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy })
+
+      return { hovered: element }
+    })
+  }
+
+  async drag(fromElement: string, toElement: string): Promise<BrowserDragResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const fromNode = await this.resolveRef(guest, sender, fromElement)
+      const toNode = await this.resolveRef(guest, sender, toElement)
+      const fromSender = this.senderForRef(guest, fromNode)
+      const toSender = this.senderForRef(guest, toNode)
+
+      await this.scrollIntoView(fromSender, fromNode.backendDOMNodeId)
+      const from = await this.getElementCenter(fromSender, fromNode.backendDOMNodeId)
+      const to = await this.getElementCenter(toSender, toNode.backendDOMNodeId)
+
+      // Why: 10-step interpolation with delays simulates human-like drag and
+      // triggers dragenter/dragover events on intermediate elements, which many
+      // drag-and-drop libraries rely on.
+      await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.cx, y: from.cy })
+      await sender('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x: from.cx,
+        y: from.cy,
+        button: 'left'
+      })
+
+      const steps = 10
+      for (let i = 1; i <= steps; i++) {
+        const x = from.cx + ((to.cx - from.cx) * i) / steps
+        const y = from.cy + ((to.cy - from.cy) * i) / steps
+        await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 1 })
+        await new Promise((r) => setTimeout(r, 10))
+      }
+
+      await sender('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: to.cx,
+        y: to.cy,
+        button: 'left'
+      })
+
+      return { dragged: { from: fromElement, to: toElement } }
+    })
+  }
+
+  async uploadFile(element: string, filePaths: string[]): Promise<BrowserUploadResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+      await refSender('DOM.setFileInputFiles', {
+        files: filePaths,
+        backendNodeId: node.backendDOMNodeId
+      })
+
+      return { uploaded: filePaths.length }
+    })
+  }
+
   async goto(url: string): Promise<BrowserGotoResult> {
     return this.enqueueCommand(async () => {
       const guest = this.getActiveGuest()
@@ -131,7 +228,7 @@ export class CdpBridge {
         throw new BrowserError('browser_navigation_failed', `Navigation failed: ${errorText}`)
       }
 
-      await this.waitForLoad(sender)
+      await this.waitForLoad(sender, guest)
       this.invalidateRefMap(guest.id)
 
       return { url: guest.getURL(), title: guest.getTitle() }
@@ -145,8 +242,9 @@ export class CdpBridge {
       await this.ensureDebuggerAttached(guest)
 
       const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
 
-      await sender('DOM.focus', { backendNodeId: node.backendDOMNodeId })
+      await refSender('DOM.focus', { backendNodeId: node.backendDOMNodeId })
 
       // Why: select-all then delete clears any existing value before typing,
       // matching the behavior of Playwright's fill() and agent-browser's fill.
@@ -164,6 +262,20 @@ export class CdpBridge {
       await sender('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete' })
 
       await sender('Input.insertText', { text: value })
+
+      // Why: React and other frameworks use synthetic event listeners that may not
+      // detect native keyboard events. Explicitly dispatching input/change ensures
+      // controlled components update their state.
+      await sender('Runtime.evaluate', {
+        expression: `(() => {
+          const el = document.activeElement;
+          if (el) {
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        })()`,
+        returnByValue: true
+      })
 
       return { filled: element }
     })
@@ -187,15 +299,16 @@ export class CdpBridge {
       await this.ensureDebuggerAttached(guest)
 
       const node = await this.resolveRef(guest, sender, element)
-      const { nodeId } = (await sender('DOM.requestNode', {
+      const refSender = this.senderForRef(guest, node)
+      const { nodeId } = (await refSender('DOM.requestNode', {
         backendNodeId: node.backendDOMNodeId
       })) as { nodeId: number }
 
-      const { object } = (await sender('DOM.resolveNode', { nodeId })) as {
+      const { object } = (await refSender('DOM.resolveNode', { nodeId })) as {
         object: { objectId: string }
       }
 
-      await sender('Runtime.callFunctionOn', {
+      await refSender('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: `function(val) {
           this.value = val;
@@ -215,23 +328,192 @@ export class CdpBridge {
       const sender = this.makeCdpSender(guest)
       await this.ensureDebuggerAttached(guest)
 
-      const { result: viewportResult } = (await sender('Runtime.evaluate', {
-        expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight })',
-        returnByValue: true
-      })) as { result: { value: string } }
-      const viewport = JSON.parse(viewportResult.value) as { w: number; h: number }
-      const scrollAmount = amount ?? viewport.h
-
-      const deltaY = direction === 'down' ? scrollAmount : -scrollAmount
-      await sender('Input.dispatchMouseEvent', {
-        type: 'mouseWheel',
-        x: viewport.w / 2,
-        y: viewport.h / 2,
-        deltaX: 0,
-        deltaY
-      })
+      // Why: JS scrollBy is deterministic and doesn't require page focus,
+      // unlike Input.dispatchMouseEvent mouseWheel which is unreliable in
+      // Electron webviews and can timeout.
+      const expr = amount
+        ? `window.scrollBy(0, ${direction === 'down' ? amount : -amount})`
+        : `window.scrollBy(0, ${direction === 'down' ? 'window.innerHeight' : '-window.innerHeight'})`
+      await sender('Runtime.evaluate', { expression: expr, returnByValue: true })
 
       return { scrolled: direction }
+    })
+  }
+
+  async wait(timeoutMs = 5000): Promise<BrowserWaitResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      await this.ensureDebuggerAttached(guest)
+      await this.waitForNetworkIdle(guest, timeoutMs, 500)
+      return { waited: true }
+    })
+  }
+
+  async check(element: string, checked: boolean): Promise<BrowserCheckResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+
+      const { nodeId } = (await refSender('DOM.requestNode', {
+        backendNodeId: node.backendDOMNodeId
+      })) as { nodeId: number }
+      const { object } = (await refSender('DOM.resolveNode', { nodeId })) as {
+        object: { objectId: string }
+      }
+
+      const { result: currentState } = (await refSender('Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        functionDeclaration: 'function() { return this.checked; }',
+        returnByValue: true
+      })) as { result: { value: boolean } }
+
+      if (currentState.value !== checked) {
+        await this.scrollIntoView(refSender, node.backendDOMNodeId)
+        const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
+        await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy })
+        await sender('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x: cx,
+          y: cy,
+          button: 'left',
+          clickCount: 1
+        })
+        await sender('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x: cx,
+          y: cy,
+          button: 'left',
+          clickCount: 1
+        })
+      }
+
+      return { checked }
+    })
+  }
+
+  async focus(element: string): Promise<BrowserFocusResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+      await refSender('DOM.focus', { backendNodeId: node.backendDOMNodeId })
+
+      return { focused: element }
+    })
+  }
+
+  async clear(element: string): Promise<BrowserClearResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+
+      const { nodeId } = (await refSender('DOM.requestNode', {
+        backendNodeId: node.backendDOMNodeId
+      })) as { nodeId: number }
+      const { object } = (await refSender('DOM.resolveNode', { nodeId })) as {
+        object: { objectId: string }
+      }
+
+      await refSender('Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        functionDeclaration: `function() {
+          this.value = '';
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+        }`
+      })
+
+      return { cleared: element }
+    })
+  }
+
+  async selectAll(element: string): Promise<BrowserSelectAllResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const node = await this.resolveRef(guest, sender, element)
+      const refSender = this.senderForRef(guest, node)
+      await refSender('DOM.focus', { backendNodeId: node.backendDOMNodeId })
+
+      await sender('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'a',
+        modifiers: process.platform === 'darwin' ? 4 : 2
+      })
+      await sender('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'a',
+        modifiers: process.platform === 'darwin' ? 4 : 2
+      })
+
+      return { selected: element }
+    })
+  }
+
+  async keypress(key: string): Promise<BrowserKeypressResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const keyDef = resolveKeyDefinition(key)
+      await sender('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        ...keyDef
+      })
+      await sender('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        ...keyDef
+      })
+
+      return { pressed: key }
+    })
+  }
+
+  async pdf(): Promise<BrowserPdfResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const { data } = (await sender('Page.printToPDF', {
+        printBackground: true
+      })) as { data: string }
+
+      return { data }
+    })
+  }
+
+  async fullPageScreenshot(format: 'png' | 'jpeg' = 'png'): Promise<BrowserScreenshotResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const { contentSize } = (await sender('Page.getLayoutMetrics')) as {
+        contentSize: { width: number; height: number }
+      }
+
+      const { data } = (await sender('Page.captureScreenshot', {
+        format,
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: contentSize.width, height: contentSize.height, scale: 1 }
+      })) as { data: string }
+
+      return { data, format }
     })
   }
 
@@ -244,7 +526,7 @@ export class CdpBridge {
       await sender('Page.navigateToHistoryEntry', {
         entryId: await this.getPreviousHistoryEntryId(sender)
       })
-      await this.waitForLoad(sender)
+      await this.waitForLoad(sender, guest)
       this.invalidateRefMap(guest.id)
 
       return { url: guest.getURL(), title: guest.getTitle() }
@@ -258,7 +540,7 @@ export class CdpBridge {
       await this.ensureDebuggerAttached(guest)
 
       await sender('Page.reload')
-      await this.waitForLoad(sender)
+      await this.waitForLoad(sender, guest)
       this.invalidateRefMap(guest.id)
 
       return { url: guest.getURL(), title: guest.getTitle() }
@@ -433,7 +715,12 @@ export class CdpBridge {
   private getOrCreateTabState(tabId: string): TabState {
     let state = this.tabState.get(tabId)
     if (!state) {
-      state = { navigationId: null, snapshotResult: null, debuggerAttached: false }
+      state = {
+        navigationId: null,
+        snapshotResult: null,
+        debuggerAttached: false,
+        iframeSessions: new Map()
+      }
       this.tabState.set(tabId, state)
     }
     return state
@@ -455,27 +742,77 @@ export class CdpBridge {
       )
     }
 
-    await this.makeCdpSender(guest)('Page.enable')
-    await this.makeCdpSender(guest)('DOM.enable')
+    const sender = this.makeCdpSender(guest)
+    await sender('Page.enable')
+    await sender('DOM.enable')
+    await sender('Network.enable')
+
+    // Why: cross-origin iframes run in separate renderer processes (OOPIFs) and
+    // are invisible to the parent's CDP session. setAutoAttach with flatten:true
+    // gives each OOPIF its own sessionId that we can target with sendCommand.
+    await sender('Target.setAutoAttach', {
+      autoAttach: true,
+      waitForDebuggerOnStart: false,
+      flatten: true
+    })
 
     guest.debugger.on('detach', () => {
       state.debuggerAttached = false
       state.snapshotResult = null
+      state.iframeSessions.clear()
     })
 
-    guest.debugger.on('message', (_event: unknown, method: string) => {
+    guest.debugger.on('message', (_event: unknown, method: string, params: unknown) => {
       if (method === 'Page.frameNavigated') {
         state.snapshotResult = null
         state.navigationId = null
+      }
+      // Why: an unhandled alert/confirm/prompt blocks ALL subsequent CDP commands.
+      // Auto-dismissing prevents the session from hanging indefinitely.
+      if (method === 'Page.javascriptDialogOpening') {
+        const dialog = params as { type: string; message: string } | undefined
+        guest.debugger
+          .sendCommand('Page.handleJavaScriptDialog', {
+            accept: dialog?.type !== 'beforeunload'
+          })
+          .catch(() => {})
+      }
+      // Why: track cross-origin iframe sessions so we can route CDP commands
+      // and accessibility tree queries to the correct session.
+      if (method === 'Target.attachedToTarget') {
+        const p = params as
+          | {
+              sessionId?: string
+              targetInfo?: { type?: string; targetId?: string }
+            }
+          | undefined
+        if (p?.sessionId && p.targetInfo?.type === 'iframe' && p.targetInfo.targetId) {
+          state.iframeSessions.set(p.targetInfo.targetId, p.sessionId)
+          // Enable domains on iframe session
+          guest.debugger.sendCommand('DOM.enable', {}, p.sessionId).catch(() => {})
+          guest.debugger.sendCommand('Accessibility.enable', {}, p.sessionId).catch(() => {})
+          guest.debugger.sendCommand('Runtime.enable', {}, p.sessionId).catch(() => {})
+        }
+      }
+      if (method === 'Target.detachedFromTarget') {
+        const p = params as { sessionId?: string } | undefined
+        if (p?.sessionId) {
+          for (const [frameId, sid] of state.iframeSessions) {
+            if (sid === p.sessionId) {
+              state.iframeSessions.delete(frameId)
+              break
+            }
+          }
+        }
       }
     })
 
     state.debuggerAttached = true
   }
 
-  private makeCdpSender(guest: Electron.WebContents): CdpCommandSender {
+  private makeCdpSender(guest: Electron.WebContents, sessionId?: string): CdpCommandSender {
     return (method: string, params?: Record<string, unknown>) => {
-      const command = guest.debugger.sendCommand(method, params) as Promise<unknown>
+      const command = guest.debugger.sendCommand(method, params, sessionId) as Promise<unknown>
       // Why: Electron's CDP sendCommand can hang indefinitely if the debugger
       // session is stale (e.g. after a renderer process swap that wasn't detected).
       // A 10s timeout prevents the RPC from blocking until the CLI's socket timeout.
@@ -492,11 +829,15 @@ export class CdpBridge {
     }
   }
 
+  private senderForRef(guest: Electron.WebContents, ref: RefEntry): CdpCommandSender {
+    return ref.sessionId ? this.makeCdpSender(guest, ref.sessionId) : this.makeCdpSender(guest)
+  }
+
   private async resolveRef(
     guest: Electron.WebContents,
     sender: CdpCommandSender,
     ref: string
-  ): Promise<{ backendDOMNodeId: number; role: string; name: string }> {
+  ): Promise<RefEntry> {
     const tabId = this.resolveTabId(guest.id)
     const state = this.getOrCreateTabState(tabId)
 
@@ -525,17 +866,76 @@ export class CdpBridge {
       )
     }
 
+    const refSender = entry.sessionId ? this.makeCdpSender(guest, entry.sessionId) : sender
     try {
-      await sender('DOM.describeNode', { backendNodeId: entry.backendDOMNodeId })
+      await refSender('DOM.describeNode', { backendNodeId: entry.backendDOMNodeId })
+      return entry
     } catch {
+      // Why: dynamic pages (React, Vue) re-render DOM nodes frequently. A ref
+      // from a snapshot taken seconds ago may point to a detached node even though
+      // an identical element exists. Re-query the AX tree to find the fresh node
+      // by matching role + name, avoiding a wasted retry for the agent.
+      const recovered = await this.tryRecoverRef(refSender, entry)
+      if (recovered) {
+        entry.backendDOMNodeId = recovered
+        return entry
+      }
       state.snapshotResult = null
       throw new BrowserError(
         'browser_stale_ref',
         `Element ${ref} no longer exists in the DOM. Run 'orca snapshot' to get fresh refs.`
       )
     }
+  }
 
-    return entry
+  private async scrollIntoView(sender: CdpCommandSender, backendNodeId: number): Promise<void> {
+    const { nodeId } = (await sender('DOM.requestNode', { backendNodeId })) as { nodeId: number }
+    const { object } = (await sender('DOM.resolveNode', { nodeId })) as {
+      object: { objectId: string }
+    }
+    await sender('Runtime.callFunctionOn', {
+      objectId: object.objectId,
+      functionDeclaration: `function() { this.scrollIntoView({ block: 'center', inline: 'center' }); }`
+    })
+  }
+
+  private async getElementCenter(
+    sender: CdpCommandSender,
+    backendNodeId: number
+  ): Promise<{ cx: number; cy: number }> {
+    const { model } = (await sender('DOM.getBoxModel', { backendNodeId })) as {
+      model: { content: number[] }
+    }
+    const [x1, y1, , , x3, y3] = model.content
+    return { cx: (x1 + x3) / 2, cy: (y1 + y3) / 2 }
+  }
+
+  private async tryRecoverRef(
+    sender: CdpCommandSender,
+    entry: { backendDOMNodeId: number; role: string; name: string }
+  ): Promise<number | null> {
+    try {
+      const { nodes } = (await sender('Accessibility.getFullAXTree')) as {
+        nodes: { role?: { value: string }; name?: { value: string }; backendDOMNodeId?: number }[]
+      }
+      for (const node of nodes) {
+        if (
+          node.role?.value === entry.role &&
+          node.name?.value === entry.name &&
+          node.backendDOMNodeId
+        ) {
+          try {
+            await sender('DOM.describeNode', { backendNodeId: node.backendDOMNodeId })
+            return node.backendDOMNodeId
+          } catch {
+            continue
+          }
+        }
+      }
+    } catch {
+      // AX tree unavailable — can't recover
+    }
+    return null
   }
 
   private async getNavigationId(sender: CdpCommandSender): Promise<string> {
@@ -558,12 +958,19 @@ export class CdpBridge {
     return entries[currentIndex - 1].id
   }
 
-  private async waitForLoad(sender: CdpCommandSender): Promise<void> {
-    await sender('Page.enable')
+  private async waitForLoad(sender: CdpCommandSender, guest: Electron.WebContents): Promise<void> {
+    // Why: wait for document.readyState=complete first, then wait for network
+    // idle (no pending requests for 500ms). This handles SPAs that fire 'load'
+    // before async content is rendered.
+    const TIMEOUT_MS = 25_000
+    const IDLE_MS = 500
+    const startedAt = Date.now()
+
+    // Phase 1: wait for readyState=complete
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new BrowserError('browser_timeout', 'Page load timed out after 30 seconds.'))
-      }, 30_000)
+        reject(new BrowserError('browser_timeout', 'Page load timed out.'))
+      }, TIMEOUT_MS)
 
       const check = async (): Promise<void> => {
         try {
@@ -579,10 +986,63 @@ export class CdpBridge {
           }
         } catch {
           clearTimeout(timeout)
-          reject(new BrowserError('browser_cdp_error', 'Failed to check page load state.'))
+          resolve()
         }
       }
       check()
+    })
+
+    // Phase 2: wait for network idle
+    const remaining = TIMEOUT_MS - (Date.now() - startedAt)
+    if (remaining <= 0) {
+      return
+    }
+    await this.waitForNetworkIdle(guest, Math.min(remaining, 5000), IDLE_MS)
+  }
+
+  private waitForNetworkIdle(
+    guest: Electron.WebContents,
+    timeoutMs: number,
+    idleMs: number
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      let pending = 0
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+      const overallTimeout = setTimeout(done, timeoutMs)
+
+      function done(): void {
+        clearTimeout(overallTimeout)
+        if (idleTimer) {
+          clearTimeout(idleTimer)
+        }
+        guest.debugger.removeListener('message', onMessage)
+        resolve()
+      }
+
+      function checkIdle(): void {
+        if (pending <= 0) {
+          if (idleTimer) {
+            clearTimeout(idleTimer)
+          }
+          idleTimer = setTimeout(done, idleMs)
+        }
+      }
+
+      function onMessage(_event: unknown, method: string): void {
+        if (method === 'Network.requestWillBeSent') {
+          pending++
+          if (idleTimer) {
+            clearTimeout(idleTimer)
+            idleTimer = null
+          }
+        } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
+          pending = Math.max(0, pending - 1)
+          checkIdle()
+        }
+      }
+
+      guest.debugger.on('message', onMessage)
+      checkIdle()
     })
   }
 
@@ -635,4 +1095,25 @@ export class CdpBridge {
 
     this.processingQueues.delete(tabId)
   }
+}
+
+const KEY_DEFINITIONS: Record<string, { key: string; code: string; keyCode?: number }> = {
+  Enter: { key: 'Enter', code: 'Enter', keyCode: 13 },
+  Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
+  Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
+  Delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+  Home: { key: 'Home', code: 'Home', keyCode: 36 },
+  End: { key: 'End', code: 'End', keyCode: 35 },
+  PageUp: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
+  PageDown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  Space: { key: ' ', code: 'Space', keyCode: 32 }
+}
+
+function resolveKeyDefinition(key: string): { key: string; code: string; keyCode?: number } {
+  return KEY_DEFINITIONS[key] ?? { key, code: `Key${key.toUpperCase()}` }
 }
