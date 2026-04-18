@@ -1038,6 +1038,258 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
+    // ── Cookie management ──
+
+    if (request.method === 'browser.cookie.get') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const result = await this.runtime.browserCookieGet({ url })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.cookie.set') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!name || value === null) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing name or value')
+        }
+        const result = await this.runtime.browserCookieSet({
+          name,
+          value,
+          domain: typeof params?.domain === 'string' ? params.domain : undefined,
+          path: typeof params?.path === 'string' ? params.path : undefined,
+          secure: typeof params?.secure === 'boolean' ? params.secure : undefined,
+          httpOnly: typeof params?.httpOnly === 'boolean' ? params.httpOnly : undefined,
+          sameSite: typeof params?.sameSite === 'string' ? params.sameSite : undefined,
+          expires: typeof params?.expires === 'number' ? params.expires : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.cookie.delete') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        if (!name) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing cookie name')
+        }
+        const result = await this.runtime.browserCookieDelete({
+          name,
+          domain: typeof params?.domain === 'string' ? params.domain : undefined,
+          url: typeof params?.url === 'string' ? params.url : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Viewport emulation ──
+
+    if (request.method === 'browser.viewport') {
+      try {
+        const params = this.extractParams(request)
+        const width = typeof params?.width === 'number' ? params.width : null
+        const height = typeof params?.height === 'number' ? params.height : null
+        if (!width || !height) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing width or height')
+        }
+        const result = await this.runtime.browserSetViewport({
+          width,
+          height,
+          deviceScaleFactor:
+            typeof params?.deviceScaleFactor === 'number' ? params.deviceScaleFactor : undefined,
+          mobile: typeof params?.mobile === 'boolean' ? params.mobile : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Geolocation/timezone/locale ──
+
+    if (request.method === 'browser.geolocation') {
+      try {
+        const params = this.extractParams(request)
+        const latitude = typeof params?.latitude === 'number' ? params.latitude : null
+        const longitude = typeof params?.longitude === 'number' ? params.longitude : null
+        if (latitude === null || longitude === null) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing latitude or longitude')
+        }
+        const result = await this.runtime.browserSetGeolocation({
+          latitude,
+          longitude,
+          accuracy: typeof params?.accuracy === 'number' ? params.accuracy : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.timezone') {
+      try {
+        const params = this.extractParams(request)
+        const timezoneId = typeof params?.timezoneId === 'string' ? params.timezoneId : null
+        if (!timezoneId) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing timezoneId')
+        }
+        const result = await this.runtime.browserSetTimezone({ timezoneId })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.locale') {
+      try {
+        const params = this.extractParams(request)
+        const locale = typeof params?.locale === 'string' ? params.locale : null
+        if (!locale) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing locale')
+        }
+        const result = await this.runtime.browserSetLocale({ locale })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Permissions ──
+
+    if (request.method === 'browser.permissions') {
+      try {
+        const params = this.extractParams(request)
+        const permissions = Array.isArray(params?.permissions)
+          ? (params.permissions as string[])
+          : null
+        if (!permissions) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing permissions array')
+        }
+        const result = await this.runtime.browserGrantPermissions({
+          permissions,
+          origin: typeof params?.origin === 'string' ? params.origin : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Request interception ──
+
+    if (request.method === 'browser.intercept.enable') {
+      try {
+        const params = this.extractParams(request)
+        const patterns = Array.isArray(params?.patterns) ? (params.patterns as string[]) : undefined
+        const result = await this.runtime.browserInterceptEnable({ patterns })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.disable') {
+      try {
+        const result = await this.runtime.browserInterceptDisable()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.list') {
+      try {
+        const result = this.runtime.browserInterceptList()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.continue') {
+      try {
+        const params = this.extractParams(request)
+        const requestId = typeof params?.requestId === 'string' ? params.requestId : null
+        if (!requestId) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing requestId')
+        }
+        const result = await this.runtime.browserInterceptContinue({ requestId })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.block') {
+      try {
+        const params = this.extractParams(request)
+        const requestId = typeof params?.requestId === 'string' ? params.requestId : null
+        if (!requestId) {
+          return this.errorResponse(request.id, 'invalid_params', 'Missing requestId')
+        }
+        const result = await this.runtime.browserInterceptBlock({
+          requestId,
+          reason: typeof params?.reason === 'string' ? params.reason : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Console/network capture ──
+
+    if (request.method === 'browser.capture.start') {
+      try {
+        const result = await this.runtime.browserCaptureStart()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.capture.stop') {
+      try {
+        const result = await this.runtime.browserCaptureStop()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.console') {
+      try {
+        const params = this.extractParams(request)
+        const limit = typeof params?.limit === 'number' ? params.limit : undefined
+        const result = this.runtime.browserConsoleLog({ limit })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.network') {
+      try {
+        const params = this.extractParams(request)
+        const limit = typeof params?.limit === 'number' ? params.limit : undefined
+        const result = this.runtime.browserNetworkLog({ limit })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
     return this.errorResponse(request.id, 'method_not_found', `Unknown method: ${request.method}`)
   }
 

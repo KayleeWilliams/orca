@@ -36,7 +36,24 @@ import type {
   BrowserClearResult,
   BrowserSelectAllResult,
   BrowserKeypressResult,
-  BrowserPdfResult
+  BrowserPdfResult,
+  BrowserCookieGetResult,
+  BrowserCookieSetResult,
+  BrowserCookieDeleteResult,
+  BrowserViewportResult,
+  BrowserGeolocationResult,
+  BrowserTimezoneResult,
+  BrowserLocaleResult,
+  BrowserPermissionResult,
+  BrowserInterceptEnableResult,
+  BrowserInterceptDisableResult,
+  BrowserInterceptedRequest,
+  BrowserInterceptContinueResult,
+  BrowserInterceptBlockResult,
+  BrowserCaptureStartResult,
+  BrowserCaptureStopResult,
+  BrowserConsoleResult,
+  BrowserNetworkLogResult
 } from '../shared/runtime-types'
 import {
   RuntimeClient,
@@ -337,6 +354,125 @@ export const COMMAND_SPECS: CommandSpec[] = [
     summary: 'Switch the active browser tab',
     usage: 'orca tab switch --index <n> [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'index']
+  },
+  // ── Cookie management ──
+  {
+    path: ['cookie', 'get'],
+    summary: 'Get cookies for the active tab (optionally filter by URL)',
+    usage: 'orca cookie get [--url <url>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'url']
+  },
+  {
+    path: ['cookie', 'set'],
+    summary: 'Set a cookie',
+    usage:
+      'orca cookie set --name <n> --value <v> [--domain <d>] [--path <p>] [--secure] [--httpOnly] [--sameSite <s>] [--expires <epoch>] [--json]',
+    allowedFlags: [
+      ...GLOBAL_FLAGS,
+      'name',
+      'value',
+      'domain',
+      'path',
+      'secure',
+      'httpOnly',
+      'sameSite',
+      'expires'
+    ]
+  },
+  {
+    path: ['cookie', 'delete'],
+    summary: 'Delete a cookie by name',
+    usage: 'orca cookie delete --name <n> [--domain <d>] [--url <u>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'name', 'domain', 'url']
+  },
+  // ── Viewport ──
+  {
+    path: ['viewport'],
+    summary: 'Set browser viewport size',
+    usage: 'orca viewport --width <w> --height <h> [--scale <n>] [--mobile] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'width', 'height', 'scale', 'mobile']
+  },
+  // ── Geolocation/timezone/locale ──
+  {
+    path: ['geolocation'],
+    summary: 'Override browser geolocation',
+    usage: 'orca geolocation --latitude <lat> --longitude <lon> [--accuracy <n>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'latitude', 'longitude', 'accuracy']
+  },
+  {
+    path: ['timezone'],
+    summary: 'Override browser timezone',
+    usage: 'orca timezone --id <timezone> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id']
+  },
+  {
+    path: ['locale'],
+    summary: 'Override browser locale',
+    usage: 'orca locale --locale <locale> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'locale']
+  },
+  // ── Permissions ──
+  {
+    path: ['permissions'],
+    summary: 'Grant browser permissions (geolocation, notifications, etc.)',
+    usage: 'orca permissions --grant <perm,...> [--origin <url>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'grant', 'origin']
+  },
+  // ── Request interception ──
+  {
+    path: ['intercept', 'enable'],
+    summary: 'Enable request interception (pause matching requests)',
+    usage: 'orca intercept enable [--patterns <glob,...>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'patterns']
+  },
+  {
+    path: ['intercept', 'disable'],
+    summary: 'Disable request interception',
+    usage: 'orca intercept disable [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['intercept', 'list'],
+    summary: 'List paused (intercepted) requests',
+    usage: 'orca intercept list [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['intercept', 'continue'],
+    summary: 'Continue a paused request',
+    usage: 'orca intercept continue --id <requestId> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id']
+  },
+  {
+    path: ['intercept', 'block'],
+    summary: 'Block (fail) a paused request',
+    usage: 'orca intercept block --id <requestId> [--reason <reason>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id', 'reason']
+  },
+  // ── Console/network capture ──
+  {
+    path: ['capture', 'start'],
+    summary: 'Start capturing console and network events',
+    usage: 'orca capture start [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['capture', 'stop'],
+    summary: 'Stop capturing console and network events',
+    usage: 'orca capture stop [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['console'],
+    summary: 'Show captured console log entries',
+    usage: 'orca console [--limit <n>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit']
+  },
+  {
+    path: ['network'],
+    summary: 'Show captured network requests',
+    usage: 'orca network [--limit <n>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit']
   }
 ]
 
@@ -698,6 +834,226 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const files = filesStr.split(',').map((f) => f.trim())
       const result = await client.call<BrowserUploadResult>('browser.upload', { element, files })
       return printResult(result, json, (v) => `Uploaded ${v.uploaded} file(s)`)
+    }
+
+    // ── Cookie management ──
+
+    if (matches(commandPath, ['cookie', 'get'])) {
+      const url = getOptionalStringFlag(parsed.flags, 'url')
+      const result = await client.call<BrowserCookieGetResult>('browser.cookie.get', { url })
+      return printResult(result, json, (v) => {
+        if (v.cookies.length === 0) {
+          return 'No cookies'
+        }
+        return v.cookies.map((c) => `${c.name}=${c.value} (${c.domain})`).join('\n')
+      })
+    }
+
+    if (matches(commandPath, ['cookie', 'set'])) {
+      const name = getRequiredStringFlag(parsed.flags, 'name')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const params: Record<string, unknown> = { name, value }
+      const domain = getOptionalStringFlag(parsed.flags, 'domain')
+      const path = getOptionalStringFlag(parsed.flags, 'path')
+      const sameSite = getOptionalStringFlag(parsed.flags, 'sameSite')
+      const expires = getOptionalStringFlag(parsed.flags, 'expires')
+      if (domain) {
+        params.domain = domain
+      }
+      if (path) {
+        params.path = path
+      }
+      if (parsed.flags.has('secure')) {
+        params.secure = true
+      }
+      if (parsed.flags.has('httpOnly')) {
+        params.httpOnly = true
+      }
+      if (sameSite) {
+        params.sameSite = sameSite
+      }
+      if (expires) {
+        params.expires = Number(expires)
+      }
+      const result = await client.call<BrowserCookieSetResult>('browser.cookie.set', params)
+      return printResult(result, json, (v) =>
+        v.success ? `Cookie "${name}" set` : `Failed to set cookie "${name}"`
+      )
+    }
+
+    if (matches(commandPath, ['cookie', 'delete'])) {
+      const name = getRequiredStringFlag(parsed.flags, 'name')
+      const params: Record<string, unknown> = { name }
+      const domain = getOptionalStringFlag(parsed.flags, 'domain')
+      const url = getOptionalStringFlag(parsed.flags, 'url')
+      if (domain) {
+        params.domain = domain
+      }
+      if (url) {
+        params.url = url
+      }
+      const result = await client.call<BrowserCookieDeleteResult>('browser.cookie.delete', params)
+      return printResult(result, json, () => `Cookie "${name}" deleted`)
+    }
+
+    // ── Viewport ──
+
+    if (matches(commandPath, ['viewport'])) {
+      const width = Number(getRequiredStringFlag(parsed.flags, 'width'))
+      const height = Number(getRequiredStringFlag(parsed.flags, 'height'))
+      const params: Record<string, unknown> = { width, height }
+      const scale = getOptionalStringFlag(parsed.flags, 'scale')
+      if (scale) {
+        params.deviceScaleFactor = Number(scale)
+      }
+      if (parsed.flags.has('mobile')) {
+        params.mobile = true
+      }
+      const result = await client.call<BrowserViewportResult>('browser.viewport', params)
+      return printResult(
+        result,
+        json,
+        (v) => `Viewport set to ${v.width}×${v.height}${v.mobile ? ' (mobile)' : ''}`
+      )
+    }
+
+    // ── Geolocation/timezone/locale ──
+
+    if (matches(commandPath, ['geolocation'])) {
+      const latitude = Number(getRequiredStringFlag(parsed.flags, 'latitude'))
+      const longitude = Number(getRequiredStringFlag(parsed.flags, 'longitude'))
+      const params: Record<string, unknown> = { latitude, longitude }
+      const accuracy = getOptionalStringFlag(parsed.flags, 'accuracy')
+      if (accuracy) {
+        params.accuracy = Number(accuracy)
+      }
+      const result = await client.call<BrowserGeolocationResult>('browser.geolocation', params)
+      return printResult(result, json, (v) => `Geolocation set to ${v.latitude}, ${v.longitude}`)
+    }
+
+    if (matches(commandPath, ['timezone'])) {
+      const timezoneId = getRequiredStringFlag(parsed.flags, 'id')
+      const result = await client.call<BrowserTimezoneResult>('browser.timezone', { timezoneId })
+      return printResult(result, json, (v) => `Timezone set to ${v.timezoneId}`)
+    }
+
+    if (matches(commandPath, ['locale'])) {
+      const locale = getRequiredStringFlag(parsed.flags, 'locale')
+      const result = await client.call<BrowserLocaleResult>('browser.locale', { locale })
+      return printResult(result, json, (v) => `Locale set to ${v.locale}`)
+    }
+
+    // ── Permissions ──
+
+    if (matches(commandPath, ['permissions'])) {
+      const grantStr = getRequiredStringFlag(parsed.flags, 'grant')
+      const permissions = grantStr.split(',').map((p) => p.trim())
+      const params: Record<string, unknown> = { permissions }
+      const origin = getOptionalStringFlag(parsed.flags, 'origin')
+      if (origin) {
+        params.origin = origin
+      }
+      const result = await client.call<BrowserPermissionResult>('browser.permissions', params)
+      return printResult(result, json, (v) => `Granted: ${v.granted.join(', ')}`)
+    }
+
+    // ── Request interception ──
+
+    if (matches(commandPath, ['intercept', 'enable'])) {
+      const params: Record<string, unknown> = {}
+      const patternsStr = getOptionalStringFlag(parsed.flags, 'patterns')
+      if (patternsStr) {
+        params.patterns = patternsStr.split(',').map((p) => p.trim())
+      }
+      const result = await client.call<BrowserInterceptEnableResult>(
+        'browser.intercept.enable',
+        params
+      )
+      return printResult(result, json, (v) => `Interception enabled for: ${v.patterns.join(', ')}`)
+    }
+
+    if (matches(commandPath, ['intercept', 'disable'])) {
+      const result = await client.call<BrowserInterceptDisableResult>('browser.intercept.disable')
+      return printResult(result, json, () => 'Interception disabled')
+    }
+
+    if (matches(commandPath, ['intercept', 'list'])) {
+      const result = await client.call<{ requests: BrowserInterceptedRequest[] }>(
+        'browser.intercept.list'
+      )
+      return printResult(result, json, (v) => {
+        if (v.requests.length === 0) {
+          return 'No paused requests'
+        }
+        return v.requests
+          .map((r) => `[${r.id}] ${r.method} ${r.url} (${r.resourceType})`)
+          .join('\n')
+      })
+    }
+
+    if (matches(commandPath, ['intercept', 'continue'])) {
+      const requestId = getRequiredStringFlag(parsed.flags, 'id')
+      const result = await client.call<BrowserInterceptContinueResult>(
+        'browser.intercept.continue',
+        { requestId }
+      )
+      return printResult(result, json, (v) => `Continued request ${v.continued}`)
+    }
+
+    if (matches(commandPath, ['intercept', 'block'])) {
+      const requestId = getRequiredStringFlag(parsed.flags, 'id')
+      const params: Record<string, unknown> = { requestId }
+      const reason = getOptionalStringFlag(parsed.flags, 'reason')
+      if (reason) {
+        params.reason = reason
+      }
+      const result = await client.call<BrowserInterceptBlockResult>(
+        'browser.intercept.block',
+        params
+      )
+      return printResult(result, json, (v) => `Blocked request ${v.blocked}`)
+    }
+
+    // ── Console/network capture ──
+
+    if (matches(commandPath, ['capture', 'start'])) {
+      const result = await client.call<BrowserCaptureStartResult>('browser.capture.start')
+      return printResult(result, json, () => 'Capture started (console + network)')
+    }
+
+    if (matches(commandPath, ['capture', 'stop'])) {
+      const result = await client.call<BrowserCaptureStopResult>('browser.capture.stop')
+      return printResult(result, json, () => 'Capture stopped')
+    }
+
+    if (matches(commandPath, ['console'])) {
+      const params: Record<string, unknown> = {}
+      const limit = getOptionalStringFlag(parsed.flags, 'limit')
+      if (limit) {
+        params.limit = Number(limit)
+      }
+      const result = await client.call<BrowserConsoleResult>('browser.console', params)
+      return printResult(result, json, (v) => {
+        if (v.entries.length === 0) {
+          return 'No console entries'
+        }
+        return v.entries.map((e) => `[${e.level}] ${e.text}`).join('\n')
+      })
+    }
+
+    if (matches(commandPath, ['network'])) {
+      const params: Record<string, unknown> = {}
+      const limit = getOptionalStringFlag(parsed.flags, 'limit')
+      if (limit) {
+        params.limit = Number(limit)
+      }
+      const result = await client.call<BrowserNetworkLogResult>('browser.network', params)
+      return printResult(result, json, (v) => {
+        if (v.entries.length === 0) {
+          return 'No network entries'
+        }
+        return v.entries.map((e) => `${e.status} ${e.url} (${e.mimeType}, ${e.size}B)`).join('\n')
+      })
     }
 
     throw new RuntimeClientError('invalid_argument', `Unknown command: ${commandPath.join(' ')}`)

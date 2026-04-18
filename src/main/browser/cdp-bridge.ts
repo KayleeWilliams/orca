@@ -1,17 +1,35 @@
 /* eslint-disable max-lines -- Why: the CDP bridge owns debugger lifecycle, ref map management, command serialization, and all browser interaction logic in one module so the browser automation boundary stays coherent. */
 import { webContents } from 'electron'
 import type {
+  BrowserCaptureStartResult,
+  BrowserCaptureStopResult,
   BrowserCheckResult,
   BrowserClearResult,
   BrowserClickResult,
+  BrowserConsoleEntry,
+  BrowserConsoleResult,
+  BrowserCookie,
+  BrowserCookieDeleteResult,
+  BrowserCookieGetResult,
+  BrowserCookieSetResult,
   BrowserDragResult,
   BrowserEvalResult,
   BrowserFillResult,
   BrowserFocusResult,
+  BrowserGeolocationResult,
   BrowserGotoResult,
   BrowserHoverResult,
+  BrowserInterceptBlockResult,
+  BrowserInterceptContinueResult,
+  BrowserInterceptDisableResult,
+  BrowserInterceptEnableResult,
+  BrowserInterceptedRequest,
   BrowserKeypressResult,
+  BrowserLocaleResult,
+  BrowserNetworkEntry,
+  BrowserNetworkLogResult,
   BrowserPdfResult,
+  BrowserPermissionResult,
   BrowserScreenshotResult,
   BrowserScrollResult,
   BrowserSelectAllResult,
@@ -20,8 +38,10 @@ import type {
   BrowserTabInfo,
   BrowserTabListResult,
   BrowserTabSwitchResult,
+  BrowserTimezoneResult,
   BrowserTypeResult,
   BrowserUploadResult,
+  BrowserViewportResult,
   BrowserWaitResult
 } from '../../shared/runtime-types'
 import {
@@ -46,6 +66,16 @@ type TabState = {
   snapshotResult: SnapshotResult | null
   debuggerAttached: boolean
   iframeSessions: Map<string, string>
+  // Why: capture state is per-tab so console/network events from one tab
+  // don't pollute another's capture buffer.
+  capturing: boolean
+  consoleLog: BrowserConsoleEntry[]
+  networkLog: BrowserNetworkEntry[]
+  // Why: interception state tracks patterns and paused requests so the
+  // agent can selectively continue or block individual requests.
+  intercepting: boolean
+  interceptPatterns: string[]
+  pausedRequests: Map<string, BrowserInterceptedRequest>
 }
 
 type QueuedCommand = {
@@ -517,6 +547,291 @@ export class CdpBridge {
     })
   }
 
+  // ── Cookie management ──
+
+  async cookieGet(url?: string): Promise<BrowserCookieGetResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const params: Record<string, unknown> = {}
+      if (url) {
+        params.urls = [url]
+      }
+      const { cookies } = (await sender('Network.getCookies', params)) as {
+        cookies: BrowserCookie[]
+      }
+
+      return { cookies }
+    })
+  }
+
+  async cookieSet(cookie: {
+    name: string
+    value: string
+    domain?: string
+    path?: string
+    secure?: boolean
+    httpOnly?: boolean
+    sameSite?: string
+    expires?: number
+  }): Promise<BrowserCookieSetResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const params: Record<string, unknown> = {
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path ?? '/',
+        secure: cookie.secure ?? false,
+        httpOnly: cookie.httpOnly ?? false,
+        sameSite: cookie.sameSite ?? 'Lax'
+      }
+      if (cookie.expires !== undefined) {
+        params.expires = cookie.expires
+      }
+
+      const { success } = (await sender('Network.setCookie', params)) as { success: boolean }
+      return { success }
+    })
+  }
+
+  async cookieDelete(
+    name: string,
+    domain?: string,
+    url?: string
+  ): Promise<BrowserCookieDeleteResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const params: Record<string, unknown> = { name }
+      if (domain) {
+        params.domain = domain
+      }
+      if (url) {
+        params.url = url
+      }
+
+      await sender('Network.deleteCookies', params)
+      return { deleted: true }
+    })
+  }
+
+  // ── Viewport emulation ──
+
+  async setViewport(
+    width: number,
+    height: number,
+    deviceScaleFactor = 1,
+    mobile = false
+  ): Promise<BrowserViewportResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      await sender('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor,
+        mobile
+      })
+
+      return { width, height, deviceScaleFactor, mobile }
+    })
+  }
+
+  // ── Geolocation/timezone/locale ──
+
+  async setGeolocation(
+    latitude: number,
+    longitude: number,
+    accuracy = 1
+  ): Promise<BrowserGeolocationResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      await sender('Emulation.setGeolocationOverride', { latitude, longitude, accuracy })
+      return { latitude, longitude, accuracy }
+    })
+  }
+
+  async setTimezone(timezoneId: string): Promise<BrowserTimezoneResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      await sender('Emulation.setTimezoneOverride', { timezoneId })
+      return { timezoneId }
+    })
+  }
+
+  async setLocale(locale: string): Promise<BrowserLocaleResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      await sender('Emulation.setLocaleOverride', { locale })
+      return { locale }
+    })
+  }
+
+  // ── Permissions ──
+
+  async grantPermissions(permissions: string[], origin?: string): Promise<BrowserPermissionResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const params: Record<string, unknown> = { permissions }
+      if (origin) {
+        params.origin = origin
+      }
+
+      await sender('Browser.grantPermissions', params)
+      return { granted: permissions }
+    })
+  }
+
+  // ── Request interception ──
+
+  async interceptEnable(patterns: string[] = ['*']): Promise<BrowserInterceptEnableResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      const requestPatterns = patterns.map((p) => ({ urlPattern: p }))
+      await sender('Fetch.enable', { patterns: requestPatterns })
+
+      state.intercepting = true
+      state.interceptPatterns = patterns
+
+      return { enabled: true, patterns }
+    })
+  }
+
+  async interceptDisable(): Promise<BrowserInterceptDisableResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      await sender('Fetch.disable')
+      state.intercepting = false
+      state.interceptPatterns = []
+      state.pausedRequests.clear()
+
+      return { disabled: true }
+    })
+  }
+
+  interceptList(): { requests: BrowserInterceptedRequest[] } {
+    const guest = this.getActiveGuest()
+    const tabId = this.resolveTabId(guest.id)
+    const state = this.getOrCreateTabState(tabId)
+    return { requests: [...state.pausedRequests.values()] }
+  }
+
+  async interceptContinue(requestId: string): Promise<BrowserInterceptContinueResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      await sender('Fetch.continueRequest', { requestId })
+      state.pausedRequests.delete(requestId)
+
+      return { continued: requestId }
+    })
+  }
+
+  async interceptBlock(requestId: string, reason = 'Failed'): Promise<BrowserInterceptBlockResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      await sender('Fetch.failRequest', { requestId, reason })
+      state.pausedRequests.delete(requestId)
+
+      return { blocked: requestId }
+    })
+  }
+
+  // ── Console/network capture ──
+
+  async captureStart(): Promise<BrowserCaptureStartResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const sender = this.makeCdpSender(guest)
+      await this.ensureDebuggerAttached(guest)
+
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      await sender('Runtime.enable')
+      state.capturing = true
+      state.consoleLog = []
+      state.networkLog = []
+
+      return { capturing: true }
+    })
+  }
+
+  async captureStop(): Promise<BrowserCaptureStopResult> {
+    return this.enqueueCommand(async () => {
+      const guest = this.getActiveGuest()
+      const tabId = this.resolveTabId(guest.id)
+      const state = this.getOrCreateTabState(tabId)
+
+      state.capturing = false
+
+      return { stopped: true }
+    })
+  }
+
+  consoleLog(limit = 100): BrowserConsoleResult {
+    const guest = this.getActiveGuest()
+    const tabId = this.resolveTabId(guest.id)
+    const state = this.getOrCreateTabState(tabId)
+
+    const entries = state.consoleLog.slice(-limit)
+    return { entries, truncated: state.consoleLog.length > limit }
+  }
+
+  networkLog(limit = 100): BrowserNetworkLogResult {
+    const guest = this.getActiveGuest()
+    const tabId = this.resolveTabId(guest.id)
+    const state = this.getOrCreateTabState(tabId)
+
+    const entries = state.networkLog.slice(-limit)
+    return { entries, truncated: state.networkLog.length > limit }
+  }
+
   async back(): Promise<{ url: string; title: string }> {
     return this.enqueueCommand(async () => {
       const guest = this.getActiveGuest()
@@ -719,7 +1034,13 @@ export class CdpBridge {
         navigationId: null,
         snapshotResult: null,
         debuggerAttached: false,
-        iframeSessions: new Map()
+        iframeSessions: new Map(),
+        capturing: false,
+        consoleLog: [],
+        networkLog: [],
+        intercepting: false,
+        interceptPatterns: [],
+        pausedRequests: new Map()
       }
       this.tabState.set(tabId, state)
     }
@@ -803,6 +1124,89 @@ export class CdpBridge {
               break
             }
           }
+        }
+      }
+      // Why: console and network events are buffered per-tab so the agent can
+      // retrieve them on demand via the capture commands.
+      if (state.capturing) {
+        if (method === 'Runtime.consoleAPICalled') {
+          const p = params as
+            | {
+                type?: string
+                args?: { value?: string; description?: string }[]
+                timestamp?: number
+                stackTrace?: { callFrames?: { url?: string; lineNumber?: number }[] }
+              }
+            | undefined
+          if (p) {
+            const text = (p.args ?? []).map((a) => a.value ?? a.description ?? '').join(' ')
+            state.consoleLog.push({
+              level: p.type ?? 'log',
+              text,
+              timestamp: p.timestamp ?? Date.now(),
+              url: p.stackTrace?.callFrames?.[0]?.url,
+              line: p.stackTrace?.callFrames?.[0]?.lineNumber
+            })
+            if (state.consoleLog.length > 1000) {
+              state.consoleLog.shift()
+            }
+          }
+        }
+        if (method === 'Network.responseReceived') {
+          const p = params as
+            | {
+                response?: {
+                  url?: string
+                  status?: number
+                  mimeType?: string
+                  headers?: Record<string, string>
+                }
+                type?: string
+                timestamp?: number
+              }
+            | undefined
+          if (p?.response) {
+            state.networkLog.push({
+              url: p.response.url ?? '',
+              method: '',
+              status: p.response.status ?? 0,
+              mimeType: p.response.mimeType ?? '',
+              size: 0,
+              timestamp: p.timestamp ?? Date.now()
+            })
+            if (state.networkLog.length > 1000) {
+              state.networkLog.shift()
+            }
+          }
+        }
+        if (method === 'Network.loadingFinished') {
+          const p = params as { requestId?: string; encodedDataLength?: number } | undefined
+          if (p?.encodedDataLength) {
+            const last = state.networkLog.at(-1)
+            if (last && last.size === 0) {
+              last.size = p.encodedDataLength
+            }
+          }
+        }
+      }
+      // Why: request interception buffers paused requests so the agent can
+      // inspect and decide to continue or block them.
+      if (state.intercepting && method === 'Fetch.requestPaused') {
+        const p = params as
+          | {
+              requestId?: string
+              request?: { url?: string; method?: string; headers?: Record<string, string> }
+              resourceType?: string
+            }
+          | undefined
+        if (p?.requestId && p.request) {
+          state.pausedRequests.set(p.requestId, {
+            id: p.requestId,
+            url: p.request.url ?? '',
+            method: p.request.method ?? 'GET',
+            headers: (p.request.headers ?? {}) as Record<string, string>,
+            resourceType: p.resourceType ?? 'Other'
+          })
         }
       }
     })

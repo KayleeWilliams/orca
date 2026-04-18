@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: shared type definitions for all runtime RPC methods live in one file for discoverability and import simplicity. */
 import type { TerminalPaneLayoutNode } from './types'
 import type { GitWorktreeInfo, Repo } from './types'
 
@@ -265,6 +266,126 @@ export type BrowserKeypressResult = {
 
 export type BrowserPdfResult = {
   data: string
+}
+
+// ── Cookie management types ──
+
+export type BrowserCookie = {
+  name: string
+  value: string
+  domain: string
+  path: string
+  expires: number
+  httpOnly: boolean
+  secure: boolean
+  sameSite: string
+}
+
+export type BrowserCookieGetResult = {
+  cookies: BrowserCookie[]
+}
+
+export type BrowserCookieSetResult = {
+  success: boolean
+}
+
+export type BrowserCookieDeleteResult = {
+  deleted: boolean
+}
+
+// ── Viewport emulation types ──
+
+export type BrowserViewportResult = {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  mobile: boolean
+}
+
+// ── Geolocation/timezone/locale types ──
+
+export type BrowserGeolocationResult = {
+  latitude: number
+  longitude: number
+  accuracy: number
+}
+
+export type BrowserTimezoneResult = {
+  timezoneId: string
+}
+
+export type BrowserLocaleResult = {
+  locale: string
+}
+
+// ── Permission types ──
+
+export type BrowserPermissionResult = {
+  granted: string[]
+}
+
+// ── Request interception types ──
+
+export type BrowserInterceptedRequest = {
+  id: string
+  url: string
+  method: string
+  headers: Record<string, string>
+  resourceType: string
+}
+
+export type BrowserInterceptEnableResult = {
+  enabled: boolean
+  patterns: string[]
+}
+
+export type BrowserInterceptDisableResult = {
+  disabled: boolean
+}
+
+export type BrowserInterceptContinueResult = {
+  continued: string
+}
+
+export type BrowserInterceptBlockResult = {
+  blocked: string
+}
+
+// ── Console/network capture types ──
+
+export type BrowserConsoleEntry = {
+  level: string
+  text: string
+  timestamp: number
+  url?: string
+  line?: number
+}
+
+export type BrowserConsoleResult = {
+  entries: BrowserConsoleEntry[]
+  truncated: boolean
+}
+
+export type BrowserNetworkEntry = {
+  url: string
+  method: string
+  status: number
+  mimeType: string
+  size: number
+  timestamp: number
+}
+
+export type BrowserNetworkLogResult = {
+  entries: BrowserNetworkEntry[]
+  truncated: boolean
+}
+
+export type BrowserCaptureStartResult = {
+  capturing: boolean
+}
+
+export type BrowserCaptureStopResult = {
+  stopped: boolean
 }
 
 export type BrowserErrorCode =

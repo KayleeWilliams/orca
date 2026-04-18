@@ -46,7 +46,24 @@ import type {
   BrowserClearResult,
   BrowserSelectAllResult,
   BrowserKeypressResult,
-  BrowserPdfResult
+  BrowserPdfResult,
+  BrowserCookieGetResult,
+  BrowserCookieSetResult,
+  BrowserCookieDeleteResult,
+  BrowserViewportResult,
+  BrowserGeolocationResult,
+  BrowserTimezoneResult,
+  BrowserLocaleResult,
+  BrowserPermissionResult,
+  BrowserInterceptEnableResult,
+  BrowserInterceptDisableResult,
+  BrowserInterceptedRequest,
+  BrowserInterceptContinueResult,
+  BrowserInterceptBlockResult,
+  BrowserCaptureStartResult,
+  BrowserCaptureStopResult,
+  BrowserConsoleResult,
+  BrowserNetworkLogResult
 } from '../../shared/runtime-types'
 import type { CdpBridge } from '../browser/cdp-bridge'
 import { getPRForBranch } from '../github/client'
@@ -1251,6 +1268,127 @@ export class OrcaRuntimeService {
     format?: 'png' | 'jpeg'
   }): Promise<BrowserScreenshotResult> {
     return this.requireCdpBridge().fullPageScreenshot(params.format)
+  }
+
+  // ── Cookie management ──
+
+  async browserCookieGet(params: { url?: string }): Promise<BrowserCookieGetResult> {
+    return this.requireCdpBridge().cookieGet(params.url)
+  }
+
+  async browserCookieSet(params: {
+    name: string
+    value: string
+    domain?: string
+    path?: string
+    secure?: boolean
+    httpOnly?: boolean
+    sameSite?: string
+    expires?: number
+  }): Promise<BrowserCookieSetResult> {
+    return this.requireCdpBridge().cookieSet(params)
+  }
+
+  async browserCookieDelete(params: {
+    name: string
+    domain?: string
+    url?: string
+  }): Promise<BrowserCookieDeleteResult> {
+    return this.requireCdpBridge().cookieDelete(params.name, params.domain, params.url)
+  }
+
+  // ── Viewport ──
+
+  async browserSetViewport(params: {
+    width: number
+    height: number
+    deviceScaleFactor?: number
+    mobile?: boolean
+  }): Promise<BrowserViewportResult> {
+    return this.requireCdpBridge().setViewport(
+      params.width,
+      params.height,
+      params.deviceScaleFactor,
+      params.mobile
+    )
+  }
+
+  // ── Geolocation/timezone/locale ──
+
+  async browserSetGeolocation(params: {
+    latitude: number
+    longitude: number
+    accuracy?: number
+  }): Promise<BrowserGeolocationResult> {
+    return this.requireCdpBridge().setGeolocation(
+      params.latitude,
+      params.longitude,
+      params.accuracy
+    )
+  }
+
+  async browserSetTimezone(params: { timezoneId: string }): Promise<BrowserTimezoneResult> {
+    return this.requireCdpBridge().setTimezone(params.timezoneId)
+  }
+
+  async browserSetLocale(params: { locale: string }): Promise<BrowserLocaleResult> {
+    return this.requireCdpBridge().setLocale(params.locale)
+  }
+
+  // ── Permissions ──
+
+  async browserGrantPermissions(params: {
+    permissions: string[]
+    origin?: string
+  }): Promise<BrowserPermissionResult> {
+    return this.requireCdpBridge().grantPermissions(params.permissions, params.origin)
+  }
+
+  // ── Request interception ──
+
+  async browserInterceptEnable(params: {
+    patterns?: string[]
+  }): Promise<BrowserInterceptEnableResult> {
+    return this.requireCdpBridge().interceptEnable(params.patterns)
+  }
+
+  async browserInterceptDisable(): Promise<BrowserInterceptDisableResult> {
+    return this.requireCdpBridge().interceptDisable()
+  }
+
+  browserInterceptList(): { requests: BrowserInterceptedRequest[] } {
+    return this.requireCdpBridge().interceptList()
+  }
+
+  async browserInterceptContinue(params: {
+    requestId: string
+  }): Promise<BrowserInterceptContinueResult> {
+    return this.requireCdpBridge().interceptContinue(params.requestId)
+  }
+
+  async browserInterceptBlock(params: {
+    requestId: string
+    reason?: string
+  }): Promise<BrowserInterceptBlockResult> {
+    return this.requireCdpBridge().interceptBlock(params.requestId, params.reason)
+  }
+
+  // ── Console/network capture ──
+
+  async browserCaptureStart(): Promise<BrowserCaptureStartResult> {
+    return this.requireCdpBridge().captureStart()
+  }
+
+  async browserCaptureStop(): Promise<BrowserCaptureStopResult> {
+    return this.requireCdpBridge().captureStop()
+  }
+
+  browserConsoleLog(params: { limit?: number }): BrowserConsoleResult {
+    return this.requireCdpBridge().consoleLog(params.limit)
+  }
+
+  browserNetworkLog(params: { limit?: number }): BrowserNetworkLogResult {
+    return this.requireCdpBridge().networkLog(params.limit)
   }
 }
 
