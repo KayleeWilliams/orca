@@ -299,8 +299,11 @@ export class CdpBridge {
 
       // Why: React and other frameworks use synthetic event listeners that may not
       // detect native keyboard events. Explicitly dispatching input/change ensures
-      // controlled components update their state.
-      await sender('Runtime.evaluate', {
+      // controlled components update their state. Uses refSender so that in iframe
+      // contexts, document.activeElement resolves to the iframe's focused element
+      // rather than the <iframe> element on the parent page.
+      const eventSender = node.sessionId ? refSender : sender
+      await eventSender('Runtime.evaluate', {
         expression: `(() => {
           const el = document.activeElement;
           if (el) {
@@ -1119,6 +1122,13 @@ export class CdpBridge {
       flatten: true
     })
 
+    // Why: remove any stale listeners from a previous attach cycle to prevent
+    // listener accumulation. After a detach+reattach, the old handlers would
+    // still fire alongside the new ones, causing duplicate log entries,
+    // duplicate dialog dismissals, and corrupted iframe session maps.
+    guest.debugger.removeAllListeners('detach')
+    guest.debugger.removeAllListeners('message')
+
     guest.debugger.on('detach', () => {
       state.debuggerAttached = false
       state.snapshotResult = null
@@ -1562,10 +1572,15 @@ export class CdpBridge {
   ): Promise<void> {
     return new Promise((resolve) => {
       let pending = 0
+      let settled = false
       let idleTimer: ReturnType<typeof setTimeout> | null = null
       const overallTimeout = setTimeout(done, timeoutMs)
 
       function done(): void {
+        if (settled) {
+          return
+        }
+        settled = true
         clearTimeout(overallTimeout)
         if (idleTimer) {
           clearTimeout(idleTimer)

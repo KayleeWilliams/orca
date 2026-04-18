@@ -372,6 +372,7 @@ async function findCursorInteractiveElements(
         const SKIP_TAGS = new Set(['input','button','select','textarea','a']);
         const seen = new Set();
         const found = [];
+        const matchedElements = [];
 
         function check(el) {
           if (seen.has(el)) return;
@@ -385,18 +386,22 @@ async function findCursorInteractiveElements(
           const text = (el.ariaLabel || el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 80);
           if (!text) return;
           found.push({ text, tag });
+          matchedElements.push(el);
+          if (found.length >= 50) return;
         }
 
-        document.querySelectorAll('[onclick], [tabindex]:not([tabindex="-1"]), [contenteditable="true"]').forEach(check);
+        document.querySelectorAll('[onclick], [tabindex]:not([tabindex="-1"]), [contenteditable="true"]').forEach(el => {
+          if (found.length < 50) check(el);
+        });
         document.querySelectorAll('div, span, li, td, img, svg, label').forEach(el => {
+          if (found.length >= 50) return;
           try {
             if (window.getComputedStyle(el).cursor === 'pointer') check(el);
           } catch {}
         });
 
-        // Store elements globally so we can resolve them by index
-        window.__orcaCursorInteractive = [...seen].filter((_, i) => i < found.length);
-        return JSON.stringify(found.slice(0, 50));
+        window.__orcaCursorInteractive = matchedElements;
+        return JSON.stringify(found);
       })()`,
       returnByValue: true
     })) as { result: { value: string } }

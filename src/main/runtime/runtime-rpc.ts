@@ -1058,7 +1058,7 @@ export class OrcaRuntimeRpcServer {
         const name = typeof params?.name === 'string' ? params.name : null
         const value = typeof params?.value === 'string' ? params.value : null
         if (!name || value === null) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing name or value')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing name or value')
         }
         const result = await this.runtime.browserCookieSet({
           name,
@@ -1081,7 +1081,7 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const name = typeof params?.name === 'string' ? params.name : null
         if (!name) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing cookie name')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing cookie name')
         }
         const result = await this.runtime.browserCookieDelete({
           name,
@@ -1104,7 +1104,7 @@ export class OrcaRuntimeRpcServer {
         if (width === null || height === null || width <= 0 || height <= 0) {
           return this.errorResponse(
             request.id,
-            'invalid_params',
+            'invalid_argument',
             'Width and height must be positive numbers'
           )
         }
@@ -1129,7 +1129,7 @@ export class OrcaRuntimeRpcServer {
         const latitude = typeof params?.latitude === 'number' ? params.latitude : null
         const longitude = typeof params?.longitude === 'number' ? params.longitude : null
         if (latitude === null || longitude === null) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing latitude or longitude')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing latitude or longitude')
         }
         const result = await this.runtime.browserSetGeolocation({
           latitude,
@@ -1147,7 +1147,7 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const timezoneId = typeof params?.timezoneId === 'string' ? params.timezoneId : null
         if (!timezoneId) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing timezoneId')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing timezoneId')
         }
         const result = await this.runtime.browserSetTimezone({ timezoneId })
         return this.successResponse(request.id, result)
@@ -1161,7 +1161,7 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const locale = typeof params?.locale === 'string' ? params.locale : null
         if (!locale) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing locale')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing locale')
         }
         const result = await this.runtime.browserSetLocale({ locale })
         return this.successResponse(request.id, result)
@@ -1181,7 +1181,7 @@ export class OrcaRuntimeRpcServer {
         if (!permissions || permissions.length === 0) {
           return this.errorResponse(
             request.id,
-            'invalid_params',
+            'invalid_argument',
             'Permissions array must not be empty'
           )
         }
@@ -1231,7 +1231,7 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const requestId = typeof params?.requestId === 'string' ? params.requestId : null
         if (!requestId) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing requestId')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
         }
         const result = await this.runtime.browserInterceptContinue({ requestId })
         return this.successResponse(request.id, result)
@@ -1245,7 +1245,7 @@ export class OrcaRuntimeRpcServer {
         const params = this.extractParams(request)
         const requestId = typeof params?.requestId === 'string' ? params.requestId : null
         if (!requestId) {
-          return this.errorResponse(request.id, 'invalid_params', 'Missing requestId')
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
         }
         const result = await this.runtime.browserInterceptBlock({
           requestId,

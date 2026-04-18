@@ -191,6 +191,9 @@ function createMockGuest(id: number, url: string, title: string) {
           handlers.splice(idx, 1)
         }
       }),
+      removeAllListeners: vi.fn((event: string) => {
+        debuggerListeners.set(event, [])
+      }),
       off: vi.fn()
     }
   }
