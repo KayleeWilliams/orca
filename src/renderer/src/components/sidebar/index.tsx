@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import SidebarHeader from './SidebarHeader'
+import SidebarNav from './SidebarNav'
 import SearchBar from './SearchBar'
 import GroupControls from './GroupControls'
 import WorktreeList from './WorktreeList'
@@ -51,6 +52,7 @@ function Sidebar(): React.JSX.Element {
         )}
       >
         {/* Fixed controls */}
+        <SidebarNav />
         <SidebarHeader />
         <SearchBar />
         <GroupControls />

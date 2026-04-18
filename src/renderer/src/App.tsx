@@ -91,8 +91,7 @@ function App(): React.JSX.Element {
       toggleRightSidebar: s.toggleRightSidebar,
       setRightSidebarOpen: s.setRightSidebarOpen,
       setRightSidebarTab: s.setRightSidebarTab,
-      updateSettings: s.updateSettings,
-      openNewWorkspacePage: s.openNewWorkspacePage
+      updateSettings: s.updateSettings
     }))
   )
 
@@ -523,14 +522,14 @@ function App(): React.JSX.Element {
         return
       }
 
-      // Cmd/Ctrl+N — new workspace
+      // Cmd/Ctrl+N — new workspace (opens the lightweight composer modal)
       if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
         if (!repos.some((repo) => isGitRepoKind(repo))) {
           return
         }
         dispatchClearModifierHints()
         e.preventDefault()
-        actions.openNewWorkspacePage()
+        actions.openModal('new-workspace-composer')
         return
       }
 

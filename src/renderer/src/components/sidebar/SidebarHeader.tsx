@@ -4,7 +4,6 @@ import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import { getTaskPresetQuery } from '@/lib/new-workspace'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,7 +36,7 @@ const isMac = navigator.userAgent.includes('Mac')
 const newWorktreeShortcutLabel = isMac ? '⌘N' : 'Ctrl+N'
 
 const SidebarHeader = React.memo(function SidebarHeader() {
-  const openNewWorkspacePage = useAppStore((s) => s.openNewWorkspacePage)
+  const openModal = useAppStore((s) => s.openModal)
   const repos = useAppStore((s) => s.repos)
   const canCreateWorktree = repos.some((repo) => isGitRepoKind(repo))
 
@@ -46,29 +45,8 @@ const SidebarHeader = React.memo(function SidebarHeader() {
   const sortBy = useAppStore((s) => s.sortBy)
   const setSortBy = useAppStore((s) => s.setSortBy)
 
-  // Why: start warming the GitHub work-item cache on hover/focus/pointerdown so
-  // by the time the user's click finishes the round-trip has either completed
-  // or is already in-flight. Shaves ~200–600ms off perceived page-load latency.
-  const prefetchWorkItems = useAppStore((s) => s.prefetchWorkItems)
-  const activeRepoId = useAppStore((s) => s.activeRepoId)
-  const defaultTaskViewPreset = useAppStore((s) => s.settings?.defaultTaskViewPreset ?? 'all')
-  const handlePrefetch = React.useCallback(() => {
-    if (!canCreateWorktree) {
-      return
-    }
-    const activeRepo = repos.find((r) => r.id === activeRepoId && isGitRepoKind(r))
-    const firstGitRepo = activeRepo ?? repos.find((r) => isGitRepoKind(r))
-    if (firstGitRepo?.path) {
-      // Why: warm the exact cache key the page will read on mount — must
-      // match NewWorkspacePage's `initialTaskQuery` derived from the same
-      // default preset, otherwise the prefetch lands in a key the page
-      // never reads and we pay the full round-trip after click.
-      prefetchWorkItems(firstGitRepo.path, 36, getTaskPresetQuery(defaultTaskViewPreset))
-    }
-  }, [activeRepoId, canCreateWorktree, defaultTaskViewPreset, prefetchWorkItems, repos])
-
   return (
-    <div className="flex items-center justify-between px-4 pt-3 pb-1">
+    <div className="flex h-8 items-center justify-between px-4 mt-1">
       <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground select-none">
         Workspaces
       </span>
@@ -134,11 +112,9 @@ const SidebarHeader = React.memo(function SidebarHeader() {
                 if (!canCreateWorktree) {
                   return
                 }
-                openNewWorkspacePage()
+                openModal('new-workspace-composer')
               }}
-              onPointerEnter={handlePrefetch}
-              onFocus={handlePrefetch}
-              aria-label="Add worktree"
+              aria-label="New workspace"
               disabled={!canCreateWorktree}
             >
               <Plus className="size-3.5" />

@@ -404,7 +404,7 @@ const WorktreeList = React.memo(function WorktreeList() {
   const sortBy = useAppStore((s) => s.sortBy)
   const showActiveOnly = useAppStore((s) => s.showActiveOnly)
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
-  const openNewWorkspacePage = useAppStore((s) => s.openNewWorkspacePage)
+  const openModal = useAppStore((s) => s.openModal)
   const activeView = useAppStore((s) => s.activeView)
   const activeModal = useAppStore((s) => s.activeModal)
   const pendingRevealWorktreeId = useAppStore((s) => s.pendingRevealWorktreeId)
@@ -657,9 +657,9 @@ const WorktreeList = React.memo(function WorktreeList() {
 
   const handleCreateForRepo = useCallback(
     (repoId: string) => {
-      openNewWorkspacePage({ preselectedRepoId: repoId })
+      openModal('new-workspace-composer', { initialRepoId: repoId })
     },
-    [openNewWorkspacePage]
+    [openModal]
   )
 
   const hasFilters = !!(searchQuery || showActiveOnly || filterRepoIds.length)

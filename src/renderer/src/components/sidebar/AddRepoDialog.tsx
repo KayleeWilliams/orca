@@ -23,7 +23,7 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   const repos = useAppStore((s) => s.repos)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
-  const openNewWorkspacePage = useAppStore((s) => s.openNewWorkspacePage)
+  const openModal = useAppStore((s) => s.openModal)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
 
@@ -185,14 +185,14 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   )
 
   const handleCreateWorktree = useCallback(() => {
+    // Why: small delay so the Add Repo dialog close animation finishes before
+    // the composer modal takes focus; otherwise the dialog teardown can steal
+    // the first focus frame from the composer's prompt textarea.
     closeModal()
-    // Why: small delay so the close animation finishes before the full-page create
-    // view takes focus; otherwise the dialog teardown can steal the first focus
-    // frame from the workspace form.
     setTimeout(() => {
-      openNewWorkspacePage({ preselectedRepoId: repoId })
+      openModal('new-workspace-composer', { initialRepoId: repoId })
     }, 150)
-  }, [closeModal, openNewWorkspacePage, repoId])
+  }, [closeModal, openModal, repoId])
 
   const handleConfigureRepo = useCallback(() => {
     closeModal()

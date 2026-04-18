@@ -1,6 +1,6 @@
-/* eslint-disable max-lines -- Why: the new-workspace page keeps the composer,
+/* eslint-disable max-lines -- Why: the tasks page keeps the repo selector,
 task source controls, and GitHub task list co-located so the wiring between the
-selected repo, the draft composer, and the work-item list stays readable in one
+selected repo, the task filters, and the work-item list stays readable in one
 place while this surface is still evolving. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -27,13 +27,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
-import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
 import GitHubItemDrawer from '@/components/GitHubItemDrawer'
 import { cn } from '@/lib/utils'
 import { LightRays } from '@/components/ui/light-rays'
-import { useComposerState } from '@/hooks/useComposerState'
 import { getLinkedWorkItemSuggestedName, getTaskPresetQuery } from '@/lib/new-workspace'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 import type { GitHubWorkItem, TaskViewPresetId } from '../../../shared/types'
 
 type TaskSource = 'github' | 'linear'
@@ -134,24 +133,43 @@ export default function NewWorkspacePage(): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const pageData = useAppStore((s) => s.newWorkspacePageData)
   const closeNewWorkspacePage = useAppStore((s) => s.closeNewWorkspacePage)
-  const clearNewWorkspaceDraft = useAppStore((s) => s.clearNewWorkspaceDraft)
-  const activeModal = useAppStore((s) => s.activeModal)
+  const repos = useAppStore((s) => s.repos)
+  const activeRepoId = useAppStore((s) => s.activeRepoId)
   const openModal = useAppStore((s) => s.openModal)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const fetchWorkItems = useAppStore((s) => s.fetchWorkItems)
   const getCachedWorkItems = useAppStore((s) => s.getCachedWorkItems)
 
-  const { cardProps, composerRef, promptTextareaRef, submit, createDisabled } = useComposerState({
-    persistDraft: true,
-    initialRepoId: pageData.preselectedRepoId,
-    initialName: pageData.prefilledName,
-    onCreated: () => {
-      clearNewWorkspaceDraft()
-      closeNewWorkspacePage()
-    }
-  })
+  const eligibleRepos = useMemo(() => repos.filter((repo) => isGitRepoKind(repo)), [repos])
 
-  const { repoId, eligibleRepos, onRepoChange } = cardProps
+  // Why: resolve the initial repo from (1) explicit page data, (2) the app's
+  // currently active repo, (3) the first eligible repo. Falls back to '' so
+  // RepoCombobox renders its placeholder until the user picks one.
+  const resolvedInitialRepoId = useMemo(() => {
+    const preferred = pageData.preselectedRepoId
+    if (preferred && eligibleRepos.some((repo) => repo.id === preferred)) {
+      return preferred
+    }
+    if (activeRepoId && eligibleRepos.some((repo) => repo.id === activeRepoId)) {
+      return activeRepoId
+    }
+    return eligibleRepos[0]?.id ?? ''
+  }, [activeRepoId, eligibleRepos, pageData.preselectedRepoId])
+
+  const [repoId, setRepoId] = useState<string>(resolvedInitialRepoId)
+
+  // Why: if the repo list changes such that the current repoId is no longer
+  // eligible (e.g. repo removed), fall back to a valid one.
+  useEffect(() => {
+    if (!repoId && eligibleRepos[0]?.id) {
+      setRepoId(eligibleRepos[0].id)
+      return
+    }
+    if (repoId && !eligibleRepos.some((repo) => repo.id === repoId)) {
+      setRepoId(eligibleRepos[0]?.id ?? '')
+    }
+  }, [eligibleRepos, repoId])
+
   const selectedRepo = eligibleRepos.find((repo) => repo.id === repoId)
 
   // Why: seed the preset + query from the user's saved default synchronously
@@ -213,11 +231,6 @@ export default function NewWorkspacePage(): React.JSX.Element {
       return true
     })
   }, [activeTaskPreset, workItems])
-
-  // Autofocus prompt on mount so the user can start typing immediately.
-  useEffect(() => {
-    promptTextareaRef.current?.focus()
-  }, [promptTextareaRef])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -346,29 +359,17 @@ export default function NewWorkspacePage(): React.JSX.Element {
     [openModal, repoId]
   )
 
-  const handleDiscardDraft = useCallback((): void => {
-    clearNewWorkspaceDraft()
-    closeNewWorkspacePage()
-  }, [clearNewWorkspaceDraft, closeNewWorkspacePage])
-
   useEffect(() => {
-    // Why: when the global composer modal is on top, let its own scoped key
-    // handler own Enter/Esc so we don't double-fire (e.g. modal Esc closes
-    // itself *and* this handler tries to discard the underlying page draft).
-    if (activeModal === 'new-workspace-composer') {
-      return
-    }
-
     // Why: when the GitHub preview sheet is open, Radix's Dialog owns Esc —
     // it closes the sheet on its own. Page-level capture would otherwise fire
-    // first and discard the whole draft while the user just meant to dismiss
-    // the preview.
+    // first and pop the tasks page while the user just meant to dismiss the
+    // preview.
     if (drawerWorkItem) {
       return
     }
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Enter' && event.key !== 'Escape') {
+      if (event.key !== 'Escape') {
         return
       }
 
@@ -377,45 +378,27 @@ export default function NewWorkspacePage(): React.JSX.Element {
         return
       }
 
-      if (event.key === 'Escape') {
-        // Why: Esc should first dismiss the focused control so users can back
-        // out of text entry without accidentally closing the whole composer.
-        // Once focus is already outside an input, Esc becomes the discard shortcut.
-        if (
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement ||
-          target instanceof HTMLSelectElement ||
-          target.isContentEditable
-        ) {
-          event.preventDefault()
-          target.blur()
-          return
-        }
-
+      // Why: Esc should first dismiss the focused control so users can back
+      // out of text entry without accidentally closing the whole page.
+      // Once focus is already outside an input, Esc closes the tasks page.
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target.isContentEditable
+      ) {
         event.preventDefault()
-        handleDiscardDraft()
-        return
-      }
-
-      if (!composerRef.current?.contains(target)) {
-        return
-      }
-
-      if (createDisabled) {
-        return
-      }
-
-      if (target instanceof HTMLTextAreaElement && event.shiftKey) {
+        target.blur()
         return
       }
 
       event.preventDefault()
-      void submit()
+      closeNewWorkspacePage()
     }
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [activeModal, composerRef, createDisabled, drawerWorkItem, handleDiscardDraft, submit])
+  }, [closeNewWorkspacePage, drawerWorkItem])
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background dark:bg-[#1a1a1a] text-foreground">
@@ -452,24 +435,20 @@ export default function NewWorkspacePage(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 className="size-8 rounded-full z-10"
-                onClick={handleDiscardDraft}
-                aria-label="Discard draft and go back"
+                onClick={closeNewWorkspacePage}
+                aria-label="Close tasks"
               >
                 <X className="size-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={6}>
-              Discard draft · Esc
+              Close · Esc
             </TooltipContent>
           </Tooltip>
         </div>
 
         <div className="mx-auto flex w-full max-w-[1120px] flex-1 flex-col min-h-0 px-5 pb-5 md:px-8 md:pb-7">
           <div className="flex-none flex flex-col gap-5">
-            <section className="mx-auto w-full max-w-[860px] border-b border-border/50 pb-5">
-              <NewWorkspaceComposerCard composerRef={composerRef} {...cardProps} />
-            </section>
-
             <section className="flex flex-col gap-4">
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
@@ -506,7 +485,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
                     <RepoCombobox
                       repos={eligibleRepos}
                       value={repoId}
-                      onValueChange={onRepoChange}
+                      onValueChange={setRepoId}
                       placeholder="Select a repository"
                       triggerClassName="h-11 w-full rounded-[10px] border border-border/50 bg-background/50 backdrop-blur-md px-3 text-sm font-medium shadow-sm transition hover:bg-muted/50 focus:ring-2 focus:ring-ring/20 focus:outline-none supports-[backdrop-filter]:bg-background/50"
                     />
