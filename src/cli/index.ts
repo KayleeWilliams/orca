@@ -969,7 +969,11 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         'browser.intercept.enable',
         params
       )
-      return printResult(result, json, (v) => `Interception enabled for: ${v.patterns.join(', ')}`)
+      return printResult(
+        result,
+        json,
+        (v) => `Interception enabled for: ${(v.patterns ?? []).join(', ') || '*'}`
+      )
     }
 
     if (matches(commandPath, ['intercept', 'disable'])) {

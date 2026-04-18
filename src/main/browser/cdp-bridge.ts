@@ -139,7 +139,8 @@ export class CdpBridge {
       const refSender = this.senderForRef(guest, node)
 
       await this.scrollIntoView(refSender, node.backendDOMNodeId)
-      const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
+      const localCenter = await this.getElementCenter(refSender, node.backendDOMNodeId)
+      const { cx, cy } = await this.getPageCoordinates(guest, node, localCenter.cx, localCenter.cy)
 
       // Why: mouseMoved fires mouseenter/mouseover which some sites need to
       // reveal hover-dependent menus or clickable areas before the click lands.
@@ -174,7 +175,8 @@ export class CdpBridge {
       const node = await this.resolveRef(guest, sender, element)
       const refSender = this.senderForRef(guest, node)
       await this.scrollIntoView(refSender, node.backendDOMNodeId)
-      const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
+      const localCenter = await this.getElementCenter(refSender, node.backendDOMNodeId)
+      const { cx, cy } = await this.getPageCoordinates(guest, node, localCenter.cx, localCenter.cy)
 
       await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy })
 
@@ -194,8 +196,10 @@ export class CdpBridge {
       const toSender = this.senderForRef(guest, toNode)
 
       await this.scrollIntoView(fromSender, fromNode.backendDOMNodeId)
-      const from = await this.getElementCenter(fromSender, fromNode.backendDOMNodeId)
-      const to = await this.getElementCenter(toSender, toNode.backendDOMNodeId)
+      const fromLocal = await this.getElementCenter(fromSender, fromNode.backendDOMNodeId)
+      const from = await this.getPageCoordinates(guest, fromNode, fromLocal.cx, fromLocal.cy)
+      const toLocal = await this.getElementCenter(toSender, toNode.backendDOMNodeId)
+      const to = await this.getPageCoordinates(guest, toNode, toLocal.cx, toLocal.cy)
 
       // Why: 10-step interpolation with delays simulates human-like drag and
       // triggers dragenter/dragover events on intermediate elements, which many
@@ -403,7 +407,13 @@ export class CdpBridge {
 
       if (currentState.value !== checked) {
         await this.scrollIntoView(refSender, node.backendDOMNodeId)
-        const { cx, cy } = await this.getElementCenter(refSender, node.backendDOMNodeId)
+        const localCenter = await this.getElementCenter(refSender, node.backendDOMNodeId)
+        const { cx, cy } = await this.getPageCoordinates(
+          guest,
+          node,
+          localCenter.cx,
+          localCenter.cy
+        )
         await sender('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy })
         await sender('Input.dispatchMouseEvent', {
           type: 'mousePressed',
@@ -1314,6 +1324,105 @@ export class CdpBridge {
     return { cx: (x1 + x3) / 2, cy: (y1 + y3) / 2 }
   }
 
+  // Why: elements inside cross-origin iframes report coordinates relative to
+  // the iframe viewport, but Input.dispatchMouseEvent operates on the parent
+  // page's coordinate space. We find the iframe element on the parent page and
+  // add its top-left offset to translate iframe-local coords to page coords.
+  private async getIframeOffset(
+    guest: Electron.WebContents,
+    sessionId: string
+  ): Promise<{ offsetX: number; offsetY: number }> {
+    const tabId = this.resolveTabId(guest.id)
+    const state = this.getOrCreateTabState(tabId)
+    const parentSender = this.makeCdpSender(guest)
+
+    for (const [targetId, sid] of state.iframeSessions) {
+      if (sid === sessionId) {
+        try {
+          // Try to find the specific iframe by its targetId via Runtime evaluation
+          const { result } = (await parentSender('Runtime.evaluate', {
+            expression: `(() => {
+              const frames = document.querySelectorAll('iframe, frame');
+              for (const f of frames) {
+                if (f.contentWindow) {
+                  const rect = f.getBoundingClientRect();
+                  return JSON.stringify({ x: rect.x, y: rect.y, found: true });
+                }
+              }
+              return JSON.stringify({ x: 0, y: 0, found: false });
+            })()`,
+            returnByValue: true
+          })) as { result: { value: string } }
+
+          // For pages with multiple iframes, find the one matching our target
+          const { result: iframeResult } = (await parentSender('Runtime.evaluate', {
+            expression: `(() => {
+              const frames = [...document.querySelectorAll('iframe, frame')];
+              for (let i = 0; i < frames.length; i++) {
+                try {
+                  // Match by checking if this frame's session corresponds to our target
+                  const rect = frames[i].getBoundingClientRect();
+                  return JSON.stringify({ rects: frames.map(f => {
+                    const r = f.getBoundingClientRect();
+                    return { x: r.x, y: r.y, src: f.src };
+                  })});
+                } catch(e) {}
+              }
+              return JSON.stringify({ rects: [] });
+            })()`,
+            returnByValue: true
+          })) as { result: { value: string } }
+
+          // Use Target.getTargetInfo to find the iframe's URL and match it
+          try {
+            const { targetInfo } = (await parentSender('Target.getTargetInfo', {
+              targetId
+            })) as { targetInfo: { url?: string } }
+
+            if (targetInfo?.url) {
+              const parsed = JSON.parse(iframeResult.value) as {
+                rects: { x: number; y: number; src: string }[]
+              }
+              for (const rect of parsed.rects) {
+                if (rect.src === targetInfo.url) {
+                  return { offsetX: rect.x, offsetY: rect.y }
+                }
+              }
+            }
+          } catch {
+            // Fall through to simple approach
+          }
+
+          // Fallback: use first iframe's position
+          const parsed = JSON.parse(result.value) as { x: number; y: number; found: boolean }
+          if (parsed.found) {
+            return { offsetX: parsed.x, offsetY: parsed.y }
+          }
+        } catch {
+          // Can't determine offset, return zero (best effort)
+        }
+        break
+      }
+    }
+
+    return { offsetX: 0, offsetY: 0 }
+  }
+
+  // Why: for elements inside iframes, translates iframe-local coordinates to
+  // page-level coordinates that Input.dispatchMouseEvent expects.
+  private async getPageCoordinates(
+    guest: Electron.WebContents,
+    refEntry: RefEntry,
+    localCx: number,
+    localCy: number
+  ): Promise<{ cx: number; cy: number }> {
+    if (!refEntry.sessionId) {
+      return { cx: localCx, cy: localCy }
+    }
+    const { offsetX, offsetY } = await this.getIframeOffset(guest, refEntry.sessionId)
+    return { cx: localCx + offsetX, cy: localCy + offsetY }
+  }
+
   private async tryRecoverRef(
     sender: CdpCommandSender,
     entry: { backendDOMNodeId: number; role: string; name: string }
@@ -1501,23 +1610,33 @@ export class CdpBridge {
   }
 }
 
-const KEY_DEFINITIONS: Record<string, { key: string; code: string; keyCode?: number }> = {
-  Enter: { key: 'Enter', code: 'Enter', keyCode: 13 },
-  Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
-  Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
-  Backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
-  Delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
-  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
-  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
-  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
-  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
-  Home: { key: 'Home', code: 'Home', keyCode: 36 },
-  End: { key: 'End', code: 'End', keyCode: 35 },
-  PageUp: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
-  PageDown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
-  Space: { key: ' ', code: 'Space', keyCode: 32 }
+// Why: CDP's Input.dispatchKeyEvent requires `windowsVirtualKeyCode` (not `keyCode`)
+// and `text` for keys that produce default browser actions (Enter submits forms,
+// Tab moves focus). Without `text`, Chrome fires the event but doesn't perform the action.
+type KeyDefinition = {
+  key: string
+  code: string
+  windowsVirtualKeyCode?: number
+  text?: string
 }
 
-function resolveKeyDefinition(key: string): { key: string; code: string; keyCode?: number } {
+const KEY_DEFINITIONS: Record<string, KeyDefinition> = {
+  Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
+  Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, text: '\t' },
+  Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
+  Delete: { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 },
+  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
+  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
+  Home: { key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 },
+  End: { key: 'End', code: 'End', windowsVirtualKeyCode: 35 },
+  PageUp: { key: 'PageUp', code: 'PageUp', windowsVirtualKeyCode: 33 },
+  PageDown: { key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 },
+  Space: { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' }
+}
+
+function resolveKeyDefinition(key: string): KeyDefinition {
   return KEY_DEFINITIONS[key] ?? { key, code: `Key${key.toUpperCase()}` }
 }
