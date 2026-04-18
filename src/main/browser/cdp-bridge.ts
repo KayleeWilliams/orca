@@ -76,6 +76,9 @@ type TabState = {
   intercepting: boolean
   interceptPatterns: string[]
   pausedRequests: Map<string, BrowserInterceptedRequest>
+  // Why: maps CDP requestId to the networkLog entry so loadingFinished
+  // can attribute size to the correct response when requests overlap.
+  networkRequestMap: Map<string, BrowserNetworkEntry>
 }
 
 type QueuedCommand = {
@@ -348,20 +351,34 @@ export class CdpBridge {
       // Why: agent-browser matches by both .value AND .textContent.trim() so
       // the agent can select options by their displayed label, not just the
       // underlying value attribute which may be an opaque ID.
+      // Also handles custom combobox elements (role="combobox" on non-<select>)
+      // by falling back to click-based selection on child options.
       await refSender('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: `function(val) {
-          for (const opt of this.options) {
-            if (opt.value === val || opt.textContent.trim() === val) {
-              this.value = opt.value;
-              this.dispatchEvent(new Event('input', { bubbles: true }));
-              this.dispatchEvent(new Event('change', { bubbles: true }));
-              return;
+          if (this.options) {
+            for (const opt of this.options) {
+              if (opt.value === val || opt.textContent.trim() === val) {
+                this.value = opt.value;
+                this.dispatchEvent(new Event('input', { bubbles: true }));
+                this.dispatchEvent(new Event('change', { bubbles: true }));
+                return;
+              }
+            }
+            this.value = val;
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            const opts = this.querySelectorAll('[role="option"], li, [data-value]');
+            for (const opt of opts) {
+              const text = opt.textContent ? opt.textContent.trim() : '';
+              const dv = opt.getAttribute('data-value');
+              if (text === val || dv === val) {
+                opt.click();
+                return;
+              }
             }
           }
-          this.value = val;
-          this.dispatchEvent(new Event('input', { bubbles: true }));
-          this.dispatchEvent(new Event('change', { bubbles: true }));
         }`,
         arguments: [{ value }]
       })
@@ -627,10 +644,23 @@ export class CdpBridge {
       const sender = this.makeCdpSender(guest)
       await this.ensureDebuggerAttached(guest)
 
+      // Why: Network.setCookie requires either domain or url to scope the cookie.
+      // If the caller doesn't provide a domain, infer it from the current page URL
+      // so the cookie is usable on the active page without forcing callers to
+      // know the domain upfront.
+      let domain = cookie.domain
+      if (!domain) {
+        const { result: urlResult } = (await sender('Runtime.evaluate', {
+          expression: 'location.hostname',
+          returnByValue: true
+        })) as { result: { value: string } }
+        domain = urlResult.value
+      }
+
       const params: Record<string, unknown> = {
         name: cookie.name,
         value: cookie.value,
-        domain: cookie.domain,
+        domain,
         path: cookie.path ?? '/',
         secure: cookie.secure ?? false,
         httpOnly: cookie.httpOnly ?? false,
@@ -661,6 +691,15 @@ export class CdpBridge {
       }
       if (url) {
         params.url = url
+      }
+      // Why: Network.deleteCookies requires at least one of domain or url.
+      // Infer from current page if neither was provided.
+      if (!domain && !url) {
+        const { result: urlResult } = (await sender('Runtime.evaluate', {
+          expression: 'location.href',
+          returnByValue: true
+        })) as { result: { value: string } }
+        params.url = urlResult.value
       }
 
       await sender('Network.deleteCookies', params)
@@ -970,15 +1009,20 @@ export class CdpBridge {
   }
 
   async tabSwitch(index: number): Promise<BrowserTabSwitchResult> {
-    const entries = [...this.getRegisteredTabs()]
-    if (index < 0 || index >= entries.length) {
+    // Why: filter to live tabs so indices match what tabList() presents.
+    // Destroyed-but-not-yet-cleaned entries must be skipped.
+    const liveEntries = [...this.getRegisteredTabs()].filter(([_, wcId]) => {
+      const guest = webContents.fromId(wcId)
+      return guest && !guest.isDestroyed()
+    })
+    if (index < 0 || index >= liveEntries.length) {
       throw new BrowserError(
         'browser_tab_not_found',
-        `Tab index ${index} is out of range. ${entries.length} tab(s) open.`
+        `Tab index ${index} is out of range. ${liveEntries.length} tab(s) open.`
       )
     }
 
-    const [_tabId, wcId] = entries[index]
+    const [_tabId, wcId] = liveEntries[index]
     if (this.activeWebContentsId !== null) {
       this.invalidateRefMap(this.activeWebContentsId)
     }
@@ -1085,7 +1129,8 @@ export class CdpBridge {
         networkLog: [],
         intercepting: false,
         interceptPatterns: [],
-        pausedRequests: new Map()
+        pausedRequests: new Map(),
+        networkRequestMap: new Map()
       }
       this.tabState.set(tabId, state)
     }
@@ -1207,6 +1252,7 @@ export class CdpBridge {
         if (method === 'Network.responseReceived') {
           const p = params as
             | {
+                requestId?: string
                 response?: {
                   url?: string
                   status?: number
@@ -1218,14 +1264,20 @@ export class CdpBridge {
               }
             | undefined
           if (p?.response) {
-            state.networkLog.push({
+            const entry: BrowserNetworkEntry = {
               url: p.response.url ?? '',
               method: '',
               status: p.response.status ?? 0,
               mimeType: p.response.mimeType ?? '',
               size: 0,
               timestamp: p.timestamp ?? Date.now()
-            })
+            }
+            state.networkLog.push(entry)
+            // Why: track requestId→entry so loadingFinished can attribute
+            // size to the correct response, not just the most recent one.
+            if (p.requestId) {
+              state.networkRequestMap.set(p.requestId, entry)
+            }
             if (state.networkLog.length > 1000) {
               state.networkLog.shift()
             }
@@ -1233,10 +1285,11 @@ export class CdpBridge {
         }
         if (method === 'Network.loadingFinished') {
           const p = params as { requestId?: string; encodedDataLength?: number } | undefined
-          if (p?.encodedDataLength) {
-            const last = state.networkLog.at(-1)
-            if (last && last.size === 0) {
-              last.size = p.encodedDataLength
+          if (p?.requestId && p.encodedDataLength) {
+            const entry = state.networkRequestMap.get(p.requestId)
+            if (entry) {
+              entry.size = p.encodedDataLength
+              state.networkRequestMap.delete(p.requestId)
             }
           }
         }
@@ -1314,14 +1367,19 @@ export class CdpBridge {
       )
     }
 
-    const currentNavId = await this.getNavigationId(sender)
-    if (state.navigationId && currentNavId !== state.navigationId) {
-      state.snapshotResult = null
-      state.navigationId = null
-      throw new BrowserError(
-        'browser_stale_ref',
-        "The page has navigated since the last snapshot. Run 'orca snapshot' to get fresh refs."
-      )
+    // Why: iframe refs use a child session whose navigation history is independent
+    // of the parent page. Checking the parent's navId against an iframe session
+    // would always mismatch and falsely reject valid refs.
+    if (!entry.sessionId) {
+      const currentNavId = await this.getNavigationId(sender)
+      if (state.navigationId && currentNavId !== state.navigationId) {
+        state.snapshotResult = null
+        state.navigationId = null
+        throw new BrowserError(
+          'browser_stale_ref',
+          "The page has navigated since the last snapshot. Run 'orca snapshot' to get fresh refs."
+        )
+      }
     }
 
     const refSender = entry.sessionId ? this.makeCdpSender(guest, entry.sessionId) : sender
@@ -1383,64 +1441,54 @@ export class CdpBridge {
     for (const [targetId, sid] of state.iframeSessions) {
       if (sid === sessionId) {
         try {
-          // Try to find the specific iframe by its targetId via Runtime evaluation
+          // Why: use Target.getTargetInfo to get the iframe's URL, then match it
+          // against DOM iframe src attributes to find the correct element's position.
+          // This correctly handles pages with multiple iframes.
+          const { targetInfo } = (await parentSender('Target.getTargetInfo', {
+            targetId
+          })) as { targetInfo: { url?: string } }
+
+          const targetUrl = targetInfo?.url
+
           const { result } = (await parentSender('Runtime.evaluate', {
             expression: `(() => {
               const frames = document.querySelectorAll('iframe, frame');
+              const rects = [];
               for (const f of frames) {
-                if (f.contentWindow) {
-                  const rect = f.getBoundingClientRect();
-                  return JSON.stringify({ x: rect.x, y: rect.y, found: true });
-                }
+                const rect = f.getBoundingClientRect();
+                rects.push({ x: rect.x, y: rect.y, src: f.src || '' });
               }
-              return JSON.stringify({ x: 0, y: 0, found: false });
+              return JSON.stringify(rects);
             })()`,
             returnByValue: true
           })) as { result: { value: string } }
 
-          // For pages with multiple iframes, find the one matching our target
-          const { result: iframeResult } = (await parentSender('Runtime.evaluate', {
-            expression: `(() => {
-              const frames = [...document.querySelectorAll('iframe, frame')];
-              for (let i = 0; i < frames.length; i++) {
-                try {
-                  // Match by checking if this frame's session corresponds to our target
-                  const rect = frames[i].getBoundingClientRect();
-                  return JSON.stringify({ rects: frames.map(f => {
-                    const r = f.getBoundingClientRect();
-                    return { x: r.x, y: r.y, src: f.src };
-                  })});
-                } catch(e) {}
-              }
-              return JSON.stringify({ rects: [] });
-            })()`,
-            returnByValue: true
-          })) as { result: { value: string } }
+          const rects = JSON.parse(result.value) as { x: number; y: number; src: string }[]
 
-          // Use Target.getTargetInfo to find the iframe's URL and match it
-          try {
-            const { targetInfo } = (await parentSender('Target.getTargetInfo', {
-              targetId
-            })) as { targetInfo: { url?: string } }
-
-            if (targetInfo?.url) {
-              const parsed = JSON.parse(iframeResult.value) as {
-                rects: { x: number; y: number; src: string }[]
+          // Match by URL first (reliable for cross-origin iframes)
+          if (targetUrl) {
+            for (const rect of rects) {
+              if (rect.src === targetUrl) {
+                return { offsetX: rect.x, offsetY: rect.y }
               }
-              for (const rect of parsed.rects) {
-                if (rect.src === targetInfo.url) {
+            }
+            // Why: iframe may have redirected after load, making src differ
+            // from the actual target URL. Match by origin as a fallback.
+            try {
+              const targetOrigin = new URL(targetUrl).origin
+              for (const rect of rects) {
+                if (rect.src && new URL(rect.src).origin === targetOrigin) {
                   return { offsetX: rect.x, offsetY: rect.y }
                 }
               }
+            } catch {
+              // URL parsing failed — fall through
             }
-          } catch {
-            // Fall through to simple approach
           }
 
-          // Fallback: use first iframe's position
-          const parsed = JSON.parse(result.value) as { x: number; y: number; found: boolean }
-          if (parsed.found) {
-            return { offsetX: parsed.x, offsetY: parsed.y }
+          // Fallback: if only one iframe exists, use its position
+          if (rects.length === 1) {
+            return { offsetX: rects[0].x, offsetY: rects[0].y }
           }
         } catch {
           // Can't determine offset, return zero (best effort)
@@ -1695,5 +1743,27 @@ const KEY_DEFINITIONS: Record<string, KeyDefinition> = {
 }
 
 function resolveKeyDefinition(key: string): KeyDefinition {
-  return KEY_DEFINITIONS[key] ?? { key, code: `Key${key.toUpperCase()}` }
+  if (KEY_DEFINITIONS[key]) {
+    return KEY_DEFINITIONS[key]
+  }
+  // Why: single characters need proper code values — digits use "DigitN",
+  // letters use "KeyX", and other characters use their char code for the
+  // windowsVirtualKeyCode. Invalid codes cause events to be dropped by sites
+  // that check event.code.
+  if (key.length === 1) {
+    const charCode = key.charCodeAt(0)
+    if (charCode >= 48 && charCode <= 57) {
+      return { key, code: `Digit${key}`, windowsVirtualKeyCode: charCode, text: key }
+    }
+    if ((charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122)) {
+      return {
+        key,
+        code: `Key${key.toUpperCase()}`,
+        windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0),
+        text: key
+      }
+    }
+    return { key, code: '', windowsVirtualKeyCode: charCode, text: key }
+  }
+  return { key, code: key }
 }
