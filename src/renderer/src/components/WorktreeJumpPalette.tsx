@@ -14,7 +14,6 @@ import { branchName } from '@/lib/git-utils'
 import { parseGitHubIssueOrPRNumber, parseGitHubIssueOrPRLink } from '@/lib/github-links'
 import { getLinkedWorkItemSuggestedName } from '@/lib/new-workspace'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
-import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 import { sortWorktreesSmart } from '@/components/sidebar/smart-sort'
 import StatusIndicator from '@/components/sidebar/StatusIndicator'
 import { cn } from '@/lib/utils'
@@ -743,13 +742,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                 const repo = repoMap.get(worktree.repoId)
                 const repoName = repo?.displayName ?? ''
                 const branch = branchName(worktree.branch)
-                const liveStatusTabs = (tabsByWorktree[worktree.id] ?? []).map((tab) => ({
-                  ...tab,
-                  ptyId: hasLivePtyForTab(tab, ptyIdsByTabId) ? (tab.ptyId ?? 'live') : null
-                }))
                 const status = getWorktreeStatus(
-                  liveStatusTabs,
-                  browserTabsByWorktree[worktree.id] ?? []
+                  tabsByWorktree[worktree.id] ?? [],
+                  browserTabsByWorktree[worktree.id] ?? [],
+                  ptyIdsByTabId
                 )
                 const statusLabel = getWorktreeStatusLabel(status)
                 const isCurrentWorktree = activeWorktreeId === worktree.id

@@ -1,4 +1,5 @@
 import { detectAgentStatusFromTitle } from '@/lib/agent-status'
+import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 import type { TerminalTab } from '../../../shared/types'
 
 export type WorktreeStatus = 'active' | 'working' | 'permission' | 'inactive'
@@ -11,10 +12,11 @@ const STATUS_LABELS: Record<WorktreeStatus, string> = {
 }
 
 export function getWorktreeStatus(
-  tabs: Pick<TerminalTab, 'ptyId' | 'title'>[],
-  browserTabs: { id: string }[]
+  tabs: Pick<TerminalTab, 'id' | 'ptyId' | 'title'>[],
+  browserTabs: { id: string }[],
+  ptyIdsByTabId?: Record<string, string[]>
 ): WorktreeStatus {
-  const liveTabs = tabs.filter((tab) => tab.ptyId)
+  const liveTabs = tabs.filter((tab) => hasLivePtyForTab(tab, ptyIdsByTabId))
   if (liveTabs.some((tab) => detectAgentStatusFromTitle(tab.title) === 'permission')) {
     return 'permission'
   }

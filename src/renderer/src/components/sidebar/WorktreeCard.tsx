@@ -8,7 +8,6 @@ import CacheTimer from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
 import { SshDisconnectedDialog } from './SshDisconnectedDialog'
 import { cn } from '@/lib/utils'
-import { hasLivePtyForTab } from '@/lib/terminal-liveness'
 import { getWorktreeStatus, type WorktreeStatus } from '@/lib/worktree-status'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
@@ -123,22 +122,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
     : null
 
   const isDeleting = deleteState?.isDeleting ?? false
-  const liveStatusTabs = useMemo(
-    () =>
-      tabs.map((tab) => ({
-        ...tab,
-        // Why: shutdown and reconnect now manage live PTYs through the
-        // per-tab PTY list. Trust that authoritative map for status badges so
-        // a stale legacy tab.ptyId cannot resurrect a shut-down worktree.
-        ptyId: hasLivePtyForTab(tab, ptyIdsByTabId) ? (tab.ptyId ?? 'live') : null
-      })),
-    [tabs, ptyIdsByTabId]
-  )
 
   // Derive status
   const status: WorktreeStatus = useMemo(
-    () => getWorktreeStatus(liveStatusTabs, browserTabs),
-    [liveStatusTabs, browserTabs]
+    () => getWorktreeStatus(tabs, browserTabs, ptyIdsByTabId),
+    [tabs, browserTabs, ptyIdsByTabId]
   )
 
   const showPR = cardProps.includes('pr')

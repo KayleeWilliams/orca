@@ -5,8 +5,8 @@ describe('worktree-status', () => {
   it('prioritizes permission over other live activity states', () => {
     const status = getWorktreeStatus(
       [
-        { ptyId: 'pty-working', title: 'claude [working]' },
-        { ptyId: 'pty-permission', title: 'claude [permission]' }
+        { id: 'tab-1', ptyId: 'pty-working', title: 'claude [working]' },
+        { id: 'tab-2', ptyId: 'pty-permission', title: 'claude [permission]' }
       ],
       [{ id: 'browser-1' }]
     )
@@ -23,5 +23,13 @@ describe('worktree-status', () => {
 
   it('returns inactive when neither tabs nor browser state are live', () => {
     expect(getWorktreeStatus([], [])).toBe('inactive')
+  })
+
+  it('returns inactive when tab.ptyId is stale but the PTY map says dead', () => {
+    const status = getWorktreeStatus([{ id: 'tab-1', ptyId: 'stale-pty', title: 'shell' }], [], {
+      'tab-1': []
+    })
+
+    expect(status).toBe('inactive')
   })
 })
