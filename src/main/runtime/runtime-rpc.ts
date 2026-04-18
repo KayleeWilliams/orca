@@ -701,6 +701,189 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
+    // ── Browser automation routes ──
+
+    if (request.method === 'browser.snapshot') {
+      try {
+        const result = await this.runtime.browserSnapshot()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.click') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserClick({ element })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.goto') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : null
+        if (!url) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --url')
+        }
+        const result = await this.runtime.browserGoto({ url })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.fill') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        if (value === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
+        }
+        const result = await this.runtime.browserFill({ element, value })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.type') {
+      try {
+        const params = this.extractParams(request)
+        const input = typeof params?.input === 'string' ? params.input : null
+        if (!input) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --input')
+        }
+        const result = await this.runtime.browserType({ input })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.select') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        if (value === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
+        }
+        const result = await this.runtime.browserSelect({ element, value })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.scroll') {
+      try {
+        const params = this.extractParams(request)
+        const direction = typeof params?.direction === 'string' ? params.direction : null
+        if (direction !== 'up' && direction !== 'down') {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --direction (up or down)'
+          )
+        }
+        const amount =
+          typeof params?.amount === 'number' && params.amount > 0 ? params.amount : undefined
+        const result = await this.runtime.browserScroll({ direction, amount })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.back') {
+      try {
+        const result = await this.runtime.browserBack()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.reload') {
+      try {
+        const result = await this.runtime.browserReload()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.screenshot') {
+      try {
+        const params = this.extractParams(request)
+        const format =
+          typeof params?.format === 'string' &&
+          (params.format === 'png' || params.format === 'jpeg')
+            ? params.format
+            : undefined
+        const result = await this.runtime.browserScreenshot({ format })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.eval') {
+      try {
+        const params = this.extractParams(request)
+        const expression = typeof params?.expression === 'string' ? params.expression : null
+        if (!expression) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --expression')
+        }
+        const result = await this.runtime.browserEval({ expression })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabList') {
+      try {
+        const result = this.runtime.browserTabList()
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabSwitch') {
+      try {
+        const params = this.extractParams(request)
+        const index = typeof params?.index === 'number' ? params.index : null
+        if (index === null || !Number.isInteger(index) || index < 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --index (non-negative integer)'
+          )
+        }
+        const result = await this.runtime.browserTabSwitch({ index })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
     return this.errorResponse(request.id, 'method_not_found', `Unknown method: ${request.method}`)
   }
 
@@ -716,6 +899,38 @@ export class OrcaRuntimeRpcServer {
         runtimeId: this.runtime.getRuntimeId()
       }
     }
+  }
+
+  private successResponse(id: string, result: unknown): RuntimeRpcResponse {
+    return {
+      id,
+      ok: true,
+      result,
+      _meta: {
+        runtimeId: this.runtime.getRuntimeId()
+      }
+    }
+  }
+
+  private extractParams(request: { params?: unknown }): Record<string, unknown> | null {
+    return request.params && typeof request.params === 'object' && request.params !== null
+      ? (request.params as Record<string, unknown>)
+      : null
+  }
+
+  // Why: browser errors carry a structured .code property (BrowserError from
+  // cdp-bridge.ts) that maps directly to agent-facing error codes. We forward
+  // that code rather than relying on the message-matching pattern used by
+  // runtimeErrorResponse, which would require adding 10+ entries to the allowlist.
+  private browserErrorResponse(id: string, error: unknown): RuntimeRpcResponse {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      typeof (error as { code: unknown }).code === 'string'
+    ) {
+      return this.errorResponse(id, (error as { code: string }).code, error.message)
+    }
+    return this.runtimeErrorResponse(id, error)
   }
 
   private runtimeErrorResponse(id: string, error: unknown): RuntimeRpcResponse {

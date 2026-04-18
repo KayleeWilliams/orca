@@ -2,6 +2,7 @@
    trust boundary (isTrustedBrowserRenderer) and handler teardown stay consistent. */
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { browserManager } from '../browser/browser-manager'
+import type { CdpBridge } from '../browser/cdp-bridge'
 import { browserSessionRegistry } from '../browser/browser-session-registry'
 import {
   pickCookieFile,
@@ -28,9 +29,14 @@ import type {
 } from '../../shared/types'
 
 let trustedBrowserRendererWebContentsId: number | null = null
+let cdpBridgeRef: CdpBridge | null = null
 
 export function setTrustedBrowserRendererWebContentsId(webContentsId: number | null): void {
   trustedBrowserRendererWebContentsId = webContentsId
+}
+
+export function setCdpBridgeRef(bridge: CdpBridge | null): void {
+  cdpBridgeRef = bridge
 }
 
 function isTrustedBrowserRenderer(sender: Electron.WebContents): boolean {
@@ -64,6 +70,7 @@ export function registerBrowserHandlers(): void {
   ipcMain.removeHandler('browser:cancelGrab')
   ipcMain.removeHandler('browser:captureSelectionScreenshot')
   ipcMain.removeHandler('browser:extractHoverPayload')
+  ipcMain.removeHandler('browser:activeTabChanged')
 
   ipcMain.handle(
     'browser:registerGuest',
@@ -71,10 +78,21 @@ export function registerBrowserHandlers(): void {
       if (!isTrustedBrowserRenderer(event.sender)) {
         return false
       }
+      // Why: when Chromium swaps a guest's renderer process (navigation,
+      // crash recovery), the renderer re-registers the same browserPageId
+      // with a new webContentsId. If the CDP bridge was tracking the old
+      // webContentsId as active, update it to the new one so agent commands
+      // don't target a destroyed surface.
+      const previousWcId = browserManager.getGuestWebContentsId(args.browserPageId)
       browserManager.registerGuest({
         ...args,
         rendererWebContentsId: event.sender.id
       })
+      if (cdpBridgeRef && previousWcId !== null && previousWcId !== args.webContentsId) {
+        if (cdpBridgeRef.getActiveWebContentsId() === previousWcId) {
+          cdpBridgeRef.onTabChanged(args.webContentsId)
+        }
+      }
       return true
     }
   )
@@ -83,7 +101,31 @@ export function registerBrowserHandlers(): void {
     if (!isTrustedBrowserRenderer(event.sender)) {
       return false
     }
+    // Why: notify CDP bridge before unregistering so it can clean up debugger
+    // state and ref maps for the closing tab. Must happen before unregisterGuest
+    // clears the webContentsId mapping.
+    const wcId = browserManager.getGuestWebContentsId(args.browserPageId)
+    if (wcId !== null && cdpBridgeRef) {
+      cdpBridgeRef.onTabClosed(wcId)
+    }
     browserManager.unregisterGuest(args.browserPageId)
+    return true
+  })
+
+  // Why: keeps the CDP bridge's active tab in sync with the renderer's UI state.
+  // Without this, a user switching tabs in the UI would leave the agent operating
+  // on the previous tab, which is confusing.
+  ipcMain.handle('browser:activeTabChanged', (event, args: { browserPageId: string }) => {
+    if (!isTrustedBrowserRenderer(event.sender)) {
+      return false
+    }
+    if (!cdpBridgeRef) {
+      return false
+    }
+    const wcId = browserManager.getGuestWebContentsId(args.browserPageId)
+    if (wcId !== null) {
+      cdpBridgeRef.onTabChanged(wcId)
+    }
     return true
   })
 

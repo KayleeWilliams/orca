@@ -748,7 +748,10 @@ const api = {
     > => ipcRenderer.invoke('browser:session:importFromBrowser', args),
 
     sessionClearDefaultCookies: (): Promise<boolean> =>
-      ipcRenderer.invoke('browser:session:clearDefaultCookies')
+      ipcRenderer.invoke('browser:session:clearDefaultCookies'),
+
+    notifyActiveTabChanged: (args: { browserPageId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('browser:activeTabChanged', args)
   },
 
   hooks: {

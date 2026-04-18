@@ -13,7 +13,20 @@ import type {
   RuntimeTerminalListResult,
   RuntimeTerminalShow,
   RuntimeTerminalSend,
-  RuntimeTerminalWait
+  RuntimeTerminalWait,
+  BrowserSnapshotResult,
+  BrowserClickResult,
+  BrowserGotoResult,
+  BrowserFillResult,
+  BrowserTypeResult,
+  BrowserSelectResult,
+  BrowserScrollResult,
+  BrowserBackResult,
+  BrowserReloadResult,
+  BrowserScreenshotResult,
+  BrowserEvalResult,
+  BrowserTabListResult,
+  BrowserTabSwitchResult
 } from '../shared/runtime-types'
 import {
   RuntimeClient,
@@ -39,7 +52,7 @@ type CommandSpec = {
 
 const DEFAULT_TERMINAL_WAIT_RPC_TIMEOUT_MS = 5 * 60 * 1000
 const GLOBAL_FLAGS = ['help', 'json']
-const COMMAND_SPECS: CommandSpec[] = [
+export const COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['open'],
     summary: 'Launch Orca and wait for the runtime to be reachable',
@@ -169,6 +182,85 @@ const COMMAND_SPECS: CommandSpec[] = [
     summary: 'Stop terminals for a worktree',
     usage: 'orca terminal stop --worktree <selector> [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  // ── Browser automation ──
+  {
+    path: ['snapshot'],
+    summary: 'Capture an accessibility snapshot of the active browser tab',
+    usage: 'orca snapshot [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['screenshot'],
+    summary: 'Capture a viewport screenshot of the active browser tab',
+    usage: 'orca screenshot [--format <png|jpeg>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'format']
+  },
+  {
+    path: ['click'],
+    summary: 'Click a browser element by ref',
+    usage: 'orca click --element <ref> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element']
+  },
+  {
+    path: ['fill'],
+    summary: 'Clear and fill a browser input by ref',
+    usage: 'orca fill --element <ref> --value <text> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value']
+  },
+  {
+    path: ['type'],
+    summary: 'Type text at the current browser focus',
+    usage: 'orca type --input <text> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'input']
+  },
+  {
+    path: ['select'],
+    summary: 'Select a dropdown option by ref',
+    usage: 'orca select --element <ref> --value <value> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value']
+  },
+  {
+    path: ['scroll'],
+    summary: 'Scroll the browser viewport',
+    usage: 'orca scroll --direction <up|down> [--amount <pixels>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'direction', 'amount']
+  },
+  {
+    path: ['goto'],
+    summary: 'Navigate the active browser tab to a URL',
+    usage: 'orca goto --url <url> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'url']
+  },
+  {
+    path: ['back'],
+    summary: 'Navigate back in browser history',
+    usage: 'orca back [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['reload'],
+    summary: 'Reload the active browser tab',
+    usage: 'orca reload [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['eval'],
+    summary: 'Evaluate JavaScript in the browser page context',
+    usage: 'orca eval --expression <js> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'expression']
+  },
+  {
+    path: ['tab', 'list'],
+    summary: 'List open browser tabs',
+    usage: 'orca tab list [--json]',
+    allowedFlags: [...GLOBAL_FLAGS]
+  },
+  {
+    path: ['tab', 'switch'],
+    summary: 'Switch the active browser tab',
+    usage: 'orca tab switch --index <n> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'index']
   }
 ]
 
@@ -362,6 +454,96 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       return printResult(result, json, (value) => `removed: ${value.removed}`)
     }
 
+    // ── Browser automation dispatch ──
+
+    if (matches(commandPath, ['snapshot'])) {
+      const result = await client.call<BrowserSnapshotResult>('browser.snapshot')
+      return printResult(result, json, formatSnapshot)
+    }
+
+    if (matches(commandPath, ['screenshot'])) {
+      const format = getOptionalStringFlag(parsed.flags, 'format')
+      const result = await client.call<BrowserScreenshotResult>('browser.screenshot', {
+        format: format === 'jpeg' ? 'jpeg' : undefined
+      })
+      return printResult(result, json, formatScreenshot)
+    }
+
+    if (matches(commandPath, ['click'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const result = await client.call<BrowserClickResult>('browser.click', { element })
+      return printResult(result, json, (v) => `Clicked ${v.clicked}`)
+    }
+
+    if (matches(commandPath, ['fill'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const result = await client.call<BrowserFillResult>('browser.fill', { element, value })
+      return printResult(result, json, (v) => `Filled ${v.filled}`)
+    }
+
+    if (matches(commandPath, ['type'])) {
+      const input = getRequiredStringFlag(parsed.flags, 'input')
+      const result = await client.call<BrowserTypeResult>('browser.type', { input })
+      return printResult(result, json, () => 'Typed input')
+    }
+
+    if (matches(commandPath, ['select'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const result = await client.call<BrowserSelectResult>('browser.select', { element, value })
+      return printResult(result, json, (v) => `Selected ${v.selected}`)
+    }
+
+    if (matches(commandPath, ['scroll'])) {
+      const direction = getRequiredStringFlag(parsed.flags, 'direction')
+      if (direction !== 'up' && direction !== 'down') {
+        throw new RuntimeClientError('invalid_argument', '--direction must be "up" or "down"')
+      }
+      const amount = getOptionalPositiveIntegerFlag(parsed.flags, 'amount')
+      const result = await client.call<BrowserScrollResult>('browser.scroll', {
+        direction,
+        amount
+      })
+      return printResult(result, json, (v) => `Scrolled ${v.scrolled}`)
+    }
+
+    if (matches(commandPath, ['goto'])) {
+      const url = getRequiredStringFlag(parsed.flags, 'url')
+      const result = await client.call<BrowserGotoResult>('browser.goto', { url })
+      return printResult(result, json, (v) => `Navigated to ${v.url} — ${v.title}`)
+    }
+
+    if (matches(commandPath, ['back'])) {
+      const result = await client.call<BrowserBackResult>('browser.back')
+      return printResult(result, json, (v) => `Back to ${v.url} — ${v.title}`)
+    }
+
+    if (matches(commandPath, ['reload'])) {
+      const result = await client.call<BrowserReloadResult>('browser.reload')
+      return printResult(result, json, (v) => `Reloaded ${v.url} — ${v.title}`)
+    }
+
+    if (matches(commandPath, ['eval'])) {
+      const expression = getRequiredStringFlag(parsed.flags, 'expression')
+      const result = await client.call<BrowserEvalResult>('browser.eval', { expression })
+      return printResult(result, json, (v) => v.value)
+    }
+
+    if (matches(commandPath, ['tab', 'list'])) {
+      const result = await client.call<BrowserTabListResult>('browser.tabList')
+      return printResult(result, json, formatTabList)
+    }
+
+    if (matches(commandPath, ['tab', 'switch'])) {
+      const index = getOptionalNonNegativeIntegerFlag(parsed.flags, 'index')
+      if (index === undefined) {
+        throw new RuntimeClientError('invalid_argument', 'Missing required --index')
+      }
+      const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', { index })
+      return printResult(result, json, (v) => `Switched to tab ${v.switched}`)
+    }
+
     throw new RuntimeClientError('invalid_argument', `Unknown command: ${commandPath.join(' ')}`)
   } catch (error) {
     if (json) {
@@ -446,7 +628,9 @@ export function findCommandSpec(commandPath: string[]): CommandSpec | undefined 
 }
 
 function isCommandGroup(commandPath: string[]): boolean {
-  return commandPath.length === 1 && ['repo', 'worktree', 'terminal'].includes(commandPath[0])
+  return (
+    commandPath.length === 1 && ['repo', 'worktree', 'terminal', 'tab'].includes(commandPath[0])
+  )
 }
 
 function getRequiredStringFlag(flags: Map<string, string | boolean>, name: string): string {
@@ -558,6 +742,20 @@ function getOptionalPositiveIntegerFlag(
   }
   if (!Number.isInteger(value) || value <= 0) {
     throw new RuntimeClientError('invalid_argument', `Invalid positive integer for --${name}`)
+  }
+  return value
+}
+
+function getOptionalNonNegativeIntegerFlag(
+  flags: Map<string, string | boolean>,
+  name: string
+): number | undefined {
+  const value = getOptionalNumberFlag(flags, name)
+  if (value === undefined) {
+    return undefined
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RuntimeClientError('invalid_argument', `Invalid non-negative integer for --${name}`)
   }
   return value
 }
@@ -737,6 +935,27 @@ function formatWorktreeShow(result: { worktree: RuntimeWorktreeRecord }): string
     .join('\n')
 }
 
+function formatSnapshot(result: BrowserSnapshotResult): string {
+  const header = `${result.title} — ${result.url}\n`
+  return header + result.snapshot
+}
+
+function formatScreenshot(result: BrowserScreenshotResult): string {
+  return `Screenshot captured (${result.format}, ${Math.round(result.data.length * 0.75)} bytes)`
+}
+
+function formatTabList(result: BrowserTabListResult): string {
+  if (result.tabs.length === 0) {
+    return 'No browser tabs open.'
+  }
+  return result.tabs
+    .map((t) => {
+      const marker = t.active ? '* ' : '  '
+      return `${marker}[${t.index}] ${t.title} — ${t.url}`
+    })
+    .join('\n')
+}
+
 function printHelp(commandPath: string[] = []): void {
   const exactSpec = findCommandSpec(commandPath)
   if (exactSpec) {
@@ -784,6 +1003,21 @@ Terminals:
   terminal send             Send input to a live terminal
   terminal wait             Wait for a terminal condition
   terminal stop             Stop terminals for a worktree
+
+Browser:
+  snapshot                  Capture an accessibility snapshot of the active browser tab
+  screenshot                Capture a viewport screenshot of the active browser tab
+  click                     Click a browser element by ref
+  fill                      Clear and fill a browser input by ref
+  type                      Type text at the current browser focus
+  select                    Select a dropdown option by ref
+  scroll                    Scroll the browser viewport
+  goto                      Navigate the active browser tab to a URL
+  back                      Navigate back in browser history
+  reload                    Reload the active browser tab
+  eval                      Evaluate JavaScript in the browser page context
+  tab list                  List open browser tabs
+  tab switch                Switch the active browser tab
 
 Common Commands:
   orca open [--json]
@@ -840,7 +1074,12 @@ Examples:
   $ orca worktree ps --limit 10
   $ orca terminal list --worktree path:/Users/me/orca/workspaces/orca/cli-test-1 --json
   $ orca terminal send --terminal term_123 --text "hi" --enter
-  $ orca terminal wait --terminal term_123 --for exit --timeout-ms 60000 --json`)
+  $ orca terminal wait --terminal term_123 --for exit --timeout-ms 60000 --json
+  $ orca goto --url https://example.com
+  $ orca snapshot
+  $ orca click --element @e3
+  $ orca fill --element @e5 --value "hello"
+  $ orca tab list --json`)
 }
 
 function formatCommandHelp(spec: CommandSpec): string {
@@ -902,7 +1141,17 @@ function formatFlagHelp(flag: string): string {
     text: '--text <text>          Text to send to the terminal',
     'timeout-ms': '--timeout-ms <ms>     Maximum wait time before timing out',
     worktree:
-      '--worktree <selector>  Worktree selector such as id:<id>, branch:<branch>, issue:<number>, path:<path>, or active/current'
+      '--worktree <selector>  Worktree selector such as id:<id>, branch:<branch>, issue:<number>, path:<path>, or active/current',
+    // Browser automation flags
+    element: '--element <ref>        Element ref from snapshot (e.g. @e3)',
+    url: '--url <url>            URL to navigate to',
+    value: '--value <text>         Value to fill or select',
+    input: '--input <text>         Text to type at current focus',
+    expression: '--expression <js>     JavaScript expression to evaluate',
+    direction: '--direction <up|down>  Scroll direction',
+    amount: '--amount <pixels>      Scroll distance in pixels',
+    index: '--index <n>            Tab index to switch to',
+    format: '--format <png|jpeg>    Screenshot image format'
   }
 
   return helpByFlag[flag] ?? `--${flag}`

@@ -152,3 +152,89 @@ export type RuntimeWorktreeListResult = {
   totalCount: number
   truncated: boolean
 }
+
+// ── Browser automation types ──
+
+export type BrowserSnapshotRef = {
+  ref: string
+  role: string
+  name: string
+}
+
+export type BrowserSnapshotResult = {
+  snapshot: string
+  refs: BrowserSnapshotRef[]
+  url: string
+  title: string
+}
+
+export type BrowserClickResult = {
+  clicked: string
+}
+
+export type BrowserGotoResult = {
+  url: string
+  title: string
+}
+
+export type BrowserFillResult = {
+  filled: string
+}
+
+export type BrowserTypeResult = {
+  typed: boolean
+}
+
+export type BrowserSelectResult = {
+  selected: string
+}
+
+export type BrowserScrollResult = {
+  scrolled: 'up' | 'down'
+}
+
+export type BrowserBackResult = {
+  url: string
+  title: string
+}
+
+export type BrowserReloadResult = {
+  url: string
+  title: string
+}
+
+export type BrowserScreenshotResult = {
+  data: string
+  format: 'png' | 'jpeg'
+}
+
+export type BrowserEvalResult = {
+  value: string
+}
+
+export type BrowserTabInfo = {
+  index: number
+  url: string
+  title: string
+  active: boolean
+}
+
+export type BrowserTabListResult = {
+  tabs: BrowserTabInfo[]
+}
+
+export type BrowserTabSwitchResult = {
+  switched: number
+}
+
+export type BrowserErrorCode =
+  | 'browser_no_tab'
+  | 'browser_tab_not_found'
+  | 'browser_stale_ref'
+  | 'browser_ref_not_found'
+  | 'browser_navigation_failed'
+  | 'browser_element_not_interactable'
+  | 'browser_eval_error'
+  | 'browser_cdp_error'
+  | 'browser_debugger_detached'
+  | 'browser_timeout'

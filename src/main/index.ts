@@ -35,6 +35,8 @@ import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
 import { openCodeHookService } from './opencode/hook-service'
 import { StarNagService } from './star-nag/service'
+import { CdpBridge } from './browser/cdp-bridge'
+import { browserManager } from './browser/browser-manager'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -158,6 +160,7 @@ app.whenReady().then(async () => {
   starNag = new StarNagService(store, stats)
   starNag.start()
   starNag.registerIpcHandlers()
+  runtime.setCdpBridge(new CdpBridge(browserManager))
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   registerAppMenu({
     onCheckForUpdates: () => checkForUpdatesFromMenu(),

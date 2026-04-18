@@ -71,7 +71,7 @@ function safeOrigin(rawUrl: string): string {
   }
 }
 
-class BrowserManager {
+export class BrowserManager {
   private readonly webContentsIdByTabId = new Map<string, number>()
   // Why: reverse map enables O(1) guest→tab lookups instead of O(N) linear
   // scans on every mouse event, load failure, permission, and popup event.

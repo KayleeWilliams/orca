@@ -35,7 +35,23 @@ vi.mock('./runtime-client', () => {
   }
 })
 
-import { buildCurrentWorktreeSelector, main, normalizeWorktreeSelector } from './index'
+import {
+  buildCurrentWorktreeSelector,
+  COMMAND_SPECS,
+  main,
+  normalizeWorktreeSelector
+} from './index'
+
+describe('COMMAND_SPECS collision check', () => {
+  it('has no duplicate command paths', () => {
+    const seen = new Set<string>()
+    for (const spec of COMMAND_SPECS) {
+      const key = spec.path.join(' ')
+      expect(seen.has(key), `Duplicate COMMAND_SPECS path: "${key}"`).toBe(false)
+      seen.add(key)
+    }
+  })
+})
 
 describe('orca cli worktree awareness', () => {
   beforeEach(() => {

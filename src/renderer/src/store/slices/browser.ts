@@ -595,6 +595,17 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
       }
     })
 
+    // Why: notify the CDP bridge which guest webContents is now active so
+    // subsequent agent commands (snapshot, click, etc.) target the correct tab.
+    // registerGuest uses page IDs (not workspace IDs), so we resolve the active
+    // page within the workspace to find the correct browserPageId.
+    const workspace = findWorkspace(get().browserTabsByWorktree, tabId)
+    if (workspace?.activePageId && typeof window !== 'undefined' && window.api?.browser) {
+      window.api.browser
+        .notifyActiveTabChanged({ browserPageId: workspace.activePageId })
+        .catch(() => {})
+    }
+
     const item = Object.values(get().unifiedTabsByWorktree)
       .flat()
       .find((entry) => entry.contentType === 'browser' && entry.entityId === tabId)
@@ -795,6 +806,12 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         }
       }
     })
+
+    // Why: switching the active page within a workspace changes which guest
+    // webContents the CDP bridge should target for agent commands.
+    if (typeof window !== 'undefined' && window.api?.browser) {
+      window.api.browser.notifyActiveTabChanged({ browserPageId: pageId }).catch(() => {})
+    }
 
     const workspace = findWorkspace(get().browserTabsByWorktree, workspaceId)
     if (!workspace) {

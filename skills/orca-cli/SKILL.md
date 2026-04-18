@@ -167,6 +167,14 @@ Why: terminal handles are runtime-scoped and may go stale after reloads. If Orca
 - If the user asks for CLI UX feedback, test the public `orca` command first. Only inspect `src/cli` or use `node out/cli/index.js` if the public command is missing or the task is explicitly about implementation internals.
 - If a command fails, prefer retrying with the public `orca` command before concluding the CLI is broken, unless the failure already came from `orca` itself.
 
+## Browser Commands
+
+`orca` also supports browser automation commands for driving the built-in Orca browser. The core loop is: snapshot the page to get element refs → interact using refs → re-snapshot to see the updated state.
+
+Key commands: `orca snapshot`, `orca click --element @e3`, `orca fill --element @e5 --value "hello"`, `orca goto --url <url>`, `orca tab list`, `orca tab switch --index <n>`.
+
+For the full browser command reference, error codes, and worked examples, see the `orca-browser` skill.
+
 ## Important Constraints
 
 - Orca CLI only talks to a running Orca editor.

@@ -23,8 +23,22 @@ import type {
   RuntimeSyncedLeaf,
   RuntimeSyncedTab,
   RuntimeSyncWindowGraph,
-  RuntimeWorktreeListResult
+  RuntimeWorktreeListResult,
+  BrowserSnapshotResult,
+  BrowserClickResult,
+  BrowserGotoResult,
+  BrowserFillResult,
+  BrowserTypeResult,
+  BrowserSelectResult,
+  BrowserScrollResult,
+  BrowserBackResult,
+  BrowserReloadResult,
+  BrowserScreenshotResult,
+  BrowserEvalResult,
+  BrowserTabListResult,
+  BrowserTabSwitchResult
 } from '../../shared/runtime-types'
+import type { CdpBridge } from '../browser/cdp-bridge'
 import { getPRForBranch } from '../github/client'
 import {
   getGitUsername,
@@ -149,6 +163,7 @@ export class OrcaRuntimeService {
   private waitersByHandle = new Map<string, Set<TerminalWaiter>>()
   private ptyController: RuntimePtyController | null = null
   private notifier: RuntimeNotifier | null = null
+  private cdpBridge: CdpBridge | null = null
   private resolvedWorktreeCache: ResolvedWorktreeCache | null = null
   private agentDetector: AgentDetector | null = null
 
@@ -187,6 +202,14 @@ export class OrcaRuntimeService {
 
   setNotifier(notifier: RuntimeNotifier | null): void {
     this.notifier = notifier
+  }
+
+  setCdpBridge(bridge: CdpBridge | null): void {
+    this.cdpBridge = bridge
+  }
+
+  getCdpBridge(): CdpBridge | null {
+    return this.cdpBridge
   }
 
   attachWindow(windowId: number): void {
@@ -1108,6 +1131,70 @@ export class OrcaRuntimeService {
 
   private getLeafKey(tabId: string, leafId: string): string {
     return `${tabId}::${leafId}`
+  }
+
+  // ── Browser automation ──
+
+  private requireCdpBridge(): CdpBridge {
+    if (!this.cdpBridge) {
+      throw new Error('runtime_unavailable')
+    }
+    return this.cdpBridge
+  }
+
+  async browserSnapshot(): Promise<BrowserSnapshotResult> {
+    return this.requireCdpBridge().snapshot()
+  }
+
+  async browserClick(params: { element: string }): Promise<BrowserClickResult> {
+    return this.requireCdpBridge().click(params.element)
+  }
+
+  async browserGoto(params: { url: string }): Promise<BrowserGotoResult> {
+    return this.requireCdpBridge().goto(params.url)
+  }
+
+  async browserFill(params: { element: string; value: string }): Promise<BrowserFillResult> {
+    return this.requireCdpBridge().fill(params.element, params.value)
+  }
+
+  async browserType(params: { input: string }): Promise<BrowserTypeResult> {
+    return this.requireCdpBridge().type(params.input)
+  }
+
+  async browserSelect(params: { element: string; value: string }): Promise<BrowserSelectResult> {
+    return this.requireCdpBridge().select(params.element, params.value)
+  }
+
+  async browserScroll(params: {
+    direction: 'up' | 'down'
+    amount?: number
+  }): Promise<BrowserScrollResult> {
+    return this.requireCdpBridge().scroll(params.direction, params.amount)
+  }
+
+  async browserBack(): Promise<BrowserBackResult> {
+    return this.requireCdpBridge().back()
+  }
+
+  async browserReload(): Promise<BrowserReloadResult> {
+    return this.requireCdpBridge().reload()
+  }
+
+  async browserScreenshot(params: { format?: 'png' | 'jpeg' }): Promise<BrowserScreenshotResult> {
+    return this.requireCdpBridge().screenshot(params.format)
+  }
+
+  async browserEval(params: { expression: string }): Promise<BrowserEvalResult> {
+    return this.requireCdpBridge().evaluate(params.expression)
+  }
+
+  browserTabList(): BrowserTabListResult {
+    return this.requireCdpBridge().tabList()
+  }
+
+  async browserTabSwitch(params: { index: number }): Promise<BrowserTabSwitchResult> {
+    return this.requireCdpBridge().tabSwitch(params.index)
   }
 }
 
