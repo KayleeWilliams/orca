@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useAppStore } from '@/store'
 import { getConnectionId } from '@/lib/connection-context'
+import { basename } from '@/lib/path'
 import { normalizeAbsolutePath } from '@/components/right-sidebar/file-explorer-paths'
 import { getExternalFileChangeRelativePath } from '@/components/right-sidebar/useFileExplorerWatch'
 import {
@@ -14,35 +15,6 @@ type WatchedTarget = {
   worktreeId: string
   worktreePath: string
   connectionId: string | undefined
-}
-
-function buildWatchTargets(): WatchedTarget[] {
-  const state = useAppStore.getState()
-  const worktreeIds = new Set<string>()
-  // Why: watch every worktree that has an editor tab open, so terminal edits
-  // in any of those roots reach the editor. Also watch the active worktree
-  // even when it has no open files — otherwise the File Explorer's tree
-  // reconciliation loses its event stream the moment the last tab for that
-  // worktree is closed.
-  for (const file of state.openFiles) {
-    worktreeIds.add(file.worktreeId)
-  }
-  if (state.activeWorktreeId) {
-    worktreeIds.add(state.activeWorktreeId)
-  }
-  const targets: WatchedTarget[] = []
-  for (const worktreeId of worktreeIds) {
-    const worktree = findWorktreeById(state.worktreesByRepo, worktreeId)
-    if (!worktree) {
-      continue
-    }
-    targets.push({
-      worktreeId,
-      worktreePath: worktree.path,
-      connectionId: getConnectionId(worktreeId) ?? undefined
-    })
-  }
-  return targets
 }
 
 /**
@@ -64,62 +36,80 @@ export function useEditorExternalWatch(): void {
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
 
-  // Derive the unique set of (worktreeId, worktreePath) pairs that need a
-  // subscription. Keyed by worktreeId so the effect only re-runs when the
-  // set of watched worktrees actually changes, not on every openFiles edit.
-  const targetsKey = useMemo(() => {
+  // Why: unify the target computation and the dependency key into one memo so
+  // there's a single source of truth. The derived string key drives the
+  // watch-diff effect; the array itself is what the effect actually iterates.
+  const { targets, targetsKey } = useMemo(() => {
     const ids = new Set<string>()
+    // Why: watch every worktree that has an editor tab open, so terminal edits
+    // in any of those roots reach the editor. Also watch the active worktree
+    // even when it has no open files — otherwise the File Explorer's tree
+    // reconciliation loses its event stream the moment the last tab for that
+    // worktree is closed.
     for (const f of openFiles) {
       ids.add(f.worktreeId)
     }
     if (activeWorktreeId) {
       ids.add(activeWorktreeId)
     }
+    const nextTargets: WatchedTarget[] = []
     const parts: string[] = []
     for (const id of Array.from(ids).sort()) {
       const wt = findWorktreeById(worktreesByRepo, id)
-      if (wt) {
-        parts.push(`${id}::${wt.path}`)
+      if (!wt) {
+        continue
       }
+      nextTargets.push({
+        worktreeId: id,
+        worktreePath: wt.path,
+        connectionId: getConnectionId(id) ?? undefined
+      })
+      parts.push(`${id}::${wt.path}`)
     }
-    return parts.join('|')
+    return { targets: nextTargets, targetsKey: parts.join('|') }
   }, [openFiles, worktreesByRepo, activeWorktreeId])
 
   const targetsRef = useRef<WatchedTarget[]>([])
 
+  // Why: diff previous vs next targets so unchanged worktrees keep their
+  // existing subscription. Tearing down every subscription on each targetsKey
+  // change (e.g. opening/closing a tab in an already-watched worktree) causes
+  // a watcher churn that can drop events emitted during the gap.
   useEffect(() => {
-    const targets = buildWatchTargets()
-    targetsRef.current = targets
-    console.log('[ext-fs] useEditorExternalWatch subscribing', {
-      targetsKey,
-      targets: targets.map((t) => ({ id: t.worktreeId, path: t.worktreePath }))
-    })
+    const prev = targetsRef.current
+    const prevIds = new Set(prev.map((t) => t.worktreeId))
+    const nextIds = new Set(targets.map((t) => t.worktreeId))
+    const removed = prev.filter((t) => !nextIds.has(t.worktreeId))
+    const added = targets.filter((t) => !prevIds.has(t.worktreeId))
 
-    for (const target of targets) {
+    for (const target of removed) {
+      void window.api.fs.unwatchWorktree({
+        worktreePath: target.worktreePath,
+        connectionId: target.connectionId
+      })
+    }
+    for (const target of added) {
       void window.api.fs.watchWorktree({
         worktreePath: target.worktreePath,
         connectionId: target.connectionId
       })
     }
+    targetsRef.current = targets
+    // Why: this effect is intentionally differential — it does not unwatch on
+    // cleanup. Final unmount unwatching lives in the separate [] effect below
+    // so that re-running on targetsKey changes doesn't tear down everything.
+  }, [targetsKey, targets])
 
+  // Why: the fs:changed subscription and the final unmount unwatch are
+  // independent of which worktrees are currently watched. Keeping them in a
+  // single always-mounted effect avoids re-subscribing on every targetsKey
+  // change (which would otherwise miss events fired during re-subscription).
+  useEffect(() => {
     const handleFsChanged = (payload: FsChangedPayload): void => {
-      console.log('[ext-fs] fs:changed received', {
-        worktreePath: payload.worktreePath,
-        eventCount: payload.events.length,
-        events: payload.events.map((e) => ({
-          kind: e.kind,
-          absolutePath: e.absolutePath,
-          isDirectory: e.isDirectory
-        }))
-      })
       const target = targetsRef.current.find(
         (t) => normalizeAbsolutePath(t.worktreePath) === normalizeAbsolutePath(payload.worktreePath)
       )
       if (!target) {
-        console.log('[ext-fs] no matching watch target for payload', {
-          payloadWorktreePath: payload.worktreePath,
-          known: targetsRef.current.map((t) => t.worktreePath)
-        })
         return
       }
 
@@ -130,9 +120,14 @@ export function useEditorExternalWatch(): void {
       // a lone delete is a hard delete. Resurrection (same path comes back
       // on disk) clears the mark further down.
       const deletedOpenEditorIds = collectDeletedOpenEditorIds(payload, target.worktreeId)
-      const hasPairedCreate = payload.events.some(
-        (evt) => evt.kind === 'create' && evt.isDirectory !== true
-      )
+      // Why: correlate creates to deletes by basename OR parent directory to
+      // avoid mislabelling unrelated create+delete pairs in a batched payload
+      // as "renamed". When we can't correlate, default to 'deleted' — that's
+      // the least misleading fallback (it preserves in-memory content and
+      // doesn't claim a rename target that doesn't exist).
+      const hasPairedCreate =
+        deletedOpenEditorIds.length > 0 &&
+        hasRenameCorrelatedCreate(payload, target.worktreeId, deletedOpenEditorIds)
       if (deletedOpenEditorIds.length > 0) {
         const setExternalMutation = useAppStore.getState().setExternalMutation
         const mutation = hasPairedCreate ? 'renamed' : 'deleted'
@@ -173,10 +168,17 @@ export function useEditorExternalWatch(): void {
           // Why: on overflow the watcher can't tell us which paths changed, so
           // conservatively reload every clean open file for this worktree.
           // Bypassing `getExternalFileChangeRelativePath` because we don't
-          // have individual paths — iterate openFiles directly below.
+          // have individual paths — iterate openFiles directly below. Skip
+          // files whose `externalMutation` is already set (tombstoned): the
+          // underlying path may no longer exist on disk and a readFile would
+          // replace the in-memory content with "Error loading file..." and
+          // clobber the tab.
           const openFilesNow = useAppStore.getState().openFiles
           for (const file of openFilesNow) {
             if (file.worktreeId !== target.worktreeId || file.mode !== 'edit' || file.isDirty) {
+              continue
+            }
+            if (file.externalMutation) {
               continue
             }
             notifyEditorExternalFileChange({
@@ -185,7 +187,10 @@ export function useEditorExternalWatch(): void {
               relativePath: file.relativePath
             })
           }
-          return
+          // Why: `break` (not `return`) — the remaining code early-returns
+          // when changedFiles is empty, so breaking out is semantically
+          // equivalent and more robust to future code added after the loop.
+          break
         }
 
         if (evt.kind === 'update' && evt.isDirectory === true) {
@@ -205,19 +210,12 @@ export function useEditorExternalWatch(): void {
           normalizeAbsolutePath(evt.absolutePath),
           evt.isDirectory
         )
-        console.log('[ext-fs] event -> relativePath', {
-          kind: evt.kind,
-          abs: evt.absolutePath,
-          isDirectory: evt.isDirectory,
-          relativePath
-        })
         if (relativePath) {
           changedFiles.add(relativePath)
         }
       }
 
       if (changedFiles.size === 0) {
-        console.log('[ext-fs] no changedFiles produced from payload')
         return
       }
 
@@ -226,17 +224,6 @@ export function useEditorExternalWatch(): void {
       // `useFileExplorerHandlers`. Read `openFiles` once per payload to avoid
       // N store reads for large batched events.
       const openFilesSnapshot = useAppStore.getState().openFiles
-      console.log('[ext-fs] resolving changedFiles against openFiles', {
-        changedFiles: Array.from(changedFiles),
-        openFiles: openFilesSnapshot.map((f) => ({
-          id: f.id,
-          mode: f.mode,
-          worktreeId: f.worktreeId,
-          filePath: 'filePath' in f ? f.filePath : undefined,
-          relativePath: f.relativePath,
-          isDirty: f.isDirty
-        }))
-      })
       for (const relativePath of changedFiles) {
         const notification = {
           worktreeId: target.worktreeId,
@@ -245,17 +232,11 @@ export function useEditorExternalWatch(): void {
         }
         const matching = getOpenFilesForExternalFileChange(openFilesSnapshot, notification)
         if (matching.length === 0) {
-          console.log('[ext-fs] no open file matches', notification)
           continue
         }
         if (matching.some((f) => f.isDirty)) {
-          console.log('[ext-fs] skipping notify — matching tab is dirty', {
-            notification,
-            matching: matching.map((f) => ({ id: f.id, isDirty: f.isDirty }))
-          })
           continue
         }
-        console.log('[ext-fs] notifyEditorExternalFileChange', notification)
         notifyEditorExternalFileChange(notification)
       }
     }
@@ -264,18 +245,18 @@ export function useEditorExternalWatch(): void {
 
     return () => {
       unsubscribe()
-      for (const target of targets) {
+      // Why: final unmount must tear down every outstanding subscription.
+      // The differential watch effect above intentionally never unwatches on
+      // cleanup, so this is the only place that clears them.
+      for (const target of targetsRef.current) {
         void window.api.fs.unwatchWorktree({
           worktreePath: target.worktreePath,
           connectionId: target.connectionId
         })
       }
+      targetsRef.current = []
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Why: the effect
-    // keys on `targetsKey` which already encodes the full set of watched
-    // worktrees. Depending on `openFiles`/`worktreesByRepo` directly would
-    // tear down and recreate subscriptions on every file-content edit.
-  }, [targetsKey])
+  }, [])
 }
 
 function collectDeletedOpenEditorIds(payload: FsChangedPayload, worktreeId: string): string[] {
@@ -299,4 +280,51 @@ function collectDeletedOpenEditorIds(payload: FsChangedPayload, worktreeId: stri
     }
   }
   return result
+}
+
+/**
+ * Returns true if the batched payload contains at least one file-create event
+ * whose basename matches a deleted open editor file.
+ *
+ * Why: a batched fs payload may include unrelated create+delete events. A
+ * blanket `events.some(kind === 'create')` would mislabel those as renames.
+ * Basename correlation catches the common `git mv` / `mv` case where the
+ * filename survives the move. We intentionally do NOT correlate by parent
+ * directory because editor save-as-temp patterns (`rm foo.md && touch
+ * foo.md.new`) routinely put unrelated creates in the same dir as a delete,
+ * which would produce false rename labels. When correlation fails the caller
+ * falls back to 'deleted', which is the least misleading default.
+ */
+function hasRenameCorrelatedCreate(
+  payload: FsChangedPayload,
+  worktreeId: string,
+  deletedOpenEditorIds: string[]
+): boolean {
+  if (deletedOpenEditorIds.length === 0) {
+    return false
+  }
+  const deletedIdSet = new Set(deletedOpenEditorIds)
+  const openFilesNow = useAppStore.getState().openFiles
+  const deletedBasenames = new Set<string>()
+  for (const file of openFilesNow) {
+    if (file.worktreeId !== worktreeId || file.mode !== 'edit') {
+      continue
+    }
+    if (!deletedIdSet.has(file.id)) {
+      continue
+    }
+    deletedBasenames.add(basename(normalizeAbsolutePath(file.filePath)))
+  }
+  if (deletedBasenames.size === 0) {
+    return false
+  }
+  for (const evt of payload.events) {
+    if (evt.kind !== 'create' || evt.isDirectory === true) {
+      continue
+    }
+    if (deletedBasenames.has(basename(normalizeAbsolutePath(evt.absolutePath)))) {
+      return true
+    }
+  }
+  return false
 }

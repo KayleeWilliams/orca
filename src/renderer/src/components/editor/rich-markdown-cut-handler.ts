@@ -3,6 +3,16 @@ import { TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { cutVisualLine, getVisualLineRange } from './rich-markdown-visual-line'
 
+function deleteBlockAndRestoreSelection(view: EditorView, from: number, to: number): void {
+  let tr = view.state.tr.delete(from, to)
+  // Why: after deleting the last block the old `from` offset may exceed
+  // the new document length, so we clamp and use TextSelection.near() to
+  // land on the closest valid cursor position.
+  const clampedPos = Math.max(0, Math.min(from, tr.doc.content.size))
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(clampedPos)))
+  view.dispatch(tr)
+}
+
 /**
  * Why: Electron's app menu `{ role: 'cut' }` binds Cmd/Ctrl+X at the
  * main-process level, so the keystroke never reaches handleKeyDown.
@@ -11,7 +21,7 @@ import { cutVisualLine, getVisualLineRange } from './rich-markdown-visual-line'
  * Code and Notion); for non-empty selections we defer to ProseMirror's
  * built-in clipboard serializer.
  */
-export function handleRichMarkdownCut(view: EditorView, event: Event): boolean {
+export function handleRichMarkdownCut(view: EditorView, event: ClipboardEvent): boolean {
   const { selection } = view.state
   if (!selection.empty) {
     return false
@@ -63,24 +73,14 @@ export function handleRichMarkdownCut(view: EditorView, event: Event): boolean {
   if (!text) {
     // Still delete the empty block, matching VS Code behavior
     event.preventDefault()
-    const from = $from.before(cutDepth)
-    const to = $from.after(cutDepth)
-    let tr = view.state.tr.delete(from, to)
-    // Why: after deleting the last block the old `from` offset may exceed
-    // the new document length, so we clamp and use TextSelection.near() to
-    // land on the closest valid cursor position.
-    const clampedPos = Math.max(0, Math.min(from, tr.doc.content.size))
-    const resolvedPos = tr.doc.resolve(clampedPos)
-    tr = tr.setSelection(TextSelection.near(resolvedPos))
-    view.dispatch(tr)
+    deleteBlockAndRestoreSelection(view, $from.before(cutDepth), $from.after(cutDepth))
     return true
   }
 
-  const clipboardEvent = event as ClipboardEvent
   // Why: if clipboardData is null (e.g. synthetic events), we must not
   // preventDefault and then delete -- that would lose content without
   // placing it on the clipboard. Fall back to browser default instead.
-  if (!clipboardEvent.clipboardData) {
+  if (!event.clipboardData) {
     return false
   }
   event.preventDefault()
@@ -92,19 +92,10 @@ export function handleRichMarkdownCut(view: EditorView, event: Event): boolean {
   const fragment = serializer.serializeFragment(cutNode.content)
   const div = document.createElement('div')
   div.appendChild(fragment)
-  clipboardEvent.clipboardData.setData('text/html', div.innerHTML)
-  clipboardEvent.clipboardData.setData('text/plain', text)
+  event.clipboardData.setData('text/html', div.innerHTML)
+  event.clipboardData.setData('text/plain', text)
 
-  const from = $from.before(cutDepth)
-  const to = $from.after(cutDepth)
-  let tr = view.state.tr.delete(from, to)
-  // Why: after deleting the last block the old `from` offset may exceed
-  // the new document length, so we clamp and use TextSelection.near() to
-  // land on the closest valid cursor position.
-  const clampedPos = Math.max(0, Math.min(from, tr.doc.content.size))
-  const resolvedPos = tr.doc.resolve(clampedPos)
-  tr = tr.setSelection(TextSelection.near(resolvedPos))
-  view.dispatch(tr)
+  deleteBlockAndRestoreSelection(view, $from.before(cutDepth), $from.after(cutDepth))
 
   return true
 }

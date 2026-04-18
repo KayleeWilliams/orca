@@ -70,6 +70,11 @@ export default function RichMarkdownEditor({
   // which triggers onUpdate. Without this guard the editor immediately marks the
   // file dirty before the user has typed anything.
   const isInitializingRef = useRef(true)
+  // Why: internal maintenance paths can dispatch transactions after mount
+  // (external reloads, soft-break normalization, image-path refresh). Those
+  // are not user edits, so onUpdate must ignore them or split panes can flip a
+  // shared file dirty without any real content change.
+  const isApplyingProgrammaticUpdateRef = useRef(false)
   const [linkBubble, setLinkBubble] = useState<LinkBubbleState | null>(null)
   const [isEditingLink, setIsEditingLink] = useState(false)
   const isEditingLinkRef = useRef(false)
@@ -162,7 +167,10 @@ export default function RichMarkdownEditor({
       // Normalizing them into separate paragraph nodes on load ensures Cmd+X (and
       // other block-level operations) treat each line as its own block.
       normalizeSoftBreaks(nextEditor)
-      lastCommittedMarkdownRef.current = nextEditor.getMarkdown()
+      // Why: raw disk content is the source of truth for dirty/external-change
+      // detection. getMarkdown() may round-trip soft breaks or trailing newlines
+      // differently, which would otherwise force a spurious mount-time re-sync.
+      lastCommittedMarkdownRef.current = content
       // Why: clear the flag *after* normalizeSoftBreaks so any onUpdate
       // triggered by the normalization transaction is still suppressed.
       isInitializingRef.current = false
@@ -179,7 +187,7 @@ export default function RichMarkdownEditor({
       // Why: bail out during normalizeSoftBreaks's onCreate transaction so the
       // structural housekeeping doesn't mark the file dirty before the user
       // has typed anything.
-      if (isInitializingRef.current) {
+      if (isInitializingRef.current || isApplyingProgrammaticUpdateRef.current) {
         return
       }
 
@@ -242,9 +250,14 @@ export default function RichMarkdownEditor({
   // nodes with the new resolved src (renderHTML reads storage at render time).
   useEffect(() => {
     if (editor) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(editor.storage as any).image.filePath = filePath
-      editor.view.dispatch(editor.state.tr)
+      isApplyingProgrammaticUpdateRef.current = true
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(editor.storage as any).image.filePath = filePath
+        editor.view.dispatch(editor.state.tr)
+      } finally {
+        isApplyingProgrammaticUpdateRef.current = false
+      }
     }
   }, [editor, filePath])
 
@@ -336,13 +349,19 @@ export default function RichMarkdownEditor({
     // Why: markdown files on disk remain the source of truth for rich mode in
     // Orca. External file changes, tab replacement, and save-after-reload must
     // overwrite the editor state so the rich view never drifts from repo text.
-    editor.commands.setContent(encodeRawMarkdownHtmlForRichEditor(content), {
-      contentType: 'markdown'
-    })
-    // Why: same soft-break normalization as onCreate — external content updates
-    // may re-introduce paragraphs with embedded `\n` characters.
-    normalizeSoftBreaks(editor)
-    lastCommittedMarkdownRef.current = content
+    isApplyingProgrammaticUpdateRef.current = true
+    try {
+      editor.commands.setContent(encodeRawMarkdownHtmlForRichEditor(content), {
+        contentType: 'markdown',
+        emitUpdate: false
+      })
+      // Why: same soft-break normalization as onCreate — external content updates
+      // may re-introduce paragraphs with embedded `\n` characters.
+      normalizeSoftBreaks(editor)
+      lastCommittedMarkdownRef.current = content
+    } finally {
+      isApplyingProgrammaticUpdateRef.current = false
+    }
     syncSlashMenu(editor, rootRef.current, setSlashMenu)
     // Why: fileId is part of the dep array so switching between files (where
     // content can coincidentally match what was last committed for the prior

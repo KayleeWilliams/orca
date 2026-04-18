@@ -31,6 +31,28 @@ type MonacoEditorProps = {
   revealMatchLength?: number
 }
 
+const programmaticContentSyncDepthByFilePath = new Map<string, number>()
+
+function beginProgrammaticContentSync(filePath: string): void {
+  programmaticContentSyncDepthByFilePath.set(
+    filePath,
+    (programmaticContentSyncDepthByFilePath.get(filePath) ?? 0) + 1
+  )
+}
+
+function endProgrammaticContentSync(filePath: string): void {
+  const depth = programmaticContentSyncDepthByFilePath.get(filePath) ?? 0
+  if (depth <= 1) {
+    programmaticContentSyncDepthByFilePath.delete(filePath)
+    return
+  }
+  programmaticContentSyncDepthByFilePath.set(filePath, depth - 1)
+}
+
+function isProgrammaticContentSyncInFlight(filePath: string): boolean {
+  return (programmaticContentSyncDepthByFilePath.get(filePath) ?? 0) > 0
+}
+
 export default function MonacoEditor({
   filePath,
   viewStateKey,
@@ -139,9 +161,19 @@ export default function MonacoEditor({
   // contentRef lets handleMount read the current content without re-binding;
   // lastSyncedContentRef lets the update effect distinguish our own onChange
   // emissions from real prop drift.
+  // Invariant: the mount path (handleMount's syncContentOnMount call) MUST
+  // read `contentRef.current`, never `lastSyncedContentRef.current`. The
+  // useLayoutEffect below can run before mount with `editorRef.current === null`
+  // and bails without updating lastSyncedContentRef, so that ref may be stale
+  // pre-mount; only contentRef is guaranteed to reflect the latest prop.
   const contentRef = useRef(content)
   contentRef.current = content
   const lastSyncedContentRef = useRef<string>(content)
+  // Why: Monaco model reconciliation reuses real edit operations so retained
+  // models keep sane undo behavior. Those edits are programmatic, not user
+  // typing, so split panes must suppress the resulting onChange callback or a
+  // freshly mounted markdown source view can mark the shared file dirty.
+  const isApplyingProgrammaticContentRef = useRef(false)
 
   const handleMount: OnMount = useCallback(
     (editorInstance, monaco) => {
@@ -150,8 +182,16 @@ export default function MonacoEditor({
       // Why: see comment on contentRef — reconcile the retained model against
       // the current prop before any user interaction so external changes that
       // arrived while the tab was unmounted become visible immediately.
-      if (syncContentOnMount(editorInstance, contentRef.current)) {
-        lastSyncedContentRef.current = contentRef.current
+      beginProgrammaticContentSync(filePath)
+      isApplyingProgrammaticContentRef.current = true
+      try {
+        const didSyncOnMount = syncContentOnMount(editorInstance, contentRef.current)
+        if (didSyncOnMount) {
+          lastSyncedContentRef.current = contentRef.current
+        }
+      } finally {
+        isApplyingProgrammaticContentRef.current = false
+        endProgrammaticContentSync(filePath)
       }
 
       setupCopy(editorInstance, monaco, filePath, propsRef)
@@ -244,11 +284,23 @@ export default function MonacoEditor({
   const handleChange = useCallback(
     (value: string | undefined) => {
       if (value !== undefined) {
+        // Why: split panes that share a retained Monaco model all receive the
+        // same model change events. When one pane is reconciling prop content
+        // into the shared model, sibling panes must ignore the echoed onChange
+        // or they'll treat the programmatic sync as a user edit and mark the
+        // shared file dirty.
+        if (
+          isApplyingProgrammaticContentRef.current ||
+          isProgrammaticContentSyncInFlight(filePath) ||
+          value === contentRef.current
+        ) {
+          return
+        }
         lastSyncedContentRef.current = value
         onContentChange(value)
       }
     },
-    [onContentChange]
+    [filePath, onContentChange]
   )
 
   // Why: reconcile the model whenever `content` drifts from what we last
@@ -260,9 +312,16 @@ export default function MonacoEditor({
     if (!ed || lastSyncedContentRef.current === content) {
       return
     }
-    syncContentUpdate(ed, content)
-    lastSyncedContentRef.current = content
-  }, [content])
+    beginProgrammaticContentSync(filePath)
+    isApplyingProgrammaticContentRef.current = true
+    try {
+      syncContentUpdate(ed, content)
+      lastSyncedContentRef.current = content
+    } finally {
+      isApplyingProgrammaticContentRef.current = false
+      endProgrammaticContentSync(filePath)
+    }
+  }, [content, filePath])
 
   // Snapshot scroll position synchronously on unmount so tab switches always
   // capture the latest value, even if the trailing throttle hasn't fired yet.
