@@ -203,7 +203,13 @@ describe('buildHydratedTabState – unified format', () => {
       expect.objectContaining({ id: 'editor-1', groupId: 'g2', contentType: 'editor' })
     ])
     expect(result.groupsByWorktree.w1).toEqual([
-      { id: 'g2', worktreeId: 'w1', activeTabId: 'editor-1', tabOrder: ['editor-1'] }
+      {
+        id: 'g2',
+        worktreeId: 'w1',
+        activeTabId: 'editor-1',
+        tabOrder: ['editor-1'],
+        recentTabIds: ['editor-1']
+      }
     ])
     expect(result.activeGroupIdByWorktree.w1).toBe('g2')
     expect(result.layoutByWorktree.w1).toEqual({ type: 'leaf', groupId: 'g2' })

@@ -20,9 +20,11 @@ import {
   findTabAndWorktree,
   findTabByEntityInGroup,
   patchTab,
-  pickNeighbor,
+  pickNextActiveTab,
+  pushRecentTabId,
+  sanitizeRecentTabIds,
   updateGroup
-} from './tabs-helpers'
+} from './tab-group-state'
 import { buildHydratedTabState } from './tabs-hydration'
 import { buildOrphanTerminalCleanupPatch, getOrphanTerminalIds } from './terminal-orphan-helpers'
 
@@ -432,6 +434,14 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       }
 
       nextOrder = dedupeTabOrder([...nextOrder, created.id])
+      // Why: creating a tab implicitly activates it, so extend the group's MRU
+      // stack with the new id. Keeping MRU updates colocated with activation
+      // writes preserves the invariant that `activeTabId` equals the tail of
+      // `recentTabIds` for any tab we've actually seen.
+      const nextRecent = pushRecentTabId(
+        sanitizeRecentTabIds(group.recentTabIds, nextOrder),
+        created.id
+      )
       return {
         unifiedTabsByWorktree: {
           ...state.unifiedTabsByWorktree,
@@ -442,7 +452,8 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
           [worktreeId]: updateGroup(groupsByWorktree[worktreeId] ?? [], {
             ...group,
             activeTabId: created.id,
-            tabOrder: nextOrder
+            tabOrder: nextOrder,
+            recentTabIds: nextRecent
           })
         },
         activeGroupIdByWorktree,
@@ -492,7 +503,20 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
         groupsByWorktree: {
           ...state.groupsByWorktree,
           [worktreeId]: (state.groupsByWorktree[worktreeId] ?? []).map((group) =>
-            group.id === tab.groupId ? { ...group, activeTabId: tabId } : group
+            group.id === tab.groupId
+              ? {
+                  ...group,
+                  activeTabId: tabId,
+                  // Why: MRU tracks every activation within the group so
+                  // closeUnifiedTab can jump back to the previous tab instead
+                  // of the visual neighbor. Sanitize first to prune ids from
+                  // removed tabs that may have lingered in persisted state.
+                  recentTabIds: pushRecentTabId(
+                    sanitizeRecentTabIds(group.recentTabIds, group.tabOrder),
+                    tabId
+                  )
+                }
+              : group
           )
         },
         activeGroupIdByWorktree: {
@@ -518,12 +542,20 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
     const dedupedGroupOrder = dedupeTabOrder(group.tabOrder)
     const remainingOrder = dedupeTabOrder(dedupedGroupOrder.filter((id) => id !== tabId))
     const wasLastTab = remainingOrder.length === 0
+    // Why: when closing the active tab, walk the group's MRU stack back to the
+    // previously-active tab instead of the visual neighbor. `pickNextActiveTab`
+    // falls back to pickNeighbor when the MRU is empty (hydrated sessions,
+    // never-visited siblings) so behavior degrades gracefully.
     const nextActiveTabId =
       group.activeTabId === tabId
         ? wasLastTab
           ? null
-          : pickNeighbor(dedupedGroupOrder, tabId)
+          : pickNextActiveTab(dedupedGroupOrder, group.recentTabIds, tabId)
         : group.activeTabId
+    const nextRecentTabIds = sanitizeRecentTabIds(
+      (group.recentTabIds ?? []).filter((id) => id !== tabId),
+      remainingOrder
+    )
 
     set((current) => {
       const nextTabs = (current.unifiedTabsByWorktree[worktreeId] ?? []).filter(
@@ -531,7 +563,12 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       )
       let nextGroups = (current.groupsByWorktree[worktreeId] ?? []).map((candidate) =>
         candidate.id === group.id
-          ? { ...candidate, activeTabId: nextActiveTabId, tabOrder: remainingOrder }
+          ? {
+              ...candidate,
+              activeTabId: nextActiveTabId,
+              tabOrder: remainingOrder,
+              recentTabIds: nextRecentTabIds
+            }
           : candidate
       )
       let nextLayoutByWorktree = current.layoutByWorktree
@@ -872,22 +909,34 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
         ...state.activeGroupIdByWorktree,
         [worktreeId]: opts?.activate ? targetGroupId : state.activeGroupIdByWorktree[worktreeId]
       }
+      const sourceRecentTabIds = sanitizeRecentTabIds(
+        (sourceGroup.recentTabIds ?? []).filter((id) => id !== tabId),
+        sourceOrder
+      )
       const nextGroups = (state.groupsByWorktree[worktreeId] ?? []).map((group) => {
         if (group.id === sourceGroup.id) {
           return {
             ...group,
             activeTabId:
               group.activeTabId === tabId
-                ? pickNeighbor(dedupedSourceGroupOrder, tabId)
+                ? // Why: when the moved tab was active in the source, keep
+                  // MRU-aware selection so the user lands on their previously
+                  // focused tab rather than a visual neighbor.
+                  pickNextActiveTab(dedupedSourceGroupOrder, sourceGroup.recentTabIds, tabId)
                 : group.activeTabId,
-            tabOrder: sourceOrder
+            tabOrder: sourceOrder,
+            recentTabIds: sourceRecentTabIds
           }
         }
         if (group.id === targetGroupId) {
+          const sanitizedTargetRecent = sanitizeRecentTabIds(group.recentTabIds, targetOrder)
           return {
             ...group,
             activeTabId: opts?.activate ? tabId : group.activeTabId,
-            tabOrder: targetOrder
+            tabOrder: targetOrder,
+            recentTabIds: opts?.activate
+              ? pushRecentTabId(sanitizedTargetRecent, tabId)
+              : sanitizedTargetRecent
           }
         }
         return group
@@ -991,22 +1040,34 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       )
       targetOrder.splice(targetIndex, 0, tabId)
 
+      const sourceRecentTabIds = sanitizeRecentTabIds(
+        (sourceGroup.recentTabIds ?? []).filter((id) => id !== tabId),
+        sourceOrder
+      )
       nextGroups = nextGroups.map((group) => {
         if (group.id === sourceGroup.id) {
           return {
             ...group,
             activeTabId:
               group.activeTabId === tabId
-                ? pickNeighbor(dedupedSourceGroupOrder, tabId)
+                ? // Why: same MRU-aware fallback as moveUnifiedTabToGroup so
+                  // the pane left behind by a drag keeps the user on their
+                  // previously-active tab.
+                  pickNextActiveTab(dedupedSourceGroupOrder, sourceGroup.recentTabIds, tabId)
                 : group.activeTabId,
-            tabOrder: sourceOrder
+            tabOrder: sourceOrder,
+            recentTabIds: sourceRecentTabIds
           }
         }
         if (group.id === resolvedTargetGroupId) {
           return {
             ...group,
             activeTabId: tabId,
-            tabOrder: targetOrder
+            tabOrder: targetOrder,
+            recentTabIds: pushRecentTabId(
+              sanitizeRecentTabIds(group.recentTabIds, targetOrder),
+              tabId
+            )
           }
         }
         return group
@@ -1222,9 +1283,16 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       const tabOrderUnchanged =
         tabOrder.length === group.tabOrder.length &&
         tabOrder.every((tabId, index) => tabId === group.tabOrder[index])
-      return tabOrderUnchanged && activeTabId === group.activeTabId
+      // Why: reconciliation can drop backing tabs (stale persisted ids, dead
+      // PTYs, closed editor files). Keep the MRU stack in sync so the next
+      // close doesn't try to activate a tab the renderer no longer owns.
+      const recentTabIds = sanitizeRecentTabIds(group.recentTabIds, tabOrder)
+      const recentUnchanged =
+        recentTabIds.length === (group.recentTabIds ?? []).length &&
+        recentTabIds.every((id, index) => id === (group.recentTabIds ?? [])[index])
+      return tabOrderUnchanged && activeTabId === group.activeTabId && recentUnchanged
         ? group
-        : { ...group, tabOrder, activeTabId }
+        : { ...group, tabOrder, activeTabId, recentTabIds }
     })
 
     const currentActiveGroupId =

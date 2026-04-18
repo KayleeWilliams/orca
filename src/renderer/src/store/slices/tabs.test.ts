@@ -244,6 +244,126 @@ describe('TabsSlice', () => {
       const result = store.getState().closeUnifiedTab('nonexistent')
       expect(result).toBeNull()
     })
+
+    it('activates the previously-active tab (MRU) instead of the visual neighbor', () => {
+      const t1 = store.getState().createUnifiedTab(WT, 'terminal')
+      const t2 = store.getState().createUnifiedTab(WT, 'terminal')
+      const t3 = store.getState().createUnifiedTab(WT, 'terminal')
+
+      // Visit order: ...→t3 (last created)→t1→t3. Closing t3 should jump
+      // back to t1 (previous), not t2 (the visual right-neighbor after t3's
+      // removal fallback or left-neighbor).
+      store.getState().activateTab(t1.id)
+      store.getState().activateTab(t3.id)
+      store.getState().closeUnifiedTab(t3.id)
+
+      expect(store.getState().groupsByWorktree[WT][0].activeTabId).toBe(t1.id)
+      // t2 should still exist and not be active
+      expect(
+        store
+          .getState()
+          .unifiedTabsByWorktree[WT].map((t) => t.id)
+          .sort()
+      ).toEqual([t1.id, t2.id].sort())
+    })
+
+    it('falls back to neighbor selection when the MRU stack has no prior tab', () => {
+      // Build state manually so no prior activations have been recorded. This
+      // mirrors a freshly-hydrated session with only an active tab known.
+      const groupId = 'mru-fallback-group'
+      store.setState({
+        unifiedTabsByWorktree: {
+          [WT]: [
+            {
+              id: 'a',
+              entityId: 'a',
+              groupId,
+              worktreeId: WT,
+              contentType: 'terminal',
+              label: 'a',
+              customLabel: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            },
+            {
+              id: 'b',
+              entityId: 'b',
+              groupId,
+              worktreeId: WT,
+              contentType: 'terminal',
+              label: 'b',
+              customLabel: null,
+              color: null,
+              sortOrder: 1,
+              createdAt: 2
+            },
+            {
+              id: 'c',
+              entityId: 'c',
+              groupId,
+              worktreeId: WT,
+              contentType: 'terminal',
+              label: 'c',
+              customLabel: null,
+              color: null,
+              sortOrder: 2,
+              createdAt: 3
+            }
+          ]
+        },
+        groupsByWorktree: {
+          [WT]: [
+            {
+              id: groupId,
+              worktreeId: WT,
+              activeTabId: 'b',
+              tabOrder: ['a', 'b', 'c'],
+              recentTabIds: ['b']
+            }
+          ]
+        },
+        activeGroupIdByWorktree: { [WT]: groupId }
+      })
+
+      store.getState().closeUnifiedTab('b')
+
+      // MRU only contains 'b' itself, so fallback picks the right neighbor 'c'.
+      expect(store.getState().groupsByWorktree[WT][0].activeTabId).toBe('c')
+    })
+
+    it('tracks an independent MRU history per tab group', () => {
+      const t1 = store.getState().createUnifiedTab(WT, 'terminal')
+      const sourceGroupId = store.getState().groupsByWorktree[WT][0].id
+      const secondGroupId = store.getState().createEmptySplitGroup(WT, sourceGroupId, 'right')
+      expect(secondGroupId).toBeTruthy()
+
+      // Create two tabs in the second (right) group and visit them in order.
+      const t2 = store.getState().createUnifiedTab(WT, 'terminal', {
+        targetGroupId: secondGroupId!
+      })
+      const t3 = store.getState().createUnifiedTab(WT, 'terminal', {
+        targetGroupId: secondGroupId!
+      })
+      // Second group's MRU tail should be t3.
+
+      // Switch focus to the source group so subsequent activations in the
+      // source group don't pollute the second group's MRU.
+      store.getState().activateTab(t1.id)
+
+      // Re-focus second group by activating t2, then close t2 — we expect the
+      // previous tab within the same group (t3), not a neighbor from the
+      // source group.
+      store.getState().activateTab(t3.id)
+      store.getState().activateTab(t2.id)
+      store.getState().closeUnifiedTab(t2.id)
+
+      const secondGroup = store.getState().groupsByWorktree[WT].find((g) => g.id === secondGroupId)
+      expect(secondGroup?.activeTabId).toBe(t3.id)
+      // Source group's active tab must remain untouched.
+      const sourceGroup = store.getState().groupsByWorktree[WT].find((g) => g.id === sourceGroupId)
+      expect(sourceGroup?.activeTabId).toBe(t1.id)
+    })
   })
 
   // ─── activateTab ──────────────────────────────────────────────────

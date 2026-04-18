@@ -700,11 +700,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
     })
 
-    // Why: the unified tab model drives visual tab‐bar order and neighbor
-    // selection via pickNeighbor(group.tabOrder). Without this, closing an
-    // editor/diff tab picks the next active file from the openFiles array
-    // instead of the visual tab order, producing inconsistent behavior vs
-    // terminal/browser tab closes which already go through closeUnifiedTab.
+    // Why: the unified tab model drives visual tab-bar order and next-active
+    // selection (MRU-based, falling back to the visual neighbor). Without
+    // this, closing an editor/diff tab picks the next active file from the
+    // openFiles array instead of running the unified close path, producing
+    // inconsistent behavior vs terminal/browser tab closes which already go
+    // through closeUnifiedTab.
     for (const tabs of Object.values(get().unifiedTabsByWorktree ?? {})) {
       const unifiedTab = tabs.find(
         (entry) =>

@@ -12,7 +12,7 @@ import type {
   WorkspaceSessionState
 } from '../../../../shared/types'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
-import { pickNeighbor } from './tabs-helpers'
+import { pickNeighbor } from './tab-group-state'
 
 type CreateBrowserTabOptions = {
   activate?: boolean

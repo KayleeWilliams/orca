@@ -87,7 +87,8 @@ const tabGroupSchema = z.object({
   id: z.string(),
   worktreeId: z.string(),
   activeTabId: z.string().nullable(),
-  tabOrder: z.array(z.string())
+  tabOrder: z.array(z.string()),
+  recentTabIds: z.array(z.string()).optional()
 })
 
 const tabGroupSplitDirectionSchema = z.enum(['horizontal', 'vertical'])

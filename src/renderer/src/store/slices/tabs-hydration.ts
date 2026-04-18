@@ -8,8 +8,9 @@ import {
   dedupeTabOrder,
   getPersistedEditFileIdsByWorktree,
   isTransientEditorContentType,
+  sanitizeRecentTabIds,
   selectHydratedActiveGroupId
-} from './tabs-helpers'
+} from './tab-group-state'
 
 type HydratedTabState = {
   unifiedTabsByWorktree: Record<string, Tab[]>
@@ -88,10 +89,21 @@ function hydrateUnifiedFormat(
       // writes. Deduping during hydration restores the store invariant before
       // later group operations branch on tab counts or neighbors.
       const tabOrder = dedupeTabOrder(g.tabOrder.filter((tid) => validTabIds.has(tid)))
+      const activeTabId = g.activeTabId && validTabIds.has(g.activeTabId) ? g.activeTabId : null
+      // Why: persisted MRU may reference tabs that no longer exist. Sanitize
+      // against the live tabOrder, then ensure the current active tab sits at
+      // the tail so the first close after restore jumps back to the previous
+      // tab rather than falling through to neighbor selection.
+      const sanitizedRecent = sanitizeRecentTabIds(g.recentTabIds, tabOrder)
+      const recentTabIds =
+        activeTabId && sanitizedRecent.at(-1) !== activeTabId
+          ? [...sanitizedRecent.filter((id) => id !== activeTabId), activeTabId]
+          : sanitizedRecent
       return {
         ...g,
         tabOrder,
-        activeTabId: g.activeTabId && validTabIds.has(g.activeTabId) ? g.activeTabId : null
+        activeTabId,
+        recentTabIds
       }
     })
     const hydratedGroups = validatedGroups.filter((group, index) => {
@@ -203,7 +215,18 @@ function hydrateLegacyFormat(
     }
 
     tabsByWorktree[worktreeId] = tabs
-    groupsByWorktree[worktreeId] = [{ id: groupId, worktreeId, activeTabId, tabOrder }]
+    groupsByWorktree[worktreeId] = [
+      {
+        id: groupId,
+        worktreeId,
+        activeTabId,
+        tabOrder,
+        // Why: legacy sessions don't persist MRU; seed with the active tab so
+        // the first close after a legacy restore still behaves MRU-ish (falls
+        // back to neighbor selection if only one tab is in the stack).
+        recentTabIds: activeTabId ? [activeTabId] : []
+      }
+    ]
     activeGroupIdByWorktree[worktreeId] = groupId
     layoutByWorktree[worktreeId] = { type: 'leaf', groupId }
   }

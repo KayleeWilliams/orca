@@ -99,6 +99,13 @@ export type TabGroup = {
   worktreeId: string
   activeTabId: string | null
   tabOrder: string[] // canonical visual order of tab IDs
+  /** Per-group MRU stack (oldest → most-recent at the tail). Drives which tab
+   *  becomes active when the current active tab closes: we pop back to the
+   *  previously-active tab instead of jumping to a visual neighbor. Scoped to
+   *  the group so split panes keep independent histories. Optional because
+   *  sessions persisted before this field was added still hydrate cleanly —
+   *  hydration seeds from activeTabId. */
+  recentTabIds?: string[]
 }
 
 // ─── Terminal Tab (legacy — used by persistence and TerminalContentSlice) ─

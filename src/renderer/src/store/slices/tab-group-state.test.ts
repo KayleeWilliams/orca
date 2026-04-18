@@ -5,9 +5,12 @@ import {
   findGroupForTab,
   ensureGroup,
   pickNeighbor,
+  pickNextActiveTab,
+  pushRecentTabId,
+  sanitizeRecentTabIds,
   updateGroup,
   patchTab
-} from './tabs-helpers'
+} from './tab-group-state'
 
 function makeTab(overrides: Partial<Tab> & { id: string; worktreeId: string }): Tab {
   return {
@@ -86,6 +89,63 @@ describe('pickNeighbor', () => {
 
   it('returns null for missing item', () => {
     expect(pickNeighbor(['a', 'b'], 'x')).toBeNull()
+  })
+})
+
+describe('pushRecentTabId', () => {
+  it('appends a new id to the tail', () => {
+    expect(pushRecentTabId(['a', 'b'], 'c')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('moves an existing id to the tail', () => {
+    expect(pushRecentTabId(['a', 'b', 'c'], 'b')).toEqual(['a', 'c', 'b'])
+  })
+
+  it('is a no-op when the id is already at the tail', () => {
+    const input = ['a', 'b']
+    expect(pushRecentTabId(input, 'b')).toBe(input)
+  })
+
+  it('handles undefined as empty', () => {
+    expect(pushRecentTabId(undefined, 'a')).toEqual(['a'])
+  })
+})
+
+describe('sanitizeRecentTabIds', () => {
+  it('drops ids not present in tabOrder', () => {
+    expect(sanitizeRecentTabIds(['a', 'b', 'c'], ['a', 'c'])).toEqual(['a', 'c'])
+  })
+
+  it('keeps only the last occurrence of duplicates', () => {
+    expect(sanitizeRecentTabIds(['a', 'b', 'a', 'c', 'b'], ['a', 'b', 'c'])).toEqual([
+      'a',
+      'c',
+      'b'
+    ])
+  })
+
+  it('returns empty for undefined or empty input', () => {
+    expect(sanitizeRecentTabIds(undefined, ['a'])).toEqual([])
+    expect(sanitizeRecentTabIds([], ['a'])).toEqual([])
+  })
+})
+
+describe('pickNextActiveTab', () => {
+  it('returns the most-recent non-closing id', () => {
+    expect(pickNextActiveTab(['a', 'b', 'c'], ['a', 'c', 'b'], 'b')).toBe('c')
+  })
+
+  it('skips the closing id if it appears in MRU', () => {
+    expect(pickNextActiveTab(['a', 'b', 'c'], ['a', 'b', 'c'], 'c')).toBe('b')
+  })
+
+  it('falls back to visual neighbor when MRU is empty or has only the closing id', () => {
+    expect(pickNextActiveTab(['a', 'b', 'c'], [], 'b')).toBe('c')
+    expect(pickNextActiveTab(['a', 'b', 'c'], ['b'], 'b')).toBe('c')
+  })
+
+  it('falls back to left neighbor when closing the rightmost and MRU is empty', () => {
+    expect(pickNextActiveTab(['a', 'b', 'c'], undefined, 'c')).toBe('b')
   })
 })
 
