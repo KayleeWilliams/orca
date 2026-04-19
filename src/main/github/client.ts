@@ -305,17 +305,31 @@ function buildWorkItemListArgs(args: {
       out.push('--label', label)
     }
   }
-  if (kind === 'pr' && query.reviewRequested) {
-    out.push('--review-requested', query.reviewRequested)
-  }
-  if (kind === 'pr' && query.reviewedBy) {
-    out.push('--reviewed-by', query.reviewedBy)
-  }
-  if (kind === 'pr' && query.scope === 'pr' && query.state === 'open' && query.freeText === '') {
+  if (
+    kind === 'pr' &&
+    query.scope === 'pr' &&
+    query.state === 'open' &&
+    query.freeText === '' &&
+    !query.reviewRequested &&
+    !query.reviewedBy
+  ) {
     out.push('--draft')
   }
+
+  // review-requested and reviewed-by are not supported as standalone gh CLI flags,
+  // so they must be passed as GitHub search qualifiers via --search.
+  const searchParts: string[] = []
+  if (kind === 'pr' && query.reviewRequested) {
+    searchParts.push(`review-requested:${query.reviewRequested}`)
+  }
+  if (kind === 'pr' && query.reviewedBy) {
+    searchParts.push(`reviewed-by:${query.reviewedBy}`)
+  }
   if (query.freeText) {
-    out.push('--search', query.freeText)
+    searchParts.push(query.freeText)
+  }
+  if (searchParts.length > 0) {
+    out.push('--search', searchParts.join(' '))
   }
   return out
 }
