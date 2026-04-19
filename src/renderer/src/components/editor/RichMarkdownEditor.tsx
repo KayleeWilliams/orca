@@ -18,6 +18,7 @@ import {
 } from './RichMarkdownLinkBubble'
 import { useLinkBubble } from './useLinkBubble'
 import { useEditorScrollRestore } from './useEditorScrollRestore'
+import { useModifierHeldClass } from './useModifierHeldClass'
 import { registerPendingEditorFlush } from './editor-pending-flush'
 import { createRichMarkdownKeyHandler } from './rich-markdown-key-handler'
 import { normalizeSoftBreaks } from './rich-markdown-normalize'
@@ -313,6 +314,8 @@ export default function RichMarkdownEditor({
   }, [flushPendingSerialization])
 
   useEditorScrollRestore(scrollContainerRef, scrollCacheKey, editor)
+
+  useModifierHeldClass(rootRef, isMac)
 
   // Why: the custom Image extension reads filePath from editor.storage to resolve
   // relative image src values to file:// URLs for display. After updating the

@@ -490,6 +490,15 @@
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   text-underline-offset: 2px;
+}
+
+/* Why: plain click places the caret inside the contenteditable region, so the
+   link only activates on Cmd/Ctrl-click. Surface the pointer affordance only
+   while that modifier is held so users can discover it without being misled
+   into expecting a plain click to open. Class is toggled by RichMarkdownEditor
+   in response to keydown/keyup of the platform modifier. */
+.rich-markdown-mod-held .rich-markdown-editor a,
+.rich-markdown-mod-held .rich-markdown-editor .ProseMirror a {
   cursor: pointer;
 }
 
