@@ -42,9 +42,9 @@ function matchesFilter(
   }
 }
 
-/** Sort worktrees within each group by most recent agent activity (descending). */
-function sortByActivity(worktrees: DashboardWorktreeCard[]): DashboardWorktreeCard[] {
-  return [...worktrees].sort((a, b) => b.latestActivityAt - a.latestActivityAt)
+/** Sort worktrees by most recently started agent (descending). */
+function sortByStartTime(worktrees: DashboardWorktreeCard[]): DashboardWorktreeCard[] {
+  return [...worktrees].sort((a, b) => b.latestStartedAt - a.latestStartedAt)
 }
 
 export function useDashboardFilter(
@@ -62,16 +62,16 @@ export function useDashboardFilter(
     const filtered = groups
       .map((group) => ({
         ...group,
-        worktrees: sortByActivity(
+        worktrees: sortByStartTime(
           group.worktrees.filter((wt) => matchesFilter(wt, filter, checkedWorktreeIds))
         )
       }))
       .filter((group) => group.worktrees.length > 0)
 
-    // Sort repo groups by their most active worktree
+    // Sort repo groups by their most recently started agent
     return filtered.sort((a, b) => {
-      const aMax = a.worktrees[0]?.latestActivityAt ?? 0
-      const bMax = b.worktrees[0]?.latestActivityAt ?? 0
+      const aMax = a.worktrees[0]?.latestStartedAt ?? 0
+      const bMax = b.worktrees[0]?.latestStartedAt ?? 0
       return bMax - aMax
     })
   }, [groups, filter, checkedWorktreeIds])

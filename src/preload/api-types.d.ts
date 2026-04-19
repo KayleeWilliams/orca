@@ -411,11 +411,7 @@ export type PreloadApi = {
   }
   agentHooks: {
     claudeStatus: () => Promise<AgentHookInstallStatus>
-    claudeInstall: () => Promise<AgentHookInstallStatus>
-    claudeRemove: () => Promise<AgentHookInstallStatus>
     codexStatus: () => Promise<AgentHookInstallStatus>
-    codexInstall: () => Promise<AgentHookInstallStatus>
-    codexRemove: () => Promise<AgentHookInstallStatus>
   }
   preflight: PreflightApi
   notifications: {

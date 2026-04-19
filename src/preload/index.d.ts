@@ -155,11 +155,7 @@ type CliApi = {
 
 type AgentHooksApi = {
   claudeStatus: () => Promise<AgentHookInstallStatus>
-  claudeInstall: () => Promise<AgentHookInstallStatus>
-  claudeRemove: () => Promise<AgentHookInstallStatus>
   codexStatus: () => Promise<AgentHookInstallStatus>
-  codexInstall: () => Promise<AgentHookInstallStatus>
-  codexRemove: () => Promise<AgentHookInstallStatus>
 }
 
 type NotificationsApi = {

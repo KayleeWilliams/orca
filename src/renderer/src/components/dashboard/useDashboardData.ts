@@ -13,6 +13,11 @@ export type DashboardAgentRow = {
   agentType: AgentType
   state: string
   source: 'agent' | 'heuristic'
+  /** When this agent first began reporting status. Derived from the oldest
+   *  stateHistory entry, falling back to updatedAt when no history exists yet.
+   *  Used to sort agents by when they started. 0 for heuristic rows that have
+   *  no explicit status record. */
+  startedAt: number
 }
 
 export type DashboardWorktreeCard = {
@@ -22,9 +27,9 @@ export type DashboardWorktreeCard = {
    *  Priority: blocked > working > done > idle.
    *  `waiting` is folded into `blocked` — both are attention-needed states. */
   dominantState: 'working' | 'blocked' | 'done' | 'idle'
-  /** Most recent agent updatedAt across all agents in this worktree.
-   *  Used to sort the dashboard by most recent activity. 0 if no agents. */
-  latestActivityAt: number
+  /** Most recent startedAt across all agents in this worktree. Used to bubble
+   *  worktrees with newly-started agents to the top of their repo group. */
+  latestStartedAt: number
 }
 
 export type DashboardRepoGroup = {
@@ -87,7 +92,11 @@ function buildAgentRowsForWorktree(
           tab,
           agentType: entry.agentType ?? inferAgentTypeFromTitle(entry.terminalTitle ?? tab.title),
           state: entry.state,
-          source: 'agent'
+          source: 'agent',
+          // Why: the oldest stateHistory entry's startedAt is the agent's original
+          // "first seen" timestamp. When history is empty the entry is brand new,
+          // so updatedAt is the best start-time approximation available.
+          startedAt: entry.stateHistory[0]?.startedAt ?? entry.updatedAt
         })
       }
     } else if (tab.ptyId) {
@@ -101,7 +110,11 @@ function buildAgentRowsForWorktree(
           agentType: inferAgentTypeFromTitle(tab.title),
           // Map heuristic 'permission' to 'blocked' for dashboard consistency
           state: heuristicStatus === 'permission' ? 'blocked' : heuristicStatus,
-          source: 'heuristic'
+          source: 'heuristic',
+          // Why: heuristic rows have no explicit start timestamp. 0 sorts them
+          // after any agent with a real start time — acceptable because these
+          // rows exist only as a best-effort visibility backstop.
+          startedAt: 0
         })
       }
     }
@@ -121,17 +134,21 @@ function buildDashboardData(
       .filter((w) => !w.isArchived)
       .map((worktree) => {
         const agents = buildAgentRowsForWorktree(worktree.id, tabsByWorktree, agentStatusByPaneKey)
-        let latestActivityAt = 0
+        // Why: sort agents within a worktree newest-first so the most recently
+        // started agent appears at the top. The dashboard answers "what did I
+        // start most recently?", not "what has been running longest".
+        agents.sort((a, b) => b.startedAt - a.startedAt)
+        let latestStartedAt = 0
         for (const agent of agents) {
-          if (agent.entry && agent.entry.updatedAt > latestActivityAt) {
-            latestActivityAt = agent.entry.updatedAt
+          if (agent.startedAt > latestStartedAt) {
+            latestStartedAt = agent.startedAt
           }
         }
         return {
           worktree,
           agents,
           dominantState: computeDominantState(agents),
-          latestActivityAt
+          latestStartedAt
         } satisfies DashboardWorktreeCard
       })
 

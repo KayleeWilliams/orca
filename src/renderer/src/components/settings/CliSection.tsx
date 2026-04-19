@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Copy, Download, FolderOpen, RefreshCw } from 'lucide-react'
+import { Check, Copy, FolderOpen, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CliInstallStatus } from '../../../../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../../../../shared/agent-hook-types'
@@ -59,7 +59,6 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
     codex: null,
     loading: true
   })
-  const [busyHook, setBusyHook] = useState<'claude' | 'codex' | null>(null)
 
   const refreshHookStatus = useCallback(async (): Promise<void> => {
     setHookStatuses((prev) => ({ ...prev, loading: true }))
@@ -73,21 +72,6 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
       setHookStatuses((prev) => ({ ...prev, loading: false }))
     }
   }, [])
-
-  const handleInstallHook = async (agent: 'claude' | 'codex'): Promise<void> => {
-    setBusyHook(agent)
-    try {
-      await (agent === 'claude'
-        ? window.api.agentHooks.claudeInstall()
-        : window.api.agentHooks.codexInstall())
-      toast.success(`Installed Orca ${agent === 'claude' ? 'Claude' : 'Codex'} hooks.`)
-      await refreshHookStatus()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : `Failed to install ${agent} hooks.`)
-    } finally {
-      setBusyHook(null)
-    }
-  }
 
   const refreshStatus = async (): Promise<void> => {
     setLoading(true)
@@ -287,15 +271,18 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
                   variant="ghost"
                   size="icon-xs"
                   onClick={() => void refreshHookStatus()}
-                  disabled={hookStatuses.loading || busyHook !== null}
+                  disabled={hookStatuses.loading}
                   aria-label="Refresh hook status"
                 >
                   <RefreshCw className="size-3.5" />
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground/70">
-                Orca installs Claude and Codex global hooks so agent lifecycle updates flow into the
-                sidebar automatically.
+                {/* Why: hooks are auto-installed at app startup. Surfacing the
+                result as read-only status avoids a toggle whose "Remove" would
+                be silently reverted on next launch. */}
+                Orca installs Claude and Codex global hooks at startup so agent lifecycle updates
+                flow into the sidebar automatically.
               </p>
               <div className="mt-2 space-y-2">
                 {(
@@ -322,26 +309,14 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
                         </p>
                       </div>
                       {installed ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="gap-1.5 text-green-600 dark:text-green-400"
-                          disabled
-                        >
+                        <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                           <Check className="size-3.5" />
                           Installed
-                        </Button>
+                        </span>
                       ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={busyHook !== null || hookStatuses.loading}
-                          onClick={() => void handleInstallHook(agent)}
-                        >
-                          <Download className="size-3.5" />
-                          {busyHook === agent ? 'Installing…' : 'Install'}
-                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          {hookStatuses.loading ? '…' : 'Pending next launch'}
+                        </span>
                       )}
                     </div>
                   )

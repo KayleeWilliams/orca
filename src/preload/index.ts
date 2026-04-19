@@ -457,15 +457,7 @@ const api = {
   agentHooks: {
     claudeStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:claudeStatus'),
-    claudeInstall: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:claudeInstall'),
-    claudeRemove: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:claudeRemove'),
-    codexStatus: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:codexStatus'),
-    codexInstall: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:codexInstall'),
-    codexRemove: (): Promise<AgentHookInstallStatus> => ipcRenderer.invoke('agentHooks:codexRemove')
+    codexStatus: (): Promise<AgentHookInstallStatus> => ipcRenderer.invoke('agentHooks:codexStatus')
   },
 
   preflight: {
