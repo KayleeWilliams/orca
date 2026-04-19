@@ -1,8 +1,16 @@
+/* eslint-disable max-lines -- Why: MarkdownPreview owns rendering, link interception,
+search, and viewport state for the preview surface in one place so markdown
+behavior stays coherent across split panes and preview tabs. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import remarkFrontmatter from 'remark-frontmatter'
+import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
+import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeSlug from 'rehype-slug'
 import { extractFrontMatter } from './markdown-frontmatter'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -10,11 +18,11 @@ import type { Components } from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAppStore } from '@/store'
-import { toast } from 'sonner'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { scrollTopCache, setWithLRU } from '@/lib/scroll-cache'
-import { getMarkdownPreviewLinkTarget } from './markdown-preview-links'
-import { absolutePathToFileUri, resolveMarkdownLinkTarget } from './markdown-internal-links'
+import { detectLanguage } from '@/lib/language-detect'
+import type { Worktree } from '../../../../shared/types'
+import { fileUrlToAbsolutePath, resolveMarkdownPreviewHref } from './markdown-preview-links'
 import { useLocalImageSrc } from './useLocalImageSrc'
 import CodeBlockCopyButton from './CodeBlockCopyButton'
 import MermaidBlock from './MermaidBlock'
@@ -32,15 +40,102 @@ type MarkdownPreviewProps = {
   filePath: string
   worktreeId: string
   scrollCacheKey: string
+  initialAnchor?: string | null
+}
+
+const markdownPreviewSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary', 'kbd', 'sub', 'sup', 'ins'],
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'id'],
+    a: [...(defaultSchema.attributes?.a ?? []), 'href', 'title'],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []),
+      ['className', /^language-[\w-]+$/, 'math-inline', 'math-display']
+    ],
+    div: [...(defaultSchema.attributes?.div ?? []), ['className', /^language-[\w-]+$/], 'align'],
+    details: [...(defaultSchema.attributes?.details ?? []), 'open'],
+    h1: [...(defaultSchema.attributes?.h1 ?? []), 'id'],
+    h2: [...(defaultSchema.attributes?.h2 ?? []), 'id'],
+    h3: [...(defaultSchema.attributes?.h3 ?? []), 'id'],
+    h4: [...(defaultSchema.attributes?.h4 ?? []), 'id'],
+    h5: [...(defaultSchema.attributes?.h5 ?? []), 'id'],
+    h6: [...(defaultSchema.attributes?.h6 ?? []), 'id'],
+    img: [...(defaultSchema.attributes?.img ?? []), 'src', 'alt', 'title', 'width', 'height'],
+    input: [...(defaultSchema.attributes?.input ?? []), 'type', 'checked', 'disabled'],
+    pre: [...(defaultSchema.attributes?.pre ?? []), ['className', /^language-[\w-]+$/]],
+    span: [...(defaultSchema.attributes?.span ?? []), ['className', /^hljs(?:-[\w-]+)?$/]],
+    td: [...(defaultSchema.attributes?.td ?? []), 'align'],
+    th: [...(defaultSchema.attributes?.th ?? []), 'align']
+  }
+}
+
+function getMarkdownPreviewNodeText(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node)
+  }
+  if (Array.isArray(node)) {
+    return node.map((child) => getMarkdownPreviewNodeText(child)).join('')
+  }
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return getMarkdownPreviewNodeText(node.props.children)
+  }
+  return ''
+}
+
+function createMarkdownPreviewHeadingId(
+  headingText: string,
+  headingIdCounts: Map<string, number>
+): string {
+  const baseId =
+    headingText
+      .trim()
+      .toLowerCase()
+      .replace(/[`~!@#$%^&*()=+[\]{}|\\:;"'<>,.?/]+/g, '')
+      .replace(/\s+/g, '-') || 'section'
+  const duplicateCount = headingIdCounts.get(baseId) ?? 0
+  headingIdCounts.set(baseId, duplicateCount + 1)
+  return duplicateCount === 0 ? baseId : `${baseId}-${duplicateCount}`
+}
+
+function normalizeMarkdownPreviewAbsolutePath(absolutePath: string): string {
+  return absolutePath.replaceAll('\\', '/')
+}
+
+function findWorktreeForMarkdownPreviewPath(
+  worktreesByRepo: Record<string, Worktree[]>,
+  absolutePath: string
+): Worktree | null {
+  const normalizedAbsolutePath = normalizeMarkdownPreviewAbsolutePath(absolutePath)
+  let bestMatch: Worktree | null = null
+  let bestMatchLength = -1
+
+  for (const worktrees of Object.values(worktreesByRepo)) {
+    for (const worktree of worktrees) {
+      const normalizedWorktreePath = normalizeMarkdownPreviewAbsolutePath(worktree.path)
+      if (
+        normalizedAbsolutePath === normalizedWorktreePath ||
+        normalizedAbsolutePath.startsWith(`${normalizedWorktreePath}/`)
+      ) {
+        if (normalizedWorktreePath.length > bestMatchLength) {
+          bestMatch = worktree
+          bestMatchLength = normalizedWorktreePath.length
+        }
+      }
+    }
+  }
+
+  return bestMatch
 }
 
 export default function MarkdownPreview({
   content,
   filePath,
   worktreeId,
-  scrollCacheKey
+  scrollCacheKey,
+  initialAnchor = null
 }: MarkdownPreviewProps): React.JSX.Element {
-  const activateMarkdownLink = useAppStore((s) => s.activateMarkdownLink)
   const worktreeRoot = useAppStore((s) => {
     for (const list of Object.values(s.worktreesByRepo)) {
       const wt = list.find((w) => w.id === worktreeId)
@@ -50,15 +145,18 @@ export default function MarkdownPreview({
     }
     return null
   })
-  const isMac = navigator.userAgent.includes('Mac')
   const rootRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const matchesRef = useRef<HTMLElement[]>([])
+  const lastAppliedInitialAnchorRef = useRef<string | null>(null)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [matchCount, setMatchCount] = useState(0)
   const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
+  const openFile = useAppStore((s) => s.openFile)
+  const openMarkdownPreview = useAppStore((s) => s.openMarkdownPreview)
+  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const settings = useAppStore((s) => s.settings)
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const editorFontSize = computeEditorFontSize(14, editorFontZoomLevel)
@@ -78,6 +176,7 @@ export default function MarkdownPreview({
       .replace(/\r?\n(?:---|\+\+\+)\r?\n?$/, '')
       .trim()
   }, [frontMatter])
+  const headingIdCounts = new Map<string, number>()
 
   // Why: each split pane needs its own markdown preview viewport even when the
   // underlying file is shared. The caller passes a pane-scoped cache key so
@@ -180,6 +279,31 @@ export default function MarkdownPreview({
     setActiveMatchIndex(-1)
   }, [])
 
+  const scrollToAnchor = useCallback((rawAnchor: string): boolean => {
+    const container = rootRef.current
+    const body = bodyRef.current
+    if (!container || !body) {
+      return false
+    }
+
+    const decodedAnchor = decodeURIComponent(rawAnchor)
+    let target: HTMLElement | null = null
+    for (const candidate of body.querySelectorAll<HTMLElement>('[id]')) {
+      if (candidate.id === decodedAnchor) {
+        target = candidate
+        break
+      }
+    }
+    if (!target) {
+      return false
+    }
+
+    const targetTop = target.offsetTop
+    container.scrollTo({ top: Math.max(0, targetTop - 12) })
+    target.focus({ preventScroll: true })
+    return true
+  }, [])
+
   useEffect(() => {
     if (isSearchOpen) {
       inputRef.current?.focus()
@@ -216,6 +340,30 @@ export default function MarkdownPreview({
   useEffect(() => {
     setActiveMarkdownPreviewSearchMatch(matchesRef.current, activeMatchIndex)
   }, [activeMatchIndex, matchCount])
+
+  useLayoutEffect(() => {
+    if (!initialAnchor || initialAnchor === lastAppliedInitialAnchorRef.current) {
+      return
+    }
+
+    let frameId = 0
+    let attempts = 0
+
+    const tryRevealAnchor = (): void => {
+      if (scrollToAnchor(initialAnchor)) {
+        lastAppliedInitialAnchorRef.current = initialAnchor
+        return
+      }
+
+      attempts += 1
+      if (attempts < 30) {
+        frameId = window.requestAnimationFrame(tryRevealAnchor)
+      }
+    }
+
+    tryRevealAnchor()
+    return () => window.cancelAnimationFrame(frameId)
+  }, [content, initialAnchor, scrollToAnchor])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -260,27 +408,12 @@ export default function MarkdownPreview({
           return
         }
 
-        // Why: anchor links target headings within the same preview. rehype-slug
-        // adds matching id attributes to headings so querySelector can find them.
-        // No modifier key required — same-page scroll is non-destructive.
+        event.preventDefault()
+
         if (href.startsWith('#')) {
-          event.preventDefault()
-          // Why: anchors in markdown are often URL-encoded (e.g. `#%C3%A9-foo`)
-          // while rehype-slug produces unicode ids, so decode before matching.
-          let id = href.slice(1)
-          try {
-            id = decodeURIComponent(id)
-          } catch {
-            // Malformed %-escapes: fall back to the raw fragment.
-          }
-          const el = rootRef.current?.querySelector(`[id="${CSS.escape(id)}"]`)
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
+          void scrollToAnchor(href.slice(1))
           return
         }
-
-        event.preventDefault()
 
         // Why: Cmd/Ctrl+Shift-click is the OS escape hatch — always hand the
         // link to the system default handler, bypassing the classifier. For a
@@ -322,10 +455,57 @@ export default function MarkdownPreview({
           return
         }
 
-        void activateMarkdownLink(href, {
-          sourceFilePath: filePath,
-          worktreeId,
-          worktreeRoot
+        const target = resolveMarkdownPreviewHref(href, filePath)
+        if (!target) {
+          return
+        }
+
+        if (target.protocol === 'http:' || target.protocol === 'https:') {
+          void window.api.shell.openUrl(target.toString())
+          return
+        }
+
+        if (target.protocol !== 'file:') {
+          return
+        }
+
+        const absolutePath = fileUrlToAbsolutePath(target)
+        if (!absolutePath) {
+          return
+        }
+
+        if (absolutePath === filePath && target.hash) {
+          void scrollToAnchor(target.hash.slice(1))
+          return
+        }
+
+        const targetWorktree = findWorktreeForMarkdownPreviewPath(worktreesByRepo, absolutePath)
+        if (!targetWorktree) {
+          void window.api.shell.openFileUri(target.toString())
+          return
+        }
+
+        const relativePath = absolutePath.slice(targetWorktree.path.length + 1)
+        const language = detectLanguage(absolutePath)
+        if (language === 'markdown') {
+          openMarkdownPreview(
+            {
+              filePath: absolutePath,
+              relativePath,
+              worktreeId: targetWorktree.id,
+              language
+            },
+            { anchor: target.hash ? target.hash.slice(1) : null }
+          )
+          return
+        }
+
+        openFile({
+          filePath: absolutePath,
+          relativePath,
+          worktreeId: targetWorktree.id,
+          language,
+          mode: 'edit'
         })
       }
 
@@ -370,6 +550,72 @@ export default function MarkdownPreview({
         return <>{children}</>
       }
       return <CodeBlockCopyButton {...props}>{children}</CodeBlockCopyButton>
+    },
+    h1: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h1 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h1>
+      )
+    },
+    h2: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h2 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h2>
+      )
+    },
+    h3: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h3 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h3>
+      )
+    },
+    h4: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h4 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h4>
+      )
+    },
+    h5: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h5 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h5>
+      )
+    },
+    h6: ({ children, ...props }) => {
+      const id = createMarkdownPreviewHeadingId(
+        getMarkdownPreviewNodeText(children),
+        headingIdCounts
+      )
+      return (
+        <h6 {...props} id={id} tabIndex={-1}>
+          {children}
+        </h6>
+      )
     }
   }
 
@@ -468,8 +714,18 @@ export default function MarkdownPreview({
         )}
         <Markdown
           components={components}
-          remarkPlugins={[remarkGfm, remarkFrontmatter]}
-          rehypePlugins={[rehypeSlug, rehypeHighlight]}
+          remarkPlugins={[remarkGfm, remarkBreaks, remarkFrontmatter, remarkMath]}
+          // Why: raw HTML must be sanitized before any trusted renderer expands
+          // it into richer DOM. Running KaTeX and syntax highlighting after
+          // sanitize preserves VS Code-style math/code rendering without having
+          // to whitelist KaTeX's generated markup in the user-content schema.
+          rehypePlugins={[
+            rehypeRaw,
+            [rehypeSanitize, markdownPreviewSanitizeSchema],
+            rehypeSlug,
+            rehypeHighlight,
+            rehypeKatex
+          ]}
         >
           {renderedContent}
         </Markdown>

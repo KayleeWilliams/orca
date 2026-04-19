@@ -184,6 +184,16 @@ const SHORTCUT_GROUP_DEFINITIONS: ShortcutGroupDefinition[] = [
         keys: ({ mod, shift, enter }) => [mod, shift, enter]
       }
     ]
+  },
+  {
+    title: 'Editors',
+    items: [
+      {
+        action: 'Show Markdown Preview',
+        searchKeywords: ['shortcut', 'editor', 'markdown', 'preview'],
+        keys: ({ mod, shift }) => [mod, shift, 'V']
+      }
+    ]
   }
 ]
 

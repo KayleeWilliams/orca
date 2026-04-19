@@ -319,7 +319,7 @@ export function createExternalWatchEventHandler(
       for (const file of state.openFiles) {
         if (
           file.worktreeId === target.worktreeId &&
-          file.mode === 'edit' &&
+          (file.mode === 'edit' || file.mode === 'markdown-preview') &&
           file.externalMutation &&
           createOrUpdatePaths.has(normalizeAbsolutePath(file.filePath))
         ) {
@@ -422,7 +422,11 @@ export function getOverflowExternalReloadTargets(
   const notifications: ExternalWatchNotification[] = []
 
   for (const file of state.openFiles) {
-    if (file.worktreeId !== target.worktreeId || file.mode !== 'edit' || file.isDirty) {
+    if (
+      file.worktreeId !== target.worktreeId ||
+      (file.mode !== 'edit' && file.mode !== 'markdown-preview') ||
+      file.isDirty
+    ) {
       continue
     }
     if (file.externalMutation) {
@@ -488,7 +492,10 @@ function collectDeletedOpenEditorIds(
   }
   const result: string[] = []
   for (const file of openFiles) {
-    if (file.worktreeId !== worktreeId || file.mode !== 'edit') {
+    if (
+      file.worktreeId !== worktreeId ||
+      (file.mode !== 'edit' && file.mode !== 'markdown-preview')
+    ) {
       continue
     }
     if (deletePaths.has(normalizeAbsolutePath(file.filePath))) {
@@ -523,7 +530,10 @@ function hasRenameCorrelatedCreate(
   const deletedIdSet = new Set(deletedOpenEditorIds)
   const deletedBasenames = new Set<string>()
   for (const file of openFiles) {
-    if (file.worktreeId !== worktreeId || file.mode !== 'edit') {
+    if (
+      file.worktreeId !== worktreeId ||
+      (file.mode !== 'edit' && file.mode !== 'markdown-preview')
+    ) {
       continue
     }
     if (!deletedIdSet.has(file.id)) {
