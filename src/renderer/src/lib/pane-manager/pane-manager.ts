@@ -99,10 +99,11 @@ export class PaneManager {
 
     // Why: wrapInSplit reparents the existing container via replaceChild +
     // appendChild, which can cause the browser to reset scrollTop on xterm's
-    // viewport element to 0 during the next layout. Capture the scroll-at-
-    // bottom state now, before the DOM reparenting corrupts it.
+    // viewport element to 0 during the next layout. Capture the exact scroll
+    // position now, before the DOM reparenting corrupts it.
     const buf = existing.terminal.buffer.active
-    const wasAtBottom = buf.viewportY >= buf.baseY
+    const savedViewportY = buf.viewportY
+    const wasAtBottom = savedViewportY >= buf.baseY
 
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
 
@@ -111,6 +112,8 @@ export class PaneManager {
     // asynchronous scroll events during its layout phase.
     if (wasAtBottom) {
       existing.terminal.scrollToBottom()
+    } else {
+      existing.terminal.scrollToLine(savedViewportY)
     }
 
     // Open terminal for new pane
@@ -134,11 +137,10 @@ export class PaneManager {
     // fitPanes (from onLayoutChanged → queueResizeAll) reflows the buffer
     // for the new column count, which changes baseY. If the browser's
     // rendering pipeline fired a scroll event that reset viewportY between
-    // our synchronous scrollToBottom above and the rAF, safeFit's
-    // wasAtBottom check would read false and skip scrollToBottom. This
-    // final rAF runs after fitPanes (FIFO ordering) and unconditionally
-    // restores the scroll-to-bottom state.
-    if (wasAtBottom) {
+    // our synchronous restore above and the rAF, the position would be
+    // lost. This final rAF runs after fitPanes (FIFO ordering) and
+    // unconditionally restores the saved scroll state.
+    {
       const existingPaneId = existing.id
       requestAnimationFrame(() => {
         // Why: replayTerminalLayout can create a PaneManager, split panes,
@@ -154,7 +156,11 @@ export class PaneManager {
         if (!live) {
           return
         }
-        live.terminal.scrollToBottom()
+        if (wasAtBottom) {
+          live.terminal.scrollToBottom()
+        } else {
+          live.terminal.scrollToLine(savedViewportY)
+        }
       })
     }
 
