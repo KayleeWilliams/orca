@@ -34,9 +34,9 @@ export function findLineByContent(terminal: Terminal, content: string): number {
   return -1
 }
 
-export function captureScrollState(
-  terminal: Terminal
-): NonNullable<ManagedPaneInternal['pendingScrollRestore']> {
+type ScrollState = { wasAtBottom: boolean; firstVisibleLineContent: string }
+
+export function captureScrollState(terminal: Terminal): ScrollState {
   const buf = terminal.buffer.active
   const viewportY = buf.viewportY
   const wasAtBottom = viewportY >= buf.baseY
@@ -44,10 +44,7 @@ export function captureScrollState(
   return { wasAtBottom, firstVisibleLineContent }
 }
 
-export function restoreScrollState(
-  terminal: Terminal,
-  state: NonNullable<ManagedPaneInternal['pendingScrollRestore']>
-): void {
+export function restoreScrollState(terminal: Terminal, state: ScrollState): void {
   if (state.wasAtBottom) {
     terminal.scrollToBottom()
     return
@@ -55,20 +52,6 @@ export function restoreScrollState(
   const target = findLineByContent(terminal, state.firstVisibleLineContent)
   if (target >= 0) {
     terminal.scrollToLine(target)
-  }
-}
-
-function restoreScrollAfterFit(
-  pane: ManagedPaneInternal,
-  pending: { wasAtBottom: boolean; firstVisibleLineContent: string }
-): void {
-  if (pending.wasAtBottom) {
-    pane.terminal.scrollToBottom()
-    return
-  }
-  const target = findLineByContent(pane.terminal, pending.firstVisibleLineContent)
-  if (target >= 0) {
-    pane.terminal.scrollToLine(target)
   }
 }
 
@@ -86,15 +69,10 @@ type TreeOpsCallbacks = {
 
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
-    const pending = pane.pendingScrollRestore
-    pane.pendingScrollRestore = null
-
     const buf = pane.terminal.buffer.active
-    const wasAtBottom = pending ? pending.wasAtBottom : buf.viewportY >= buf.baseY
+    const wasAtBottom = buf.viewportY >= buf.baseY
     pane.fitAddon.fit()
-    if (pending) {
-      restoreScrollAfterFit(pane, pending)
-    } else if (wasAtBottom) {
+    if (wasAtBottom) {
       pane.terminal.scrollToBottom()
     }
   } catch {
@@ -105,25 +83,14 @@ export function safeFit(pane: ManagedPaneInternal): void {
 export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of panes.values()) {
     try {
-      const pending = pane.pendingScrollRestore
-      pane.pendingScrollRestore = null
-
       const dims = pane.fitAddon.proposeDimensions()
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
-        // Dimensions unchanged — no fit needed, but scroll may still need
-        // restoring after DOM reparenting corrupted viewportY.
-        if (pending) {
-          restoreScrollAfterFit(pane, pending)
-        }
         continue
       }
-
       const buf = pane.terminal.buffer.active
-      const wasAtBottom = pending ? pending.wasAtBottom : buf.viewportY >= buf.baseY
+      const wasAtBottom = buf.viewportY >= buf.baseY
       pane.fitAddon.fit()
-      if (pending) {
-        restoreScrollAfterFit(pane, pending)
-      } else if (wasAtBottom) {
+      if (wasAtBottom) {
         pane.terminal.scrollToBottom()
       }
     } catch {

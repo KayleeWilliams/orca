@@ -105,10 +105,10 @@ export class PaneManager {
     const divider = this.createDividerWrapped(isVertical)
 
     // Why: wrapInSplit reparents the existing container, which causes the
-    // browser to asynchronously reset scrollTop to 0. Capture scroll state
-    // before reparenting so fitAllPanes can restore it after reflow.
+    // browser to asynchronously reset scrollTop to 0 during layout. Capture
+    // the scroll state before reparenting so we can restore it after all
+    // layout and reflow have settled.
     const scrollState = captureScrollState(existing.terminal)
-    existing.pendingScrollRestore = scrollState
 
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
 
@@ -121,19 +121,25 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: belt-and-suspenders — fitAllPanes should have already restored
-    // scroll via pendingScrollRestore, but if a browser scroll event
-    // drifted viewportY between fitPanes and this rAF, re-apply.
+    // Why: double-rAF guarantees this runs AFTER:
+    //  - fitPanes (from queueResizeAll rAF) which does fit() + basic scroll
+    //  - xterm Viewport sync (deferred callback from resize)
+    //  - any browser scroll events from DOM reparenting layout
+    // A single rAF runs in the same frame as fitPanes and can be overwritten
+    // by the Viewport's deferred sync. The double-rAF runs in the NEXT frame
+    // when everything has settled, giving us the last word on scroll position.
     const existingPaneId = existing.id
     requestAnimationFrame(() => {
-      if (this.destroyed) {
-        return
-      }
-      const live = this.panes.get(existingPaneId)
-      if (!live) {
-        return
-      }
-      restoreScrollState(live.terminal, scrollState)
+      requestAnimationFrame(() => {
+        if (this.destroyed) {
+          return
+        }
+        const live = this.panes.get(existingPaneId)
+        if (!live) {
+          return
+        }
+        restoreScrollState(live.terminal, scrollState)
+      })
     })
 
     return this.toPublic(newPane)

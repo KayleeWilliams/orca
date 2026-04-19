@@ -133,8 +133,7 @@ export function createPaneDOM(
     unicode11Addon,
     webLinksAddon,
     webglAddon: null,
-    compositionHandler: null,
-    pendingScrollRestore: null
+    compositionHandler: null
   }
 
   // Focus handler: clicking a pane makes it active and explicitly focuses
