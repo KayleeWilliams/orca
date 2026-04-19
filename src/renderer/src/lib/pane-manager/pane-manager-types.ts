@@ -48,6 +48,13 @@ export type ManagedPane = {
 // Internal types
 // ---------------------------------------------------------------------------
 
+export type ScrollState = {
+  wasAtBottom: boolean
+  firstVisibleLineContent: string
+  viewportY: number
+  totalLines: number
+}
+
 export type ManagedPaneInternal = {
   xtermContainer: HTMLElement
   linkTooltip: HTMLElement
@@ -58,6 +65,12 @@ export type ManagedPaneInternal = {
   webLinksAddon: WebLinksAddon
   // Stored so disposePane() can remove it and avoid a memory leak.
   compositionHandler: (() => void) | null
+  // Why: during splitPane, multiple async operations (rAFs, ResizeObserver
+  // debounce, WebGL context loss) may independently attempt scroll
+  // restoration. This field acts as a lock: when set, safeFit and other
+  // intermediate fit paths skip their own scroll restoration, deferring to
+  // the splitPane's final authoritative restore.
+  pendingSplitScrollState: ScrollState | null
 } & ManagedPane
 
 export type DropZone = 'top' | 'bottom' | 'left' | 'right'

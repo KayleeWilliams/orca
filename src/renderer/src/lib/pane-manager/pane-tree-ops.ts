@@ -1,5 +1,10 @@
 import type { Terminal } from '@xterm/xterm'
-import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
+import type {
+  DropZone,
+  ManagedPaneInternal,
+  PaneStyleOptions,
+  ScrollState
+} from './pane-manager-types'
 import { createDivider } from './pane-divider'
 
 // ---------------------------------------------------------------------------
@@ -50,13 +55,6 @@ export function findLineByContent(terminal: Terminal, content: string, hintRatio
   return bestMatch
 }
 
-type ScrollState = {
-  wasAtBottom: boolean
-  firstVisibleLineContent: string
-  viewportY: number
-  totalLines: number
-}
-
 export function captureScrollState(terminal: Terminal): ScrollState {
   const buf = terminal.buffer.active
   const viewportY = buf.viewportY
@@ -92,6 +90,10 @@ type TreeOpsCallbacks = {
 
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
+    if (pane.pendingSplitScrollState) {
+      pane.fitAddon.fit()
+      return
+    }
     const state = captureScrollState(pane.terminal)
     pane.fitAddon.fit()
     restoreScrollState(pane.terminal, state)
@@ -105,6 +107,10 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
     try {
       const dims = pane.fitAddon.proposeDimensions()
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
+        continue
+      }
+      if (pane.pendingSplitScrollState) {
+        pane.fitAddon.fit()
         continue
       }
       const state = captureScrollState(pane.terminal)

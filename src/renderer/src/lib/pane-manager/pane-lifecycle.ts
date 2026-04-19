@@ -133,7 +133,8 @@ export function createPaneDOM(
     unicode11Addon,
     webLinksAddon,
     webglAddon: null,
-    compositionHandler: null
+    compositionHandler: null,
+    pendingSplitScrollState: null
   }
 
   // Focus handler: clicking a pane makes it active and explicitly focuses
@@ -270,9 +271,13 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       // scrolled positions and would undo scroll restoration from splitPane.
       requestAnimationFrame(() => {
         try {
-          const scrollState = captureScrollState(pane.terminal)
-          pane.fitAddon.fit()
-          restoreScrollState(pane.terminal, scrollState)
+          if (pane.pendingSplitScrollState) {
+            pane.fitAddon.fit()
+          } else {
+            const scrollState = captureScrollState(pane.terminal)
+            pane.fitAddon.fit()
+            restoreScrollState(pane.terminal, scrollState)
+          }
           pane.terminal.refresh(0, pane.terminal.rows - 1)
         } catch {
           /* ignore — pane may have been disposed in the meantime */

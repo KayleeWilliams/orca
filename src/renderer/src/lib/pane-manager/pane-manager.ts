@@ -110,6 +110,14 @@ export class PaneManager {
     // layout and reflow have settled.
     const scrollState = captureScrollState(existing.terminal)
 
+    // Why: multiple async operations fire after the split (rAFs from
+    // queueResizeAll, WebGL context loss, ResizeObserver 150ms debounce).
+    // Each would independently try to restore scroll, potentially to wrong
+    // positions due to intermediate buffer states. The lock makes safeFit
+    // and fitAllPanesInternal skip their own scroll restoration, leaving
+    // the authoritative restore to the timeout below.
+    existing.pendingSplitScrollState = scrollState
+
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
 
     openTerminal(newPane)
@@ -121,15 +129,13 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: wrapInSplit + openTerminal cause synchronous DOM mutations that
-    // trigger xterm's internal resize, reflowing the buffer and changing line
-    // numbering. The content-match strategy (findLineByContent) must run
-    // after all synchronous layout has settled. A single rAF is sufficient
-    // because the resize already happened synchronously; the rAF just waits
-    // for the current JS turn to complete so no further layout callbacks can
-    // overwrite the restored scroll position.
+    // Why: the authoritative scroll restore fires after a 200ms delay —
+    // long enough for all async operations to settle (rAFs at ~16ms,
+    // ResizeObserver debounce at 150ms, WebGL context loss rAFs). Using
+    // setTimeout instead of rAF ensures we always have the last word
+    // regardless of how many intermediate fit cycles occur.
     const existingPaneId = existing.id
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       if (this.destroyed) {
         return
       }
@@ -137,8 +143,9 @@ export class PaneManager {
       if (!live) {
         return
       }
+      live.pendingSplitScrollState = null
       restoreScrollState(live.terminal, scrollState)
-    })
+    }, 200)
 
     return this.toPublic(newPane)
   }
