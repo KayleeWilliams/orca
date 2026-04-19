@@ -76,6 +76,11 @@ export function useTerminalPaneContextMenu({
     if (selection) {
       await window.api.ui.writeClipboardText(selection)
     }
+    // Why: Radix returns focus to the menu trigger (the pane container) on
+    // close, but xterm.js only accepts input when its own helper textarea is
+    // focused. Without this, the user has to click the pane again before
+    // typing works (see #592).
+    pane.terminal.focus()
   }
 
   const onPaste = async (): Promise<void> => {
@@ -86,6 +91,7 @@ export function useTerminalPaneContextMenu({
     const text = await window.api.ui.readClipboardText()
     if (text) {
       pane.terminal.paste(text)
+      pane.terminal.focus()
       return
     }
     // Why: clipboard has no text — check for an image (e.g. screenshot).
@@ -95,6 +101,11 @@ export function useTerminalPaneContextMenu({
     if (filePath) {
       pane.terminal.paste(filePath)
     }
+    // Why: Radix returns focus to the menu trigger (the pane container) on
+    // close, but xterm.js only accepts input when its own helper textarea is
+    // focused. Without this, the user has to click the pane again before
+    // typing works (see #592).
+    pane.terminal.focus()
   }
 
   const onSplitRight = (): void => {
