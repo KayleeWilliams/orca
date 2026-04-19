@@ -505,6 +505,13 @@ function BrowserPagePane({
   }, [browserTab.id, browserTab.url])
 
   useEffect(() => {
+    // Why: if the user is actively typing in the address bar (focused), do not
+    // clobber their in-progress query when an async URL update lands (e.g., the
+    // configured default URL resolving after a new tab opens). Syncing will
+    // resume on the next legitimate URL change after the input loses focus.
+    if (document.activeElement === addressBarInputRef.current) {
+      return
+    }
     setAddressBarValue(toDisplayUrl(browserTab.url))
   }, [browserTab.url])
 
@@ -1056,7 +1063,11 @@ function BrowserPagePane({
       activeLoadFailureRef.current = null
       lastKnownWebviewUrlRef.current = normalizeBrowserNavigationUrl(currentUrl) ?? currentUrl
       rememberLiveBrowserUrl(browserTab.id, currentUrl)
-      setAddressBarValue(toDisplayUrl(currentUrl))
+      // Why: don't overwrite in-progress typing. See comment on the
+      // browserTab.url sync effect above.
+      if (document.activeElement !== addressBarInputRef.current) {
+        setAddressBarValue(toDisplayUrl(currentUrl))
+      }
       onSetUrlRef.current(browserTab.id, currentUrl)
       if (keepAddressBarFocusRef.current && currentUrl === ORCA_BROWSER_BLANK_URL) {
         focusAddressBarNow()
@@ -1083,7 +1094,10 @@ function BrowserPagePane({
       }
       lastKnownWebviewUrlRef.current = normalizeBrowserNavigationUrl(currentUrl) ?? currentUrl
       rememberLiveBrowserUrl(browserTab.id, currentUrl)
-      setAddressBarValue(toDisplayUrl(currentUrl))
+      // Why: don't overwrite in-progress typing (see above).
+      if (document.activeElement !== addressBarInputRef.current) {
+        setAddressBarValue(toDisplayUrl(currentUrl))
+      }
       onSetUrlRef.current(browserTab.id, currentUrl)
       onUpdatePageStateRef.current(browserTab.id, {
         title: webview.getTitle() || currentUrl,

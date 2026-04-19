@@ -162,8 +162,11 @@ export default function BrowserAddressBar({
     }
   }, [open, suggestions.length])
 
+  // Why: auto-select the top suggestion so Enter navigates to the best match
+  // without an extra ArrowDown. Fall back to clearing selection when nothing
+  // matches so stale highlights don't persist.
   useEffect(() => {
-    setSelectedValue('')
+    setSelectedValue(suggestions[0]?.url ?? '')
   }, [suggestions])
 
   return (
