@@ -42,17 +42,9 @@ export function RichMarkdownToolbar({
         return null
       }
       return {
-        paragraph: ed.isActive('paragraph'),
-        h1: ed.isActive('heading', { level: 1 }),
-        h2: ed.isActive('heading', { level: 2 }),
-        h3: ed.isActive('heading', { level: 3 }),
         bold: ed.isActive('bold'),
         italic: ed.isActive('italic'),
         strike: ed.isActive('strike'),
-        bulletList: ed.isActive('bulletList'),
-        orderedList: ed.isActive('orderedList'),
-        taskList: ed.isActive('taskList'),
-        blockquote: ed.isActive('blockquote'),
         link: ed.isActive('link')
       }
     }
@@ -61,28 +53,28 @@ export function RichMarkdownToolbar({
   return (
     <div className="rich-markdown-editor-toolbar">
       <RichMarkdownToolbarButton
-        active={active?.paragraph ?? false}
+        active={false}
         label="Body text"
         onClick={() => editor?.chain().focus().setParagraph().run()}
       >
         <Pilcrow className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.h1 ?? false}
+        active={false}
         label="Heading 1"
         onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
       >
         <Heading1 className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.h2 ?? false}
+        active={false}
         label="Heading 2"
         onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
       >
         <Heading2 className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.h3 ?? false}
+        active={false}
         label="Heading 3"
         onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
       >
@@ -112,21 +104,21 @@ export function RichMarkdownToolbar({
       </RichMarkdownToolbarButton>
       <Separator />
       <RichMarkdownToolbarButton
-        active={active?.bulletList ?? false}
+        active={false}
         label="Bullet list"
         onClick={() => editor?.chain().focus().toggleBulletList().run()}
       >
         <List className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.orderedList ?? false}
+        active={false}
         label="Numbered list"
         onClick={() => editor?.chain().focus().toggleOrderedList().run()}
       >
         <ListOrdered className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.taskList ?? false}
+        active={false}
         label="Checklist"
         onClick={() => editor?.chain().focus().toggleTaskList().run()}
       >
@@ -134,7 +126,7 @@ export function RichMarkdownToolbar({
       </RichMarkdownToolbarButton>
       <Separator />
       <RichMarkdownToolbarButton
-        active={active?.blockquote ?? false}
+        active={false}
         label="Quote"
         onClick={() => editor?.chain().focus().toggleBlockquote().run()}
       >
