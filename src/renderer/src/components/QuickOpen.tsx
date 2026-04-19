@@ -1,5 +1,5 @@
 /* oxlint-disable max-lines */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { File } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
@@ -63,6 +63,7 @@ export default function QuickOpen(): React.JSX.Element | null {
   const [files, setFiles] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   // Find active worktree path
   const worktreePath = useMemo(() => {
@@ -138,6 +139,13 @@ export default function QuickOpen(): React.JSX.Element | null {
     return results.slice(0, 50)
   }, [files, query])
 
+  // Why: when the query changes the first result becomes selected, but cmdk
+  // doesn't reset the list's scrollTop. Without this, a previously scrolled
+  // list leaves the new top result clipped behind the input border.
+  useEffect(() => {
+    listRef.current?.scrollTo(0, 0)
+  }, [query, visible])
+
   const handleSelect = useCallback(
     (relativePath: string) => {
       if (!activeWorktreeId || !worktreePath) {
@@ -178,16 +186,10 @@ export default function QuickOpen(): React.JSX.Element | null {
       title="Go to file"
       description="Search for a file to open"
     >
-      <CommandInput
-        placeholder="Go to file..."
-        value={query}
-        onValueChange={setQuery}
-      />
-      <CommandList>
+      <CommandInput placeholder="Go to file..." value={query} onValueChange={setQuery} />
+      <CommandList ref={listRef} className="p-2">
         {loading ? (
-          <div className="py-6 text-center text-sm text-muted-foreground">
-            Loading files...
-          </div>
+          <div className="py-6 text-center text-sm text-muted-foreground">Loading files...</div>
         ) : loadError ? (
           <div className="py-6 text-center text-sm text-red-500">{loadError}</div>
         ) : filtered.length === 0 ? (
