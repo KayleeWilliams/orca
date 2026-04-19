@@ -121,25 +121,23 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: double-rAF guarantees this runs AFTER:
-    //  - fitPanes (from queueResizeAll rAF) which does fit() + basic scroll
-    //  - xterm Viewport sync (deferred callback from resize)
-    //  - any browser scroll events from DOM reparenting layout
-    // A single rAF runs in the same frame as fitPanes and can be overwritten
-    // by the Viewport's deferred sync. The double-rAF runs in the NEXT frame
-    // when everything has settled, giving us the last word on scroll position.
+    // Why: wrapInSplit + openTerminal cause synchronous DOM mutations that
+    // trigger xterm's internal resize, reflowing the buffer and changing line
+    // numbering. The content-match strategy (findLineByContent) must run
+    // after all synchronous layout has settled. A single rAF is sufficient
+    // because the resize already happened synchronously; the rAF just waits
+    // for the current JS turn to complete so no further layout callbacks can
+    // overwrite the restored scroll position.
     const existingPaneId = existing.id
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (this.destroyed) {
-          return
-        }
-        const live = this.panes.get(existingPaneId)
-        if (!live) {
-          return
-        }
-        restoreScrollState(live.terminal, scrollState)
-      })
+      if (this.destroyed) {
+        return
+      }
+      const live = this.panes.get(existingPaneId)
+      if (!live) {
+        return
+      }
+      restoreScrollState(live.terminal, scrollState)
     })
 
     return this.toPublic(newPane)

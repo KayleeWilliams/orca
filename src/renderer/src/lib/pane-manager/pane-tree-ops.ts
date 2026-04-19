@@ -69,12 +69,9 @@ type TreeOpsCallbacks = {
 
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
-    const buf = pane.terminal.buffer.active
-    const wasAtBottom = buf.viewportY >= buf.baseY
+    const state = captureScrollState(pane.terminal)
     pane.fitAddon.fit()
-    if (wasAtBottom) {
-      pane.terminal.scrollToBottom()
-    }
+    restoreScrollState(pane.terminal, state)
   } catch {
     // Container may not have dimensions yet
   }
@@ -87,12 +84,9 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
         continue
       }
-      const buf = pane.terminal.buffer.active
-      const wasAtBottom = buf.viewportY >= buf.baseY
+      const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()
-      if (wasAtBottom) {
-        pane.terminal.scrollToBottom()
-      }
+      restoreScrollState(pane.terminal, state)
     } catch {
       /* ignore */
     }
