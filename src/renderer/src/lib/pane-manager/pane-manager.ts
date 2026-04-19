@@ -133,14 +133,21 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: belt-and-suspenders for the scroll position — the deferred
+    // Why: belt-and-suspenders for the at-bottom case only. The deferred
     // fitPanes (from onLayoutChanged → queueResizeAll) reflows the buffer
     // for the new column count, which changes baseY. If the browser's
     // rendering pipeline fired a scroll event that reset viewportY between
-    // our synchronous restore above and the rAF, the position would be
-    // lost. This final rAF runs after fitPanes (FIFO ordering) and
-    // unconditionally restores the saved scroll state.
-    {
+    // our synchronous scrollToBottom above and the rAF, safeFit's
+    // wasAtBottom check would read false and skip scrollToBottom. This
+    // final rAF runs after fitPanes (FIFO ordering) and unconditionally
+    // restores the scroll-to-bottom state.
+    //
+    // For the partially-scrolled case we intentionally do NOT restore
+    // savedViewportY here — xterm.js internally adjusts viewportY during
+    // the reflow triggered by fit() to account for changed line wrapping,
+    // and overwriting it with the stale pre-reflow value would shift the
+    // viewport to the wrong content.
+    if (wasAtBottom) {
       const existingPaneId = existing.id
       requestAnimationFrame(() => {
         // Why: replayTerminalLayout can create a PaneManager, split panes,
@@ -156,11 +163,7 @@ export class PaneManager {
         if (!live) {
           return
         }
-        if (wasAtBottom) {
-          live.terminal.scrollToBottom()
-        } else {
-          live.terminal.scrollToLine(savedViewportY)
-        }
+        live.terminal.scrollToBottom()
       })
     }
 
