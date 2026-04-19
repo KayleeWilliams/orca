@@ -11,6 +11,7 @@ vi.mock('electron', () => {
       }),
       quit: vi.fn(),
       exit: vi.fn(),
+      isPackaged: false,
       commandLine: {
         appendSwitch: vi.fn()
       }
@@ -21,6 +22,70 @@ vi.mock('electron', () => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+})
+
+describe('patchPackagedProcessPath', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  const originalHome = process.env.HOME
+  const originalPath = process.env.PATH
+
+  function setPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: platform
+    })
+  }
+
+  afterEach(() => {
+    if (originalPlatform) {
+      Object.defineProperty(process, 'platform', originalPlatform)
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME
+    } else {
+      process.env.HOME = originalHome
+    }
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+  })
+
+  it('prepends agent-CLI install dirs (~/.opencode/bin, ~/.vite-plus/bin) for packaged darwin runs', async () => {
+    const { app } = await import('electron')
+    const { patchPackagedProcessPath } = await import('./configure-process')
+
+    setPlatform('darwin')
+    Object.defineProperty(app, 'isPackaged', { configurable: true, value: true })
+    process.env.HOME = '/Users/tester'
+    process.env.PATH = '/usr/bin:/bin'
+
+    patchPackagedProcessPath()
+
+    const segments = (process.env.PATH ?? '').split(':')
+    // Why: issue #829 — ~/.opencode/bin and ~/.vite-plus/bin are the documented
+    // fallback install locations for the opencode and Pi CLI install scripts.
+    // Without them on PATH, GUI-launched Orca reports both as "Not installed"
+    // even when `which` resolves them in the user's shell.
+    expect(segments).toContain('/Users/tester/.opencode/bin')
+    expect(segments).toContain('/Users/tester/.vite-plus/bin')
+    expect(segments).toContain('/Users/tester/bin')
+  })
+
+  it('leaves PATH untouched when the app is not packaged', async () => {
+    const { app } = await import('electron')
+    const { patchPackagedProcessPath } = await import('./configure-process')
+
+    setPlatform('darwin')
+    Object.defineProperty(app, 'isPackaged', { configurable: true, value: false })
+    process.env.HOME = '/Users/tester'
+    process.env.PATH = '/usr/bin:/bin'
+
+    patchPackagedProcessPath()
+
+    expect(process.env.PATH).toBe('/usr/bin:/bin')
+  })
 })
 
 describe('configureDevUserDataPath', () => {
