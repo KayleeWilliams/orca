@@ -242,10 +242,7 @@ describe('CodexRuntimeHomeService', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { CodexRuntimeHomeService } = await import('./runtime-home-service')
-    const service = new CodexRuntimeHomeService(store as never)
-    writeFileSync(runtimeAuthPath, '{"account":"managed"}\n', 'utf-8')
-
-    service.syncForCurrentSelection()
+    new CodexRuntimeHomeService(store as never)
 
     expect(store.updateSettings).toHaveBeenCalledWith({ activeCodexManagedAccountId: null })
     expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
@@ -260,6 +257,20 @@ describe('CodexRuntimeHomeService', () => {
     expect(service.prepareForCodexLaunch()).toBe(join(testState.fakeHomeDir, '.codex'))
     expect(service.prepareForRateLimitFetch()).toBe(join(testState.fakeHomeDir, '.codex'))
     expect(existsSync(join(testState.fakeHomeDir, '.codex'))).toBe(true)
+  })
+
+  it('does not overwrite auth.json when no managed account was ever active', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"original"}\n', 'utf-8')
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+
+    writeFileSync(runtimeAuthPath, '{"account":"external-switch"}\n', 'utf-8')
+    service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"external-switch"}\n')
   })
 
   it('imports legacy managed-home history into the shared runtime history', async () => {
