@@ -75,9 +75,7 @@ describe('listWorkItems', () => {
           }
         ])
       })
-
     const items = await listWorkItems('/repo-root', 10, 'assignee:@me')
-
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       1,
       [
@@ -156,9 +154,7 @@ describe('listWorkItems', () => {
         }
       ])
     })
-
     const items = await listWorkItems('/repo-root', 10, 'is:pr is:draft')
-
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       [
@@ -193,6 +189,23 @@ describe('listWorkItems', () => {
     ])
   })
 
+  it('passes review-requested as a --search qualifier (gh CLI has no dedicated flag)', async () => {
+    getOwnerRepoMock.mockResolvedValueOnce({ owner: 'acme', repo: 'widgets' })
+    ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: '[]' })
+
+    await listWorkItems('/repo-root', 10, 'review-requested:@me is:open')
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      expect.arrayContaining(['--search', 'review-requested:@me']),
+      { cwd: '/repo-root' }
+    )
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(['--review-requested']),
+      expect.anything()
+    )
+  })
+
   it('returns open issues and PRs for the all-open preset query', async () => {
     getOwnerRepoMock.mockResolvedValueOnce({ owner: 'acme', repo: 'widgets' })
     ghExecFileAsyncMock
@@ -225,9 +238,7 @@ describe('listWorkItems', () => {
           }
         ])
       })
-
     const items = await listWorkItems('/repo-root', 10, 'is:open')
-
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       [
         'issue',
