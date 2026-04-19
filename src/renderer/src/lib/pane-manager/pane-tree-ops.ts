@@ -12,36 +12,58 @@ import { createDivider } from './pane-divider'
 // line wrap to 2 rows). To preserve the user's scroll position, we find
 // the buffer line whose content matches what was at the top of the viewport
 // before the reflow, then scroll to it.
-export function findLineByContent(terminal: Terminal, content: string): number {
+//
+// Why hintRatio: terminals frequently contain duplicate short lines (shell
+// prompts, repeated log prefixes). A prefix-only search returns the first
+// match which may be far from the actual scroll position. The proportional
+// hint (viewportY / totalLines before reflow) disambiguates by preferring
+// the match closest to the expected position in the reflowed buffer.
+export function findLineByContent(terminal: Terminal, content: string, hintRatio?: number): number {
   if (!content) {
     return -1
   }
   const buf = terminal.buffer.active
   const totalLines = buf.baseY + terminal.rows
-  // Use a prefix for matching — after reflow, lines may be split differently
-  // so an exact match on the full line won't work. Use enough chars to be
-  // unambiguous but short enough to survive wrapping.
-  const prefix = content.substring(0, Math.min(content.length, 20))
+  const prefix = content.substring(0, Math.min(content.length, 40))
   if (!prefix) {
     return -1
   }
+
+  const hintLine = hintRatio !== undefined ? Math.round(hintRatio * totalLines) : -1
+
+  let bestMatch = -1
+  let bestDistance = Infinity
+
   for (let i = 0; i < totalLines; i++) {
     const line = buf.getLine(i)?.translateToString(true)?.trimEnd() ?? ''
     if (line.startsWith(prefix)) {
-      return i
+      if (hintLine < 0) {
+        return i
+      }
+      const distance = Math.abs(i - hintLine)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        bestMatch = i
+      }
     }
   }
-  return -1
+  return bestMatch
 }
 
-type ScrollState = { wasAtBottom: boolean; firstVisibleLineContent: string }
+type ScrollState = {
+  wasAtBottom: boolean
+  firstVisibleLineContent: string
+  viewportY: number
+  totalLines: number
+}
 
 export function captureScrollState(terminal: Terminal): ScrollState {
   const buf = terminal.buffer.active
   const viewportY = buf.viewportY
   const wasAtBottom = viewportY >= buf.baseY
   const firstVisibleLineContent = buf.getLine(viewportY)?.translateToString(true)?.trimEnd() ?? ''
-  return { wasAtBottom, firstVisibleLineContent }
+  const totalLines = buf.baseY + terminal.rows
+  return { wasAtBottom, firstVisibleLineContent, viewportY, totalLines }
 }
 
 export function restoreScrollState(terminal: Terminal, state: ScrollState): void {
@@ -49,7 +71,8 @@ export function restoreScrollState(terminal: Terminal, state: ScrollState): void
     terminal.scrollToBottom()
     return
   }
-  const target = findLineByContent(terminal, state.firstVisibleLineContent)
+  const hintRatio = state.totalLines > 0 ? state.viewportY / state.totalLines : undefined
+  const target = findLineByContent(terminal, state.firstVisibleLineContent, hintRatio)
   if (target >= 0) {
     terminal.scrollToLine(target)
   }

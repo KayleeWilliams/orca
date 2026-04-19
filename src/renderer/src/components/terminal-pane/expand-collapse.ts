@@ -1,4 +1,5 @@
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
+import { captureScrollState, restoreScrollState } from '@/lib/pane-manager/pane-tree-ops'
 
 type ExpandCollapseState = {
   expandedPaneIdRef: React.MutableRefObject<number | null>
@@ -101,12 +102,9 @@ export function createExpandCollapseActions(state: ExpandCollapseState) {
       const panes = manager.getPanes()
       for (const p of panes) {
         try {
-          const buf = p.terminal.buffer.active
-          const wasAtBottom = buf.viewportY >= buf.baseY
+          const state = captureScrollState(p.terminal)
           p.fitAddon.fit()
-          if (wasAtBottom) {
-            p.terminal.scrollToBottom()
-          }
+          restoreScrollState(p.terminal, state)
         } catch {
           /* container may not have dimensions */
         }

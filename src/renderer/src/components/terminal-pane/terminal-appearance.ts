@@ -8,6 +8,7 @@ import {
   resolveEffectiveTerminalAppearance
 } from '@/lib/terminal-theme'
 import { buildFontFamily } from './layout-serialization'
+import { captureScrollState, restoreScrollState } from '@/lib/pane-manager/pane-tree-ops'
 import type { PtyTransport } from './pty-transport'
 
 export function applyTerminalAppearance(
@@ -36,14 +37,9 @@ export function applyTerminalAppearance(
     pane.terminal.options.fontWeightBold = terminalFontWeights.fontWeightBold
     pane.terminal.options.macOptionIsMeta = settings.terminalMacOptionAsAlt === 'true'
     try {
-      // Why: preserve scroll-to-bottom state across the reflow so appearance
-      // changes (theme, font size, etc.) don't make the terminal scroll up.
-      const buf = pane.terminal.buffer.active
-      const wasAtBottom = buf.viewportY >= buf.baseY
+      const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()
-      if (wasAtBottom) {
-        pane.terminal.scrollToBottom()
-      }
+      restoreScrollState(pane.terminal, state)
     } catch {
       /* ignore */
     }
