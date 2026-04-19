@@ -635,6 +635,18 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
   // the file becomes live-unresolved again. trackedConflictPaths is tied to
   // sidebar presence, not tab lifecycle.
   closeFile: (fileId) => {
+    // Why: capture untitled + dirty state before the set() call mutates the
+    // store, so we can decide after the tab is removed whether the on-disk
+    // file should be cleaned up (untitled files closed without edits are
+    // throwaway and should not litter the worktree).
+    const preClose = get().openFiles.find((f) => f.id === fileId)
+    // Why: also check editorDrafts as a safety net — isDirty is set via a
+    // debounced callback from the editor, so there's a narrow window where
+    // content exists but isDirty hasn't flushed yet. A draft means the user
+    // typed something, so the file should be kept.
+    const hasDraft = !!get().editorDrafts[fileId]
+    const shouldDeleteFromDisk = preClose?.isUntitled === true && !preClose.isDirty && !hasDraft
+
     set((s) => {
       const closedFile = s.openFiles.find((f) => f.id === fileId)
       const idx = s.openFiles.findIndex((f) => f.id === fileId)
@@ -727,7 +739,10 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
 
       let nextRecentlyClosed = s.recentlyClosedEditorTabsByWorktree
       const wtRecent = closedFile?.worktreeId
-      if (closedFile && wtRecent) {
+      // Why: untitled files that were never edited will be deleted from disk
+      // after close. Adding them to the reopen stack would let Cmd+Shift+T
+      // try to reopen a path that no longer exists.
+      if (closedFile && wtRecent && !shouldDeleteFromDisk) {
         const { id: _id, isDirty: _dirty, ...snap } = closedFile
         const stack = s.recentlyClosedEditorTabsByWorktree[wtRecent] ?? []
         nextRecentlyClosed = {
@@ -763,6 +778,15 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         recentlyClosedEditorTabsByWorktree: nextRecentlyClosed
       }
     })
+
+    // Why: untitled files that were never edited are empty placeholders — they
+    // exist on disk only because createUntitledMarkdownFile() eagerly writes
+    // them so the editor has a real path to bind to. If the user closes the
+    // tab without typing anything, the file is just clutter. Fire-and-forget
+    // delete; failure (e.g. already removed externally) is harmless.
+    if (shouldDeleteFromDisk && preClose && typeof window !== 'undefined') {
+      void window.api?.fs?.deletePath({ targetPath: preClose.filePath })?.catch(() => {})
+    }
 
     // Why: the unified tab model drives visual tab-bar order and next-active
     // selection (MRU-based, falling back to the visual neighbor). Without
@@ -804,6 +828,17 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
   closeAllFiles: () => {
     const state = get()
     const activeWorktreeId = state.activeWorktreeId
+
+    // Why: same rationale as closeFile — untitled files that were never edited
+    // are empty placeholders that should not survive a "close all" operation.
+    const untitledToDelete = state.openFiles.filter(
+      (f) =>
+        f.isUntitled === true &&
+        !f.isDirty &&
+        !state.editorDrafts[f.id] &&
+        (!activeWorktreeId || f.worktreeId === activeWorktreeId)
+    )
+
     const closingItemIds = Object.values(state.unifiedTabsByWorktree ?? {})
       .flat()
       .filter(
@@ -866,6 +901,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       const closingFiles = s.openFiles.filter((f) => f.worktreeId === activeWorktreeId)
       let nextRecentClosed = s.recentlyClosedEditorTabsByWorktree[activeWorktreeId] ?? []
       for (const f of [...closingFiles].reverse()) {
+        // Why: untitled non-dirty files are deleted from disk after close —
+        // skip them so the reopen stack doesn't reference vanished paths.
+        if (f.isUntitled && !f.isDirty) {
+          continue
+        }
         const { id: _id, isDirty: _dirty, ...snap } = f
         nextRecentClosed = [snap as ClosedEditorTabSnapshot, ...nextRecentClosed].slice(
           0,
@@ -905,6 +945,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         }
       }
     })
+    if (typeof window !== 'undefined') {
+      for (const f of untitledToDelete) {
+        void window.api?.fs?.deletePath({ targetPath: f.filePath })?.catch(() => {})
+      }
+    }
     for (const itemId of closingItemIds) {
       get().closeUnifiedTab?.(itemId)
     }
