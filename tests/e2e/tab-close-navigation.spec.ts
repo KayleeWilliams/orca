@@ -29,53 +29,61 @@ import {
   ensureTerminalVisible
 } from './helpers/store'
 
+/**
+ * Why: take the worktreeId explicitly instead of reading activeWorktreeId
+ * inside the page. Tests in this file deliberately drain other surfaces
+ * (terminals/browser tabs) which can trigger the `shouldDeactivateWorktree`
+ * cascade and clear activeWorktreeId. A helper that silently depends on
+ * activeWorktreeId would then return `[]` and fail in a confusing way. Taking
+ * the id as an argument keeps each test's setup self-contained and order-
+ * independent.
+ */
 async function openSeededEditorTabs(
   page: Parameters<typeof getActiveWorktreeId>[0],
+  worktreeId: string,
   relativePaths: string[]
 ): Promise<string[]> {
-  return page.evaluate((relPaths) => {
-    const store = window.__store
-    if (!store) {
-      return []
-    }
-
-    const state = store.getState()
-    const worktreeId = state.activeWorktreeId
-    if (!worktreeId) {
-      return []
-    }
-
-    const worktree = Object.values(state.worktreesByRepo)
-      .flat()
-      .find((entry) => entry.id === worktreeId)
-    if (!worktree) {
-      return []
-    }
-
-    const separator = worktree.path.includes('\\') ? '\\' : '/'
-    const ids: string[] = []
-    for (const relPath of relPaths) {
-      const filePath = `${worktree.path}${separator}${relPath}`
-      state.openFile({
-        filePath,
-        relativePath: relPath,
-        worktreeId,
-        language: relPath.endsWith('.md')
-          ? 'markdown'
-          : relPath.endsWith('.json')
-            ? 'json'
-            : relPath.endsWith('.ts')
-              ? 'typescript'
-              : 'plaintext',
-        mode: 'edit'
-      })
-      const latest = store.getState().openFiles.find((f) => f.filePath === filePath)
-      if (latest) {
-        ids.push(latest.id)
+  return page.evaluate(
+    ({ wId, relPaths }) => {
+      const store = window.__store
+      if (!store) {
+        return []
       }
-    }
-    return ids
-  }, relativePaths)
+
+      const state = store.getState()
+      const worktree = Object.values(state.worktreesByRepo)
+        .flat()
+        .find((entry) => entry.id === wId)
+      if (!worktree) {
+        return []
+      }
+
+      const separator = worktree.path.includes('\\') ? '\\' : '/'
+      const ids: string[] = []
+      for (const relPath of relPaths) {
+        const filePath = `${worktree.path}${separator}${relPath}`
+        state.openFile({
+          filePath,
+          relativePath: relPath,
+          worktreeId: wId,
+          language: relPath.endsWith('.md')
+            ? 'markdown'
+            : relPath.endsWith('.json')
+              ? 'json'
+              : relPath.endsWith('.ts')
+                ? 'typescript'
+                : 'plaintext',
+          mode: 'edit'
+        })
+        const latest = store.getState().openFiles.find((f) => f.filePath === filePath)
+        if (latest) {
+          ids.push(latest.id)
+        }
+      }
+      return ids
+    },
+    { wId: worktreeId, relPaths: relativePaths }
+  )
 }
 
 async function setActiveFile(
@@ -123,7 +131,7 @@ test.describe('Tab Close Navigation', () => {
   test('closing the active editor tab activates its visual neighbor', async ({ orcaPage }) => {
     const worktreeId = (await getActiveWorktreeId(orcaPage))!
 
-    const fileIds = await openSeededEditorTabs(orcaPage, [
+    const fileIds = await openSeededEditorTabs(orcaPage, worktreeId, [
       'package.json',
       'README.md',
       'tsconfig.json'
@@ -142,18 +150,19 @@ test.describe('Tab Close Navigation', () => {
     const remainingIds = new Set(openFilesAfter.map((f) => f.id))
     expect(remainingIds.has(fileIds[1])).toBe(false)
 
-    // The replacement active file must be one that is still open (the exact
-    // neighbor index is a product decision; the regression in #693 was that
-    // the replacement pointer wasn't in openFiles at all).
+    // Why tsconfig.json specifically: `closeFile` picks `worktreeFiles[closedIdx]`
+    // from the post-close list (editor.ts:681-684). For a middle close on
+    // [pkg, README, tsconfig], closedIdx=1 and the post-close list is
+    // [pkg, tsconfig], so the neighbor is tsconfig.json (fileIds[2]). PR #693
+    // regressed this by leaving `activeFileId` pointing at a closed file — a
+    // laxer assertion like "some open file is active" would have missed that
+    // specific regression, since any order-agnostic fallback would still pass.
     await expect
-      .poll(
-        async () => {
-          const activeId = await getActiveFileId(orcaPage)
-          return activeId != null && remainingIds.has(activeId)
-        },
-        { timeout: 5_000, message: 'activeFileId did not point to a file still in openFiles' }
-      )
-      .toBe(true)
+      .poll(async () => getActiveFileId(orcaPage), {
+        timeout: 5_000,
+        message: 'expected the visual neighbor (tsconfig.json) to become active after close'
+      })
+      .toBe(fileIds[2])
 
     // And the workspace must still be showing an editor, not silently flipping
     // back to terminal while editors remain open.
@@ -169,7 +178,10 @@ test.describe('Tab Close Navigation', () => {
     const worktreeId = (await getActiveWorktreeId(orcaPage))!
 
     // Seed two editor tabs + one diff tab in the same worktree.
-    const editorIds = await openSeededEditorTabs(orcaPage, ['package.json', 'README.md'])
+    const editorIds = await openSeededEditorTabs(orcaPage, worktreeId, [
+      'package.json',
+      'README.md'
+    ])
     expect(editorIds.length).toBe(2)
 
     const diffId = await orcaPage.evaluate((wId) => {
@@ -205,17 +217,20 @@ test.describe('Tab Close Navigation', () => {
     const openFilesAfter = await getOpenFiles(orcaPage, worktreeId)
     const remainingIds = new Set(openFilesAfter.map((f) => f.id))
     expect(remainingIds.has(diffId!)).toBe(false)
-    expect(remainingIds.size).toBeGreaterThan(0)
+    expect(remainingIds.size).toBe(2)
 
+    // Why README.md specifically: the diff tab was appended last
+    // (index 2 in openFiles). Closing it hits the
+    // `closedWorktreeIdx >= worktreeFiles.length` branch in closeFile
+    // (editor.ts:681-683) which picks `worktreeFiles.at(-1)` — the last
+    // remaining file, README.md (editorIds[1]). Asserting the exact ID makes
+    // this a real guard against #693 instead of a tautology.
     await expect
-      .poll(
-        async () => {
-          const activeId = await getActiveFileId(orcaPage)
-          return activeId != null && remainingIds.has(activeId)
-        },
-        { timeout: 5_000, message: 'Closing diff tab left activeFileId pointing at a missing file' }
-      )
-      .toBe(true)
+      .poll(async () => getActiveFileId(orcaPage), {
+        timeout: 5_000,
+        message: 'expected README.md (last remaining) to become active after closing the diff tab'
+      })
+      .toBe(editorIds[1])
   })
 
   /**
@@ -228,6 +243,15 @@ test.describe('Tab Close Navigation', () => {
 
     // Prepare the worktree so only a single editor tab is present as a
     // visible surface: no browser tabs and no terminal tabs.
+    //
+    // Why re-activate at the end: closing the last unified tab for a worktree
+    // that has no editor/browser surfaces triggers the `shouldDeactivateWorktree`
+    // cascade in closeUnifiedTab, which clears activeWorktreeId. That's the
+    // exact behavior this test eventually asserts — but we need the worktree
+    // active again in order to seed the editor that we will close. Re-selecting
+    // it here keeps the helpers below self-contained and the test's setup
+    // order-independent instead of depending on whichever surface-close
+    // happens to leave activeWorktreeId untouched.
     await orcaPage.evaluate((wId) => {
       const store = window.__store
       if (!store) {
@@ -246,9 +270,14 @@ test.describe('Tab Close Navigation', () => {
       for (const bt of state.browserTabsByWorktree[wId] ?? []) {
         state.closeBrowserTab(bt.id)
       }
+
+      // Re-select the worktree if surface-close cascades deactivated it.
+      if (store.getState().activeWorktreeId !== wId) {
+        store.getState().setActiveWorktree(wId)
+      }
     }, worktreeId)
 
-    const editorIds = await openSeededEditorTabs(orcaPage, ['package.json'])
+    const editorIds = await openSeededEditorTabs(orcaPage, worktreeId, ['package.json'])
     expect(editorIds.length).toBe(1)
 
     await setActiveFile(orcaPage, editorIds[0])

@@ -157,12 +157,26 @@ test.describe('Worktree Lifecycle', () => {
   })
 
   /**
-   * Covers PR #598 / #628 / #726: switching worktrees while the right sidebar
-   * is open used to freeze the renderer or tear down the split-group
-   * container. Assert the switch lands on the new worktree and leaves the
-   * sidebar in a usable state.
+   * Worktree switching preserves per-worktree state — specifically
+   * `layoutByWorktree`, `openFiles`, and the right-sidebar UI state across a
+   * round-trip.
+   *
+   * Why a narrowed claim: the original #598 / #628 regressions were renderer
+   * freezes, and #726 was split-group container teardown. Those are
+   * *renderer-side* bugs — a store-level test can't observe a frozen React
+   * render loop (if the renderer hung, `page.evaluate` would hang too, which
+   * looks identical to any other timeout). #726 in particular is already
+   * guarded at the unit level by `anyMountedWorktreeHasLayout` tests per its
+   * PR summary.
+   *
+   * What this test *does* catch: regressions that wipe per-worktree store
+   * state during a switch — e.g. a cascading reducer that clears
+   * `layoutByWorktree[oldWorktreeId]` when activating a new worktree, or a
+   * sidebar-reset side effect attached to `setActiveWorktree`. That's a
+   * smaller claim than "doesn't hang," but it's one this layer can actually
+   * verify.
    */
-  test('switching worktrees with the right sidebar open does not hang the UI', async ({
+  test('switching worktrees preserves per-worktree state across a round-trip', async ({
     orcaPage
   }) => {
     const allIds = await getAllWorktreeIds(orcaPage)
@@ -172,13 +186,23 @@ test.describe('Worktree Lifecycle', () => {
 
     const originalWorktreeId = (await getActiveWorktreeId(orcaPage))!
 
-    // Open the explorer panel in the right sidebar. This is the exact surface
-    // the freeze regressions were reported against.
     await openFileExplorer(orcaPage)
-
-    // Seed an open file so the explorer is doing real rendering work during
-    // the switch, not an empty tree.
     await clickFileInExplorer(orcaPage, ['README.md', 'package.json'])
+
+    // Snapshot the original worktree's state so we can assert preservation
+    // after the round-trip. An empty `openFiles` here would make the second
+    // assertion tautological, so guard that expectation up-front.
+    const originalState = await orcaPage.evaluate((wId) => {
+      const state = window.__store!.getState()
+      return {
+        openFileIds: state.openFiles.filter((f) => f.worktreeId === wId).map((f) => f.id),
+        hasLayout: Boolean(state.layoutByWorktree?.[wId])
+      }
+    }, originalWorktreeId)
+    expect(
+      originalState.openFileIds.length,
+      'expected seeded openFiles on original worktree'
+    ).toBeGreaterThan(0)
 
     const otherWorktreeId = allIds.find((id) => id !== originalWorktreeId)!
     await switchToWorktree(orcaPage, otherWorktreeId)
@@ -186,8 +210,8 @@ test.describe('Worktree Lifecycle', () => {
       .poll(async () => getActiveWorktreeId(orcaPage), { timeout: 10_000 })
       .toBe(otherWorktreeId)
 
-    // The sidebar must still be open and pointing at the explorer tab. A
-    // frozen-renderer regression also tends to lose the sidebar state here.
+    // Sidebar UI state must survive the switch — user shouldn't have to
+    // re-open the explorer after every worktree change.
     await expect
       .poll(
         async () =>
@@ -199,12 +223,24 @@ test.describe('Worktree Lifecycle', () => {
       )
       .toBe(true)
 
-    // Switch back to confirm the round-trip is still responsive — a hang
-    // shows up as a timeout here.
     await switchToWorktree(orcaPage, originalWorktreeId)
     await expect
       .poll(async () => getActiveWorktreeId(orcaPage), { timeout: 10_000 })
       .toBe(originalWorktreeId)
+
+    // Original worktree's state must be intact: the openFiles it had before
+    // the switch are all still present, and its layout entry (if any) was
+    // not torn down. A regression that clears these on setActiveWorktree
+    // would fail here even though `activeWorktreeId` round-tripped cleanly.
+    const afterRoundTrip = await orcaPage.evaluate((wId) => {
+      const state = window.__store!.getState()
+      return {
+        openFileIds: state.openFiles.filter((f) => f.worktreeId === wId).map((f) => f.id),
+        hasLayout: Boolean(state.layoutByWorktree?.[wId])
+      }
+    }, originalWorktreeId)
+    expect(new Set(afterRoundTrip.openFileIds)).toEqual(new Set(originalState.openFileIds))
+    expect(afterRoundTrip.hasLayout).toBe(originalState.hasLayout)
   })
 
   /**
