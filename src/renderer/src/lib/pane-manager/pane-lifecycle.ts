@@ -228,6 +228,17 @@ export function openTerminal(pane: ManagedPaneInternal): void {
   })
 }
 
+export function disposeWebgl(pane: ManagedPaneInternal): void {
+  if (pane.webglAddon) {
+    try {
+      pane.webglAddon.dispose()
+    } catch {
+      /* ignore */
+    }
+    pane.webglAddon = null
+  }
+}
+
 export function attachWebgl(pane: ManagedPaneInternal): void {
   if (!ENABLE_WEBGL_RENDERER || !pane.gpuRenderingEnabled) {
     pane.webglAddon = null

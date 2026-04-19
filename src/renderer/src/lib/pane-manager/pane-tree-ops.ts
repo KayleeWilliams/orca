@@ -1,5 +1,76 @@
+import type { Terminal } from '@xterm/xterm'
 import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
 import { createDivider } from './pane-divider'
+
+// ---------------------------------------------------------------------------
+// Scroll restoration after reflow
+// ---------------------------------------------------------------------------
+
+// Why: xterm.js does NOT adjust viewportY for partially-scrolled buffers
+// during resize/reflow. Line N before reflow shows different content than
+// line N after reflow when wrapping changes (e.g. 80→40 cols makes each
+// line wrap to 2 rows). To preserve the user's scroll position, we find
+// the buffer line whose content matches what was at the top of the viewport
+// before the reflow, then scroll to it.
+export function findLineByContent(terminal: Terminal, content: string): number {
+  if (!content) {
+    return -1
+  }
+  const buf = terminal.buffer.active
+  const totalLines = buf.baseY + terminal.rows
+  // Use a prefix for matching — after reflow, lines may be split differently
+  // so an exact match on the full line won't work. Use enough chars to be
+  // unambiguous but short enough to survive wrapping.
+  const prefix = content.substring(0, Math.min(content.length, 20))
+  if (!prefix) {
+    return -1
+  }
+  for (let i = 0; i < totalLines; i++) {
+    const line = buf.getLine(i)?.translateToString(true)?.trimEnd() ?? ''
+    if (line.startsWith(prefix)) {
+      return i
+    }
+  }
+  return -1
+}
+
+export function captureScrollState(
+  terminal: Terminal
+): NonNullable<ManagedPaneInternal['pendingScrollRestore']> {
+  const buf = terminal.buffer.active
+  const viewportY = buf.viewportY
+  const wasAtBottom = viewportY >= buf.baseY
+  const firstVisibleLineContent = buf.getLine(viewportY)?.translateToString(true)?.trimEnd() ?? ''
+  return { wasAtBottom, firstVisibleLineContent }
+}
+
+export function restoreScrollState(
+  terminal: Terminal,
+  state: NonNullable<ManagedPaneInternal['pendingScrollRestore']>
+): void {
+  if (state.wasAtBottom) {
+    terminal.scrollToBottom()
+    return
+  }
+  const target = findLineByContent(terminal, state.firstVisibleLineContent)
+  if (target >= 0) {
+    terminal.scrollToLine(target)
+  }
+}
+
+function restoreScrollAfterFit(
+  pane: ManagedPaneInternal,
+  pending: { wasAtBottom: boolean; firstVisibleLineContent: string }
+): void {
+  if (pending.wasAtBottom) {
+    pane.terminal.scrollToBottom()
+    return
+  }
+  const target = findLineByContent(pane.terminal, pending.firstVisibleLineContent)
+  if (target >= 0) {
+    pane.terminal.scrollToLine(target)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Split-tree manipulation: detach, insert, promote sibling
@@ -15,32 +86,15 @@ type TreeOpsCallbacks = {
 
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
-    // Why: fitAddon.fit() triggers a terminal reflow that can leave the viewport
-    // at a stale scroll offset, making the terminal appear scrolled up after a
-    // resize. Preserve the scroll-to-bottom state across the reflow.
-    //
-    // After DOM reparenting (e.g. splitPane), the browser asynchronously resets
-    // scrollTop to 0, corrupting xterm's viewportY before we get here. When
-    // pendingScrollRestore is set, restore the saved position BEFORE fit() so
-    // xterm's reflow has the correct starting viewportY. After fit(), only
-    // explicitly restore for the at-bottom case — for partially-scrolled
-    // terminals, trust xterm's internal reflow adjustment.
     const pending = pane.pendingScrollRestore
     pane.pendingScrollRestore = null
-    let wasAtBottom: boolean
-    if (pending) {
-      wasAtBottom = pending.wasAtBottom
-      if (pending.wasAtBottom) {
-        pane.terminal.scrollToBottom()
-      } else {
-        pane.terminal.scrollToLine(pending.viewportY)
-      }
-    } else {
-      const buf = pane.terminal.buffer.active
-      wasAtBottom = buf.viewportY >= buf.baseY
-    }
+
+    const buf = pane.terminal.buffer.active
+    const wasAtBottom = pending ? pending.wasAtBottom : buf.viewportY >= buf.baseY
     pane.fitAddon.fit()
-    if (wasAtBottom) {
+    if (pending) {
+      restoreScrollAfterFit(pane, pending)
+    } else if (wasAtBottom) {
       pane.terminal.scrollToBottom()
     }
   } catch {
@@ -56,32 +110,20 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
 
       const dims = pane.fitAddon.proposeDimensions()
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
+        // Dimensions unchanged — no fit needed, but scroll may still need
+        // restoring after DOM reparenting corrupted viewportY.
         if (pending) {
-          if (pending.wasAtBottom) {
-            pane.terminal.scrollToBottom()
-          } else {
-            pane.terminal.scrollToLine(pending.viewportY)
-          }
+          restoreScrollAfterFit(pane, pending)
         }
         continue
       }
 
-      let wasAtBottom: boolean
-      if (pending) {
-        wasAtBottom = pending.wasAtBottom
-        if (pending.wasAtBottom) {
-          pane.terminal.scrollToBottom()
-        } else {
-          pane.terminal.scrollToLine(pending.viewportY)
-        }
-      } else {
-        const buf = pane.terminal.buffer.active
-        wasAtBottom = buf.viewportY >= buf.baseY
-      }
-
+      const buf = pane.terminal.buffer.active
+      const wasAtBottom = pending ? pending.wasAtBottom : buf.viewportY >= buf.baseY
       pane.fitAddon.fit()
-
-      if (wasAtBottom) {
+      if (pending) {
+        restoreScrollAfterFit(pane, pending)
+      } else if (wasAtBottom) {
         pane.terminal.scrollToBottom()
       }
     } catch {

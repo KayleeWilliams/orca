@@ -17,7 +17,13 @@ import {
   handlePaneDrop,
   updateMultiPaneState
 } from './pane-drag-reorder'
-import { createPaneDOM, openTerminal, attachWebgl, disposePane } from './pane-lifecycle'
+import {
+  createPaneDOM,
+  openTerminal,
+  attachWebgl,
+  disposeWebgl,
+  disposePane
+} from './pane-lifecycle'
 import { shouldFollowMouseFocus } from './focus-follows-mouse'
 import {
   findPaneChildren,
@@ -26,6 +32,8 @@ import {
   wrapInSplit,
   safeFit,
   fitAllPanesInternal,
+  captureScrollState,
+  restoreScrollState,
   refitPanesUnder
 } from './pane-tree-ops'
 
@@ -87,9 +95,7 @@ export class PaneManager {
     if (!existing) {
       return null
     }
-
     const newPane = this.createPaneInternal()
-
     const parent = existing.container.parentElement
     if (!parent) {
       return null
@@ -98,58 +104,37 @@ export class PaneManager {
     const isVertical = direction === 'vertical'
     const divider = this.createDividerWrapped(isVertical)
 
-    // Why: wrapInSplit reparents the existing container via replaceChild +
-    // appendChild, which causes the browser to asynchronously reset scrollTop
-    // on xterm's viewport element to 0 during layout. This corrupts xterm's
-    // viewportY before the deferred fitPanes/safeFit can read it. Store the
-    // pre-reparent scroll state on the pane so that safeFit (called from
-    // fitPanes in the queueResizeAll rAF) can restore the correct position
-    // after fit() reflows the buffer for the new column count.
-    const buf = existing.terminal.buffer.active
-    const savedViewportY = buf.viewportY
-    const wasAtBottom = savedViewportY >= buf.baseY
-    existing.pendingScrollRestore = { viewportY: savedViewportY, wasAtBottom }
+    // Why: wrapInSplit reparents the existing container, which causes the
+    // browser to asynchronously reset scrollTop to 0. Capture scroll state
+    // before reparenting so fitAllPanes can restore it after reflow.
+    const scrollState = captureScrollState(existing.terminal)
+    existing.pendingScrollRestore = scrollState
 
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
 
-    // Open terminal for new pane
     openTerminal(newPane)
-
-    // Set new pane active
     this.activePaneId = newPane.id
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
     this.applyDividerStylesWrapped()
-
-    if (newPane.terminal) {
-      newPane.terminal.focus()
-    }
-
+    newPane.terminal?.focus()
     updateMultiPaneState(this.getDragCallbacks())
-
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: belt-and-suspenders for the at-bottom case. The deferred fitPanes
-    // (from onLayoutChanged → queueResizeAll) should have already restored
-    // scroll via pendingScrollRestore, but if a browser scroll event fired
-    // between fitPanes and this rAF and knocked viewportY off the bottom,
-    // this unconditionally pins it back. For the partially-scrolled case,
-    // xterm.js's internal reflow adjustment (triggered by fit()) is
-    // authoritative — overwriting it with the stale pre-reflow savedViewportY
-    // would shift the viewport to the wrong content.
-    if (wasAtBottom) {
-      const existingPaneId = existing.id
-      requestAnimationFrame(() => {
-        if (this.destroyed) {
-          return
-        }
-        const live = this.panes.get(existingPaneId)
-        if (!live) {
-          return
-        }
-        live.terminal.scrollToBottom()
-      })
-    }
+    // Why: belt-and-suspenders — fitAllPanes should have already restored
+    // scroll via pendingScrollRestore, but if a browser scroll event
+    // drifted viewportY between fitPanes and this rAF, re-apply.
+    const existingPaneId = existing.id
+    requestAnimationFrame(() => {
+      if (this.destroyed) {
+        return
+      }
+      const live = this.panes.get(existingPaneId)
+      if (!live) {
+        return
+      }
+      restoreScrollState(live.terminal, scrollState)
+    })
 
     return this.toPublic(newPane)
   }
@@ -159,29 +144,21 @@ export class PaneManager {
     if (!pane) {
       return
     }
-
     const paneContainer = pane.container
     const parent = paneContainer.parentElement
     if (!parent) {
       return
     }
-
-    // Dispose terminal and addons
     disposePane(pane, this.panes)
-
     if (parent.classList.contains('pane-split')) {
       const siblings = findPaneChildren(parent)
       const sibling = siblings.find((c) => c !== paneContainer) ?? null
-
       paneContainer.remove()
       removeDividers(parent)
       promoteSibling(sibling, parent, this.root)
     } else {
-      // Direct child of root (only pane) — just remove
       paneContainer.remove()
     }
-
-    // Activate next pane if needed
     if (this.activePaneId === paneId) {
       const remaining = Array.from(this.panes.values())
       if (remaining.length > 0) {
@@ -191,14 +168,10 @@ export class PaneManager {
         this.activePaneId = null
       }
     }
-
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
-
-    // Refit remaining panes
     for (const p of this.panes.values()) {
       safeFit(p)
     }
-
     updateMultiPaneState(this.getDragCallbacks())
     this.options.onPaneClosed?.(paneId)
     this.options.onLayoutChanged?.()
@@ -225,7 +198,6 @@ export class PaneManager {
     if (!pane) {
       return
     }
-
     const changed = this.activePaneId !== paneId
     this.activePaneId = paneId
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
@@ -251,49 +223,23 @@ export class PaneManager {
     if (!pane) {
       return
     }
-
     pane.gpuRenderingEnabled = enabled
-
     if (!enabled) {
-      if (pane.webglAddon) {
-        try {
-          pane.webglAddon.dispose()
-        } catch {
-          /* ignore */
-        }
-        pane.webglAddon = null
-      }
+      disposeWebgl(pane)
       return
     }
-
     if (!pane.webglAddon) {
       attachWebgl(pane)
       safeFit(pane)
     }
   }
 
-  /**
-   * Suspend GPU rendering for all panes. Disposes WebGL addons to free
-   * GPU contexts while keeping Terminal instances alive (scrollback, cursor,
-   * screen buffer all preserved). Call when this tab/worktree becomes hidden.
-   */
   suspendRendering(): void {
     for (const pane of this.panes.values()) {
-      if (pane.webglAddon) {
-        try {
-          pane.webglAddon.dispose()
-        } catch {
-          /* ignore */
-        }
-        pane.webglAddon = null
-      }
+      disposeWebgl(pane)
     }
   }
 
-  /**
-   * Resume GPU rendering for all panes. Recreates WebGL addons. Call when
-   * this tab/worktree becomes visible again. Must be followed by a fit() pass.
-   */
   resumeRendering(): void {
     for (const pane of this.panes.values()) {
       if (pane.gpuRenderingEnabled && !pane.webglAddon) {
