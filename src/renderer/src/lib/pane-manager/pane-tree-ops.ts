@@ -18,14 +18,75 @@ export function safeFit(pane: ManagedPaneInternal): void {
     // Why: fitAddon.fit() triggers a terminal reflow that can leave the viewport
     // at a stale scroll offset, making the terminal appear scrolled up after a
     // resize. Preserve the scroll-to-bottom state across the reflow.
-    const buf = pane.terminal.buffer.active
-    const wasAtBottom = buf.viewportY >= buf.baseY
+    //
+    // After DOM reparenting (e.g. splitPane), the browser asynchronously resets
+    // scrollTop to 0, corrupting xterm's viewportY before we get here. When
+    // pendingScrollRestore is set, restore the saved position BEFORE fit() so
+    // xterm's reflow has the correct starting viewportY. After fit(), only
+    // explicitly restore for the at-bottom case — for partially-scrolled
+    // terminals, trust xterm's internal reflow adjustment.
+    const pending = pane.pendingScrollRestore
+    pane.pendingScrollRestore = null
+    let wasAtBottom: boolean
+    if (pending) {
+      wasAtBottom = pending.wasAtBottom
+      if (pending.wasAtBottom) {
+        pane.terminal.scrollToBottom()
+      } else {
+        pane.terminal.scrollToLine(pending.viewportY)
+      }
+    } else {
+      const buf = pane.terminal.buffer.active
+      wasAtBottom = buf.viewportY >= buf.baseY
+    }
     pane.fitAddon.fit()
     if (wasAtBottom) {
       pane.terminal.scrollToBottom()
     }
   } catch {
     // Container may not have dimensions yet
+  }
+}
+
+export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): void {
+  for (const pane of panes.values()) {
+    try {
+      const pending = pane.pendingScrollRestore
+      pane.pendingScrollRestore = null
+
+      const dims = pane.fitAddon.proposeDimensions()
+      if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
+        if (pending) {
+          if (pending.wasAtBottom) {
+            pane.terminal.scrollToBottom()
+          } else {
+            pane.terminal.scrollToLine(pending.viewportY)
+          }
+        }
+        continue
+      }
+
+      let wasAtBottom: boolean
+      if (pending) {
+        wasAtBottom = pending.wasAtBottom
+        if (pending.wasAtBottom) {
+          pane.terminal.scrollToBottom()
+        } else {
+          pane.terminal.scrollToLine(pending.viewportY)
+        }
+      } else {
+        const buf = pane.terminal.buffer.active
+        wasAtBottom = buf.viewportY >= buf.baseY
+      }
+
+      pane.fitAddon.fit()
+
+      if (wasAtBottom) {
+        pane.terminal.scrollToBottom()
+      }
+    } catch {
+      /* ignore */
+    }
   }
 }
 

@@ -25,6 +25,7 @@ import {
   promoteSibling,
   wrapInSplit,
   safeFit,
+  fitAllPanesInternal,
   refitPanesUnder
 } from './pane-tree-ops'
 
@@ -98,23 +99,18 @@ export class PaneManager {
     const divider = this.createDividerWrapped(isVertical)
 
     // Why: wrapInSplit reparents the existing container via replaceChild +
-    // appendChild, which can cause the browser to reset scrollTop on xterm's
-    // viewport element to 0 during the next layout. Capture the exact scroll
-    // position now, before the DOM reparenting corrupts it.
+    // appendChild, which causes the browser to asynchronously reset scrollTop
+    // on xterm's viewport element to 0 during layout. This corrupts xterm's
+    // viewportY before the deferred fitPanes/safeFit can read it. Store the
+    // pre-reparent scroll state on the pane so that safeFit (called from
+    // fitPanes in the queueResizeAll rAF) can restore the correct position
+    // after fit() reflows the buffer for the new column count.
     const buf = existing.terminal.buffer.active
     const savedViewportY = buf.viewportY
     const wasAtBottom = savedViewportY >= buf.baseY
+    existing.pendingScrollRestore = { viewportY: savedViewportY, wasAtBottom }
 
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
-
-    // Why: immediately restore the scroll position after DOM reparenting so
-    // that xterm's internal viewportY stays correct when the browser fires
-    // asynchronous scroll events during its layout phase.
-    if (wasAtBottom) {
-      existing.terminal.scrollToBottom()
-    } else {
-      existing.terminal.scrollToLine(savedViewportY)
-    }
 
     // Open terminal for new pane
     openTerminal(newPane)
@@ -133,29 +129,17 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: belt-and-suspenders for the at-bottom case only. The deferred
-    // fitPanes (from onLayoutChanged → queueResizeAll) reflows the buffer
-    // for the new column count, which changes baseY. If the browser's
-    // rendering pipeline fired a scroll event that reset viewportY between
-    // our synchronous scrollToBottom above and the rAF, safeFit's
-    // wasAtBottom check would read false and skip scrollToBottom. This
-    // final rAF runs after fitPanes (FIFO ordering) and unconditionally
-    // restores the scroll-to-bottom state.
-    //
-    // For the partially-scrolled case we intentionally do NOT restore
-    // savedViewportY here — xterm.js internally adjusts viewportY during
-    // the reflow triggered by fit() to account for changed line wrapping,
-    // and overwriting it with the stale pre-reflow value would shift the
-    // viewport to the wrong content.
+    // Why: belt-and-suspenders for the at-bottom case. The deferred fitPanes
+    // (from onLayoutChanged → queueResizeAll) should have already restored
+    // scroll via pendingScrollRestore, but if a browser scroll event fired
+    // between fitPanes and this rAF and knocked viewportY off the bottom,
+    // this unconditionally pins it back. For the partially-scrolled case,
+    // xterm.js's internal reflow adjustment (triggered by fit()) is
+    // authoritative — overwriting it with the stale pre-reflow savedViewportY
+    // would shift the viewport to the wrong content.
     if (wasAtBottom) {
       const existingPaneId = existing.id
       requestAnimationFrame(() => {
-        // Why: replayTerminalLayout can create a PaneManager, split panes,
-        // then tear the whole manager down (e.g. when the owning worktree
-        // deactivates) before this rAF fires. Touching xterm's renderer
-        // after disposePane throws "Cannot read properties of undefined
-        // (reading 'dimensions')". Resolve the pane from the live map so
-        // we no-op instead of crashing.
         if (this.destroyed) {
           return
         }
@@ -222,6 +206,10 @@ export class PaneManager {
 
   getPanes(): ManagedPane[] {
     return Array.from(this.panes.values()).map((p) => this.toPublic(p))
+  }
+
+  fitAllPanes(): void {
+    fitAllPanesInternal(this.panes)
   }
 
   getActivePane(): ManagedPane | null {

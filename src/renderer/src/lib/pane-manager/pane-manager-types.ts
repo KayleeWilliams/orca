@@ -58,6 +58,12 @@ export type ManagedPaneInternal = {
   webLinksAddon: WebLinksAddon
   // Stored so disposePane() can remove it and avoid a memory leak.
   compositionHandler: (() => void) | null
+  // Why: DOM reparenting (e.g. splitPane's wrapInSplit) causes the browser to
+  // asynchronously reset scrollTop to 0 during layout, which corrupts xterm's
+  // viewportY before safeFit/fitPanes can read it. splitPane stores the
+  // pre-reparent scroll state here so safeFit can restore the correct position
+  // after fit() reflows the buffer, then clears it.
+  pendingScrollRestore: { viewportY: number; wasAtBottom: boolean } | null
 } & ManagedPane
 
 export type DropZone = 'top' | 'bottom' | 'left' | 'right'
