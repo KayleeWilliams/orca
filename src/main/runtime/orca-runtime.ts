@@ -1179,10 +1179,33 @@ export class OrcaRuntimeService {
       return undefined
     }
     try {
-      return (await this.resolveWorktreeSelector(selector)).id
+      const worktreeId = (await this.resolveWorktreeSelector(selector)).id
+      // Why: if the worktree has no registered tabs in the bridge, it's likely
+      // not the active worktree in the UI (webviews only mount for the active
+      // worktree). Activate it so existing tabs become operable.
+      const bridge = this.agentBrowserBridge
+      if (bridge && bridge.getRegisteredTabs(worktreeId).size === 0) {
+        await this.ensureBrowserWorktreeActive(worktreeId)
+      }
+      return worktreeId
     } catch {
       return undefined
     }
+  }
+
+  // Why: browser tabs only mount (and become operable) when their worktree is
+  // the active worktree in the renderer. If the CLI targets a different worktree,
+  // we must switch the UI first so the webview mounts and registerGuest fires.
+  private async ensureBrowserWorktreeActive(worktreeId: string): Promise<void> {
+    const win = this.getAuthoritativeWindow()
+    const repoId = worktreeId.split('::')[0]
+    if (!repoId) {
+      return
+    }
+    win.webContents.send('ui:activateWorktree', { repoId, worktreeId })
+    // Why: give the renderer time to mount the webview after switching worktrees.
+    // The webview needs to attach and fire dom-ready before registerGuest runs.
+    await new Promise((resolve) => setTimeout(resolve, 500))
   }
 
   async browserSnapshot(params: { worktree?: string }): Promise<BrowserSnapshotResult> {
@@ -1757,6 +1780,12 @@ export class OrcaRuntimeService {
     const worktreeId = params.worktree
       ? (await this.resolveWorktreeSelector(params.worktree)).id
       : undefined
+
+    // Why: browser webviews only mount when their worktree is active in the UI.
+    // Switch to it before creating the tab so the webview attaches immediately.
+    if (worktreeId) {
+      await this.ensureBrowserWorktreeActive(worktreeId)
+    }
 
     // Why: tab creation is a renderer-side Zustand store operation. The main process
     // sends a request, the renderer creates the tab and replies with the workspace ID
