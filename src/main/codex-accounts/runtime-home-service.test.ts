@@ -273,6 +273,78 @@ describe('CodexRuntimeHomeService', () => {
     expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"external-switch"}\n')
   })
 
+  it('does not overwrite auth.json after deselection + external change', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const managedHomePath = createManagedAuth(
+      testState.userDataDir,
+      'account-1',
+      '{"account":"managed"}\n'
+    )
+    const settings = createSettings({
+      codexManagedAccounts: [
+        {
+          id: 'account-1',
+          email: 'user@example.com',
+          managedHomePath,
+          providerAccountId: null,
+          workspaceLabel: null,
+          workspaceAccountId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          lastAuthenticatedAt: 1
+        }
+      ],
+      activeCodexManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+
+    // Deselect managed account — should restore system default once
+    settings.activeCodexManagedAccountId = null
+    service.syncForCurrentSelection()
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
+
+    // External tool changes auth — subsequent syncs must not overwrite
+    writeFileSync(runtimeAuthPath, '{"account":"cc-switch"}\n', 'utf-8')
+    service.syncForCurrentSelection()
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"cc-switch"}\n')
+  })
+
+  it('restores system default on restart when persisted active account is invalid', async () => {
+    const runtimeAuthPath = join(testState.fakeHomeDir, '.codex', 'auth.json')
+    writeFileSync(runtimeAuthPath, '{"account":"system"}\n', 'utf-8')
+    const settings = createSettings({
+      codexManagedAccounts: [
+        {
+          id: 'account-1',
+          email: 'user@example.com',
+          managedHomePath: join(testState.userDataDir, 'codex-accounts', 'account-1', 'home'),
+          providerAccountId: null,
+          workspaceLabel: null,
+          workspaceAccountId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          lastAuthenticatedAt: 1
+        }
+      ],
+      activeCodexManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    // Constructor initializes lastSyncedAccountId='account-1' from settings,
+    // then syncForCurrentSelection finds missing auth.json and restores snapshot
+    expect(store.updateSettings).toHaveBeenCalledWith({ activeCodexManagedAccountId: null })
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
+    expect(warnSpy).toHaveBeenCalled()
+  })
+
   it('imports legacy managed-home history into the shared runtime history', async () => {
     const runtimeHomePath = join(testState.fakeHomeDir, '.codex')
     const runtimeHistoryPath = join(runtimeHomePath, 'history.jsonl')
