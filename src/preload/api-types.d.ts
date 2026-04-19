@@ -89,6 +89,7 @@ export type BrowserApi = {
   registerGuest: (args: {
     browserPageId: string
     workspaceId: string
+    worktreeId: string
     webContentsId: number
   }) => Promise<void>
   unregisterGuest: (args: { browserPageId: string }) => Promise<void>
@@ -595,6 +596,14 @@ export type PreloadApi = {
     onOpenQuickOpen: (callback: () => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
+    onRequestTabCreate: (
+      callback: (data: { requestId: string; url: string; worktreeId?: string }) => void
+    ) => () => void
+    replyTabCreate: (reply: { requestId: string; browserPageId?: string; error?: string }) => void
+    onRequestTabClose: (
+      callback: (data: { requestId: string; tabId: string | null }) => void
+    ) => () => void
+    replyTabClose: (reply: { requestId: string; error?: string }) => void
     onNewTerminalTab: (callback: () => void) => () => void
     onFocusBrowserAddressBar: (callback: () => void) => () => void
     onFindInBrowserPage: (callback: () => void) => () => void

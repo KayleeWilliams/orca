@@ -261,7 +261,8 @@ describe('Browser automation pipeline (integration)', () => {
 
     const userDataPath = mkdtempSync(join(tmpdir(), 'browser-e2e-'))
     const runtime = new OrcaRuntimeService()
-    runtime.setCdpBridge(cdpBridge)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    runtime.setAgentBrowserBridge(cdpBridge as any)
 
     server = new OrcaRuntimeRpcServer({ runtime, userDataPath })
     await server.start()
@@ -508,7 +509,8 @@ describe('Browser automation pipeline (integration)', () => {
 
     const userDataPath2 = mkdtempSync(join(tmpdir(), 'browser-e2e-empty-'))
     const runtime2 = new OrcaRuntimeService()
-    runtime2.setCdpBridge(emptyBridge)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    runtime2.setAgentBrowserBridge(emptyBridge as any)
 
     const server2 = new OrcaRuntimeRpcServer({ runtime: runtime2, userDataPath: userDataPath2 })
     await server2.start()

@@ -106,6 +106,9 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      agent-browser:
+        specifier: ~0.24.1
+        version: 0.24.1
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -184,6 +187,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -199,7 +205,7 @@ importers:
         version: 1.59.1
       '@stablyai/playwright-test':
         specifier: ^2.1.13
-        version: 2.1.13(@playwright/test@1.59.1)(zod@4.3.6)
+        version: 2.1.14(@playwright/test@1.59.1)(zod@4.3.6)
       '@tailwindcss/vite':
         specifier: ^4.2.2
         version: 4.2.2(vite@7.3.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.3))
@@ -215,6 +221,9 @@ importers:
       '@types/ssh2':
         specifier: ^1.15.5
         version: 1.15.5
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       '@typescript/native-preview':
         specifier: 7.0.0-dev.20260406.1
         version: 7.0.0-dev.20260406.1
@@ -2205,8 +2214,8 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
-  '@stablyai/playwright-base@2.1.13':
-    resolution: {integrity: sha512-F8lc2qSfNZQ53WeWWDLLZSpu6f2ZCuiVgGP0P0+PGdO9swCKEwV0f+ti7a4MlmgMlHoCsf5tvddXIVpikhPRlQ==}
+  '@stablyai/playwright-base@2.1.14':
+    resolution: {integrity: sha512-/iAgMW5tC0ETDo3mFyTzszRrD7rGFIT4fgDgtZxqa9vPhiTLix/1+GeOOBNY0uS+XRLFY0Uc/irsC3XProL47g==}
     engines: {node: '>=18'}
     peerDependencies:
       '@playwright/test': ^1.52.0
@@ -2215,13 +2224,13 @@ packages:
       zod:
         optional: true
 
-  '@stablyai/playwright-test@2.1.13':
-    resolution: {integrity: sha512-VXy65GukMkIsHtTuYuLhSP3l3YMl21ePTXKI2xLRBCkgzhTLdzat0vHM5TEh7vh58lsxmHlruMFESjcaIeb25g==}
+  '@stablyai/playwright-test@2.1.14':
+    resolution: {integrity: sha512-CAyVVnRdsyJg9pbK3Yq5L9lcvEabilFLb2RWeTQybKv7sDkEEqE2t1boXqBt3X6wQO6lsyhUHB9pc10wSwuc4Q==}
     peerDependencies:
       '@playwright/test': ^1.52.0
 
-  '@stablyai/playwright@2.1.13':
-    resolution: {integrity: sha512-PGE6hR5WTknfbEBz+KvhG9i2gukSYdie0at6SI0CnJPu13NvGBno1N0Fm/AePhtO5Kjn1mMWW5cRiknVP4bOwA==}
+  '@stablyai/playwright@2.1.14':
+    resolution: {integrity: sha512-+SkphioOf+o2VWiM3KPm/fFTTjwNHUV5b2ZRPrLMTsW6bwmEvjo2FbVOUobNBqbopQBnntNLd8ZCG2gvw7rwtg==}
     peerDependencies:
       '@playwright/test': ^1.52.0
 
@@ -2751,6 +2760,9 @@ packages:
   '@types/verror@1.10.11':
     resolution: {integrity: sha512-RlDm9K7+o5stv0Co8i8ZRGxDbrTxhJtgjqjFyVh/tXQyl/rYtTKlnTvZ88oSTeYREWurwx20Js4kTuKCsFkUtg==}
 
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
 
@@ -2879,6 +2891,10 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
+
+  agent-browser@0.24.1:
+    resolution: {integrity: sha512-csWJtYEQow52b+p93zVZfNrcNBwbxGCZDXDMNWl2ij2i0MFKubIzN+icUeX2/NrkZe5iIau8px+HQlxata2oPw==}
+    hasBin: true
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -6047,6 +6063,18 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   wsl-utils@0.3.1:
     resolution: {integrity: sha512-g/eziiSUNBSsdDJtCLB8bdYEUMj4jR7AGeUo96p/3dTafgjHhpF4RiCFPiRILwjQoDXx5MqkBr4fwWtR3Ky4Wg==}
     engines: {node: '>=20'}
@@ -7897,7 +7925,7 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@stablyai/playwright-base@2.1.13(@playwright/test@1.59.1)(zod@4.3.6)':
+  '@stablyai/playwright-base@2.1.14(@playwright/test@1.59.1)(zod@4.3.6)':
     dependencies:
       '@playwright/test': 1.59.1
       jpeg-js: 0.4.4
@@ -7906,18 +7934,18 @@ snapshots:
     optionalDependencies:
       zod: 4.3.6
 
-  '@stablyai/playwright-test@2.1.13(@playwright/test@1.59.1)(zod@4.3.6)':
+  '@stablyai/playwright-test@2.1.14(@playwright/test@1.59.1)(zod@4.3.6)':
     dependencies:
       '@playwright/test': 1.59.1
-      '@stablyai/playwright': 2.1.13(@playwright/test@1.59.1)(zod@4.3.6)
-      '@stablyai/playwright-base': 2.1.13(@playwright/test@1.59.1)(zod@4.3.6)
+      '@stablyai/playwright': 2.1.14(@playwright/test@1.59.1)(zod@4.3.6)
+      '@stablyai/playwright-base': 2.1.14(@playwright/test@1.59.1)(zod@4.3.6)
     transitivePeerDependencies:
       - zod
 
-  '@stablyai/playwright@2.1.13(@playwright/test@1.59.1)(zod@4.3.6)':
+  '@stablyai/playwright@2.1.14(@playwright/test@1.59.1)(zod@4.3.6)':
     dependencies:
       '@playwright/test': 1.59.1
-      '@stablyai/playwright-base': 2.1.13(@playwright/test@1.59.1)(zod@4.3.6)
+      '@stablyai/playwright-base': 2.1.14(@playwright/test@1.59.1)(zod@4.3.6)
     transitivePeerDependencies:
       - zod
 
@@ -8482,6 +8510,10 @@ snapshots:
   '@types/verror@1.10.11':
     optional: true
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 25.5.0
+
   '@types/yauzl@2.10.3':
     dependencies:
       '@types/node': 25.5.0
@@ -8607,6 +8639,8 @@ snapshots:
   acorn@8.16.0: {}
 
   agent-base@7.1.4: {}
+
+  agent-browser@0.24.1: {}
 
   ajv-formats@3.0.1(ajv@8.18.0):
     optionalDependencies:
@@ -12373,6 +12407,8 @@ snapshots:
       strip-ansi: 7.2.0
 
   wrappy@1.0.2: {}
+
+  ws@8.20.0: {}
 
   wsl-utils@0.3.1:
     dependencies:

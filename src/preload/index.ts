@@ -500,6 +500,7 @@ const api = {
     registerGuest: (args: {
       browserPageId: string
       workspaceId: string
+      worktreeId: string
       webContentsId: number
     }): Promise<void> => ipcRenderer.invoke('browser:registerGuest', args),
 
@@ -1052,6 +1053,36 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:newBrowserTab', listener)
       return () => ipcRenderer.removeListener('ui:newBrowserTab', listener)
+    },
+    onRequestTabCreate: (
+      callback: (data: { requestId: string; url: string; worktreeId?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { requestId: string; url: string; worktreeId?: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:requestTabCreate', listener)
+      return () => ipcRenderer.removeListener('browser:requestTabCreate', listener)
+    },
+    replyTabCreate: (reply: {
+      requestId: string
+      browserPageId?: string
+      error?: string
+    }): void => {
+      ipcRenderer.send('browser:tabCreateReply', reply)
+    },
+    onRequestTabClose: (
+      callback: (data: { requestId: string; tabId: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { requestId: string; tabId: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:requestTabClose', listener)
+      return () => ipcRenderer.removeListener('browser:requestTabClose', listener)
+    },
+    replyTabClose: (reply: { requestId: string; error?: string }): void => {
+      ipcRenderer.send('browser:tabCloseReply', reply)
     },
     onNewTerminalTab: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()

@@ -388,6 +388,18 @@ export type BrowserCaptureStopResult = {
   stopped: boolean
 }
 
+export type BrowserExecResult = {
+  output: unknown
+}
+
+export type BrowserTabCreateResult = {
+  browserPageId: string
+}
+
+export type BrowserTabCloseResult = {
+  closed: boolean
+}
+
 export type BrowserErrorCode =
   | 'browser_no_tab'
   | 'browser_tab_not_found'
@@ -399,3 +411,4 @@ export type BrowserErrorCode =
   | 'browser_cdp_error'
   | 'browser_debugger_detached'
   | 'browser_timeout'
+  | 'browser_error'

@@ -29,6 +29,10 @@ module.exports = {
       {
         from: 'resources/win32/bin/orca.cmd',
         to: 'bin/orca.cmd'
+      },
+      {
+        from: 'node_modules/agent-browser/bin/agent-browser-win32-x64.exe',
+        to: 'agent-browser-win32-x64.exe'
       }
     ]
   },
@@ -60,6 +64,10 @@ module.exports = {
       {
         from: 'resources/darwin/bin/orca',
         to: 'bin/orca'
+      },
+      {
+        from: 'node_modules/agent-browser/bin/agent-browser-darwin-${arch}',
+        to: 'agent-browser-darwin-${arch}'
       }
     ],
     target: [
@@ -84,6 +92,10 @@ module.exports = {
       {
         from: 'resources/linux/bin/orca',
         to: 'bin/orca'
+      },
+      {
+        from: 'node_modules/agent-browser/bin/agent-browser-linux-${arch}',
+        to: 'agent-browser-linux-${arch}'
       }
     ],
     target: ['AppImage', 'deb'],

@@ -187,6 +187,71 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: CLI-driven tab creation sends a request with a specific worktreeId and
+    // url. The renderer creates the tab and replies with the workspace ID so the
+    // main process can wait for registerGuest before returning to the CLI.
+    unsubs.push(
+      window.api.ui.onRequestTabCreate((data) => {
+        try {
+          const store = useAppStore.getState()
+          const worktreeId = data.worktreeId ?? store.activeWorktreeId
+          if (!worktreeId) {
+            window.api.ui.replyTabCreate({ requestId: data.requestId, error: 'No active worktree' })
+            return
+          }
+          const workspace = store.createBrowserTab(worktreeId, data.url, { title: data.url })
+          // Why: registerGuest fires with the page ID (not workspace ID) as
+          // browserPageId. Return the page ID so waitForTabRegistration can
+          // correlate correctly.
+          const pages = useAppStore.getState().browserPagesByWorkspace[workspace.id] ?? []
+          const browserPageId = pages[0]?.id ?? workspace.id
+          window.api.ui.replyTabCreate({ requestId: data.requestId, browserPageId })
+        } catch (err) {
+          window.api.ui.replyTabCreate({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Tab creation failed'
+          })
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onRequestTabClose((data) => {
+        try {
+          const store = useAppStore.getState()
+          let tabToClose = data.tabId ?? store.activeBrowserTabId
+          if (!tabToClose) {
+            window.api.ui.replyTabClose({
+              requestId: data.requestId,
+              error: 'No active browser tab to close'
+            })
+            return
+          }
+          // Why: the bridge stores tabs keyed by browserPageId (which is the page
+          // ID from registerGuest), but closeBrowserTab expects a workspace ID. If
+          // tabToClose is a page ID, resolve it to its owning workspace ID.
+          const isWorkspaceId = Object.values(store.browserTabsByWorktree)
+            .flat()
+            .some((ws) => ws.id === tabToClose)
+          if (!isWorkspaceId) {
+            const owningWorkspace = Object.entries(store.browserPagesByWorkspace).find(
+              ([, pages]) => pages.some((p) => p.id === tabToClose)
+            )
+            if (owningWorkspace) {
+              tabToClose = owningWorkspace[0]
+            }
+          }
+          store.closeBrowserTab(tabToClose)
+          window.api.ui.replyTabClose({ requestId: data.requestId })
+        } catch (err) {
+          window.api.ui.replyTabClose({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Tab close failed'
+          })
+        }
+      })
+    )
+
     unsubs.push(
       window.api.ui.onNewTerminalTab(() => {
         const store = useAppStore.getState()

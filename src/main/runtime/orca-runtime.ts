@@ -57,7 +57,6 @@ import type {
   BrowserPermissionResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
-  BrowserInterceptedRequest,
   BrowserInterceptContinueResult,
   BrowserInterceptBlockResult,
   BrowserCaptureStartResult,
@@ -65,7 +64,9 @@ import type {
   BrowserConsoleResult,
   BrowserNetworkLogResult
 } from '../../shared/runtime-types'
-import type { CdpBridge } from '../browser/cdp-bridge'
+import { BrowserWindow, ipcMain } from 'electron'
+import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
+import { waitForTabRegistration } from '../ipc/browser'
 import { getPRForBranch } from '../github/client'
 import {
   getGitUsername,
@@ -190,7 +191,7 @@ export class OrcaRuntimeService {
   private waitersByHandle = new Map<string, Set<TerminalWaiter>>()
   private ptyController: RuntimePtyController | null = null
   private notifier: RuntimeNotifier | null = null
-  private cdpBridge: CdpBridge | null = null
+  private agentBrowserBridge: AgentBrowserBridge | null = null
   private resolvedWorktreeCache: ResolvedWorktreeCache | null = null
   private agentDetector: AgentDetector | null = null
 
@@ -231,12 +232,12 @@ export class OrcaRuntimeService {
     this.notifier = notifier
   }
 
-  setCdpBridge(bridge: CdpBridge | null): void {
-    this.cdpBridge = bridge
+  setAgentBrowserBridge(bridge: AgentBrowserBridge | null): void {
+    this.agentBrowserBridge = bridge
   }
 
-  getCdpBridge(): CdpBridge | null {
-    return this.cdpBridge
+  getAgentBrowserBridge(): AgentBrowserBridge | null {
+    return this.agentBrowserBridge
   }
 
   attachWindow(windowId: number): void {
@@ -1162,118 +1163,205 @@ export class OrcaRuntimeService {
 
   // ── Browser automation ──
 
-  private requireCdpBridge(): CdpBridge {
-    if (!this.cdpBridge) {
+  private requireAgentBrowserBridge(): AgentBrowserBridge {
+    if (!this.agentBrowserBridge) {
       throw new Error('runtime_unavailable')
     }
-    return this.cdpBridge
+    return this.agentBrowserBridge
   }
 
-  async browserSnapshot(): Promise<BrowserSnapshotResult> {
-    return this.requireCdpBridge().snapshot()
+  // Why: the CLI sends worktree selectors (e.g. "path:/Users/...") but the
+  // bridge stores worktreeIds in "repoId::path" format (from the renderer's
+  // Zustand store). This helper resolves the selector to the store-compatible
+  // ID so the bridge can filter tabs correctly.
+  private async resolveBrowserWorktreeId(selector?: string): Promise<string | undefined> {
+    if (!selector) {
+      return undefined
+    }
+    try {
+      return (await this.resolveWorktreeSelector(selector)).id
+    } catch {
+      return undefined
+    }
   }
 
-  async browserClick(params: { element: string }): Promise<BrowserClickResult> {
-    return this.requireCdpBridge().click(params.element)
+  async browserSnapshot(params: { worktree?: string }): Promise<BrowserSnapshotResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().snapshot(worktreeId)
   }
 
-  async browserGoto(params: { url: string }): Promise<BrowserGotoResult> {
-    return this.requireCdpBridge().goto(params.url)
+  async browserClick(params: { element: string; worktree?: string }): Promise<BrowserClickResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().click(params.element, worktreeId)
   }
 
-  async browserFill(params: { element: string; value: string }): Promise<BrowserFillResult> {
-    return this.requireCdpBridge().fill(params.element, params.value)
+  async browserGoto(params: { url: string; worktree?: string }): Promise<BrowserGotoResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().goto(params.url, worktreeId)
   }
 
-  async browserType(params: { input: string }): Promise<BrowserTypeResult> {
-    return this.requireCdpBridge().type(params.input)
+  async browserFill(params: {
+    element: string
+    value: string
+    worktree?: string
+  }): Promise<BrowserFillResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().fill(params.element, params.value, worktreeId)
   }
 
-  async browserSelect(params: { element: string; value: string }): Promise<BrowserSelectResult> {
-    return this.requireCdpBridge().select(params.element, params.value)
+  async browserType(params: { input: string; worktree?: string }): Promise<BrowserTypeResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().type(params.input, worktreeId)
+  }
+
+  async browserSelect(params: {
+    element: string
+    value: string
+    worktree?: string
+  }): Promise<BrowserSelectResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().select(params.element, params.value, worktreeId)
   }
 
   async browserScroll(params: {
     direction: 'up' | 'down'
     amount?: number
+    worktree?: string
   }): Promise<BrowserScrollResult> {
-    return this.requireCdpBridge().scroll(params.direction, params.amount)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().scroll(params.direction, params.amount, worktreeId)
   }
 
-  async browserBack(): Promise<BrowserBackResult> {
-    return this.requireCdpBridge().back()
+  async browserBack(params: { worktree?: string }): Promise<BrowserBackResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().back(worktreeId)
   }
 
-  async browserReload(): Promise<BrowserReloadResult> {
-    return this.requireCdpBridge().reload()
+  async browserReload(params: { worktree?: string }): Promise<BrowserReloadResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().reload(worktreeId)
   }
 
-  async browserScreenshot(params: { format?: 'png' | 'jpeg' }): Promise<BrowserScreenshotResult> {
-    return this.requireCdpBridge().screenshot(params.format)
+  async browserScreenshot(params: {
+    format?: 'png' | 'jpeg'
+    worktree?: string
+  }): Promise<BrowserScreenshotResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().screenshot(params.format, worktreeId)
   }
 
-  async browserEval(params: { expression: string }): Promise<BrowserEvalResult> {
-    return this.requireCdpBridge().evaluate(params.expression)
+  async browserEval(params: { expression: string; worktree?: string }): Promise<BrowserEvalResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().evaluate(params.expression, worktreeId)
   }
 
-  browserTabList(): BrowserTabListResult {
-    return this.requireCdpBridge().tabList()
+  async browserTabList(params: { worktree?: string }): Promise<BrowserTabListResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().tabList(worktreeId)
   }
 
-  async browserTabSwitch(params: { index: number }): Promise<BrowserTabSwitchResult> {
-    return this.requireCdpBridge().tabSwitch(params.index)
+  async browserTabSwitch(params: {
+    index: number
+    worktree?: string
+  }): Promise<BrowserTabSwitchResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().tabSwitch(params.index, worktreeId)
   }
 
-  async browserHover(params: { element: string }): Promise<BrowserHoverResult> {
-    return this.requireCdpBridge().hover(params.element)
+  async browserHover(params: { element: string; worktree?: string }): Promise<BrowserHoverResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().hover(params.element, worktreeId)
   }
 
-  async browserDrag(params: { from: string; to: string }): Promise<BrowserDragResult> {
-    return this.requireCdpBridge().drag(params.from, params.to)
+  async browserDrag(params: {
+    from: string
+    to: string
+    worktree?: string
+  }): Promise<BrowserDragResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().drag(params.from, params.to, worktreeId)
   }
 
-  async browserUpload(params: { element: string; files: string[] }): Promise<BrowserUploadResult> {
-    return this.requireCdpBridge().uploadFile(params.element, params.files)
+  async browserUpload(params: {
+    element: string
+    files: string[]
+    worktree?: string
+  }): Promise<BrowserUploadResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().upload(params.element, params.files, worktreeId)
   }
 
-  async browserWait(params: { timeout?: number }): Promise<BrowserWaitResult> {
-    return this.requireCdpBridge().wait(params.timeout)
+  async browserWait(params: {
+    selector?: string
+    timeout?: number
+    text?: string
+    url?: string
+    load?: string
+    fn?: string
+    state?: string
+    worktree?: string
+  }): Promise<BrowserWaitResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    const { worktree: _, ...options } = params
+    return this.requireAgentBrowserBridge().wait(options, worktreeId)
   }
 
-  async browserCheck(params: { element: string; checked: boolean }): Promise<BrowserCheckResult> {
-    return this.requireCdpBridge().check(params.element, params.checked)
+  async browserCheck(params: {
+    element: string
+    checked: boolean
+    worktree?: string
+  }): Promise<BrowserCheckResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().check(params.element, params.checked, worktreeId)
   }
 
-  async browserFocus(params: { element: string }): Promise<BrowserFocusResult> {
-    return this.requireCdpBridge().focus(params.element)
+  async browserFocus(params: { element: string; worktree?: string }): Promise<BrowserFocusResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().focus(params.element, worktreeId)
   }
 
-  async browserClear(params: { element: string }): Promise<BrowserClearResult> {
-    return this.requireCdpBridge().clear(params.element)
+  async browserClear(params: { element: string; worktree?: string }): Promise<BrowserClearResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().clear(params.element, worktreeId)
   }
 
-  async browserSelectAll(params: { element: string }): Promise<BrowserSelectAllResult> {
-    return this.requireCdpBridge().selectAll(params.element)
+  async browserSelectAll(params: {
+    element: string
+    worktree?: string
+  }): Promise<BrowserSelectAllResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().selectAll(params.element, worktreeId)
   }
 
-  async browserKeypress(params: { key: string }): Promise<BrowserKeypressResult> {
-    return this.requireCdpBridge().keypress(params.key)
+  async browserKeypress(params: {
+    key: string
+    worktree?: string
+  }): Promise<BrowserKeypressResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().keypress(params.key, worktreeId)
   }
 
-  async browserPdf(): Promise<BrowserPdfResult> {
-    return this.requireCdpBridge().pdf()
+  async browserPdf(params: { worktree?: string }): Promise<BrowserPdfResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().pdf(worktreeId)
   }
 
   async browserFullScreenshot(params: {
     format?: 'png' | 'jpeg'
+    worktree?: string
   }): Promise<BrowserScreenshotResult> {
-    return this.requireCdpBridge().fullPageScreenshot(params.format)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().fullPageScreenshot(params.format, worktreeId)
   }
 
   // ── Cookie management ──
 
-  async browserCookieGet(params: { url?: string }): Promise<BrowserCookieGetResult> {
-    return this.requireCdpBridge().cookieGet(params.url)
+  async browserCookieGet(params: {
+    url?: string
+    worktree?: string
+  }): Promise<BrowserCookieGetResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().cookieGet(params.url, worktreeId)
   }
 
   async browserCookieSet(params: {
@@ -1285,16 +1373,25 @@ export class OrcaRuntimeService {
     httpOnly?: boolean
     sameSite?: string
     expires?: number
+    worktree?: string
   }): Promise<BrowserCookieSetResult> {
-    return this.requireCdpBridge().cookieSet(params)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().cookieSet(params, worktreeId)
   }
 
   async browserCookieDelete(params: {
     name: string
     domain?: string
     url?: string
+    worktree?: string
   }): Promise<BrowserCookieDeleteResult> {
-    return this.requireCdpBridge().cookieDelete(params.name, params.domain, params.url)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().cookieDelete(
+      params.name,
+      params.domain,
+      params.url,
+      worktreeId
+    )
   }
 
   // ── Viewport ──
@@ -1304,12 +1401,15 @@ export class OrcaRuntimeService {
     height: number
     deviceScaleFactor?: number
     mobile?: boolean
+    worktree?: string
   }): Promise<BrowserViewportResult> {
-    return this.requireCdpBridge().setViewport(
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setViewport(
       params.width,
       params.height,
       params.deviceScaleFactor,
-      params.mobile
+      params.mobile,
+      worktreeId
     )
   }
 
@@ -1319,20 +1419,31 @@ export class OrcaRuntimeService {
     latitude: number
     longitude: number
     accuracy?: number
+    worktree?: string
   }): Promise<BrowserGeolocationResult> {
-    return this.requireCdpBridge().setGeolocation(
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setGeolocation(
       params.latitude,
       params.longitude,
-      params.accuracy
+      params.accuracy,
+      worktreeId
     )
   }
 
-  async browserSetTimezone(params: { timezoneId: string }): Promise<BrowserTimezoneResult> {
-    return this.requireCdpBridge().setTimezone(params.timezoneId)
+  async browserSetTimezone(params: {
+    timezoneId: string
+    worktree?: string
+  }): Promise<BrowserTimezoneResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setTimezone(params.timezoneId, worktreeId)
   }
 
-  async browserSetLocale(params: { locale: string }): Promise<BrowserLocaleResult> {
-    return this.requireCdpBridge().setLocale(params.locale)
+  async browserSetLocale(params: {
+    locale: string
+    worktree?: string
+  }): Promise<BrowserLocaleResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setLocale(params.locale, worktreeId)
   }
 
   // ── Permissions ──
@@ -1340,55 +1451,433 @@ export class OrcaRuntimeService {
   async browserGrantPermissions(params: {
     permissions: string[]
     origin?: string
+    worktree?: string
   }): Promise<BrowserPermissionResult> {
-    return this.requireCdpBridge().grantPermissions(params.permissions, params.origin)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().grantPermissions(
+      params.permissions,
+      params.origin,
+      worktreeId
+    )
   }
 
   // ── Request interception ──
 
   async browserInterceptEnable(params: {
     patterns?: string[]
+    worktree?: string
   }): Promise<BrowserInterceptEnableResult> {
-    return this.requireCdpBridge().interceptEnable(params.patterns)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().interceptEnable(params.patterns, worktreeId)
   }
 
-  async browserInterceptDisable(): Promise<BrowserInterceptDisableResult> {
-    return this.requireCdpBridge().interceptDisable()
+  async browserInterceptDisable(params: {
+    worktree?: string
+  }): Promise<BrowserInterceptDisableResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().interceptDisable(worktreeId)
   }
 
-  browserInterceptList(): { requests: BrowserInterceptedRequest[] } {
-    return this.requireCdpBridge().interceptList()
+  async browserInterceptList(params: { worktree?: string }): Promise<{ requests: unknown[] }> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().interceptList(worktreeId)
   }
 
   async browserInterceptContinue(params: {
     requestId: string
+    worktree?: string
   }): Promise<BrowserInterceptContinueResult> {
-    return this.requireCdpBridge().interceptContinue(params.requestId)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().interceptContinue(params.requestId, worktreeId)
   }
 
   async browserInterceptBlock(params: {
     requestId: string
     reason?: string
+    worktree?: string
   }): Promise<BrowserInterceptBlockResult> {
-    return this.requireCdpBridge().interceptBlock(params.requestId, params.reason)
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().interceptBlock(
+      params.requestId,
+      params.reason,
+      worktreeId
+    )
   }
 
   // ── Console/network capture ──
 
-  async browserCaptureStart(): Promise<BrowserCaptureStartResult> {
-    return this.requireCdpBridge().captureStart()
+  async browserCaptureStart(params: { worktree?: string }): Promise<BrowserCaptureStartResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().captureStart(worktreeId)
   }
 
-  async browserCaptureStop(): Promise<BrowserCaptureStopResult> {
-    return this.requireCdpBridge().captureStop()
+  async browserCaptureStop(params: { worktree?: string }): Promise<BrowserCaptureStopResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().captureStop(worktreeId)
   }
 
-  browserConsoleLog(params: { limit?: number }): BrowserConsoleResult {
-    return this.requireCdpBridge().consoleLog(params.limit)
+  async browserConsoleLog(params: {
+    limit?: number
+    worktree?: string
+  }): Promise<BrowserConsoleResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().consoleLog(params.limit, worktreeId)
   }
 
-  browserNetworkLog(params: { limit?: number }): BrowserNetworkLogResult {
-    return this.requireCdpBridge().networkLog(params.limit)
+  async browserNetworkLog(params: {
+    limit?: number
+    worktree?: string
+  }): Promise<BrowserNetworkLogResult> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().networkLog(params.limit, worktreeId)
+  }
+
+  // ── Additional core commands ──
+
+  async browserDblclick(params: { element: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().dblclick(params.element, worktreeId)
+  }
+
+  async browserForward(params: { worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().forward(worktreeId)
+  }
+
+  async browserScrollIntoView(params: { element: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().scrollIntoView(params.element, worktreeId)
+  }
+
+  async browserGet(params: {
+    what: string
+    selector?: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().get(params.what, params.selector, worktreeId)
+  }
+
+  async browserIs(params: { what: string; selector: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().is(params.what, params.selector, worktreeId)
+  }
+
+  // ── Keyboard insert text ──
+
+  async browserKeyboardInsertText(params: { text: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().keyboardInsertText(params.text, worktreeId)
+  }
+
+  // ── Mouse commands ──
+
+  async browserMouseMove(params: { x: number; y: number; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().mouseMove(params.x, params.y, worktreeId)
+  }
+
+  async browserMouseDown(params: { button?: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().mouseDown(params.button, worktreeId)
+  }
+
+  async browserMouseUp(params: { button?: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().mouseUp(params.button, worktreeId)
+  }
+
+  async browserMouseWheel(params: {
+    dy: number
+    dx?: number
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().mouseWheel(params.dy, params.dx, worktreeId)
+  }
+
+  // ── Find (semantic locators) ──
+
+  async browserFind(params: {
+    locator: string
+    value: string
+    action: string
+    text?: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().find(
+      params.locator,
+      params.value,
+      params.action,
+      params.text,
+      worktreeId
+    )
+  }
+
+  // ── Set commands ──
+
+  async browserSetDevice(params: { name: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setDevice(params.name, worktreeId)
+  }
+
+  async browserSetOffline(params: { state?: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setOffline(params.state, worktreeId)
+  }
+
+  async browserSetHeaders(params: { headers: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setHeaders(params.headers, worktreeId)
+  }
+
+  async browserSetCredentials(params: {
+    user: string
+    pass: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setCredentials(params.user, params.pass, worktreeId)
+  }
+
+  async browserSetMedia(params: {
+    colorScheme?: string
+    reducedMotion?: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().setMedia(
+      params.colorScheme,
+      params.reducedMotion,
+      worktreeId
+    )
+  }
+
+  // ── Clipboard commands ──
+
+  async browserClipboardRead(params: { worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().clipboardRead(worktreeId)
+  }
+
+  async browserClipboardWrite(params: { text: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().clipboardWrite(params.text, worktreeId)
+  }
+
+  // ── Dialog commands ──
+
+  async browserDialogAccept(params: { text?: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().dialogAccept(params.text, worktreeId)
+  }
+
+  async browserDialogDismiss(params: { worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().dialogDismiss(worktreeId)
+  }
+
+  // ── Storage commands ──
+
+  async browserStorageLocalGet(params: { key: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageLocalGet(params.key, worktreeId)
+  }
+
+  async browserStorageLocalSet(params: {
+    key: string
+    value: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageLocalSet(params.key, params.value, worktreeId)
+  }
+
+  async browserStorageLocalClear(params: { worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageLocalClear(worktreeId)
+  }
+
+  async browserStorageSessionGet(params: { key: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageSessionGet(params.key, worktreeId)
+  }
+
+  async browserStorageSessionSet(params: {
+    key: string
+    value: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageSessionSet(params.key, params.value, worktreeId)
+  }
+
+  async browserStorageSessionClear(params: { worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().storageSessionClear(worktreeId)
+  }
+
+  // ── Download command ──
+
+  async browserDownload(params: {
+    selector: string
+    path: string
+    worktree?: string
+  }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().download(params.selector, params.path, worktreeId)
+  }
+
+  // ── Highlight command ──
+
+  async browserHighlight(params: { selector: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().highlight(params.selector, worktreeId)
+  }
+
+  // ── New: exec passthrough + tab lifecycle ──
+
+  async browserExec(params: { command: string; worktree?: string }): Promise<unknown> {
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+    return this.requireAgentBrowserBridge().exec(params.command, worktreeId)
+  }
+
+  async browserTabCreate(params: {
+    url?: string
+    worktree?: string
+  }): Promise<{ browserPageId: string }> {
+    const win = this.getAuthoritativeWindow()
+    const requestId = randomUUID()
+    const url = params.url ?? 'about:blank'
+
+    // Why: the renderer's Zustand store keys browser tabs by worktreeId in
+    // "repoId::path" format. The CLI sends a selector (e.g. "path:/Users/...").
+    // Resolve it here so the renderer receives the store-compatible ID.
+    const worktreeId = params.worktree
+      ? (await this.resolveWorktreeSelector(params.worktree)).id
+      : undefined
+
+    // Why: tab creation is a renderer-side Zustand store operation. The main process
+    // sends a request, the renderer creates the tab and replies with the workspace ID
+    // (which is the browserPageId used by registerGuest and the bridge).
+    const browserPageId = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ipcMain.removeListener('browser:tabCreateReply', handler)
+        reject(new Error('Tab creation timed out'))
+      }, 10_000)
+
+      const handler = (
+        _event: Electron.IpcMainEvent,
+        reply: { requestId: string; browserPageId?: string; error?: string }
+      ): void => {
+        if (reply.requestId !== requestId) {
+          return
+        }
+        clearTimeout(timer)
+        ipcMain.removeListener('browser:tabCreateReply', handler)
+        if (reply.error) {
+          reject(new Error(reply.error))
+        } else {
+          resolve(reply.browserPageId!)
+        }
+      }
+      ipcMain.on('browser:tabCreateReply', handler)
+      win.webContents.send('browser:requestTabCreate', { requestId, url, worktreeId })
+    })
+
+    // Why: the renderer creates the Zustand tab immediately, but the webview must
+    // mount and fire dom-ready before registerGuest runs. Waiting here ensures the
+    // tab is operable by subsequent CLI commands (snapshot, click, etc.).
+    // If registration doesn't complete within timeout, return the ID anyway — the
+    // tab exists in the UI but may not be ready for automation commands yet.
+    try {
+      await waitForTabRegistration(browserPageId)
+    } catch {
+      // Tab was created in the renderer but the webview hasn't finished mounting.
+      // Return success since the tab exists; subsequent commands will fail with a
+      // clear "tab not available" error if the webview never loads.
+    }
+
+    // Why: newly created tabs should be auto-activated so subsequent commands
+    // (snapshot, click, goto) target the new tab without requiring an explicit
+    // tab switch. Without this, the bridge's active tab still points at the
+    // previously active tab and the new tab shows active: false in tab list.
+    const bridge = this.requireAgentBrowserBridge()
+    const wcId = bridge.getRegisteredTabs(worktreeId).get(browserPageId)
+    if (wcId != null) {
+      bridge.setActiveTab(wcId, worktreeId)
+    }
+
+    return { browserPageId }
+  }
+
+  async browserTabClose(params: {
+    index?: number
+    worktree?: string
+  }): Promise<{ closed: boolean }> {
+    const win = this.getAuthoritativeWindow()
+    const bridge = this.requireAgentBrowserBridge()
+    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+
+    let tabId: string | null = null
+    if (params.index !== undefined) {
+      const tabs = bridge.getRegisteredTabs(worktreeId)
+      const entries = [...tabs.entries()]
+      if (params.index < 0 || params.index >= entries.length) {
+        throw new Error(`Tab index ${params.index} out of range (0-${entries.length - 1})`)
+      }
+      tabId = entries[params.index][0]
+    } else {
+      // Why: try the bridge first (registered tabs with webviews), then fall back
+      // to asking the renderer to close its active browser tab (handles cases where
+      // the webview hasn't mounted yet, e.g. tab was just created).
+      const tabs = bridge.getRegisteredTabs(worktreeId)
+      const entries = [...tabs.entries()]
+      const activeEntry = entries.find(([, wcId]) => wcId === bridge.getActiveWebContentsId())
+      if (activeEntry) {
+        tabId = activeEntry[0]
+      }
+    }
+
+    const requestId = randomUUID()
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ipcMain.removeListener('browser:tabCloseReply', handler)
+        reject(new Error('Tab close timed out'))
+      }, 10_000)
+
+      const handler = (
+        _event: Electron.IpcMainEvent,
+        reply: { requestId: string; error?: string }
+      ): void => {
+        if (reply.requestId !== requestId) {
+          return
+        }
+        clearTimeout(timer)
+        ipcMain.removeListener('browser:tabCloseReply', handler)
+        if (reply.error) {
+          reject(new Error(reply.error))
+        } else {
+          resolve()
+        }
+      }
+      ipcMain.on('browser:tabCloseReply', handler)
+      win.webContents.send('browser:requestTabClose', { requestId, tabId })
+    })
+
+    return { closed: true }
+  }
+
+  private getAuthoritativeWindow(): BrowserWindow {
+    if (this.authoritativeWindowId === null) {
+      throw new Error('No renderer window available')
+    }
+    const win = BrowserWindow.fromId(this.authoritativeWindowId)
+    if (!win || win.isDestroyed()) {
+      throw new Error('No renderer window available')
+    }
+    return win
   }
 }
 

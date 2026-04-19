@@ -35,7 +35,7 @@ import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
 import { openCodeHookService } from './opencode/hook-service'
 import { StarNagService } from './star-nag/service'
-import { CdpBridge } from './browser/cdp-bridge'
+import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
 
 let mainWindow: BrowserWindow | null = null
@@ -160,7 +160,7 @@ app.whenReady().then(async () => {
   starNag = new StarNagService(store, stats)
   starNag.start()
   starNag.registerIpcHandlers()
-  runtime.setCdpBridge(new CdpBridge(browserManager))
+  runtime.setAgentBrowserBridge(new AgentBrowserBridge(browserManager))
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   registerAppMenu({
     onCheckForUpdates: () => checkForUpdatesFromMenu(),
@@ -268,6 +268,9 @@ app.on('will-quit', () => {
   openCodeHookService.stop()
   starNag?.stop()
   stats?.flush()
+  // Why: agent-browser daemon processes would otherwise linger after Orca quits,
+  // holding ports and leaving stale session state on disk.
+  runtime?.getAgentBrowserBridge()?.destroyAllSessions()
   killAllPty()
   // Why: in daemon mode, killAllPty is a no-op (daemon sessions survive app
   // quit) but the client connection must be closed so sockets are released.

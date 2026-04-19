@@ -373,8 +373,12 @@ class BrowserSessionRegistry {
     this.configuredPartitions.add(partition)
 
     const sess = session.fromPartition(partition)
+    // Why: clipboard-read and clipboard-sanitized-write are required for agent-browser's
+    // clipboard commands to work. Without these, navigator.clipboard.writeText/readText
+    // throws NotAllowedError even when invoked via CDP with userGesture:true.
+    const autoGranted = new Set(['fullscreen', 'clipboard-read', 'clipboard-sanitized-write'])
     sess.setPermissionRequestHandler((webContents, permission, callback) => {
-      const allowed = permission === 'fullscreen'
+      const allowed = autoGranted.has(permission)
       if (!allowed) {
         browserManager.notifyPermissionDenied({
           guestWebContentsId: webContents.id,
@@ -385,7 +389,7 @@ class BrowserSessionRegistry {
       callback(allowed)
     })
     sess.setPermissionCheckHandler((_webContents, permission) => {
-      return permission === 'fullscreen'
+      return autoGranted.has(permission)
     })
     sess.setDisplayMediaRequestHandler((_request, callback) => {
       callback({ video: undefined, audio: undefined })

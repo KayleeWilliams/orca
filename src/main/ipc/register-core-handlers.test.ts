@@ -20,7 +20,7 @@ const {
   registerUpdaterHandlersMock,
   registerRateLimitHandlersMock,
   registerBrowserHandlersMock,
-  setCdpBridgeRefMock,
+  setAgentBrowserBridgeRefMock,
   setTrustedBrowserRendererWebContentsIdMock,
   registerFilesystemWatcherHandlersMock,
   registerAppHandlersMock
@@ -44,7 +44,7 @@ const {
   registerUpdaterHandlersMock: vi.fn(),
   registerRateLimitHandlersMock: vi.fn(),
   registerBrowserHandlersMock: vi.fn(),
-  setCdpBridgeRefMock: vi.fn(),
+  setAgentBrowserBridgeRefMock: vi.fn(),
   setTrustedBrowserRendererWebContentsIdMock: vi.fn(),
   registerFilesystemWatcherHandlersMock: vi.fn(),
   registerAppHandlersMock: vi.fn()
@@ -126,7 +126,7 @@ vi.mock('../window/attach-main-window-services', () => ({
 vi.mock('./browser', () => ({
   registerBrowserHandlers: registerBrowserHandlersMock,
   setTrustedBrowserRendererWebContentsId: setTrustedBrowserRendererWebContentsIdMock,
-  setCdpBridgeRef: setCdpBridgeRefMock
+  setAgentBrowserBridgeRef: setAgentBrowserBridgeRefMock
 }))
 
 vi.mock('./app', () => ({
@@ -156,7 +156,7 @@ describe('registerCoreHandlers', () => {
     registerUpdaterHandlersMock.mockReset()
     registerRateLimitHandlersMock.mockReset()
     registerBrowserHandlersMock.mockReset()
-    setCdpBridgeRefMock.mockReset()
+    setAgentBrowserBridgeRefMock.mockReset()
     setTrustedBrowserRendererWebContentsIdMock.mockReset()
     registerFilesystemWatcherHandlersMock.mockReset()
     registerAppHandlersMock.mockReset()
@@ -164,7 +164,7 @@ describe('registerCoreHandlers', () => {
 
   it('passes the store through to handler registrars that need it', () => {
     const store = { marker: 'store' }
-    const runtime = { marker: 'runtime', getCdpBridge: () => null }
+    const runtime = { marker: 'runtime', getAgentBrowserBridge: () => null }
     const stats = { marker: 'stats' }
     const claudeUsage = { marker: 'claudeUsage' }
     const codexUsage = { marker: 'codexUsage' }
@@ -208,7 +208,7 @@ describe('registerCoreHandlers', () => {
     // The first test already called registerCoreHandlers, so the module-level
     // guard is now set. beforeEach reset all mocks, so call counts are 0.
     const store2 = { marker: 'store2' }
-    const runtime2 = { marker: 'runtime2', getCdpBridge: () => null }
+    const runtime2 = { marker: 'runtime2', getAgentBrowserBridge: () => null }
     const stats2 = { marker: 'stats2' }
     const claudeUsage2 = { marker: 'claudeUsage2' }
     const codexUsage2 = { marker: 'codexUsage2' }

@@ -214,159 +214,188 @@ export const COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['snapshot'],
     summary: 'Capture an accessibility snapshot of the active browser tab',
-    usage: 'orca snapshot [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca snapshot [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['screenshot'],
     summary: 'Capture a viewport screenshot of the active browser tab',
-    usage: 'orca screenshot [--format <png|jpeg>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'format']
+    usage: 'orca screenshot [--format <png|jpeg>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'format', 'worktree']
   },
   {
     path: ['click'],
     summary: 'Click a browser element by ref',
-    usage: 'orca click --element <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element']
+    usage: 'orca click --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['fill'],
     summary: 'Clear and fill a browser input by ref',
-    usage: 'orca fill --element <ref> --value <text> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value']
+    usage: 'orca fill --element <ref> --value <text> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value', 'worktree']
   },
   {
     path: ['type'],
     summary: 'Type text at the current browser focus',
-    usage: 'orca type --input <text> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'input']
+    usage: 'orca type --input <text> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'input', 'worktree']
   },
   {
     path: ['select'],
     summary: 'Select a dropdown option by ref',
-    usage: 'orca select --element <ref> --value <value> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value']
+    usage: 'orca select --element <ref> --value <value> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'value', 'worktree']
   },
   {
     path: ['scroll'],
     summary: 'Scroll the browser viewport',
-    usage: 'orca scroll --direction <up|down> [--amount <pixels>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'direction', 'amount']
+    usage: 'orca scroll --direction <up|down> [--amount <pixels>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'direction', 'amount', 'worktree']
   },
   {
     path: ['goto'],
     summary: 'Navigate the active browser tab to a URL',
-    usage: 'orca goto --url <url> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'url']
+    usage: 'orca goto --url <url> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'url', 'worktree']
   },
   {
     path: ['back'],
     summary: 'Navigate back in browser history',
-    usage: 'orca back [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca back [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['reload'],
     summary: 'Reload the active browser tab',
-    usage: 'orca reload [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca reload [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['eval'],
     summary: 'Evaluate JavaScript in the browser page context',
-    usage: 'orca eval --expression <js> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'expression']
+    usage: 'orca eval --expression <js> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'expression', 'worktree']
   },
   {
     path: ['wait'],
-    summary: 'Wait for network idle',
-    usage: 'orca wait [--timeout <ms>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'timeout']
+    summary: 'Wait for element, text, URL, load state, JS condition, or timeout',
+    usage:
+      'orca wait [--selector <sel>] [--timeout <ms>] [--text <text>] [--url <pattern>] [--load <state>] [--fn <js>] [--state <hidden|visible>] [--worktree <selector>] [--json]',
+    allowedFlags: [
+      ...GLOBAL_FLAGS,
+      'selector',
+      'timeout',
+      'text',
+      'url',
+      'load',
+      'fn',
+      'state',
+      'worktree'
+    ]
   },
   {
     path: ['check'],
     summary: 'Check or uncheck a checkbox/radio by ref',
-    usage: 'orca check --element <ref> [--uncheck] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element', 'uncheck']
+    usage: 'orca check --element <ref> [--uncheck] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'uncheck', 'worktree']
   },
   {
     path: ['focus'],
     summary: 'Focus a browser element by ref',
-    usage: 'orca focus --element <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element']
+    usage: 'orca focus --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['clear'],
     summary: 'Clear an input element by ref',
-    usage: 'orca clear --element <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element']
+    usage: 'orca clear --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['select-all'],
     summary: 'Select all text in an input by ref',
-    usage: 'orca select-all --element <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element']
+    usage: 'orca select-all --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['keypress'],
     summary: 'Press a key (Enter, Tab, Escape, ArrowDown, etc.)',
-    usage: 'orca keypress --key <name> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'key']
+    usage: 'orca keypress --key <name> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key', 'worktree']
   },
   {
     path: ['pdf'],
     summary: 'Export the active browser tab as PDF',
-    usage: 'orca pdf [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca pdf [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['full-screenshot'],
     summary: 'Capture a full-page screenshot (beyond viewport)',
-    usage: 'orca full-screenshot [--format <png|jpeg>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'format']
+    usage: 'orca full-screenshot [--format <png|jpeg>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'format', 'worktree']
   },
   {
     path: ['hover'],
     summary: 'Hover over a browser element by ref',
-    usage: 'orca hover --element <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element']
+    usage: 'orca hover --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['drag'],
     summary: 'Drag from one element to another',
-    usage: 'orca drag --from <ref> --to <ref> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'from', 'to']
+    usage: 'orca drag --from <ref> --to <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'from', 'to', 'worktree']
   },
   {
     path: ['upload'],
     summary: 'Upload files to a file input element',
-    usage: 'orca upload --element <ref> --files <path,...> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element', 'files']
+    usage: 'orca upload --element <ref> --files <path,...> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'files', 'worktree']
   },
   {
     path: ['tab', 'list'],
     summary: 'List open browser tabs',
-    usage: 'orca tab list [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca tab list [--worktree <selector|all>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['tab', 'switch'],
     summary: 'Switch the active browser tab',
-    usage: 'orca tab switch --index <n> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'index']
+    usage: 'orca tab switch --index <n> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'index', 'worktree']
+  },
+  {
+    path: ['tab', 'create'],
+    summary: 'Create a new browser tab in the current worktree',
+    usage: 'orca tab create [--url <url>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'url', 'worktree']
+  },
+  {
+    path: ['tab', 'close'],
+    summary: 'Close a browser tab',
+    usage: 'orca tab close [--index <n>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'index', 'worktree']
+  },
+  {
+    path: ['exec'],
+    summary: 'Run any agent-browser command against the active browser tab',
+    usage: 'orca exec --command "<agent-browser command>" [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'command', 'worktree']
   },
   // ── Cookie management ──
   {
     path: ['cookie', 'get'],
     summary: 'Get cookies for the active tab (optionally filter by URL)',
-    usage: 'orca cookie get [--url <url>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'url']
+    usage: 'orca cookie get [--url <url>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'url', 'worktree']
   },
   {
     path: ['cookie', 'set'],
     summary: 'Set a cookie',
     usage:
-      'orca cookie set --name <n> --value <v> [--domain <d>] [--path <p>] [--secure] [--httpOnly] [--sameSite <s>] [--expires <epoch>] [--json]',
+      'orca cookie set --name <n> --value <v> [--domain <d>] [--path <p>] [--secure] [--httpOnly] [--sameSite <s>] [--expires <epoch>] [--worktree <selector>] [--json]',
     allowedFlags: [
       ...GLOBAL_FLAGS,
       'name',
@@ -376,103 +405,288 @@ export const COMMAND_SPECS: CommandSpec[] = [
       'secure',
       'httpOnly',
       'sameSite',
-      'expires'
+      'expires',
+      'worktree'
     ]
   },
   {
     path: ['cookie', 'delete'],
     summary: 'Delete a cookie by name',
-    usage: 'orca cookie delete --name <n> [--domain <d>] [--url <u>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'name', 'domain', 'url']
+    usage:
+      'orca cookie delete --name <n> [--domain <d>] [--url <u>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'name', 'domain', 'url', 'worktree']
   },
   // ── Viewport ──
   {
     path: ['viewport'],
     summary: 'Set browser viewport size',
-    usage: 'orca viewport --width <w> --height <h> [--scale <n>] [--mobile] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'width', 'height', 'scale', 'mobile']
+    usage:
+      'orca viewport --width <w> --height <h> [--scale <n>] [--mobile] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'width', 'height', 'scale', 'mobile', 'worktree']
   },
   // ── Geolocation/timezone/locale ──
   {
     path: ['geolocation'],
     summary: 'Override browser geolocation',
-    usage: 'orca geolocation --latitude <lat> --longitude <lon> [--accuracy <n>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'latitude', 'longitude', 'accuracy']
+    usage:
+      'orca geolocation --latitude <lat> --longitude <lon> [--accuracy <n>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'latitude', 'longitude', 'accuracy', 'worktree']
   },
   {
     path: ['timezone'],
     summary: 'Override browser timezone',
-    usage: 'orca timezone --id <timezone> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id']
+    usage: 'orca timezone --id <timezone> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id', 'worktree']
   },
   {
     path: ['locale'],
     summary: 'Override browser locale',
-    usage: 'orca locale --locale <locale> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'locale']
+    usage: 'orca locale --locale <locale> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'locale', 'worktree']
   },
   // ── Permissions ──
   {
     path: ['permissions'],
     summary: 'Grant browser permissions (geolocation, notifications, etc.)',
-    usage: 'orca permissions --grant <perm,...> [--origin <url>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'grant', 'origin']
+    usage: 'orca permissions --grant <perm,...> [--origin <url>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'grant', 'origin', 'worktree']
   },
   // ── Request interception ──
   {
     path: ['intercept', 'enable'],
     summary: 'Enable request interception (pause matching requests)',
-    usage: 'orca intercept enable [--patterns <glob,...>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'patterns']
+    usage: 'orca intercept enable [--patterns <glob,...>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'patterns', 'worktree']
   },
   {
     path: ['intercept', 'disable'],
     summary: 'Disable request interception',
-    usage: 'orca intercept disable [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca intercept disable [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['intercept', 'list'],
     summary: 'List paused (intercepted) requests',
-    usage: 'orca intercept list [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca intercept list [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['intercept', 'continue'],
     summary: 'Continue a paused request',
-    usage: 'orca intercept continue --id <requestId> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id']
+    usage: 'orca intercept continue --id <requestId> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id', 'worktree']
   },
   {
     path: ['intercept', 'block'],
     summary: 'Block (fail) a paused request',
-    usage: 'orca intercept block --id <requestId> [--reason <reason>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'reason']
+    usage:
+      'orca intercept block --id <requestId> [--reason <reason>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'id', 'reason', 'worktree']
   },
   // ── Console/network capture ──
   {
     path: ['capture', 'start'],
     summary: 'Start capturing console and network events',
-    usage: 'orca capture start [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca capture start [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['capture', 'stop'],
     summary: 'Stop capturing console and network events',
-    usage: 'orca capture stop [--json]',
-    allowedFlags: [...GLOBAL_FLAGS]
+    usage: 'orca capture stop [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
   {
     path: ['console'],
     summary: 'Show captured console log entries',
-    usage: 'orca console [--limit <n>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'limit']
+    usage: 'orca console [--limit <n>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit', 'worktree']
   },
   {
     path: ['network'],
     summary: 'Show captured network requests',
-    usage: 'orca network [--limit <n>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'limit']
+    usage: 'orca network [--limit <n>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit', 'worktree']
+  },
+  // ── Additional core commands ──
+  {
+    path: ['dblclick'],
+    summary: 'Double-click element by ref',
+    usage: 'orca dblclick --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
+  },
+  {
+    path: ['forward'],
+    summary: 'Navigate forward in browser history',
+    usage: 'orca forward [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  {
+    path: ['scrollintoview'],
+    summary: 'Scroll element into view',
+    usage: 'orca scrollintoview --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
+  },
+  {
+    path: ['get'],
+    summary: 'Get element property (text, html, value, url, title, count, box)',
+    usage: 'orca get --what <property> [--element <ref>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'what', 'element', 'worktree']
+  },
+  {
+    path: ['is'],
+    summary: 'Check element state (visible, enabled, checked)',
+    usage: 'orca is --what <state> --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'what', 'element', 'worktree']
+  },
+  // ── Keyboard insert text ──
+  {
+    path: ['inserttext'],
+    summary: 'Insert text without key events',
+    usage: 'orca inserttext --text <text> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'text', 'worktree']
+  },
+  // ── Mouse commands ──
+  {
+    path: ['mouse', 'move'],
+    summary: 'Move mouse to x,y coordinates',
+    usage: 'orca mouse move --x <n> --y <n> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'x', 'y', 'worktree']
+  },
+  {
+    path: ['mouse', 'down'],
+    summary: 'Press mouse button',
+    usage: 'orca mouse down [--button <left|right|middle>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'button', 'worktree']
+  },
+  {
+    path: ['mouse', 'up'],
+    summary: 'Release mouse button',
+    usage: 'orca mouse up [--button <left|right|middle>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'button', 'worktree']
+  },
+  {
+    path: ['mouse', 'wheel'],
+    summary: 'Scroll wheel',
+    usage: 'orca mouse wheel --dy <n> [--dx <n>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'dy', 'dx', 'worktree']
+  },
+  // ── Find (semantic locators) ──
+  {
+    path: ['find'],
+    summary: 'Find element by semantic locator and perform action',
+    usage:
+      'orca find --locator <type> --value <text> --action <action> [--text <text>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'locator', 'value', 'action', 'text', 'worktree']
+  },
+  // ── Set commands ──
+  {
+    path: ['set', 'device'],
+    summary: 'Emulate a device',
+    usage: 'orca set device --name <device> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'name', 'worktree']
+  },
+  {
+    path: ['set', 'offline'],
+    summary: 'Toggle offline mode',
+    usage: 'orca set offline [--state <on|off>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'state', 'worktree']
+  },
+  {
+    path: ['set', 'headers'],
+    summary: 'Set extra HTTP headers',
+    usage: 'orca set headers --headers <json> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'headers', 'worktree']
+  },
+  {
+    path: ['set', 'credentials'],
+    summary: 'Set HTTP auth credentials',
+    usage: 'orca set credentials --user <user> --pass <pass> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'user', 'pass', 'worktree']
+  },
+  {
+    path: ['set', 'media'],
+    summary: 'Set color scheme and reduced motion preferences',
+    usage:
+      'orca set media [--color-scheme <dark|light>] [--reduced-motion <reduce|no-preference>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'color-scheme', 'reduced-motion', 'worktree']
+  },
+  // ── Clipboard commands ──
+  {
+    path: ['clipboard', 'read'],
+    summary: 'Read clipboard contents',
+    usage: 'orca clipboard read [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  {
+    path: ['clipboard', 'write'],
+    summary: 'Write text to clipboard',
+    usage: 'orca clipboard write --text <text> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'text', 'worktree']
+  },
+  // ── Dialog commands ──
+  {
+    path: ['dialog', 'accept'],
+    summary: 'Accept a browser dialog',
+    usage: 'orca dialog accept [--text <text>] [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'text', 'worktree']
+  },
+  {
+    path: ['dialog', 'dismiss'],
+    summary: 'Dismiss a browser dialog',
+    usage: 'orca dialog dismiss [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  // ── Storage commands ──
+  {
+    path: ['storage', 'local', 'get'],
+    summary: 'Get a localStorage value by key',
+    usage: 'orca storage local get --key <key> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key', 'worktree']
+  },
+  {
+    path: ['storage', 'local', 'set'],
+    summary: 'Set a localStorage value',
+    usage: 'orca storage local set --key <key> --value <value> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key', 'value', 'worktree']
+  },
+  {
+    path: ['storage', 'local', 'clear'],
+    summary: 'Clear all localStorage',
+    usage: 'orca storage local clear [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  {
+    path: ['storage', 'session', 'get'],
+    summary: 'Get a sessionStorage value by key',
+    usage: 'orca storage session get --key <key> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key', 'worktree']
+  },
+  {
+    path: ['storage', 'session', 'set'],
+    summary: 'Set a sessionStorage value',
+    usage: 'orca storage session set --key <key> --value <value> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'key', 'value', 'worktree']
+  },
+  {
+    path: ['storage', 'session', 'clear'],
+    summary: 'Clear all sessionStorage',
+    usage: 'orca storage session clear [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  // ── Download command ──
+  {
+    path: ['download'],
+    summary: 'Download a file by clicking a selector',
+    usage: 'orca download --selector <ref> --path <path> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'selector', 'path', 'worktree']
+  },
+  // ── Highlight command ──
+  {
+    path: ['highlight'],
+    summary: 'Highlight an element by selector',
+    usage: 'orca highlight --selector <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'selector', 'worktree']
   }
 ]
 
@@ -669,41 +883,56 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Browser automation dispatch ──
 
     if (matches(commandPath, ['snapshot'])) {
-      const result = await client.call<BrowserSnapshotResult>('browser.snapshot')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserSnapshotResult>('browser.snapshot', { worktree })
       return printResult(result, json, formatSnapshot)
     }
 
     if (matches(commandPath, ['screenshot'])) {
       const format = getOptionalStringFlag(parsed.flags, 'format')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserScreenshotResult>('browser.screenshot', {
-        format: format === 'jpeg' ? 'jpeg' : undefined
+        format: format === 'jpeg' ? 'jpeg' : undefined,
+        worktree
       })
       return printResult(result, json, formatScreenshot)
     }
 
     if (matches(commandPath, ['click'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const result = await client.call<BrowserClickResult>('browser.click', { element })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserClickResult>('browser.click', { element, worktree })
       return printResult(result, json, (v) => `Clicked ${v.clicked}`)
     }
 
     if (matches(commandPath, ['fill'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const result = await client.call<BrowserFillResult>('browser.fill', { element, value })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserFillResult>('browser.fill', {
+        element,
+        value,
+        worktree
+      })
       return printResult(result, json, (v) => `Filled ${v.filled}`)
     }
 
     if (matches(commandPath, ['type'])) {
       const input = getRequiredStringFlag(parsed.flags, 'input')
-      const result = await client.call<BrowserTypeResult>('browser.type', { input })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserTypeResult>('browser.type', { input, worktree })
       return printResult(result, json, () => 'Typed input')
     }
 
     if (matches(commandPath, ['select'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const result = await client.call<BrowserSelectResult>('browser.select', { element, value })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserSelectResult>('browser.select', {
+        element,
+        value,
+        worktree
+      })
       return printResult(result, json, (v) => `Selected ${v.selected}`)
     }
 
@@ -713,37 +942,53 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         throw new RuntimeClientError('invalid_argument', '--direction must be "up" or "down"')
       }
       const amount = getOptionalPositiveIntegerFlag(parsed.flags, 'amount')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserScrollResult>('browser.scroll', {
         direction,
-        amount
+        amount,
+        worktree
       })
       return printResult(result, json, (v) => `Scrolled ${v.scrolled}`)
     }
 
     if (matches(commandPath, ['goto'])) {
       const url = getRequiredStringFlag(parsed.flags, 'url')
-      const result = await client.call<BrowserGotoResult>('browser.goto', { url })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      // Why: navigation waits for network idle which can exceed the default 15s RPC timeout
+      const result = await client.call<BrowserGotoResult>(
+        'browser.goto',
+        { url, worktree },
+        { timeoutMs: 60_000 }
+      )
       return printResult(result, json, (v) => `Navigated to ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['back'])) {
-      const result = await client.call<BrowserBackResult>('browser.back')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserBackResult>('browser.back', { worktree })
       return printResult(result, json, (v) => `Back to ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['reload'])) {
-      const result = await client.call<BrowserReloadResult>('browser.reload')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserReloadResult>(
+        'browser.reload',
+        { worktree },
+        { timeoutMs: 60_000 }
+      )
       return printResult(result, json, (v) => `Reloaded ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['eval'])) {
       const expression = getRequiredStringFlag(parsed.flags, 'expression')
-      const result = await client.call<BrowserEvalResult>('browser.eval', { expression })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserEvalResult>('browser.eval', { expression, worktree })
       return printResult(result, json, (v) => v.value)
     }
 
     if (matches(commandPath, ['tab', 'list'])) {
-      const result = await client.call<BrowserTabListResult>('browser.tabList')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserTabListResult>('browser.tabList', { worktree })
       return printResult(result, json, formatTabList)
     }
 
@@ -752,22 +997,69 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (index === undefined) {
         throw new RuntimeClientError('invalid_argument', 'Missing required --index')
       }
-      const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', { index })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', {
+        index,
+        worktree
+      })
       return printResult(result, json, (v) => `Switched to tab ${v.switched}`)
     }
 
+    if (matches(commandPath, ['tab', 'create'])) {
+      const url = getOptionalStringFlag(parsed.flags, 'url')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<{ browserPageId: string }>(
+        'browser.tabCreate',
+        { url, worktree },
+        { timeoutMs: 60_000 }
+      )
+      return printResult(result, json, (v) => `Created tab ${v.browserPageId}`)
+    }
+
+    if (matches(commandPath, ['tab', 'close'])) {
+      const index = getOptionalNonNegativeIntegerFlag(parsed.flags, 'index')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<{ closed: boolean }>('browser.tabClose', { index, worktree })
+      return printResult(result, json, () => 'Tab closed')
+    }
+
+    if (matches(commandPath, ['exec'])) {
+      const command = getRequiredStringFlag(parsed.flags, 'command')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.exec', { command, worktree })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
+    }
+
     if (matches(commandPath, ['wait'])) {
+      const selector = getOptionalStringFlag(parsed.flags, 'selector')
       const timeout = getOptionalPositiveIntegerFlag(parsed.flags, 'timeout')
-      const result = await client.call<BrowserWaitResult>('browser.wait', { timeout })
-      return printResult(result, json, () => 'Network idle')
+      const text = getOptionalStringFlag(parsed.flags, 'text')
+      const url = getOptionalStringFlag(parsed.flags, 'url')
+      const load = getOptionalStringFlag(parsed.flags, 'load')
+      const fn = getOptionalStringFlag(parsed.flags, 'fn')
+      const state = getOptionalStringFlag(parsed.flags, 'state')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserWaitResult>('browser.wait', {
+        selector,
+        timeout,
+        text,
+        url,
+        load,
+        fn,
+        state,
+        worktree
+      })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
     if (matches(commandPath, ['check'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const uncheck = parsed.flags.has('uncheck')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserCheckResult>('browser.check', {
         element,
-        checked: !uncheck
+        checked: !uncheck,
+        worktree
       })
       return printResult(result, json, (v) =>
         v.checked ? `Checked ${element}` : `Unchecked ${element}`
@@ -776,51 +1068,63 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['focus'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const result = await client.call<BrowserFocusResult>('browser.focus', { element })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserFocusResult>('browser.focus', { element, worktree })
       return printResult(result, json, (v) => `Focused ${v.focused}`)
     }
 
     if (matches(commandPath, ['clear'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const result = await client.call<BrowserClearResult>('browser.clear', { element })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserClearResult>('browser.clear', { element, worktree })
       return printResult(result, json, (v) => `Cleared ${v.cleared}`)
     }
 
     if (matches(commandPath, ['select-all'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const result = await client.call<BrowserSelectAllResult>('browser.selectAll', { element })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserSelectAllResult>('browser.selectAll', {
+        element,
+        worktree
+      })
       return printResult(result, json, (v) => `Selected all in ${v.selected}`)
     }
 
     if (matches(commandPath, ['keypress'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
-      const result = await client.call<BrowserKeypressResult>('browser.keypress', { key })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserKeypressResult>('browser.keypress', { key, worktree })
       return printResult(result, json, (v) => `Pressed ${v.pressed}`)
     }
 
     if (matches(commandPath, ['pdf'])) {
-      const result = await client.call<BrowserPdfResult>('browser.pdf')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserPdfResult>('browser.pdf', { worktree })
       return printResult(result, json, (v) => `PDF exported (${v.data.length} bytes base64)`)
     }
 
     if (matches(commandPath, ['full-screenshot'])) {
       const format = getOptionalStringFlag(parsed.flags, 'format') === 'jpeg' ? 'jpeg' : 'png'
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserScreenshotResult>('browser.fullScreenshot', {
-        format
+        format,
+        worktree
       })
       return printResult(result, json, (v) => `Full-page screenshot captured (${v.format})`)
     }
 
     if (matches(commandPath, ['hover'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const result = await client.call<BrowserHoverResult>('browser.hover', { element })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserHoverResult>('browser.hover', { element, worktree })
       return printResult(result, json, (v) => `Hovered ${v.hovered}`)
     }
 
     if (matches(commandPath, ['drag'])) {
       const from = getRequiredStringFlag(parsed.flags, 'from')
       const to = getRequiredStringFlag(parsed.flags, 'to')
-      const result = await client.call<BrowserDragResult>('browser.drag', { from, to })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserDragResult>('browser.drag', { from, to, worktree })
       return printResult(result, json, (v) => `Dragged ${v.dragged.from} → ${v.dragged.to}`)
     }
 
@@ -828,7 +1132,12 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const filesStr = getRequiredStringFlag(parsed.flags, 'files')
       const files = filesStr.split(',').map((f) => f.trim())
-      const result = await client.call<BrowserUploadResult>('browser.upload', { element, files })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserUploadResult>('browser.upload', {
+        element,
+        files,
+        worktree
+      })
       return printResult(result, json, (v) => `Uploaded ${v.uploaded} file(s)`)
     }
 
@@ -836,7 +1145,11 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['cookie', 'get'])) {
       const url = getOptionalStringFlag(parsed.flags, 'url')
-      const result = await client.call<BrowserCookieGetResult>('browser.cookie.get', { url })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserCookieGetResult>('browser.cookie.get', {
+        url,
+        worktree
+      })
       return printResult(result, json, (v) => {
         if (v.cookies.length === 0) {
           return 'No cookies'
@@ -871,6 +1184,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (expires) {
         params.expires = Number(expires)
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserCookieSetResult>('browser.cookie.set', params)
       return printResult(result, json, (v) =>
         v.success ? `Cookie "${name}" set` : `Failed to set cookie "${name}"`
@@ -888,6 +1203,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (url) {
         params.url = url
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserCookieDeleteResult>('browser.cookie.delete', params)
       return printResult(result, json, () => `Cookie "${name}" deleted`)
     }
@@ -909,6 +1226,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (parsed.flags.has('mobile')) {
         params.mobile = true
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserViewportResult>('browser.viewport', params)
       return printResult(
         result,
@@ -931,19 +1250,26 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         }
         params.accuracy = n
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserGeolocationResult>('browser.geolocation', params)
       return printResult(result, json, (v) => `Geolocation set to ${v.latitude}, ${v.longitude}`)
     }
 
     if (matches(commandPath, ['timezone'])) {
       const timezoneId = getRequiredStringFlag(parsed.flags, 'id')
-      const result = await client.call<BrowserTimezoneResult>('browser.timezone', { timezoneId })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserTimezoneResult>('browser.timezone', {
+        timezoneId,
+        worktree
+      })
       return printResult(result, json, (v) => `Timezone set to ${v.timezoneId}`)
     }
 
     if (matches(commandPath, ['locale'])) {
       const locale = getRequiredStringFlag(parsed.flags, 'locale')
-      const result = await client.call<BrowserLocaleResult>('browser.locale', { locale })
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserLocaleResult>('browser.locale', { locale, worktree })
       return printResult(result, json, (v) => `Locale set to ${v.locale}`)
     }
 
@@ -957,6 +1283,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (origin) {
         params.origin = origin
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserPermissionResult>('browser.permissions', params)
       return printResult(result, json, (v) => `Granted: ${v.granted.join(', ')}`)
     }
@@ -969,6 +1297,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (patternsStr) {
         params.patterns = patternsStr.split(',').map((p) => p.trim())
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserInterceptEnableResult>(
         'browser.intercept.enable',
         params
@@ -981,13 +1311,18 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     }
 
     if (matches(commandPath, ['intercept', 'disable'])) {
-      const result = await client.call<BrowserInterceptDisableResult>('browser.intercept.disable')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserInterceptDisableResult>('browser.intercept.disable', {
+        worktree
+      })
       return printResult(result, json, () => 'Interception disabled')
     }
 
     if (matches(commandPath, ['intercept', 'list'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<{ requests: BrowserInterceptedRequest[] }>(
-        'browser.intercept.list'
+        'browser.intercept.list',
+        { worktree }
       )
       return printResult(result, json, (v) => {
         if (v.requests.length === 0) {
@@ -1001,9 +1336,10 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['intercept', 'continue'])) {
       const requestId = getRequiredStringFlag(parsed.flags, 'id')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserInterceptContinueResult>(
         'browser.intercept.continue',
-        { requestId }
+        { requestId, worktree }
       )
       return printResult(result, json, (v) => `Continued request ${v.continued}`)
     }
@@ -1015,6 +1351,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (reason) {
         params.reason = reason
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserInterceptBlockResult>(
         'browser.intercept.block',
         params
@@ -1025,12 +1363,18 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Console/network capture ──
 
     if (matches(commandPath, ['capture', 'start'])) {
-      const result = await client.call<BrowserCaptureStartResult>('browser.capture.start')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserCaptureStartResult>('browser.capture.start', {
+        worktree
+      })
       return printResult(result, json, () => 'Capture started (console + network)')
     }
 
     if (matches(commandPath, ['capture', 'stop'])) {
-      const result = await client.call<BrowserCaptureStopResult>('browser.capture.stop')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<BrowserCaptureStopResult>('browser.capture.stop', {
+        worktree
+      })
       return printResult(result, json, () => 'Capture stopped')
     }
 
@@ -1040,6 +1384,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (limit !== undefined) {
         params.limit = limit
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserConsoleResult>('browser.console', params)
       return printResult(result, json, (v) => {
         if (v.entries.length === 0) {
@@ -1055,6 +1401,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (limit !== undefined) {
         params.limit = limit
       }
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      params.worktree = worktree
       const result = await client.call<BrowserNetworkLogResult>('browser.network', params)
       return printResult(result, json, (v) => {
         if (v.entries.length === 0) {
@@ -1062,6 +1410,260 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         }
         return v.entries.map((e) => `${e.status} ${e.url} (${e.mimeType}, ${e.size}B)`).join('\n')
       })
+    }
+
+    // ── Additional core commands ──
+
+    if (matches(commandPath, ['dblclick'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dblclick', { element, worktree })
+      return printResult(result, json, () => `Double-clicked ${element}`)
+    }
+
+    if (matches(commandPath, ['forward'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.forward', { worktree })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return printResult(result, json, (v: any) =>
+        v?.url ? `Navigated forward to ${v.url}` : 'Navigated forward'
+      )
+    }
+
+    if (matches(commandPath, ['scrollintoview'])) {
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.scrollIntoView', { element, worktree })
+      return printResult(result, json, () => `Scrolled ${element} into view`)
+    }
+
+    if (matches(commandPath, ['get'])) {
+      const what = getRequiredStringFlag(parsed.flags, 'what')
+      const element = getOptionalStringFlag(parsed.flags, 'element')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.get', {
+        what,
+        selector: element,
+        worktree
+      })
+      return printResult(result, json, (v) =>
+        typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+      )
+    }
+
+    if (matches(commandPath, ['is'])) {
+      const what = getRequiredStringFlag(parsed.flags, 'what')
+      const element = getRequiredStringFlag(parsed.flags, 'element')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.is', { what, selector: element, worktree })
+      return printResult(result, json, (v) => String(v))
+    }
+
+    // ── Keyboard insert text ──
+
+    if (matches(commandPath, ['inserttext'])) {
+      const text = getRequiredStringFlag(parsed.flags, 'text')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.keyboardInsertText', { text, worktree })
+      return printResult(result, json, () => 'Text inserted')
+    }
+
+    // ── Mouse commands ──
+
+    if (matches(commandPath, ['mouse', 'move'])) {
+      const x = getRequiredFiniteNumber(parsed.flags, 'x')
+      const y = getRequiredFiniteNumber(parsed.flags, 'y')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseMove', { x, y, worktree })
+      return printResult(result, json, () => `Mouse moved to ${x},${y}`)
+    }
+
+    if (matches(commandPath, ['mouse', 'down'])) {
+      const button = getOptionalStringFlag(parsed.flags, 'button')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseDown', { button, worktree })
+      return printResult(result, json, () => `Mouse button ${button ?? 'left'} pressed`)
+    }
+
+    if (matches(commandPath, ['mouse', 'up'])) {
+      const button = getOptionalStringFlag(parsed.flags, 'button')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseUp', { button, worktree })
+      return printResult(result, json, () => `Mouse button ${button ?? 'left'} released`)
+    }
+
+    if (matches(commandPath, ['mouse', 'wheel'])) {
+      const dy = getRequiredFiniteNumber(parsed.flags, 'dy')
+      const dx = getOptionalNumberFlag(parsed.flags, 'dx')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseWheel', { dy, dx, worktree })
+      return printResult(
+        result,
+        json,
+        () => `Mouse wheel scrolled dy=${dy}${dx != null ? ` dx=${dx}` : ''}`
+      )
+    }
+
+    // ── Find (semantic locators) ──
+
+    if (matches(commandPath, ['find'])) {
+      const locator = getRequiredStringFlag(parsed.flags, 'locator')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const action = getRequiredStringFlag(parsed.flags, 'action')
+      const text = getOptionalStringFlag(parsed.flags, 'text')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.find', {
+        locator,
+        value,
+        action,
+        text,
+        worktree
+      })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
+    }
+
+    // ── Set commands ──
+
+    if (matches(commandPath, ['set', 'device'])) {
+      const name = getRequiredStringFlag(parsed.flags, 'name')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setDevice', { name, worktree })
+      return printResult(result, json, () => `Device emulation set to ${name}`)
+    }
+
+    if (matches(commandPath, ['set', 'offline'])) {
+      const state = getOptionalStringFlag(parsed.flags, 'state')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setOffline', { state, worktree })
+      return printResult(result, json, () => `Offline mode ${state ?? 'toggled'}`)
+    }
+
+    if (matches(commandPath, ['set', 'headers'])) {
+      const headers = getRequiredStringFlag(parsed.flags, 'headers')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setHeaders', { headers, worktree })
+      return printResult(result, json, () => 'Extra HTTP headers set')
+    }
+
+    if (matches(commandPath, ['set', 'credentials'])) {
+      const user = getRequiredStringFlag(parsed.flags, 'user')
+      const pass = getRequiredStringFlag(parsed.flags, 'pass')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setCredentials', { user, pass, worktree })
+      return printResult(result, json, () => `HTTP auth credentials set for ${user}`)
+    }
+
+    if (matches(commandPath, ['set', 'media'])) {
+      const colorScheme = getOptionalStringFlag(parsed.flags, 'color-scheme')
+      const reducedMotion = getOptionalStringFlag(parsed.flags, 'reduced-motion')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setMedia', {
+        colorScheme,
+        reducedMotion,
+        worktree
+      })
+      return printResult(result, json, () => 'Media preferences set')
+    }
+
+    // ── Clipboard commands ──
+
+    if (matches(commandPath, ['clipboard', 'read'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.clipboardRead', { worktree })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
+    }
+
+    if (matches(commandPath, ['clipboard', 'write'])) {
+      const text = getRequiredStringFlag(parsed.flags, 'text')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.clipboardWrite', { text, worktree })
+      return printResult(result, json, () => 'Clipboard updated')
+    }
+
+    // ── Dialog commands ──
+
+    if (matches(commandPath, ['dialog', 'accept'])) {
+      const text = getOptionalStringFlag(parsed.flags, 'text')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dialogAccept', { text, worktree })
+      return printResult(result, json, () => 'Dialog accepted')
+    }
+
+    if (matches(commandPath, ['dialog', 'dismiss'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dialogDismiss', { worktree })
+      return printResult(result, json, () => 'Dialog dismissed')
+    }
+
+    // ── Storage commands ──
+
+    if (matches(commandPath, ['storage', 'local', 'get'])) {
+      const key = getRequiredStringFlag(parsed.flags, 'key')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.local.get', { key, worktree })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
+    }
+
+    if (matches(commandPath, ['storage', 'local', 'set'])) {
+      const key = getRequiredStringFlag(parsed.flags, 'key')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.local.set', {
+        key,
+        value,
+        worktree
+      })
+      return printResult(result, json, () => `localStorage["${key}"] set`)
+    }
+
+    if (matches(commandPath, ['storage', 'local', 'clear'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.local.clear', { worktree })
+      return printResult(result, json, () => 'localStorage cleared')
+    }
+
+    if (matches(commandPath, ['storage', 'session', 'get'])) {
+      const key = getRequiredStringFlag(parsed.flags, 'key')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.session.get', { key, worktree })
+      return printResult(result, json, (v) => JSON.stringify(v, null, 2))
+    }
+
+    if (matches(commandPath, ['storage', 'session', 'set'])) {
+      const key = getRequiredStringFlag(parsed.flags, 'key')
+      const value = getRequiredStringFlag(parsed.flags, 'value')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.session.set', {
+        key,
+        value,
+        worktree
+      })
+      return printResult(result, json, () => `sessionStorage["${key}"] set`)
+    }
+
+    if (matches(commandPath, ['storage', 'session', 'clear'])) {
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.session.clear', { worktree })
+      return printResult(result, json, () => 'sessionStorage cleared')
+    }
+
+    // ── Download command ──
+
+    if (matches(commandPath, ['download'])) {
+      const selector = getRequiredStringFlag(parsed.flags, 'selector')
+      const path = getRequiredStringFlag(parsed.flags, 'path')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.download', { selector, path, worktree })
+      return printResult(result, json, () => `Downloaded to ${path}`)
+    }
+
+    // ── Highlight command ──
+
+    if (matches(commandPath, ['highlight'])) {
+      const selector = getRequiredStringFlag(parsed.flags, 'selector')
+      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.highlight', { selector, worktree })
+      return printResult(result, json, () => `Highlighted ${selector}`)
     }
 
     throw new RuntimeClientError('invalid_argument', `Unknown command: ${commandPath.join(' ')}`)
@@ -1149,10 +1751,24 @@ export function findCommandSpec(commandPath: string[]): CommandSpec | undefined 
 
 function isCommandGroup(commandPath: string[]): boolean {
   return (
-    commandPath.length === 1 &&
-    ['repo', 'worktree', 'terminal', 'tab', 'cookie', 'intercept', 'capture'].includes(
-      commandPath[0]
-    )
+    (commandPath.length === 1 &&
+      [
+        'repo',
+        'worktree',
+        'terminal',
+        'tab',
+        'cookie',
+        'intercept',
+        'capture',
+        'mouse',
+        'set',
+        'clipboard',
+        'dialog',
+        'storage'
+      ].includes(commandPath[0])) ||
+    (commandPath.length === 2 &&
+      commandPath[0] === 'storage' &&
+      ['local', 'session'].includes(commandPath[1]))
   )
 }
 
@@ -1238,6 +1854,32 @@ async function getRequiredWorktreeSelector(
     return await resolveCurrentWorktreeSelector(cwd, client)
   }
   return normalizeWorktreeSelector(value, cwd)
+}
+
+// Why: browser commands default to the current worktree (auto-resolve from cwd).
+// --worktree all bypasses filtering. Omitting --worktree auto-resolves.
+async function getBrowserWorktreeSelector(
+  flags: Map<string, string | boolean>,
+  cwd: string,
+  client: RuntimeClient
+): Promise<string | undefined> {
+  const value = getOptionalStringFlag(flags, 'worktree')
+  if (value === 'all') {
+    return undefined
+  }
+  if (value) {
+    if (value === 'active' || value === 'current') {
+      return await resolveCurrentWorktreeSelector(cwd, client)
+    }
+    return normalizeWorktreeSelector(value, cwd)
+  }
+  // Default: auto-resolve from cwd
+  try {
+    return await resolveCurrentWorktreeSelector(cwd, client)
+  } catch {
+    // Not inside a managed worktree — no filter
+    return undefined
+  }
 }
 
 function getOptionalNumberFlag(
@@ -1545,20 +2187,59 @@ Terminals:
   terminal wait             Wait for a terminal condition
   terminal stop             Stop terminals for a worktree
 
-Browser:
-  snapshot                  Capture an accessibility snapshot of the active browser tab
-  screenshot                Capture a viewport screenshot of the active browser tab
-  click                     Click a browser element by ref
-  fill                      Clear and fill a browser input by ref
-  type                      Type text at the current browser focus
-  select                    Select a dropdown option by ref
-  scroll                    Scroll the browser viewport
-  goto                      Navigate the active browser tab to a URL
+Browser Automation:
+  tab create                Create a new browser tab (navigates to --url)
+  tab list                  List open browser tabs
+  tab switch                Switch the active browser tab by --index
+  tab close                 Close the active browser tab
+  snapshot                  Accessibility snapshot with element refs (e.g. e1, e2)
+  goto                      Navigate the active tab to --url
+  click                     Click element by --element ref
+  fill                      Clear and fill input by --element ref with --value
+  type                      Type --input text at the current focus (no element needed)
+  select                    Select dropdown option by --element ref and --value
+  hover                     Hover element by --element ref
+  keypress                  Press a key (e.g. --key Enter, --key Tab)
+  scroll                    Scroll --direction (up/down/left/right) by --amount pixels
   back                      Navigate back in browser history
   reload                    Reload the active browser tab
-  eval                      Evaluate JavaScript in the browser page context
-  tab list                  List open browser tabs
-  tab switch                Switch the active browser tab
+  screenshot                Capture viewport screenshot (--format png|jpeg)
+  eval                      Evaluate --expression JavaScript in the page context
+  wait                      Wait for page idle or --timeout ms
+  check                     Check/uncheck a checkbox by --element ref
+  focus                     Focus an element by --element ref
+  clear                     Clear an input by --element ref
+  drag                      Drag --from ref to --to ref
+  upload                    Upload --files to a file input by --element ref
+  dblclick                  Double-click element by --element ref
+  forward                   Navigate forward in browser history
+  scrollintoview            Scroll --element into view
+  get                       Get element property (--what: text, html, value, url, title)
+  is                        Check element state (--what: visible, enabled, checked)
+  keyboard inserttext       Insert text without key events
+  mouse move                Move mouse to --x --y coordinates
+  mouse down                Press mouse button
+  mouse up                  Release mouse button
+  mouse wheel               Scroll wheel --dy [--dx]
+  find                      Find element by locator (--locator role|text|label --value <v>)
+  set device                Emulate device (--name "iPhone 12")
+  set offline               Toggle offline mode (--state on|off)
+  set headers               Set HTTP headers (--headers '{"key":"val"}')
+  set credentials           Set HTTP auth (--user <u> --pass <p>)
+  set media                 Set color scheme (--scheme dark|light)
+  clipboard read            Read clipboard contents
+  clipboard write           Write --text to clipboard
+  dialog accept             Accept browser dialog (--text for prompt response)
+  dialog dismiss            Dismiss browser dialog
+  storage local get         Get localStorage value by --key
+  storage local set         Set localStorage --key --value
+  storage local clear       Clear localStorage
+  storage session get       Get sessionStorage value by --key
+  storage session set       Set sessionStorage --key --value
+  storage session clear     Clear sessionStorage
+  download                  Download file via --element to --path
+  highlight                 Highlight --element on page
+  exec                      Run any agent-browser command (--command "...")
 
 Common Commands:
   orca open [--json]
@@ -1604,6 +2285,34 @@ Behavior:
   Most commands require a running Orca runtime. If Orca is not open yet, run \`orca open\` first.
   Use selectors for discovery and handles for repeated live terminal operations.
 
+Browser Workflow:
+  1. Create or navigate:  orca tab create --url https://example.com
+                          orca goto --url https://example.com
+  2. Inspect the page:    orca snapshot
+     (Returns an accessibility tree with element refs like e1, e2, e3)
+  3. Interact:            orca click --element e2
+                          orca fill --element e5 --value "search query"
+                          orca keypress --key Enter
+  4. Re-inspect:          orca snapshot
+     (Element refs change after navigation — always re-snapshot before interacting)
+
+Browser Options:
+  --element <ref>           Element ref from snapshot (e.g. e3, not @e3)
+  --url <url>               URL to navigate to
+  --value <text>            Value to fill or select
+  --input <text>            Text to type at current focus (no element needed)
+  --expression <js>         JavaScript expression to evaluate
+  --key <key>               Key to press (Enter, Tab, Escape, Control+a, etc.)
+  --direction <dir>         Scroll direction: up, down, left, right
+  --amount <pixels>         Scroll distance in pixels (default: viewport height)
+  --index <n>               Tab index (from \`tab list\`)
+  --format <png|jpeg>       Screenshot image format
+  --from <ref>              Drag source element ref
+  --to <ref>                Drag target element ref
+  --files <path,...>        Comma-separated file paths for upload
+  --timeout <ms>            Wait timeout in milliseconds
+  --worktree <selector>     Scope commands to a specific worktree's browser tabs
+
 Examples:
   $ orca open
   $ orca status --json
@@ -1616,10 +2325,13 @@ Examples:
   $ orca terminal list --worktree path:/Users/me/orca/workspaces/orca/cli-test-1 --json
   $ orca terminal send --terminal term_123 --text "hi" --enter
   $ orca terminal wait --terminal term_123 --for exit --timeout-ms 60000 --json
-  $ orca goto --url https://example.com
+  $ orca tab create --url https://example.com
   $ orca snapshot
-  $ orca click --element @e3
-  $ orca fill --element @e5 --value "hello"
+  $ orca click --element e3
+  $ orca fill --element e5 --value "hello"
+  $ orca goto --url https://example.com/login
+  $ orca keypress --key Enter
+  $ orca eval --expression "document.title"
   $ orca tab list --json`)
 }
 

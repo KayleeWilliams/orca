@@ -999,6 +999,7 @@ function BrowserPagePane({
         void window.api.browser.registerGuest({
           browserPageId: browserTab.id,
           workspaceId,
+          worktreeId,
           webContentsId
         })
       }

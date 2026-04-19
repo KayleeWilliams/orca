@@ -38,6 +38,7 @@ export type BrowserGuestRegistration = {
   browserPageId?: string
   browserTabId?: string
   workspaceId?: string
+  worktreeId?: string
   webContentsId: number
   rendererWebContentsId: number
 }
@@ -80,6 +81,7 @@ export class BrowserManager {
   private readonly contextMenuCleanupByTabId = new Map<string, () => void>()
   private readonly grabShortcutCleanupByTabId = new Map<string, () => void>()
   private readonly shortcutForwardingCleanupByTabId = new Map<string, () => void>()
+  private readonly worktreeIdByTabId = new Map<string, string>()
   private readonly policyAttachedGuestIds = new Set<number>()
   private readonly policyCleanupByGuestId = new Map<number, () => void>()
   private readonly pendingLoadFailuresByGuestId = new Map<
@@ -192,6 +194,7 @@ export class BrowserManager {
   registerGuest({
     browserPageId,
     browserTabId: legacyBrowserTabId,
+    worktreeId,
     webContentsId,
     rendererWebContentsId
   }: BrowserGuestRegistration): void {
@@ -234,6 +237,9 @@ export class BrowserManager {
     this.webContentsIdByTabId.set(browserTabId, webContentsId)
     this.tabIdByWebContentsId.set(webContentsId, browserTabId)
     this.rendererWebContentsIdByTabId.set(browserTabId, rendererWebContentsId)
+    if (worktreeId) {
+      this.worktreeIdByTabId.set(browserTabId, worktreeId)
+    }
 
     this.setupContextMenu(browserTabId, guest)
     this.setupGrabShortcut(browserTabId, guest)
@@ -292,6 +298,7 @@ export class BrowserManager {
     }
     this.webContentsIdByTabId.delete(browserTabId)
     this.rendererWebContentsIdByTabId.delete(browserTabId)
+    this.worktreeIdByTabId.delete(browserTabId)
   }
 
   unregisterAll(): void {
@@ -313,6 +320,7 @@ export class BrowserManager {
     }
     this.policyCleanupByGuestId.clear()
     this.tabIdByWebContentsId.clear()
+    this.worktreeIdByTabId.clear()
     this.pendingLoadFailuresByGuestId.clear()
     this.pendingPermissionEventsByGuestId.clear()
     this.pendingPopupEventsByGuestId.clear()
@@ -321,6 +329,14 @@ export class BrowserManager {
 
   getGuestWebContentsId(browserTabId: string): number | null {
     return this.webContentsIdByTabId.get(browserTabId) ?? null
+  }
+
+  getWebContentsIdByTabId(): Map<string, number> {
+    return this.webContentsIdByTabId
+  }
+
+  getWorktreeIdForTab(browserTabId: string): string | undefined {
+    return this.worktreeIdByTabId.get(browserTabId)
   }
 
   notifyPermissionDenied(args: {

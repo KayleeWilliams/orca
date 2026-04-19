@@ -702,10 +702,13 @@ export class OrcaRuntimeRpcServer {
     }
 
     // ── Browser automation routes ──
+    // Why: all browser routes extract optional worktree param for worktree-scoped tab routing
 
     if (request.method === 'browser.snapshot') {
       try {
-        const result = await this.runtime.browserSnapshot()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSnapshot({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -719,7 +722,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserClick({ element })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserClick({ element, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -733,7 +737,8 @@ export class OrcaRuntimeRpcServer {
         if (!url) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --url')
         }
-        const result = await this.runtime.browserGoto({ url })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserGoto({ url, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -751,7 +756,8 @@ export class OrcaRuntimeRpcServer {
         if (value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
         }
-        const result = await this.runtime.browserFill({ element, value })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserFill({ element, value, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -765,7 +771,8 @@ export class OrcaRuntimeRpcServer {
         if (!input) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --input')
         }
-        const result = await this.runtime.browserType({ input })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserType({ input, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -783,7 +790,8 @@ export class OrcaRuntimeRpcServer {
         if (value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
         }
-        const result = await this.runtime.browserSelect({ element, value })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSelect({ element, value, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -803,7 +811,8 @@ export class OrcaRuntimeRpcServer {
         }
         const amount =
           typeof params?.amount === 'number' && params.amount > 0 ? params.amount : undefined
-        const result = await this.runtime.browserScroll({ direction, amount })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserScroll({ direction, amount, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -812,7 +821,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.back') {
       try {
-        const result = await this.runtime.browserBack()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserBack({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -821,7 +832,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.reload') {
       try {
-        const result = await this.runtime.browserReload()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserReload({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -836,7 +849,8 @@ export class OrcaRuntimeRpcServer {
           (params.format === 'png' || params.format === 'jpeg')
             ? params.format
             : undefined
-        const result = await this.runtime.browserScreenshot({ format })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserScreenshot({ format, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -850,7 +864,8 @@ export class OrcaRuntimeRpcServer {
         if (!expression) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --expression')
         }
-        const result = await this.runtime.browserEval({ expression })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserEval({ expression, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -859,7 +874,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.tabList') {
       try {
-        const result = this.runtime.browserTabList()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabList({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -877,7 +894,8 @@ export class OrcaRuntimeRpcServer {
             'Missing required --index (non-negative integer)'
           )
         }
-        const result = await this.runtime.browserTabSwitch({ index })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabSwitch({ index, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -891,7 +909,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserHover({ element })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserHover({ element, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -910,7 +929,8 @@ export class OrcaRuntimeRpcServer {
             'Missing required --from and --to element refs'
           )
         }
-        const result = await this.runtime.browserDrag({ from, to })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserDrag({ from, to, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -929,7 +949,8 @@ export class OrcaRuntimeRpcServer {
             'Missing required --element and --files'
           )
         }
-        const result = await this.runtime.browserUpload({ element, files })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserUpload({ element, files, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -939,9 +960,25 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.wait') {
       try {
         const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : undefined
         const raw = typeof params?.timeout === 'number' ? params.timeout : undefined
         const timeout = raw !== undefined && raw > 0 ? raw : undefined
-        const result = await this.runtime.browserWait({ timeout })
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const load = typeof params?.load === 'string' ? params.load : undefined
+        const fn = typeof params?.fn === 'string' ? params.fn : undefined
+        const state = typeof params?.state === 'string' ? params.state : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserWait({
+          selector,
+          timeout,
+          text,
+          url,
+          load,
+          fn,
+          state,
+          worktree
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -956,7 +993,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserCheck({ element, checked })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserCheck({ element, checked, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -970,7 +1008,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserFocus({ element })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserFocus({ element, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -984,7 +1023,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserClear({ element })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserClear({ element, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -998,7 +1038,8 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const result = await this.runtime.browserSelectAll({ element })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSelectAll({ element, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1012,7 +1053,8 @@ export class OrcaRuntimeRpcServer {
         if (!key) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
         }
-        const result = await this.runtime.browserKeypress({ key })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserKeypress({ key, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1021,7 +1063,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.pdf') {
       try {
-        const result = await this.runtime.browserPdf()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserPdf({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1032,7 +1076,8 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const format = params?.format === 'jpeg' ? ('jpeg' as const) : ('png' as const)
-        const result = await this.runtime.browserFullScreenshot({ format })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserFullScreenshot({ format, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1045,7 +1090,8 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const url = typeof params?.url === 'string' ? params.url : undefined
-        const result = await this.runtime.browserCookieGet({ url })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserCookieGet({ url, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1060,6 +1106,7 @@ export class OrcaRuntimeRpcServer {
         if (!name || value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing name or value')
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserCookieSet({
           name,
           value,
@@ -1068,7 +1115,8 @@ export class OrcaRuntimeRpcServer {
           secure: typeof params?.secure === 'boolean' ? params.secure : undefined,
           httpOnly: typeof params?.httpOnly === 'boolean' ? params.httpOnly : undefined,
           sameSite: typeof params?.sameSite === 'string' ? params.sameSite : undefined,
-          expires: typeof params?.expires === 'number' ? params.expires : undefined
+          expires: typeof params?.expires === 'number' ? params.expires : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1083,10 +1131,12 @@ export class OrcaRuntimeRpcServer {
         if (!name) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing cookie name')
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserCookieDelete({
           name,
           domain: typeof params?.domain === 'string' ? params.domain : undefined,
-          url: typeof params?.url === 'string' ? params.url : undefined
+          url: typeof params?.url === 'string' ? params.url : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1108,12 +1158,14 @@ export class OrcaRuntimeRpcServer {
             'Width and height must be positive numbers'
           )
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserSetViewport({
           width,
           height,
           deviceScaleFactor:
             typeof params?.deviceScaleFactor === 'number' ? params.deviceScaleFactor : undefined,
-          mobile: typeof params?.mobile === 'boolean' ? params.mobile : undefined
+          mobile: typeof params?.mobile === 'boolean' ? params.mobile : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1131,10 +1183,12 @@ export class OrcaRuntimeRpcServer {
         if (latitude === null || longitude === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing latitude or longitude')
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserSetGeolocation({
           latitude,
           longitude,
-          accuracy: typeof params?.accuracy === 'number' ? params.accuracy : undefined
+          accuracy: typeof params?.accuracy === 'number' ? params.accuracy : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1149,7 +1203,8 @@ export class OrcaRuntimeRpcServer {
         if (!timezoneId) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing timezoneId')
         }
-        const result = await this.runtime.browserSetTimezone({ timezoneId })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetTimezone({ timezoneId, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1163,7 +1218,8 @@ export class OrcaRuntimeRpcServer {
         if (!locale) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing locale')
         }
-        const result = await this.runtime.browserSetLocale({ locale })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetLocale({ locale, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1185,9 +1241,11 @@ export class OrcaRuntimeRpcServer {
             'Permissions array must not be empty'
           )
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserGrantPermissions({
           permissions,
-          origin: typeof params?.origin === 'string' ? params.origin : undefined
+          origin: typeof params?.origin === 'string' ? params.origin : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1201,7 +1259,8 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const patterns = Array.isArray(params?.patterns) ? (params.patterns as string[]) : undefined
-        const result = await this.runtime.browserInterceptEnable({ patterns })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserInterceptEnable({ patterns, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1210,7 +1269,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.intercept.disable') {
       try {
-        const result = await this.runtime.browserInterceptDisable()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserInterceptDisable({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1219,7 +1280,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.intercept.list') {
       try {
-        const result = this.runtime.browserInterceptList()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserInterceptList({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1233,7 +1296,8 @@ export class OrcaRuntimeRpcServer {
         if (!requestId) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
         }
-        const result = await this.runtime.browserInterceptContinue({ requestId })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserInterceptContinue({ requestId, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1247,9 +1311,11 @@ export class OrcaRuntimeRpcServer {
         if (!requestId) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
         }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserInterceptBlock({
           requestId,
-          reason: typeof params?.reason === 'string' ? params.reason : undefined
+          reason: typeof params?.reason === 'string' ? params.reason : undefined,
+          worktree
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1261,7 +1327,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.capture.start') {
       try {
-        const result = await this.runtime.browserCaptureStart()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserCaptureStart({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1270,7 +1338,9 @@ export class OrcaRuntimeRpcServer {
 
     if (request.method === 'browser.capture.stop') {
       try {
-        const result = await this.runtime.browserCaptureStop()
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserCaptureStop({ worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1281,7 +1351,8 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const limit = typeof params?.limit === 'number' ? params.limit : undefined
-        const result = this.runtime.browserConsoleLog({ limit })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserConsoleLog({ limit, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1292,7 +1363,499 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const limit = typeof params?.limit === 'number' ? params.limit : undefined
-        const result = this.runtime.browserNetworkLog({ limit })
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserNetworkLog({ limit, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Additional core commands ──
+
+    if (request.method === 'browser.dblclick') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserDblclick({ element, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.forward') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserForward({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.scrollIntoView') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserScrollIntoView({ element, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.get') {
+      try {
+        const params = this.extractParams(request)
+        const what = typeof params?.what === 'string' ? params.what : null
+        if (!what) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --what')
+        }
+        const selector = typeof params?.selector === 'string' ? params.selector : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserGet({ what, selector, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.is') {
+      try {
+        const params = this.extractParams(request)
+        const what = typeof params?.what === 'string' ? params.what : null
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        if (!what || !selector) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --what and --element'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserIs({ what, selector, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Keyboard insert text ──
+
+    if (request.method === 'browser.keyboardInsertText') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : null
+        if (!text) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserKeyboardInsertText({ text, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Mouse commands ──
+
+    if (request.method === 'browser.mouseMove') {
+      try {
+        const params = this.extractParams(request)
+        const x = typeof params?.x === 'number' ? params.x : null
+        const y = typeof params?.y === 'number' ? params.y : null
+        if (x === null || y === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required x and y coordinates'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserMouseMove({ x, y, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseDown') {
+      try {
+        const params = this.extractParams(request)
+        const button = typeof params?.button === 'string' ? params.button : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserMouseDown({ button, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseUp') {
+      try {
+        const params = this.extractParams(request)
+        const button = typeof params?.button === 'string' ? params.button : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserMouseUp({ button, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseWheel') {
+      try {
+        const params = this.extractParams(request)
+        const dy = typeof params?.dy === 'number' ? params.dy : null
+        if (dy === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --dy')
+        }
+        const dx = typeof params?.dx === 'number' ? params.dx : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserMouseWheel({ dy, dx, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Find (semantic locators) ──
+
+    if (request.method === 'browser.find') {
+      try {
+        const params = this.extractParams(request)
+        const locator = typeof params?.locator === 'string' ? params.locator : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        const action = typeof params?.action === 'string' ? params.action : null
+        if (!locator || !value || !action) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --locator, --value, and --action'
+          )
+        }
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserFind({ locator, value, action, text, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Set commands ──
+
+    if (request.method === 'browser.setDevice') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        if (!name) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --name')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetDevice({ name, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setOffline') {
+      try {
+        const params = this.extractParams(request)
+        const state = typeof params?.state === 'string' ? params.state : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetOffline({ state, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setHeaders') {
+      try {
+        const params = this.extractParams(request)
+        const headers = typeof params?.headers === 'string' ? params.headers : null
+        if (!headers) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --headers (JSON string)'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetHeaders({ headers, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setCredentials') {
+      try {
+        const params = this.extractParams(request)
+        const user = typeof params?.user === 'string' ? params.user : null
+        const pass = typeof params?.pass === 'string' ? params.pass : null
+        if (!user || pass === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --user and --pass'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetCredentials({ user, pass, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setMedia') {
+      try {
+        const params = this.extractParams(request)
+        const colorScheme = typeof params?.colorScheme === 'string' ? params.colorScheme : undefined
+        const reducedMotion =
+          typeof params?.reducedMotion === 'string' ? params.reducedMotion : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserSetMedia({ colorScheme, reducedMotion, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Clipboard commands ──
+
+    if (request.method === 'browser.clipboardRead') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserClipboardRead({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.clipboardWrite') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : null
+        if (!text) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserClipboardWrite({ text, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Dialog commands ──
+
+    if (request.method === 'browser.dialogAccept') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserDialogAccept({ text, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.dialogDismiss') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserDialogDismiss({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Storage commands ──
+
+    if (request.method === 'browser.storage.local.get') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageLocalGet({ key, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.local.set') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!key || value === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --key and --value'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageLocalSet({ key, value, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.local.clear') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageLocalClear({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.get') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageSessionGet({ key, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.set') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!key || value === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --key and --value'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageSessionSet({ key, value, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.clear') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserStorageSessionClear({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Download command ──
+
+    if (request.method === 'browser.download') {
+      try {
+        const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        const path = typeof params?.path === 'string' ? params.path : null
+        if (!selector || !path) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --selector and --path'
+          )
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserDownload({ selector, path, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Highlight command ──
+
+    if (request.method === 'browser.highlight') {
+      try {
+        const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        if (!selector) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --selector')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserHighlight({ selector, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── New: exec passthrough + tab lifecycle ──
+
+    if (request.method === 'browser.exec') {
+      try {
+        const params = this.extractParams(request)
+        const command = typeof params?.command === 'string' ? params.command : null
+        if (!command) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --command')
+        }
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserExec({ command, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabCreate') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabCreate({ url, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabClose') {
+      try {
+        const params = this.extractParams(request)
+        const index = typeof params?.index === 'number' ? params.index : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabClose({ index, worktree })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
