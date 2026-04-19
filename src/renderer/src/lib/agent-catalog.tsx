@@ -173,13 +173,6 @@ export const AGENT_CATALOG: AgentCatalogEntry[] = [
     cmd: 'hermes',
     faviconDomain: 'nousresearch.com',
     homepageUrl: 'https://hermes-agent.nousresearch.com/docs/'
-  },
-  {
-    id: 'copilot',
-    label: 'GitHub Copilot',
-    cmd: 'copilot',
-    faviconDomain: 'github.com',
-    homepageUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli'
   }
 ]
 

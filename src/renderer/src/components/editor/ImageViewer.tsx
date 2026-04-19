@@ -1,6 +1,6 @@
 import { Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { type JSX, useEffect, useMemo, useState } from 'react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -191,6 +191,7 @@ export default function ImageViewer({
             className="top-1/2 left-1/2 h-[80vh] w-[70vw] max-w-[70vw] -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden border border-border/60 bg-background p-0 shadow-2xl sm:max-w-[70vw]"
           >
             <DialogTitle className="sr-only">{filename}</DialogTitle>
+            <DialogDescription className="sr-only">Full-size image preview</DialogDescription>
             <div className="flex items-center justify-between border-b border-border/60 bg-background/95 px-3 py-2">
               <div className="min-w-0 truncate text-sm font-medium text-foreground">{filename}</div>
               <button

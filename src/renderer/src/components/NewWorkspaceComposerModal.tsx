@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect } from 'react'
 import { useAppStore } from '@/store'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
 import { useComposerState } from '@/hooks/useComposerState'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
@@ -122,6 +122,10 @@ function ComposerModalBody({
           promptTextareaRef.current?.focus()
         }}
       >
+        <DialogTitle className="sr-only">Create New Workspace</DialogTitle>
+        <DialogDescription className="sr-only">
+          Configure a name and prompt for the new workspace.
+        </DialogDescription>
         <NewWorkspaceComposerCard
           containerClassName="bg-card/98 shadow-2xl supports-[backdrop-filter]:bg-card/95"
           composerRef={composerRef}
