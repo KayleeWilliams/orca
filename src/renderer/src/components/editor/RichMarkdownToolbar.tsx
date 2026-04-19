@@ -1,6 +1,5 @@
 import React from 'react'
 import type { Editor } from '@tiptap/react'
-import { useEditorState } from '@tiptap/react'
 import {
   Heading1,
   Heading2,
@@ -30,26 +29,6 @@ export function RichMarkdownToolbar({
   onToggleLink,
   onImagePick
 }: RichMarkdownToolbarProps): React.JSX.Element {
-  // Why: the editor object reference is stable across transactions, so passing
-  // it as a prop alone won't re-render this component when the selection moves.
-  // useEditorState subscribes to editor transactions and returns derived state,
-  // triggering a re-render only when the active formatting actually changes.
-  const active = useEditorState({
-    editor,
-    selector: (ctx) => {
-      const ed = ctx.editor
-      if (!ed) {
-        return null
-      }
-      return {
-        bold: ed.isActive('bold'),
-        italic: ed.isActive('italic'),
-        strike: ed.isActive('strike'),
-        link: ed.isActive('link')
-      }
-    }
-  })
-
   return (
     <div className="rich-markdown-editor-toolbar">
       <RichMarkdownToolbarButton
@@ -82,21 +61,21 @@ export function RichMarkdownToolbar({
       </RichMarkdownToolbarButton>
       <Separator />
       <RichMarkdownToolbarButton
-        active={active?.bold ?? false}
+        active={false}
         label="Bold"
         onClick={() => editor?.chain().focus().toggleBold().run()}
       >
         B
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.italic ?? false}
+        active={false}
         label="Italic"
         onClick={() => editor?.chain().focus().toggleItalic().run()}
       >
         I
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton
-        active={active?.strike ?? false}
+        active={false}
         label="Strike"
         onClick={() => editor?.chain().focus().toggleStrike().run()}
       >
@@ -132,7 +111,7 @@ export function RichMarkdownToolbar({
       >
         <Quote className="size-3.5" />
       </RichMarkdownToolbarButton>
-      <RichMarkdownToolbarButton active={active?.link ?? false} label="Link" onClick={onToggleLink}>
+      <RichMarkdownToolbarButton active={false} label="Link" onClick={onToggleLink}>
         <LinkIcon className="size-3.5" />
       </RichMarkdownToolbarButton>
       <RichMarkdownToolbarButton active={false} label="Image" onClick={onImagePick}>
