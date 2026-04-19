@@ -235,6 +235,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     [navigateWorktree]
   )
 
+  const firstHeaderIndex = useMemo(() => rows.findIndex((r) => r.type === 'header'), [rows])
+
   const virtualItems = virtualizer.getVirtualItems()
   const activeDescendantId =
     activeWorktreeId != null &&
@@ -291,7 +293,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   role="button"
                   tabIndex={0}
                   className={cn(
-                    'group mt-2 flex h-7 w-full items-center gap-1.5 px-1.5 text-left transition-all cursor-pointer',
+                    'group flex h-7 w-full items-center gap-1.5 px-1.5 text-left transition-all cursor-pointer',
+                    // First header sits right under the sidebar search bar, which
+                    // already supplies its own spacing — only offset secondary
+                    // group headers.
+                    vItem.index !== firstHeaderIndex && 'mt-2',
                     row.repo ? 'overflow-hidden' : row.tone
                   )}
                   onClick={() => toggleGroup(row.key)}
