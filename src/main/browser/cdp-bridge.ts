@@ -101,6 +101,18 @@ export class CdpBridge {
     return this.activeWebContentsId
   }
 
+  getActivePageId(_worktreeId?: string): string | null {
+    if (!this.activeWebContentsId) {
+      return null
+    }
+    for (const [tabId, wcId] of this.getRegisteredTabs()) {
+      if (wcId === this.activeWebContentsId) {
+        return tabId
+      }
+    }
+    return null
+  }
+
   async snapshot(): Promise<BrowserSnapshotResult> {
     return this.enqueueCommand(async () => {
       const guest = this.getActiveGuest()

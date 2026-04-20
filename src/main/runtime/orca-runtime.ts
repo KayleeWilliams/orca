@@ -61,6 +61,7 @@ import type {
 } from '../../shared/runtime-types'
 import { BrowserWindow, ipcMain } from 'electron'
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
+import { BrowserError } from '../browser/cdp-bridge'
 import { waitForTabRegistration } from '../ipc/browser'
 import { getPRForBranch } from '../github/client'
 import {
@@ -1160,7 +1161,7 @@ export class OrcaRuntimeService {
 
   private requireAgentBrowserBridge(): AgentBrowserBridge {
     if (!this.agentBrowserBridge) {
-      throw new Error('runtime_unavailable')
+      throw new BrowserError('browser_no_tab', 'No browser session is active')
     }
     return this.agentBrowserBridge
   }
@@ -1176,9 +1177,13 @@ export class OrcaRuntimeService {
       // become operable via registerGuest.
       const bridge = this.agentBrowserBridge
       if (bridge && bridge.getRegisteredTabs().size === 0) {
-        const win = this.getAuthoritativeWindow()
-        win.webContents.send('browser:activateView', {})
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        try {
+          const win = this.getAuthoritativeWindow()
+          win.webContents.send('browser:activateView', {})
+          await new Promise((resolve) => setTimeout(resolve, 500))
+        } catch {
+          // Window may not exist yet (e.g. during startup or in tests)
+        }
       }
       return undefined
     }

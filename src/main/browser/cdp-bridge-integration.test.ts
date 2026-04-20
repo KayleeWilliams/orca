@@ -112,6 +112,9 @@ function createMockGuest(id: number, url: string, title: string) {
         if (expr === 'document.readyState') {
           return { result: { value: 'complete' } }
         }
+        if (expr === 'location.origin') {
+          return { result: { value: new URL(currentUrl).origin } }
+        }
         if (expr.includes('innerWidth')) {
           return { result: { value: JSON.stringify({ w: 1280, h: 720 }) } }
         }
@@ -431,7 +434,7 @@ describe('Browser automation pipeline (integration)', () => {
   it('evaluates JavaScript in the page context', async () => {
     const res = await rpc('browser.eval', { expression: '2 + 2' })
     expect(res.ok).toBe(true)
-    expect((res.result as { value: string }).value).toBe('4')
+    expect((res.result as { result: string }).result).toBe('4')
   })
 
   // ── Tab management ──
