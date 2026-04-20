@@ -42,9 +42,6 @@ import type {
   BrowserCookieDeleteResult,
   BrowserViewportResult,
   BrowserGeolocationResult,
-  BrowserTimezoneResult,
-  BrowserLocaleResult,
-  BrowserPermissionResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
   BrowserInterceptedRequest,
@@ -296,9 +293,15 @@ export const COMMAND_SPECS: CommandSpec[] = [
   },
   {
     path: ['check'],
-    summary: 'Check or uncheck a checkbox/radio by ref',
-    usage: 'orca check --element <ref> [--uncheck] [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'element', 'uncheck', 'worktree']
+    summary: 'Check a checkbox/radio by ref',
+    usage: 'orca check --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
+  },
+  {
+    path: ['uncheck'],
+    summary: 'Uncheck a checkbox/radio by ref',
+    usage: 'orca uncheck --element <ref> [--worktree <selector>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'element', 'worktree']
   },
   {
     path: ['focus'],
@@ -424,32 +427,13 @@ export const COMMAND_SPECS: CommandSpec[] = [
       'orca viewport --width <w> --height <h> [--scale <n>] [--mobile] [--worktree <selector>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'width', 'height', 'scale', 'mobile', 'worktree']
   },
-  // ── Geolocation/timezone/locale ──
+  // ── Geolocation ──
   {
     path: ['geolocation'],
     summary: 'Override browser geolocation',
     usage:
       'orca geolocation --latitude <lat> --longitude <lon> [--accuracy <n>] [--worktree <selector>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'latitude', 'longitude', 'accuracy', 'worktree']
-  },
-  {
-    path: ['timezone'],
-    summary: 'Override browser timezone',
-    usage: 'orca timezone --id <timezone> [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'worktree']
-  },
-  {
-    path: ['locale'],
-    summary: 'Override browser locale',
-    usage: 'orca locale --locale <locale> [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'locale', 'worktree']
-  },
-  // ── Permissions ──
-  {
-    path: ['permissions'],
-    summary: 'Grant browser permissions (geolocation, notifications, etc.)',
-    usage: 'orca permissions --grant <perm,...> [--origin <url>] [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'grant', 'origin', 'worktree']
   },
   // ── Request interception ──
   {
@@ -1052,13 +1036,13 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
-    if (matches(commandPath, ['check'])) {
+    if (matches(commandPath, ['check']) || matches(commandPath, ['uncheck'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const uncheck = parsed.flags.has('uncheck')
+      const checked = matches(commandPath, ['check'])
       const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserCheckResult>('browser.check', {
         element,
-        checked: !uncheck,
+        checked,
         worktree
       })
       return printResult(result, json, (v) =>
@@ -1254,39 +1238,6 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       params.worktree = worktree
       const result = await client.call<BrowserGeolocationResult>('browser.geolocation', params)
       return printResult(result, json, (v) => `Geolocation set to ${v.latitude}, ${v.longitude}`)
-    }
-
-    if (matches(commandPath, ['timezone'])) {
-      const timezoneId = getRequiredStringFlag(parsed.flags, 'id')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserTimezoneResult>('browser.timezone', {
-        timezoneId,
-        worktree
-      })
-      return printResult(result, json, (v) => `Timezone set to ${v.timezoneId}`)
-    }
-
-    if (matches(commandPath, ['locale'])) {
-      const locale = getRequiredStringFlag(parsed.flags, 'locale')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserLocaleResult>('browser.locale', { locale, worktree })
-      return printResult(result, json, (v) => `Locale set to ${v.locale}`)
-    }
-
-    // ── Permissions ──
-
-    if (matches(commandPath, ['permissions'])) {
-      const grantStr = getRequiredStringFlag(parsed.flags, 'grant')
-      const permissions = grantStr.split(',').map((p) => p.trim())
-      const params: Record<string, unknown> = { permissions }
-      const origin = getOptionalStringFlag(parsed.flags, 'origin')
-      if (origin) {
-        params.origin = origin
-      }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
-      const result = await client.call<BrowserPermissionResult>('browser.permissions', params)
-      return printResult(result, json, (v) => `Granted: ${v.granted.join(', ')}`)
     }
 
     // ── Request interception ──
@@ -2206,7 +2157,8 @@ Browser Automation:
   screenshot                Capture viewport screenshot (--format png|jpeg)
   eval                      Evaluate --expression JavaScript in the page context
   wait                      Wait for page idle or --timeout ms
-  check                     Check/uncheck a checkbox by --element ref
+  check                     Check a checkbox by --element ref
+  uncheck                   Uncheck a checkbox by --element ref
   focus                     Focus an element by --element ref
   clear                     Clear an input by --element ref
   drag                      Drag --from ref to --to ref

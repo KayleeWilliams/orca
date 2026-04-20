@@ -52,9 +52,6 @@ import type {
   BrowserCookieDeleteResult,
   BrowserViewportResult,
   BrowserGeolocationResult,
-  BrowserTimezoneResult,
-  BrowserLocaleResult,
-  BrowserPermissionResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
   BrowserInterceptContinueResult,
@@ -1449,37 +1446,6 @@ export class OrcaRuntimeService {
       params.latitude,
       params.longitude,
       params.accuracy,
-      worktreeId
-    )
-  }
-
-  async browserSetTimezone(params: {
-    timezoneId: string
-    worktree?: string
-  }): Promise<BrowserTimezoneResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setTimezone(params.timezoneId, worktreeId)
-  }
-
-  async browserSetLocale(params: {
-    locale: string
-    worktree?: string
-  }): Promise<BrowserLocaleResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setLocale(params.locale, worktreeId)
-  }
-
-  // ── Permissions ──
-
-  async browserGrantPermissions(params: {
-    permissions: string[]
-    origin?: string
-    worktree?: string
-  }): Promise<BrowserPermissionResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().grantPermissions(
-      params.permissions,
-      params.origin,
       worktreeId
     )
   }

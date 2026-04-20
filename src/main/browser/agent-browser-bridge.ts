@@ -37,9 +37,6 @@ import type {
   BrowserCookieDeleteResult,
   BrowserViewportResult,
   BrowserGeolocationResult,
-  BrowserTimezoneResult,
-  BrowserLocaleResult,
-  BrowserPermissionResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
   BrowserInterceptContinueResult,
@@ -928,35 +925,6 @@ export class AgentBrowserBridge {
         String(lat),
         String(lon)
       ])) as BrowserGeolocationResult
-    })
-  }
-
-  async setTimezone(_timezoneId: string, worktreeId?: string): Promise<BrowserTimezoneResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      // Why: agent-browser doesn't have a dedicated timezone command — use eval
-      // to inject the timezone override via CDP Emulation domain
-      return (await this.execAgentBrowser(sessionName, ['eval', 'void 0'])) as BrowserTimezoneResult
-    })
-  }
-
-  async setLocale(_locale: string, worktreeId?: string): Promise<BrowserLocaleResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      // Why: agent-browser doesn't have a dedicated locale command
-      return (await this.execAgentBrowser(sessionName, ['eval', 'void 0'])) as BrowserLocaleResult
-    })
-  }
-
-  async grantPermissions(
-    _permissions: string[],
-    _origin?: string,
-    worktreeId?: string
-  ): Promise<BrowserPermissionResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      // Why: agent-browser doesn't have a permissions command — no-op stub
-      return (await this.execAgentBrowser(sessionName, [
-        'eval',
-        'void 0'
-      ])) as BrowserPermissionResult
     })
   }
 

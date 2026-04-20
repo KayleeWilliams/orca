@@ -1196,63 +1196,6 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
-    if (request.method === 'browser.timezone') {
-      try {
-        const params = this.extractParams(request)
-        const timezoneId = typeof params?.timezoneId === 'string' ? params.timezoneId : null
-        if (!timezoneId) {
-          return this.errorResponse(request.id, 'invalid_argument', 'Missing timezoneId')
-        }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetTimezone({ timezoneId, worktree })
-        return this.successResponse(request.id, result)
-      } catch (error) {
-        return this.browserErrorResponse(request.id, error)
-      }
-    }
-
-    if (request.method === 'browser.locale') {
-      try {
-        const params = this.extractParams(request)
-        const locale = typeof params?.locale === 'string' ? params.locale : null
-        if (!locale) {
-          return this.errorResponse(request.id, 'invalid_argument', 'Missing locale')
-        }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetLocale({ locale, worktree })
-        return this.successResponse(request.id, result)
-      } catch (error) {
-        return this.browserErrorResponse(request.id, error)
-      }
-    }
-
-    // ── Permissions ──
-
-    if (request.method === 'browser.permissions') {
-      try {
-        const params = this.extractParams(request)
-        const permissions = Array.isArray(params?.permissions)
-          ? (params.permissions as string[])
-          : null
-        if (!permissions || permissions.length === 0) {
-          return this.errorResponse(
-            request.id,
-            'invalid_argument',
-            'Permissions array must not be empty'
-          )
-        }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserGrantPermissions({
-          permissions,
-          origin: typeof params?.origin === 'string' ? params.origin : undefined,
-          worktree
-        })
-        return this.successResponse(request.id, result)
-      } catch (error) {
-        return this.browserErrorResponse(request.id, error)
-      }
-    }
-
     // ── Request interception ──
 
     if (request.method === 'browser.intercept.enable') {

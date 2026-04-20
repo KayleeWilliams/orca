@@ -310,20 +310,6 @@ export type BrowserGeolocationResult = {
   accuracy: number
 }
 
-export type BrowserTimezoneResult = {
-  timezoneId: string
-}
-
-export type BrowserLocaleResult = {
-  locale: string
-}
-
-// ── Permission types ──
-
-export type BrowserPermissionResult = {
-  granted: string[]
-}
-
 // ── Request interception types ──
 
 export type BrowserInterceptedRequest = {

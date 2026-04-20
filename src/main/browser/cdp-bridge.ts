@@ -25,11 +25,9 @@ import type {
   BrowserInterceptEnableResult,
   BrowserInterceptedRequest,
   BrowserKeypressResult,
-  BrowserLocaleResult,
   BrowserNetworkEntry,
   BrowserNetworkLogResult,
   BrowserPdfResult,
-  BrowserPermissionResult,
   BrowserScreenshotResult,
   BrowserScrollResult,
   BrowserSelectAllResult,
@@ -38,7 +36,6 @@ import type {
   BrowserTabInfo,
   BrowserTabListResult,
   BrowserTabSwitchResult,
-  BrowserTimezoneResult,
   BrowserTypeResult,
   BrowserUploadResult,
   BrowserViewportResult,
@@ -745,46 +742,6 @@ export class CdpBridge {
 
       await sender('Emulation.setGeolocationOverride', { latitude, longitude, accuracy })
       return { latitude, longitude, accuracy }
-    })
-  }
-
-  async setTimezone(timezoneId: string): Promise<BrowserTimezoneResult> {
-    return this.enqueueCommand(async () => {
-      const guest = this.getActiveGuest()
-      const sender = this.makeCdpSender(guest)
-      await this.ensureDebuggerAttached(guest)
-
-      await sender('Emulation.setTimezoneOverride', { timezoneId })
-      return { timezoneId }
-    })
-  }
-
-  async setLocale(locale: string): Promise<BrowserLocaleResult> {
-    return this.enqueueCommand(async () => {
-      const guest = this.getActiveGuest()
-      const sender = this.makeCdpSender(guest)
-      await this.ensureDebuggerAttached(guest)
-
-      await sender('Emulation.setLocaleOverride', { locale })
-      return { locale }
-    })
-  }
-
-  // ── Permissions ──
-
-  async grantPermissions(permissions: string[], origin?: string): Promise<BrowserPermissionResult> {
-    return this.enqueueCommand(async () => {
-      const guest = this.getActiveGuest()
-      const sender = this.makeCdpSender(guest)
-      await this.ensureDebuggerAttached(guest)
-
-      const params: Record<string, unknown> = { permissions }
-      if (origin) {
-        params.origin = origin
-      }
-
-      await sender('Browser.grantPermissions', params)
-      return { granted: permissions }
     })
   }
 
