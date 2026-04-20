@@ -171,7 +171,9 @@ Why: terminal handles are runtime-scoped and may go stale after reloads. If Orca
 
 `orca` also supports browser automation commands for driving the built-in Orca browser. The core loop is: snapshot the page to get element refs → interact using refs → re-snapshot to see the updated state.
 
-Key commands: `orca snapshot`, `orca click --element @e3`, `orca fill --element @e5 --value "hello"`, `orca goto --url <url>`, `orca tab list`, `orca tab switch --index <n>`.
+Key commands: `orca snapshot`, `orca click --element @e3`, `orca fill --element @e5 --value "hello"`, `orca goto --url <url>`, `orca tab list`, `orca tab switch --index <n>`, `orca wait --text "loaded"`.
+
+Browser commands auto-switch the active worktree and auto-activate newly created tabs — no manual worktree/tab activation needed.
 
 For the full browser command reference, error codes, and worked examples, see the `orca-browser` skill.
 

@@ -19,8 +19,6 @@ import type {
   BrowserGeolocationResult,
   BrowserGotoResult,
   BrowserHoverResult,
-  BrowserInterceptBlockResult,
-  BrowserInterceptContinueResult,
   BrowserInterceptDisableResult,
   BrowserInterceptEnableResult,
   BrowserInterceptedRequest,
@@ -791,37 +789,9 @@ export class CdpBridge {
     return { requests: [...state.pausedRequests.values()] }
   }
 
-  async interceptContinue(requestId: string): Promise<BrowserInterceptContinueResult> {
-    return this.enqueueCommand(async () => {
-      const guest = this.getActiveGuest()
-      const sender = this.makeCdpSender(guest)
-      await this.ensureDebuggerAttached(guest)
-
-      const tabId = this.resolveTabId(guest.id)
-      const state = this.getOrCreateTabState(tabId)
-
-      await sender('Fetch.continueRequest', { requestId })
-      state.pausedRequests.delete(requestId)
-
-      return { continued: requestId }
-    })
-  }
-
-  async interceptBlock(requestId: string, reason = 'Failed'): Promise<BrowserInterceptBlockResult> {
-    return this.enqueueCommand(async () => {
-      const guest = this.getActiveGuest()
-      const sender = this.makeCdpSender(guest)
-      await this.ensureDebuggerAttached(guest)
-
-      const tabId = this.resolveTabId(guest.id)
-      const state = this.getOrCreateTabState(tabId)
-
-      await sender('Fetch.failRequest', { requestId, reason })
-      state.pausedRequests.delete(requestId)
-
-      return { blocked: requestId }
-    })
-  }
+  // TODO: Add interceptContinue/interceptBlock once agent-browser supports per-request
+  // interception decisions. The CDP Fetch domain supports it, but the agent-browser CLI
+  // only operates on URL pattern-level routing, creating a design mismatch.
 
   // ── Console/network capture ──
 

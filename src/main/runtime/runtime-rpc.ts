@@ -1232,40 +1232,6 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
-    if (request.method === 'browser.intercept.continue') {
-      try {
-        const params = this.extractParams(request)
-        const requestId = typeof params?.requestId === 'string' ? params.requestId : null
-        if (!requestId) {
-          return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
-        }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserInterceptContinue({ requestId, worktree })
-        return this.successResponse(request.id, result)
-      } catch (error) {
-        return this.browserErrorResponse(request.id, error)
-      }
-    }
-
-    if (request.method === 'browser.intercept.block') {
-      try {
-        const params = this.extractParams(request)
-        const requestId = typeof params?.requestId === 'string' ? params.requestId : null
-        if (!requestId) {
-          return this.errorResponse(request.id, 'invalid_argument', 'Missing requestId')
-        }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserInterceptBlock({
-          requestId,
-          reason: typeof params?.reason === 'string' ? params.reason : undefined,
-          worktree
-        })
-        return this.successResponse(request.id, result)
-      } catch (error) {
-        return this.browserErrorResponse(request.id, error)
-      }
-    }
-
     // ── Console/network capture ──
 
     if (request.method === 'browser.capture.start') {

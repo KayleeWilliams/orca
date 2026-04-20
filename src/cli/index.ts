@@ -45,8 +45,6 @@ import type {
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
   BrowserInterceptedRequest,
-  BrowserInterceptContinueResult,
-  BrowserInterceptBlockResult,
   BrowserCaptureStartResult,
   BrowserCaptureStopResult,
   BrowserConsoleResult,
@@ -454,19 +452,8 @@ export const COMMAND_SPECS: CommandSpec[] = [
     usage: 'orca intercept list [--worktree <selector>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'worktree']
   },
-  {
-    path: ['intercept', 'continue'],
-    summary: 'Continue a paused request',
-    usage: 'orca intercept continue --id <requestId> [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'worktree']
-  },
-  {
-    path: ['intercept', 'block'],
-    summary: 'Block (fail) a paused request',
-    usage:
-      'orca intercept block --id <requestId> [--reason <reason>] [--worktree <selector>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'reason', 'worktree']
-  },
+  // TODO: add intercept continue/block once agent-browser supports per-request
+  // interception decisions (currently only supports URL-pattern-based route/unroute).
   // ── Console/network capture ──
   {
     path: ['capture', 'start'],
@@ -1283,32 +1270,6 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
           .map((r) => `[${r.id}] ${r.method} ${r.url} (${r.resourceType})`)
           .join('\n')
       })
-    }
-
-    if (matches(commandPath, ['intercept', 'continue'])) {
-      const requestId = getRequiredStringFlag(parsed.flags, 'id')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserInterceptContinueResult>(
-        'browser.intercept.continue',
-        { requestId, worktree }
-      )
-      return printResult(result, json, (v) => `Continued request ${v.continued}`)
-    }
-
-    if (matches(commandPath, ['intercept', 'block'])) {
-      const requestId = getRequiredStringFlag(parsed.flags, 'id')
-      const params: Record<string, unknown> = { requestId }
-      const reason = getOptionalStringFlag(parsed.flags, 'reason')
-      if (reason) {
-        params.reason = reason
-      }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
-      const result = await client.call<BrowserInterceptBlockResult>(
-        'browser.intercept.block',
-        params
-      )
-      return printResult(result, json, (v) => `Blocked request ${v.blocked}`)
     }
 
     // ── Console/network capture ──

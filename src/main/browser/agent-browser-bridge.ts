@@ -39,8 +39,6 @@ import type {
   BrowserGeolocationResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
-  BrowserInterceptContinueResult,
-  BrowserInterceptBlockResult,
   BrowserConsoleResult,
   BrowserNetworkLogResult,
   BrowserCaptureStartResult,
@@ -972,36 +970,9 @@ export class AgentBrowserBridge {
     })
   }
 
-  async interceptContinue(
-    _requestId: string,
-    worktreeId?: string
-  ): Promise<BrowserInterceptContinueResult> {
-    // TODO: agent-browser doesn't support per-request continue — this removes all interception.
-    // The CLI/RPC pass requestId but agent-browser only operates on URL patterns.
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, [
-        'network',
-        'unroute'
-      ])) as BrowserInterceptContinueResult
-    })
-  }
-
-  async interceptBlock(
-    urlPattern: string,
-    _reason?: string,
-    worktreeId?: string
-  ): Promise<BrowserInterceptBlockResult> {
-    // TODO: RPC passes requestId as urlPattern — agent-browser expects a URL glob, not a request ID.
-    // This is a design mismatch that needs reworking at the CLI/RPC/bridge level.
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, [
-        'network',
-        'route',
-        urlPattern,
-        '--abort'
-      ])) as BrowserInterceptBlockResult
-    })
-  }
+  // TODO: Add interceptContinue/interceptBlock once agent-browser supports per-request
+  // interception decisions. Currently agent-browser only operates on URL pattern-level
+  // routing, not individual request IDs, so the RPC/CLI interface doesn't map cleanly.
 
   // ── Capture commands ──
 

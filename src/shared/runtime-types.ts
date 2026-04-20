@@ -329,14 +329,6 @@ export type BrowserInterceptDisableResult = {
   disabled: boolean
 }
 
-export type BrowserInterceptContinueResult = {
-  continued: string
-}
-
-export type BrowserInterceptBlockResult = {
-  blocked: string
-}
-
 // ── Console/network capture types ──
 
 export type BrowserConsoleEntry = {

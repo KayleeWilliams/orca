@@ -54,8 +54,6 @@ import type {
   BrowserGeolocationResult,
   BrowserInterceptEnableResult,
   BrowserInterceptDisableResult,
-  BrowserInterceptContinueResult,
-  BrowserInterceptBlockResult,
   BrowserCaptureStartResult,
   BrowserCaptureStopResult,
   BrowserConsoleResult,
@@ -1470,27 +1468,6 @@ export class OrcaRuntimeService {
   async browserInterceptList(params: { worktree?: string }): Promise<{ requests: unknown[] }> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
     return this.requireAgentBrowserBridge().interceptList(worktreeId)
-  }
-
-  async browserInterceptContinue(params: {
-    requestId: string
-    worktree?: string
-  }): Promise<BrowserInterceptContinueResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().interceptContinue(params.requestId, worktreeId)
-  }
-
-  async browserInterceptBlock(params: {
-    requestId: string
-    reason?: string
-    worktree?: string
-  }): Promise<BrowserInterceptBlockResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().interceptBlock(
-      params.requestId,
-      params.reason,
-      worktreeId
-    )
   }
 
   // ── Console/network capture ──
