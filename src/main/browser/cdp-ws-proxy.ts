@@ -161,10 +161,10 @@ export class CdpWsProxy {
         return
       }
 
-      // Why: events from the root debugger session have no sessionId, but agent-browser
-      // expects them tagged with the sessionId returned from Target.attachToTarget.
+      // Why: Electron passes empty string (not undefined) for root-session events, but
+      // agent-browser filters events by the sessionId from Target.attachToTarget.
       const msg: Record<string, unknown> = { method, params }
-      msg.sessionId = sessionId ?? this.clientSessionId
+      msg.sessionId = sessionId || this.clientSessionId
       this.client.send(JSON.stringify(msg))
     }
 
@@ -206,7 +206,6 @@ export class CdpWsProxy {
     if (msg.id == null || !msg.method) {
       return
     }
-
     const clientId = msg.id
 
     // Why: Target.* and Browser.* commands are browser-level. Electron's per-tab
@@ -267,13 +266,30 @@ export class CdpWsProxy {
       this.webContents.focus()
     }
 
+    // Why: agent-browser waits for network idle (0 pending requests for 500ms) to
+    // detect navigation completion. On Electron webview guests, CDP domain subscriptions
+    // (Network, Page) silently lapse after cross-process swaps. Re-enabling before
+    // every Page.navigate ensures agent-browser receives completion signals.
+    if (msg.method === 'Page.navigate' && !this.webContents.isDestroyed()) {
+      void this.navigateWithLifecycleEnsured(clientId, msg.params ?? {})
+      return
+    }
+
+    this.forwardCommand(clientId, msg.method, msg.params ?? {}, msg.sessionId)
+  }
+
+  private forwardCommand(
+    clientId: number,
+    method: string,
+    params: Record<string, unknown>,
+    msgSessionId?: string
+  ): void {
     const internalId = this.nextId++
-    // Why: strip synthetic sessionId so commands route to Electron's root session.
     const sessionId =
-      msg.sessionId && msg.sessionId !== this.clientSessionId ? msg.sessionId : undefined
+      msgSessionId && msgSessionId !== this.clientSessionId ? msgSessionId : undefined
 
     this.webContents.debugger
-      .sendCommand(msg.method, msg.params ?? {}, sessionId)
+      .sendCommand(method, params, sessionId)
       .then((result) => {
         this.inflight.delete(internalId)
         this.sendResult(clientId, result)
@@ -284,6 +300,22 @@ export class CdpWsProxy {
       })
 
     this.inflight.set(internalId, { clientId, resolve: () => {}, reject: () => {} })
+  }
+
+  private async navigateWithLifecycleEnsured(
+    clientId: number,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const dbg = this.webContents.debugger
+      // Why: agent-browser's completion signal is network idle — without Network.enable, goto times out.
+      await dbg.sendCommand('Network.enable', {})
+      await dbg.sendCommand('Page.enable', {})
+      await dbg.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true })
+    } catch {
+      /* best-effort — proceed even if re-enable fails */
+    }
+    this.forwardCommand(clientId, 'Page.navigate', params)
   }
 
   // Why: Electron's wc.debugger.sendCommand('Page.captureScreenshot') hangs
