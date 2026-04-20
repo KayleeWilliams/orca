@@ -1091,6 +1091,14 @@ export class AgentBrowserBridge {
     this.processingQueues.delete(sessionName)
   }
 
+  getActivePageId(worktreeId?: string): string | null {
+    try {
+      return this.resolveActiveTab(worktreeId).browserPageId
+    } catch {
+      return null
+    }
+  }
+
   private resolveActiveTab(worktreeId?: string): { browserPageId: string; webContentsId: number } {
     const tabs = this.getRegisteredTabs(worktreeId)
 

@@ -658,6 +658,17 @@ const api = {
       return () => ipcRenderer.removeListener('browser:context-menu-dismissed', listener)
     },
 
+    onNavigationUpdate: (
+      callback: (event: { browserPageId: string; url: string; title: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { browserPageId: string; url: string; title: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:navigation-update', listener)
+      return () => ipcRenderer.removeListener('browser:navigation-update', listener)
+    },
+
     onOpenLinkInOrcaTab: (
       callback: (event: { browserPageId: string; url: string }) => void
     ): (() => void) => {

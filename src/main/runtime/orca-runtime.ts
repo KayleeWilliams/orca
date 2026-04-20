@@ -1203,6 +1203,20 @@ export class OrcaRuntimeService {
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
 
+  // Why: agent-browser drives navigation via CDP, which bypasses Electron's
+  // webview event system. The renderer's did-navigate / page-title-updated
+  // listeners never fire, leaving the Zustand store (and thus the Orca UI's
+  // address bar and tab title) stale. Push updates from main → renderer after
+  // any navigation-causing command so the UI stays in sync.
+  private notifyRendererNavigation(browserPageId: string, url: string, title: string): void {
+    try {
+      const win = this.getAuthoritativeWindow()
+      win.webContents.send('browser:navigation-update', { browserPageId, url, title })
+    } catch {
+      // Window may not exist during shutdown
+    }
+  }
+
   async browserSnapshot(params: { worktree?: string }): Promise<BrowserSnapshotResult> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
     return this.requireAgentBrowserBridge().snapshot(worktreeId)
@@ -1210,12 +1224,30 @@ export class OrcaRuntimeService {
 
   async browserClick(params: { element: string; worktree?: string }): Promise<BrowserClickResult> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().click(params.element, worktreeId)
+    const bridge = this.requireAgentBrowserBridge()
+    const result = await bridge.click(params.element, worktreeId)
+    // Why: clicks can trigger navigation (e.g. submitting a form, clicking a link).
+    // Read the live URL/title after the click and push to renderer so the UI updates.
+    const pageId = bridge.getActivePageId(worktreeId)
+    if (pageId) {
+      const tabs = bridge.tabList(worktreeId)
+      const active = tabs.tabs.find((t) => t.active)
+      if (active) {
+        this.notifyRendererNavigation(pageId, active.url, active.title)
+      }
+    }
+    return result
   }
 
   async browserGoto(params: { url: string; worktree?: string }): Promise<BrowserGotoResult> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().goto(params.url, worktreeId)
+    const bridge = this.requireAgentBrowserBridge()
+    const result = await bridge.goto(params.url, worktreeId)
+    const pageId = bridge.getActivePageId(worktreeId)
+    if (pageId) {
+      this.notifyRendererNavigation(pageId, result.url, result.title)
+    }
+    return result
   }
 
   async browserFill(params: {
@@ -1252,12 +1284,24 @@ export class OrcaRuntimeService {
 
   async browserBack(params: { worktree?: string }): Promise<BrowserBackResult> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().back(worktreeId)
+    const bridge = this.requireAgentBrowserBridge()
+    const result = await bridge.back(worktreeId)
+    const pageId = bridge.getActivePageId(worktreeId)
+    if (pageId) {
+      this.notifyRendererNavigation(pageId, result.url, result.title)
+    }
+    return result
   }
 
   async browserReload(params: { worktree?: string }): Promise<BrowserReloadResult> {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().reload(worktreeId)
+    const bridge = this.requireAgentBrowserBridge()
+    const result = await bridge.reload(worktreeId)
+    const pageId = bridge.getActivePageId(worktreeId)
+    if (pageId) {
+      this.notifyRendererNavigation(pageId, result.url, result.title)
+    }
+    return result
   }
 
   async browserScreenshot(params: {
@@ -1779,6 +1823,19 @@ export class OrcaRuntimeService {
     const wcId = bridge.getRegisteredTabs(worktreeId).get(browserPageId)
     if (wcId != null) {
       bridge.setActiveTab(wcId, worktreeId)
+    }
+
+    // Why: the renderer sets webview.src=url on mount, but agent-browser connects
+    // via CDP after the webview loads about:blank. Without an explicit goto, the
+    // page stays blank from agent-browser's perspective. Navigate via the bridge
+    // so agent-browser's CDP session tracks the correct page state.
+    if (url && url !== 'about:blank') {
+      try {
+        const result = await bridge.goto(url, worktreeId)
+        this.notifyRendererNavigation(browserPageId, result.url, result.title)
+      } catch {
+        // Tab exists but navigation failed — caller can retry with explicit goto
+      }
     }
 
     return { browserPageId }

@@ -156,6 +156,18 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: agent-browser drives navigation via CDP, bypassing Electron's webview
+    // event system. The renderer's did-navigate listener never fires for those
+    // navigations, so the Zustand store (address bar, tab title) stays stale.
+    // This IPC pushes the live URL/title from main after goto/click/back/reload.
+    unsubs.push(
+      window.api.browser.onNavigationUpdate(({ browserPageId, url, title }) => {
+        const store = useAppStore.getState()
+        store.setBrowserPageUrl(browserPageId, url)
+        store.updateBrowserPageState(browserPageId, { title, loading: false })
+      })
+    )
+
     unsubs.push(
       window.api.browser.onOpenLinkInOrcaTab(({ browserPageId, url }) => {
         const store = useAppStore.getState()
