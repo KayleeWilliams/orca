@@ -58,7 +58,10 @@ export class RuntimeClient {
   private readonly userDataPath: string
   private readonly requestTimeoutMs: number
 
-  constructor(userDataPath = getDefaultUserDataPath(), requestTimeoutMs = 15000) {
+  // Why: browser commands trigger first-time session init (agent-browser connect +
+  // CDP proxy setup) which can take 15-30s. 60s accommodates cold start without
+  // being so large that genuine hangs go unnoticed.
+  constructor(userDataPath = getDefaultUserDataPath(), requestTimeoutMs = 60_000) {
     this.userDataPath = userDataPath
     this.requestTimeoutMs = requestTimeoutMs
   }

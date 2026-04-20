@@ -1,6 +1,6 @@
 /* eslint-disable max-lines */
 import { execFile } from 'child_process'
-import { existsSync, accessSync, chmodSync, constants } from 'fs'
+import { existsSync, accessSync, chmodSync, readFileSync, constants } from 'fs'
 import { join } from 'path'
 import { platform, arch } from 'os'
 import { app } from 'electron'
@@ -114,6 +114,45 @@ function resolveAgentBrowserBinary(): string {
   return 'agent-browser'
 }
 
+// Why: exec commands arrive as a single string (e.g. 'keyboard inserttext "hello world"').
+// Naive split on whitespace breaks quoted arguments. This parser respects double and
+// single quotes so the value arrives as a single argument without surrounding quotes.
+function parseShellArgs(input: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let inDouble = false
+  let inSingle = false
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble
+    } else if (ch === "'" && !inDouble) {
+      inSingle = !inSingle
+    } else if (ch === ' ' && !inDouble && !inSingle) {
+      if (current) {
+        args.push(current)
+        current = ''
+      }
+    } else {
+      current += ch
+    }
+  }
+  if (current) {
+    args.push(current)
+  }
+  return args
+}
+
+// Why: agent-browser returns generic error messages for stale/unknown refs.
+// Map them to a specific code so agents can reliably detect and re-snapshot.
+function classifyErrorCode(message: string): string {
+  if (/unknown ref|ref not found|element not found: @e/i.test(message)) {
+    return 'browser_stale_ref'
+  }
+  return 'browser_error'
+}
+
 function translateResult(
   stdout: string
 ): { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } } {
@@ -132,11 +171,12 @@ function translateResult(
   if (parsed.success) {
     return { ok: true, result: parsed.data }
   }
+  const message = parsed.error ?? 'Unknown browser error'
   return {
     ok: false,
     error: {
-      code: 'browser_error',
-      message: parsed.error ?? 'Unknown browser error'
+      code: classifyErrorCode(message),
+      message
     }
   }
 }
@@ -311,12 +351,19 @@ export class AgentBrowserBridge {
   }
 
   async fill(element: string, value: string, worktreeId?: string): Promise<BrowserFillResult> {
+    // Why: Input.insertText via Electron's debugger API does not deliver text to
+    // focused inputs in webviews — this is a fundamental Electron limitation.
+    // Agent-browser's fill and click also fail for the same reason.
+    // Workaround: use agent-browser's focus to resolve the ref, then set the value
+    // directly via JS and dispatch input/change events for React/framework compat.
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, [
-        'fill',
-        element,
-        value
-      ])) as BrowserFillResult
+      await this.execAgentBrowser(sessionName, ['focus', element])
+      const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+      await this.execAgentBrowser(sessionName, [
+        'eval',
+        `(() => { const el = document.activeElement; if (el) { const nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set; if (nativeSetter) { nativeSetter.call(el, '${escaped}'); } else { el.value = '${escaped}'; } el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); } })()`
+      ])
+      return { filled: element } as BrowserFillResult
     })
   }
 
@@ -586,29 +633,81 @@ export class AgentBrowserBridge {
   }
 
   async reload(worktreeId?: string): Promise<BrowserReloadResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, ['reload'])) as BrowserReloadResult
+    // Why: reload can trigger a process swap in Electron (site-isolation), which
+    // destroys the session mid-command. Use the webContents directly for reload
+    // instead of going through agent-browser to avoid the session lifecycle issue.
+    const { webContentsId } = this.resolveActiveTab(worktreeId)
+    const wc = this.getWebContents(webContentsId)
+    if (!wc) {
+      throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+    }
+    wc.reload()
+    // Why: wait for the page to finish loading before returning.
+    await new Promise<void>((resolve) => {
+      const onFinish = (): void => {
+        wc.removeListener('did-finish-load', onFinish)
+        wc.removeListener('did-fail-load', onFail)
+        resolve()
+      }
+      const onFail = (): void => {
+        wc.removeListener('did-finish-load', onFinish)
+        wc.removeListener('did-fail-load', onFail)
+        resolve()
+      }
+      wc.on('did-finish-load', onFinish)
+      wc.on('did-fail-load', onFail)
+      setTimeout(onFinish, 10_000)
     })
+    return { url: wc.getURL(), title: wc.getTitle() }
   }
 
   async screenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
+    // Why: agent-browser writes the screenshot to a temp file and returns
+    // { "path": "/tmp/screenshot-xxx.png" }. We read the file and return base64.
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      const args = ['screenshot']
-      if (format) {
-        args.push('--screenshot-format', format)
+      const session = this.sessions.get(sessionName)
+      const restore = session
+        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
+        : () => {}
+      try {
+        // Why: after focusing the window and unhiding the webview, the compositor
+        // needs ~300ms to produce a painted frame. Without this delay capturePage()
+        // returns a black/empty surface.
+        await new Promise((r) => setTimeout(r, 300))
+        const raw = await this.execAgentBrowser(sessionName, ['screenshot'])
+        return this.readScreenshotFromResult(raw, format)
+      } finally {
+        restore()
       }
-      return (await this.execAgentBrowser(sessionName, args)) as BrowserScreenshotResult
     })
   }
 
   async fullPageScreenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      const args = ['screenshot', '--full']
-      if (format) {
-        args.push('--screenshot-format', format)
+      const session = this.sessions.get(sessionName)
+      const restore = session
+        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
+        : () => {}
+      try {
+        await new Promise((r) => setTimeout(r, 300))
+        const raw = await this.execAgentBrowser(sessionName, ['screenshot', '--full-page'])
+        return this.readScreenshotFromResult(raw, format)
+      } finally {
+        restore()
       }
-      return (await this.execAgentBrowser(sessionName, args)) as BrowserScreenshotResult
     })
+  }
+
+  private readScreenshotFromResult(raw: unknown, format?: string): BrowserScreenshotResult {
+    const parsed = raw as { path?: string } | undefined
+    if (!parsed?.path) {
+      throw new BrowserError('browser_error', 'Screenshot returned no file path')
+    }
+    if (!existsSync(parsed.path)) {
+      throw new BrowserError('browser_error', `Screenshot file not found: ${parsed.path}`)
+    }
+    const data = readFileSync(parsed.path).toString('base64')
+    return { data, format: format === 'jpeg' ? 'jpeg' : 'png' } as BrowserScreenshotResult
   }
 
   async evaluate(expression: string, worktreeId?: string): Promise<BrowserEvalResult> {
@@ -719,9 +818,18 @@ export class AgentBrowserBridge {
   }
 
   async pdf(worktreeId?: string): Promise<BrowserPdfResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, ['pdf'])) as BrowserPdfResult
+    // Why: agent-browser's pdf command via CDP Page.printToPDF hangs in Electron
+    // webviews. Use Electron's native webContents.printToPDF() which is reliable.
+    const { webContentsId } = this.resolveActiveTab(worktreeId)
+    const wc = this.getWebContents(webContentsId)
+    if (!wc) {
+      throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+    }
+    const buffer = await wc.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true
     })
+    return { data: buffer.toString('base64') }
   }
 
   // ── Cookie commands ──
@@ -969,7 +1077,7 @@ export class AgentBrowserBridge {
         .replace(/--cdp\s+\S+/g, '')
         .replace(/--session\s+\S+/g, '')
         .trim()
-      const args = sanitized.split(/\s+/)
+      const args = parseShellArgs(sanitized)
       return await this.execAgentBrowser(sessionName, args)
     })
   }
@@ -1087,11 +1195,8 @@ export class AgentBrowserBridge {
     // Why: agent-browser's daemon persists session state (including the CDP port)
     // across Orca restarts. A stale session would try to connect to a dead port.
     // Close any pre-existing agent-browser session before creating a new proxy.
-    try {
-      await this.runAgentBrowserRaw(sessionName, ['--session', sessionName, 'close'])
-    } catch {
-      // Session may not exist — that's fine
-    }
+    // Fire-and-forget with a short timeout — never block session creation on cleanup.
+    execFile(this.agentBrowserBin, ['--session', sessionName, 'close'], { timeout: 3000 }, () => {})
 
     const proxy = new CdpWsProxy(wc)
 
@@ -1197,7 +1302,9 @@ export class AgentBrowserBridge {
       execFile(
         this.agentBrowserBin,
         args,
-        { timeout: EXEC_TIMEOUT_MS },
+        // Why: screenshots return large base64 strings that exceed Node's default
+        // 1MB maxBuffer, causing ENOBUFS and a timeout-like failure.
+        { timeout: EXEC_TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
         (error, stdout, stderr) => {
           const session = this.sessions.get(sessionName)
 
@@ -1225,7 +1332,7 @@ export class AgentBrowserBridge {
               try {
                 const parsed = JSON.parse(stdout)
                 if (parsed.error) {
-                  reject(new BrowserError('browser_error', parsed.error))
+                  reject(new BrowserError(classifyErrorCode(parsed.error), parsed.error))
                   return
                 }
               } catch {

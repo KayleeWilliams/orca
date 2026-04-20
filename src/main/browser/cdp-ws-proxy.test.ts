@@ -12,6 +12,7 @@ function createMockWebContents() {
   const listeners = new Map<string, DebuggerListener[]>()
 
   const debuggerObj = {
+    isAttached: vi.fn(() => false),
     attach: vi.fn(),
     detach: vi.fn(),
     sendCommand: vi.fn(async () => ({})),

@@ -2,16 +2,6 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http'
 import type { WebContents } from 'electron'
 
-/**
- * Per-tab WebSocket proxy bridging agent-browser's CDP client connection
- * to Electron's webContents.debugger API.
- *
- * Not a transparent forwarder — handles CDP message ID correlation,
- * sessionId envelope translation for OOPIFs, and event forwarding.
- *
- * Also serves HTTP /json endpoints so agent-browser's target discovery
- * only sees the proxied webview (not the host renderer).
- */
 export class CdpWsProxy {
   private httpServer: Server | null = null
   private wss: WebSocketServer | null = null
@@ -40,16 +30,11 @@ export class CdpWsProxy {
       this.wss = new WebSocketServer({ server: this.httpServer })
 
       this.wss.on('connection', (ws) => {
-        // Single-client: replace any previous connection
         if (this.client) {
           this.client.close()
         }
         this.client = ws
-
-        ws.on('message', (data) => {
-          this.handleClientMessage(data.toString())
-        })
-
+        ws.on('message', (data) => this.handleClientMessage(data.toString()))
         ws.on('close', () => {
           if (this.client === ws) {
             this.client = null
@@ -73,7 +58,6 @@ export class CdpWsProxy {
 
   async stop(): Promise<void> {
     this.detachDebugger()
-
     if (this.client) {
       this.client.close()
       this.client = null
@@ -86,7 +70,6 @@ export class CdpWsProxy {
       this.httpServer.close()
       this.httpServer = null
     }
-
     for (const { reject } of this.inflight.values()) {
       reject(new Error('Proxy stopped'))
     }
@@ -97,10 +80,30 @@ export class CdpWsProxy {
     return this.port
   }
 
-  // Why: agent-browser (and Playwright) discover CDP targets via HTTP before
-  // connecting the WebSocket. Serving /json with only the proxied webview
-  // ensures agent-browser attaches to the correct target instead of picking
-  // the Orca renderer page.
+  private sendResult(clientId: number, result: unknown): void {
+    if (this.client?.readyState === WebSocket.OPEN) {
+      this.client.send(JSON.stringify({ id: clientId, result }))
+    }
+  }
+
+  private sendError(clientId: number, message: string): void {
+    if (this.client?.readyState === WebSocket.OPEN) {
+      this.client.send(JSON.stringify({ id: clientId, error: { code: -32000, message } }))
+    }
+  }
+
+  private buildTargetInfo(): Record<string, unknown> {
+    const destroyed = this.webContents.isDestroyed()
+    return {
+      targetId: 'orca-proxy-target',
+      type: 'page',
+      title: destroyed ? '' : this.webContents.getTitle(),
+      url: destroyed ? '' : this.webContents.getURL(),
+      attached: true,
+      canAccessOpener: false
+    }
+  }
+
   private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
     const url = req.url ?? ''
 
@@ -117,16 +120,12 @@ export class CdpWsProxy {
     }
 
     if (url === '/json' || url === '/json/' || url === '/json/list' || url === '/json/list/') {
-      const pageUrl = this.webContents.isDestroyed() ? '' : this.webContents.getURL()
-      const pageTitle = this.webContents.isDestroyed() ? '' : this.webContents.getTitle()
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(
         JSON.stringify([
           {
+            ...this.buildTargetInfo(),
             id: 'orca-proxy-target',
-            type: 'page',
-            title: pageTitle,
-            url: pageUrl,
             webSocketDebuggerUrl: `ws://127.0.0.1:${this.port}`
           }
         ])
@@ -143,10 +142,12 @@ export class CdpWsProxy {
       return
     }
 
-    try {
-      this.webContents.debugger.attach('1.3')
-    } catch {
-      throw new Error('Could not attach debugger. DevTools may already be open for this tab.')
+    if (!this.webContents.debugger.isAttached()) {
+      try {
+        this.webContents.debugger.attach('1.3')
+      } catch {
+        throw new Error('Could not attach debugger. DevTools may already be open for this tab.')
+      }
     }
     this.attached = true
 
@@ -162,13 +163,8 @@ export class CdpWsProxy {
 
       // Why: events from the root debugger session have no sessionId, but agent-browser
       // expects them tagged with the sessionId returned from Target.attachToTarget.
-      // Without this, agent-browser drops events and commands like goto hang forever.
       const msg: Record<string, unknown> = { method, params }
-      if (sessionId) {
-        msg.sessionId = sessionId
-      } else if (this.clientSessionId) {
-        msg.sessionId = this.clientSessionId
-      }
+      msg.sessionId = sessionId ?? this.clientSessionId
       this.client.send(JSON.stringify(msg))
     }
 
@@ -194,7 +190,7 @@ export class CdpWsProxy {
       try {
         this.webContents.debugger.detach()
       } catch {
-        // Already detached
+        /* already detached */
       }
       this.attached = false
     }
@@ -207,127 +203,72 @@ export class CdpWsProxy {
     } catch {
       return
     }
-
     if (msg.id == null || !msg.method) {
       return
     }
 
     const clientId = msg.id
 
-    // Why: Target.getTargets() is browser-level — even when the debugger is attached
-    // to the webview, it returns ALL targets (including the Orca renderer). Intercept
-    // and return only the proxied webview so agent-browser doesn't discover/switch to
-    // the wrong target.
+    // Why: Target.* and Browser.* commands are browser-level. Electron's per-tab
+    // debugger can't handle them. Intercept with synthetic responses so agent-browser
+    // sees only the proxied webview target.
     if (msg.method === 'Target.getTargets') {
-      const targetInfo = {
-        targetId: 'orca-proxy-target',
-        type: 'page',
-        title: this.webContents.isDestroyed() ? '' : this.webContents.getTitle(),
-        url: this.webContents.isDestroyed() ? '' : this.webContents.getURL(),
-        attached: true,
-        canAccessOpener: false
-      }
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(JSON.stringify({ id: clientId, result: { targetInfos: [targetInfo] } }))
-      }
+      this.sendResult(clientId, { targetInfos: [this.buildTargetInfo()] })
       return
     }
-
-    // Why: Target.setDiscoverTargets would cause the proxy to emit Target.targetCreated
-    // events for all browser targets. Acknowledge it without forwarding.
-    if (msg.method === 'Target.setDiscoverTargets') {
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(JSON.stringify({ id: clientId, result: {} }))
-      }
+    if (msg.method === 'Target.getTargetInfo') {
+      this.sendResult(clientId, { targetInfo: this.buildTargetInfo() })
       return
     }
-
-    // Why: agent-browser calls attachToTarget after discovering our synthetic target ID.
-    // Since the proxy WebSocket is already directly connected to the webview's debugger,
-    // no real attachment is needed. Return a synthetic sessionId so agent-browser can
-    // correlate events. We tag forwarded events with this same sessionId.
+    if (msg.method === 'Target.setDiscoverTargets' || msg.method === 'Target.detachFromTarget') {
+      if (msg.method === 'Target.detachFromTarget') {
+        this.clientSessionId = undefined
+      }
+      this.sendResult(clientId, {})
+      return
+    }
     if (msg.method === 'Target.attachToTarget') {
       this.clientSessionId = 'orca-proxy-session'
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(
-          JSON.stringify({ id: clientId, result: { sessionId: this.clientSessionId } })
-        )
-      }
+      this.sendResult(clientId, { sessionId: this.clientSessionId })
       return
     }
-
-    // Why: Target.getTargetInfo returns info for a single target — return our synthetic
-    // target consistent with getTargets to prevent agent-browser from seeing other targets.
-    if (msg.method === 'Target.getTargetInfo') {
-      const targetInfo = {
-        targetId: 'orca-proxy-target',
-        type: 'page',
-        title: this.webContents.isDestroyed() ? '' : this.webContents.getTitle(),
-        url: this.webContents.isDestroyed() ? '' : this.webContents.getURL(),
-        attached: true,
-        canAccessOpener: false
-      }
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(JSON.stringify({ id: clientId, result: { targetInfo } }))
-      }
-      return
-    }
-
-    // Why: agent-browser may call detachFromTarget during cleanup. Since our attachment
-    // is synthetic, acknowledge without forwarding.
-    if (msg.method === 'Target.detachFromTarget') {
-      this.clientSessionId = undefined
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(JSON.stringify({ id: clientId, result: {} }))
-      }
-      return
-    }
-
-    // Why: Browser.getVersion is browser-level and would fail through Electron's
-    // per-tab debugger. Return a synthetic response matching Chrome's format.
     if (msg.method === 'Browser.getVersion') {
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(
-          JSON.stringify({
-            id: clientId,
-            result: {
-              protocolVersion: '1.3',
-              product: 'Orca/Electron',
-              userAgent: '',
-              jsVersion: ''
-            }
-          })
-        )
-      }
+      this.sendResult(clientId, {
+        protocolVersion: '1.3',
+        product: 'Orca/Electron',
+        userAgent: '',
+        jsVersion: ''
+      })
       return
     }
-
-    // Why: Page.bringToFront gives document focus which is required for
-    // navigator.clipboard API. Electron's debugger doesn't handle this —
-    // we must call webContents.focus() at the native level.
     if (msg.method === 'Page.bringToFront') {
       if (!this.webContents.isDestroyed()) {
         this.webContents.focus()
       }
-      if (this.client?.readyState === WebSocket.OPEN) {
-        this.client.send(JSON.stringify({ id: clientId, result: {} }))
-      }
+      this.sendResult(clientId, {})
       return
     }
 
-    // Why: focus-dependent APIs (navigator.clipboard, etc.) require document.hasFocus()
-    // to return true. In Electron, the webview doesn't automatically have focus since
-    // it's a background guest. Ensure focus before any JS evaluation so clipboard and
-    // similar APIs work without the "Document is not focused" error.
-    if (msg.method === 'Runtime.evaluate' && !this.webContents.isDestroyed()) {
+    // Why: Page.captureScreenshot via wc.debugger.sendCommand hangs on Electron
+    // webview guests. Intercept and use capturePage() instead.
+    if (msg.method === 'Page.captureScreenshot') {
+      this.handleScreenshot(clientId, msg.params)
+      return
+    }
+
+    // Why: Input.insertText requires native focus; Runtime.evaluate/callFunctionOn
+    // need focus for clipboard APIs. dispatchKeyEvent must NOT trigger focus here.
+    if (
+      (msg.method === 'Input.insertText' ||
+        msg.method === 'Runtime.evaluate' ||
+        msg.method === 'Runtime.callFunctionOn') &&
+      !this.webContents.isDestroyed()
+    ) {
       this.webContents.focus()
     }
 
     const internalId = this.nextId++
-
-    // Why: our Target.attachToTarget intercept returns a synthetic sessionId so
-    // agent-browser includes it in all subsequent commands. Electron only knows about
-    // real sessions — strip the synthetic one so commands route to the root session.
+    // Why: strip synthetic sessionId so commands route to Electron's root session.
     const sessionId =
       msg.sessionId && msg.sessionId !== this.clientSessionId ? msg.sessionId : undefined
 
@@ -335,26 +276,52 @@ export class CdpWsProxy {
       .sendCommand(msg.method, msg.params ?? {}, sessionId)
       .then((result) => {
         this.inflight.delete(internalId)
-        if (this.client?.readyState === WebSocket.OPEN) {
-          this.client.send(JSON.stringify({ id: clientId, result }))
-        }
+        this.sendResult(clientId, result)
       })
       .catch((err: Error) => {
         this.inflight.delete(internalId)
-        if (this.client?.readyState === WebSocket.OPEN) {
-          this.client.send(
-            JSON.stringify({
-              id: clientId,
-              error: { code: -32000, message: err.message }
-            })
-          )
-        }
+        this.sendError(clientId, err.message)
       })
 
-    this.inflight.set(internalId, {
-      clientId,
-      resolve: () => {},
-      reject: () => {}
-    })
+    this.inflight.set(internalId, { clientId, resolve: () => {}, reject: () => {} })
+  }
+
+  // Why: Electron's wc.debugger.sendCommand('Page.captureScreenshot') hangs
+  // indefinitely on webview guest processes. The bridge calls ensureWebviewVisible
+  // before the command reaches here. Retry to tolerate slow compositing.
+  private handleScreenshot(clientId: number, params?: Record<string, unknown>): void {
+    if (this.webContents.isDestroyed()) {
+      this.sendError(clientId, 'WebContents destroyed')
+      return
+    }
+    const format = (params?.format as string) ?? 'png'
+
+    const attemptCapture = async (retries: number): Promise<void> => {
+      try {
+        if (this.webContents.isDestroyed()) {
+          this.sendError(clientId, 'WebContents destroyed')
+          return
+        }
+        const image = await this.webContents.capturePage()
+        if (image.isEmpty()) {
+          if (retries > 0) {
+            setTimeout(() => attemptCapture(retries - 1), 200)
+            return
+          }
+          this.sendError(
+            clientId,
+            'Screenshot captured an empty image — the browser tab may not be visible in the Orca UI.'
+          )
+          return
+        }
+        const data =
+          format === 'jpeg' ? image.toJPEG(80).toString('base64') : image.toPNG().toString('base64')
+        this.sendResult(clientId, { data })
+      } catch (err) {
+        this.sendError(clientId, (err as Error).message)
+      }
+    }
+
+    setTimeout(() => attemptCapture(3), 100)
   }
 }

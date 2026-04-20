@@ -4,7 +4,7 @@ cleanup even after extracting the grab/session helpers. Keeping that ownership
 in one file avoids scattering the browser security boundary across modules. */
 import { randomUUID } from 'node:crypto'
 
-import { shell, webContents } from 'electron'
+import { BrowserWindow, shell, webContents } from 'electron'
 import {
   normalizeBrowserNavigationUrl,
   normalizeExternalBrowserUrl
@@ -110,12 +110,83 @@ export class BrowserManager {
     return renderer
   }
 
+  // Why: agent-driven screenshots need the webview to be rendered by the host
+  // compositor. Three conditions must be met for capturePage() to return content:
+  // 1. The BrowserWindow must be the focused foreground window (compositor only
+  //    paints guest surfaces when the host window has focus — showInactive is not enough)
+  // 2. The webview element must not have `display: none` (hidden class from inactive panel)
+  // 3. The compositor needs ~200ms after focus to produce a painted frame
+  // This method ensures all three and returns a cleanup function to restore prior state.
+  async ensureWebviewVisible(guestWebContentsId: number): Promise<() => void> {
+    const browserTabId = this.resolveBrowserTabIdForGuestWebContentsId(guestWebContentsId)
+    if (!browserTabId) {
+      return () => {}
+    }
+    const renderer = this.resolveRendererForBrowserTab(browserTabId)
+    if (!renderer || renderer.isDestroyed()) {
+      return () => {}
+    }
+
+    const win = BrowserWindow.fromWebContents(renderer)
+    const wasFocused = win ? win.isFocused() : true
+    if (win && !wasFocused) {
+      // Why: win.focus() alone doesn't work if the window is minimized or hidden.
+      // win.show() ensures it's visible, then focus() gives it compositor priority.
+      win.show()
+      win.focus()
+    }
+
+    const wasHidden = await renderer
+      .executeJavaScript(
+        `(function() {
+          var wv = null;
+          var all = document.querySelectorAll('webview');
+          for (var i = 0; i < all.length; i++) {
+            try { if (all[i].getWebContentsId() === ${guestWebContentsId}) { wv = all[i]; break; } } catch(e) {}
+          }
+          if (!wv) return false;
+          var wrapper = wv.closest('.hidden');
+          if (!wrapper) return false;
+          wrapper.classList.remove('hidden');
+          wrapper.classList.remove('pointer-events-none');
+          wrapper.dataset.orcaScreenshotRestore = 'true';
+          return true;
+        })()`
+      )
+      .catch(() => false)
+
+    if (!wasHidden && wasFocused) {
+      return () => {}
+    }
+
+    return () => {
+      if (wasHidden && renderer && !renderer.isDestroyed()) {
+        renderer
+          .executeJavaScript(
+            `(function() {
+              var el = document.querySelector('[data-orca-screenshot-restore="true"]');
+              if (el) {
+                el.classList.add('hidden');
+                el.classList.add('pointer-events-none');
+                delete el.dataset.orcaScreenshotRestore;
+              }
+            })()`
+          )
+          .catch(() => {})
+      }
+    }
+  }
+
   attachGuestPolicies(guest: Electron.WebContents): void {
     if (this.policyAttachedGuestIds.has(guest.id)) {
       return
     }
     this.policyAttachedGuestIds.add(guest.id)
-    guest.setBackgroundThrottling(true)
+    // Why: background throttling must be disabled so agent-driven screenshots
+    // (Page.captureScreenshot via CDP proxy) can capture frames even when the
+    // Orca window is not the focused foreground app. With throttling enabled,
+    // the compositor stops producing frames and capturePage() returns empty.
+    guest.setBackgroundThrottling(false)
     guest.setWindowOpenHandler(({ url }) => {
       const browserTabId = this.resolveBrowserTabIdForGuestWebContentsId(guest.id)
       const browserUrl = normalizeBrowserNavigationUrl(url)
