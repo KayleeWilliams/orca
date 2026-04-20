@@ -425,7 +425,10 @@ export function registerFilesystemHandlers(store: Store): void {
   // ─── List all files (for quick-open) ─────────────────────
   ipcMain.handle(
     'fs:listFiles',
-    async (_event, args: { rootPath: string; connectionId?: string }): Promise<string[]> => {
+    async (
+      _event,
+      args: { rootPath: string; connectionId?: string; excludePaths?: string[] }
+    ): Promise<string[]> => {
       if (args.connectionId) {
         const provider = getSshFilesystemProvider(args.connectionId)
         if (!provider) {
@@ -433,7 +436,7 @@ export function registerFilesystemHandlers(store: Store): void {
         }
         return provider.listFiles(args.rootPath)
       }
-      return listQuickOpenFiles(args.rootPath, store)
+      return listQuickOpenFiles(args.rootPath, store, args.excludePaths)
     }
   )
 

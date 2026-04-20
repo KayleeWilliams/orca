@@ -896,8 +896,11 @@ const api = {
       connectionId?: string
     }): Promise<{ size: number; isDirectory: boolean; mtime: number }> =>
       ipcRenderer.invoke('fs:stat', args),
-    listFiles: (args: { rootPath: string; connectionId?: string }): Promise<string[]> =>
-      ipcRenderer.invoke('fs:listFiles', args),
+    listFiles: (args: {
+      rootPath: string
+      connectionId?: string
+      excludePaths?: string[]
+    }): Promise<string[]> => ipcRenderer.invoke('fs:listFiles', args),
     search: (args: {
       query: string
       rootPath: string

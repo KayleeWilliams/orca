@@ -45,8 +45,28 @@ function shouldIncludeQuickOpenPath(path: string): boolean {
   return true
 }
 
-export async function listQuickOpenFiles(rootPath: string, store: Store): Promise<string[]> {
+export async function listQuickOpenFiles(
+  rootPath: string,
+  store: Store,
+  excludePaths?: string[]
+): Promise<string[]> {
   const authorizedRootPath = await resolveAuthorizedPath(rootPath, store)
+
+  // Why: when the main worktree sits at the repo root, linked worktrees are
+  // nested subdirectories. Without excluding them, rg/git lists files from
+  // every worktree instead of just the active one.
+  const excludeGlobs: string[] = []
+  if (excludePaths?.length) {
+    const normalizedRoot = `${authorizedRootPath.replace(/[\\/]+$/, '')}/`
+    for (const abs of excludePaths) {
+      const rel = abs.startsWith(normalizedRoot)
+        ? abs.slice(normalizedRoot.length)
+        : relative(authorizedRootPath, abs).replace(/\\/g, '/')
+      if (rel && !rel.startsWith('..') && !rel.startsWith('/')) {
+        excludeGlobs.push(rel)
+      }
+    }
+  }
 
   // Why: checking rg availability upfront avoids a race condition where
   // spawn('rg') emits 'close' before 'error' on some platforms, causing
@@ -54,7 +74,7 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
   // can run. The result is cached after the first check.
   const rgAvailable = await checkRgAvailable(authorizedRootPath)
   if (!rgAvailable) {
-    return listFilesWithGit(authorizedRootPath)
+    return listFilesWithGit(authorizedRootPath, excludeGlobs)
   }
 
   // Why: We try fast string slicing first (O(1) per file), but fall back to
@@ -164,6 +184,7 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
   // Why: On Windows, rg outputs '\'-separated paths. Forcing '/' via
   // --path-separator avoids per-line backslash replacement in processLine.
   const rgSepArgs = sep === '\\' ? ['--path-separator', '/'] : []
+  const rgExcludeArgs = excludeGlobs.flatMap((g) => ['--glob', `!${g}/**`])
 
   await Promise.all([
     runRg([
@@ -174,6 +195,7 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
       '!**/node_modules',
       '--glob',
       '!**/.git',
+      ...rgExcludeArgs,
       authorizedRootPath
     ]),
     runRg([
@@ -187,6 +209,7 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
       '!**/node_modules',
       '--glob',
       '!**/.git',
+      ...rgExcludeArgs,
       authorizedRootPath
     ])
   ])
@@ -202,8 +225,9 @@ export async function listQuickOpenFiles(rootPath: string, store: Store): Promis
  * surfaces .env* files that are typically gitignored but users frequently need in
  * quick-open (mirrors the second rg call with --no-ignore-vcs).
  */
-function listFilesWithGit(rootPath: string): Promise<string[]> {
+function listFilesWithGit(rootPath: string, excludeGlobs: string[] = []): Promise<string[]> {
   const files = new Set<string>()
+  const excludePrefixes = excludeGlobs.map((g) => `${g.replace(/\\/g, '/')}/`)
 
   const runGitLsFiles = (args: string[]): Promise<void> => {
     return new Promise((resolve) => {
@@ -223,6 +247,9 @@ function listFilesWithGit(rootPath: string): Promise<string[]> {
           line = line.substring(0, line.length - 1)
         }
         if (!line) {
+          return
+        }
+        if (excludePrefixes.some((p) => line.startsWith(p))) {
           return
         }
         if (shouldIncludeQuickOpenPath(line)) {

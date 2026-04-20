@@ -66,18 +66,24 @@ export default function QuickOpen(): React.JSX.Element | null {
   const [loadError, setLoadError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Find active worktree path
-  const worktreePath = useMemo(() => {
+  // Find active worktree path and sibling worktree paths to exclude
+  const { worktreePath, excludePaths } = useMemo(() => {
     if (!activeWorktreeId) {
-      return null
+      return { worktreePath: null, excludePaths: [] as string[] }
     }
     for (const worktrees of Object.values(worktreesByRepo)) {
       const wt = worktrees.find((w) => w.id === activeWorktreeId)
       if (wt) {
-        return wt.path
+        // Why: when the active worktree is the repo root (isMainWorktree),
+        // linked worktrees are nested subdirectories. Without excluding them,
+        // file listing returns files from every worktree, not just this one.
+        const siblings = worktrees
+          .filter((w) => w.id !== activeWorktreeId && w.path.startsWith(`${wt.path}/`))
+          .map((w) => w.path)
+        return { worktreePath: wt.path, excludePaths: siblings }
       }
     }
-    return null
+    return { worktreePath: null, excludePaths: [] as string[] }
   }, [activeWorktreeId, worktreesByRepo])
 
   const connectionId = useMemo(
@@ -106,7 +112,11 @@ export default function QuickOpen(): React.JSX.Element | null {
       // Why: quick-open shares the active worktree path model with file explorer
       // and search, so remote worktrees must include connectionId. Without this,
       // Windows resolves Linux roots (e.g. /home/*) as local C:\home\* paths.
-      .listFiles({ rootPath: worktreePath, connectionId })
+      .listFiles({
+        rootPath: worktreePath,
+        connectionId,
+        excludePaths: excludePaths.length > 0 ? excludePaths : undefined
+      })
       .then((result) => {
         if (!cancelled) {
           setFiles(result)
@@ -129,7 +139,7 @@ export default function QuickOpen(): React.JSX.Element | null {
     return () => {
       cancelled = true
     }
-  }, [visible, worktreePath, connectionId])
+  }, [visible, worktreePath, connectionId, excludePaths])
 
   // Filter files by fuzzy match
   const filtered = useMemo(() => {
@@ -151,8 +161,12 @@ export default function QuickOpen(): React.JSX.Element | null {
   // Why: when the query changes the first result becomes selected, but cmdk
   // doesn't reset the list's scrollTop. Without this, a previously scrolled
   // list leaves the new top result clipped behind the input border.
+  // rAF defers until after cmdk's own scroll-into-view pass, so our reset wins.
   useEffect(() => {
-    listRef.current?.scrollTo(0, 0)
+    const id = requestAnimationFrame(() => {
+      listRef.current?.scrollTo(0, 0)
+    })
+    return () => cancelAnimationFrame(id)
   }, [query, visible])
 
   const handleSelect = useCallback(
