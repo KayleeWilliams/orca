@@ -33,9 +33,9 @@ import {
   safeFit,
   fitAllPanesInternal,
   captureScrollState,
-  restoreScrollState,
   refitPanesUnder
 } from './pane-tree-ops'
+import { scheduleSplitScrollRestore } from './pane-split-scroll'
 
 export type { PaneManagerOptions, PaneStyleOptions, ManagedPane, DropZone }
 
@@ -129,40 +129,12 @@ export class PaneManager {
     void this.options.onPaneCreated?.(this.toPublic(newPane))
     this.options.onLayoutChanged?.()
 
-    // Why: reparenting the container resets the viewport scroll position
-    // immediately (browser clears scrollTop on DOM move). The early
-    // double-rAF restore fires after the first fit settles (~2 frames /
-    // ~32ms) to minimise the visible flash. The lock stays in place so
-    // intermediate fits don't interfere. The later 200ms timeout is the
-    // authoritative final restore that also clears the lock — it catches
-    // any late async reflows (ResizeObserver 150ms debounce, WebGL
-    // context-loss rAFs) that might shift the position after the early
-    // restore.
-    const existingPaneId = existing.id
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (this.destroyed) {
-          return
-        }
-        const live = this.panes.get(existingPaneId)
-        if (live?.pendingSplitScrollState) {
-          restoreScrollState(live.terminal, scrollState)
-        }
-      })
-    })
-
-    setTimeout(() => {
-      if (this.destroyed) {
-        return
-      }
-      const live = this.panes.get(existingPaneId)
-      if (!live) {
-        return
-      }
-      live.pendingSplitScrollState = null
-      restoreScrollState(live.terminal, scrollState)
-    }, 200)
+    scheduleSplitScrollRestore(
+      (id) => this.panes.get(id),
+      existing.id,
+      scrollState,
+      () => this.destroyed
+    )
 
     return this.toPublic(newPane)
   }
