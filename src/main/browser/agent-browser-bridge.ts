@@ -1164,14 +1164,14 @@ export class AgentBrowserBridge {
       }
 
       // Why: agent-browser's daemon persists session state (including the CDP port)
-      // across Orca restarts. A stale session would try to connect to a dead port.
-      // Fire-and-forget with a short timeout — never block session creation on cleanup.
-      execFile(
-        this.agentBrowserBin,
-        ['--session', sessionName, 'close'],
-        { timeout: 3000 },
-        () => {}
-      )
+      // across Orca restarts. A stale session ignores --cdp (already initialized) and
+      // connects to the dead port. Must await close so the daemon forgets the session
+      // before we pass --cdp with the new port.
+      await new Promise<void>((resolve) => {
+        execFile(this.agentBrowserBin, ['--session', sessionName, 'close'], { timeout: 3000 }, () =>
+          resolve()
+        )
+      })
 
       const proxy = new CdpWsProxy(wc)
       const cdpEndpoint = await proxy.start()

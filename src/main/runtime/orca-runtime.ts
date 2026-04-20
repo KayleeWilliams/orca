@@ -1171,6 +1171,15 @@ export class OrcaRuntimeService {
   // ID so the bridge can filter tabs correctly.
   private async resolveBrowserWorktreeId(selector?: string): Promise<string | undefined> {
     if (!selector) {
+      // Why: after app restart, webviews only mount when the browser pane is visible.
+      // Without --worktree, we still need to activate the view so persisted tabs
+      // become operable via registerGuest.
+      const bridge = this.agentBrowserBridge
+      if (bridge && bridge.getRegisteredTabs().size === 0) {
+        const win = this.getAuthoritativeWindow()
+        win.webContents.send('browser:activateView', {})
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
       return undefined
     }
     try {
