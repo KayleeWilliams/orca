@@ -64,6 +64,52 @@ async function getPtyWrites(app: ElectronApplication): Promise<string[]> {
   })
 }
 
+// Why: copySelection writes through the `clipboard:writeText` ipcMain.handle
+// channel. Replace the handler (instead of spying on Electron's clipboard
+// object) so the test both captures the call and avoids mutating the real
+// system clipboard on headful runs.
+async function installMainProcessClipboardSpy(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ ipcMain }) => {
+    const g = globalThis as unknown as {
+      __clipboardTextLog?: string[]
+      __clipboardSpyInstalled?: boolean
+    }
+    if (g.__clipboardSpyInstalled) {
+      return
+    }
+    g.__clipboardTextLog = []
+    g.__clipboardSpyInstalled = true
+    ipcMain.removeHandler('clipboard:writeText')
+    ipcMain.handle('clipboard:writeText', (_event, text: string) => {
+      g.__clipboardTextLog!.push(text)
+    })
+  })
+}
+
+async function getClipboardWrites(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(() => {
+    const g = globalThis as unknown as { __clipboardTextLog?: string[] }
+    return g.__clipboardTextLog ?? []
+  })
+}
+
+async function selectAllActiveTerminal(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const paneManagers = window.__paneManagers
+    if (!paneManagers) {
+      return
+    }
+    const state = window.__store?.getState()
+    const tabId = state?.activeTabId
+    if (!tabId) {
+      return
+    }
+    const manager = paneManagers.get(tabId)
+    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0]
+    pane?.terminal.selectAll()
+  })
+}
+
 // Why: the window-level keydown handler is gated on non-editable targets; the
 // xterm helper textarea is treated as non-editable on purpose. Focusing it
 // guarantees each chord reaches the shortcut policy through the real DOM path.
@@ -131,12 +177,27 @@ test.describe('Terminal Shortcuts', () => {
     electronApp
   }) => {
     await installMainProcessPtyWriteSpy(electronApp)
+    await installMainProcessClipboardSpy(electronApp)
 
     // Seed the buffer so Cmd+K has something to clear.
     const ptyId = await discoverActivePtyId(orcaPage)
     const marker = `SHORTCUT_TEST_${Date.now()}`
     await execInTerminal(orcaPage, ptyId, `echo ${marker}`)
     await waitForTerminalOutput(orcaPage, marker)
+
+    // --- copy-selection chord (Mod+Shift+C) ---
+    // Why: must run before Cmd+K clears the buffer; selectAll + Mod+Shift+C
+    // must route through the shortcut policy and write the selection through
+    // the clipboard:writeText IPC (which the spy captured).
+    await selectAllActiveTerminal(orcaPage)
+    await focusActiveTerminal(orcaPage)
+    await orcaPage.keyboard.press(`${mod}+Shift+c`)
+    await expect
+      .poll(async () => (await getClipboardWrites(electronApp)).some((t) => t.includes(marker)), {
+        timeout: 5_000,
+        message: 'Mod+Shift+C did not write the terminal selection to the clipboard'
+      })
+      .toBe(true)
 
     // --- send-input chords (platform-agnostic) ---
 

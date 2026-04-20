@@ -9,8 +9,12 @@ import type { TerminalShortcutAction } from './terminal-shortcut-policy-types'
  *  - `nonMac: true` → entry applies on Windows/Linux (mod = Ctrl)
  *  - both           → platform-agnostic chord
  *
- * Ordering matters: the first matching row wins. More specific chords (those
- * requiring Shift) must come before the base variant or they'll never fire.
+ * Entries are mutually exclusive by construction: `chordMatches` (in
+ * terminal-shortcut-policy.ts) rejects any event whose modifier set isn't
+ * exactly what the entry requires, so a base chord (e.g. Mod+D) cannot match
+ * a Shift-variant event regardless of where it sits in this array. Ordering
+ * is not load-bearing for correctness — keep entries grouped by feature for
+ * readability only.
  *
  * Chords that require dynamic runtime state (Mac Option-as-Alt composition,
  * which branches on `optionKeyLocation` and the `macOptionAsAlt` setting) are

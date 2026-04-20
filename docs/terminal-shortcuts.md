@@ -65,4 +65,6 @@ These fall through to xterm.js and the shell regardless of platform:
 - `Ctrl+Z` — SIGTSTP
 - `Ctrl+\` — SIGQUIT
 - `Home` / `End` — start/end of line (xterm's terminfo sequences)
-- `Ctrl+R` / `Ctrl+U` / `Ctrl+A` / `Ctrl+E` / `Ctrl+K` / `Ctrl+W` — readline
+- `Ctrl+R` / `Ctrl+U` / `Ctrl+A` / `Ctrl+E` — readline
+
+Note: on Linux/Windows, `Ctrl+K` and `Ctrl+W` ARE intercepted by the app (they are `Mod+K` / `Mod+W` — see the Windows/Linux table above). On macOS, `Mod` is Cmd, so `Ctrl+K` and `Ctrl+W` fall through to readline there.
