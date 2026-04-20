@@ -516,6 +516,17 @@ function App(): React.JSX.Element {
         return
       }
 
+      // Cmd/Ctrl+N — new workspace (opens the lightweight composer modal)
+      if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
+        if (!repos.some((repo) => isGitRepoKind(repo))) {
+          return
+        }
+        dispatchClearModifierHints()
+        e.preventDefault()
+        actions.openModal('new-workspace-composer')
+        return
+      }
+
       // Why: the new-workspace composer should not be able to reveal the right
       // sidebar at all, because that surface is intentionally distraction-free.
       if (activeView === 'new-workspace') {
@@ -527,17 +538,6 @@ function App(): React.JSX.Element {
         dispatchClearModifierHints()
         e.preventDefault()
         actions.toggleRightSidebar()
-        return
-      }
-
-      // Cmd/Ctrl+N — new workspace (opens the lightweight composer modal)
-      if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
-        if (!repos.some((repo) => isGitRepoKind(repo))) {
-          return
-        }
-        dispatchClearModifierHints()
-        e.preventDefault()
-        actions.openModal('new-workspace-composer')
         return
       }
 

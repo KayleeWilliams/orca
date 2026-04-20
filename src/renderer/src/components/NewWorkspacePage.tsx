@@ -142,6 +142,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const pageData = useAppStore((s) => s.newWorkspacePageData)
   const closeNewWorkspacePage = useAppStore((s) => s.closeNewWorkspacePage)
+  const activeModal = useAppStore((s) => s.activeModal)
   const repos = useAppStore((s) => s.repos)
   const activeRepoId = useAppStore((s) => s.activeRepoId)
   const openModal = useAppStore((s) => s.openModal)
@@ -443,11 +444,8 @@ export default function NewWorkspacePage(): React.JSX.Element {
   }, [newIssueBody, newIssueSubmitting, newIssueTitle, selectedRepo])
 
   useEffect(() => {
-    // Why: when the GitHub preview sheet is open, Radix's Dialog owns Esc —
-    // it closes the sheet on its own. Page-level capture would otherwise fire
-    // first and pop the tasks page while the user just meant to dismiss the
-    // preview.
-    if (drawerWorkItem || newIssueOpen) {
+    // Why: when a modal is open, let it own Esc dismissal.
+    if (drawerWorkItem || newIssueOpen || activeModal !== 'none') {
       return
     }
 
@@ -481,7 +479,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [closeNewWorkspacePage, drawerWorkItem, newIssueOpen])
+  }, [activeModal, closeNewWorkspacePage, drawerWorkItem, newIssueOpen])
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
