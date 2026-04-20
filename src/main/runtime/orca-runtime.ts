@@ -1189,8 +1189,10 @@ export class OrcaRuntimeService {
   }
 
   // Why: browser tabs only mount (and become operable) when their worktree is
-  // the active worktree in the renderer. If the CLI targets a different worktree,
-  // we must switch the UI first so the webview mounts and registerGuest fires.
+  // the active worktree in the renderer AND activeTabType is 'browser'. If either
+  // condition is false, the webview stays in display:none and Electron won't start
+  // its guest process — dom-ready never fires, registerGuest never runs, and CLI
+  // browser commands fail with "CDP connection refused".
   private async ensureBrowserWorktreeActive(worktreeId: string): Promise<void> {
     const win = this.getAuthoritativeWindow()
     const repoId = worktreeId.split('::')[0]
@@ -1198,6 +1200,9 @@ export class OrcaRuntimeService {
       return
     }
     win.webContents.send('ui:activateWorktree', { repoId, worktreeId })
+    // Why: switching worktree alone sets activeView='terminal'. Browser webviews
+    // won't mount until activeTabType is 'browser'. Send a second IPC to flip it.
+    win.webContents.send('browser:activateView', { worktreeId })
     // Why: give the renderer time to mount the webview after switching worktrees.
     // The webview needs to attach and fire dom-ready before registerGuest runs.
     await new Promise((resolve) => setTimeout(resolve, 500))

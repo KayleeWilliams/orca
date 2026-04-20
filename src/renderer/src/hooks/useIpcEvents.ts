@@ -168,6 +168,16 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: browser webviews only start their guest process when the container
+    // has display != none. After app restart, activeTabType defaults to 'terminal'
+    // so persisted browser tabs never mount. The main process sends this IPC
+    // before browser commands so the webview can start and registerGuest fires.
+    unsubs.push(
+      window.api.browser.onActivateView(() => {
+        useAppStore.getState().setActiveTabType('browser')
+      })
+    )
+
     unsubs.push(
       window.api.browser.onOpenLinkInOrcaTab(({ browserPageId, url }) => {
         const store = useAppStore.getState()
