@@ -49,6 +49,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalDividerThicknessPx: 1,
     terminalRightClickToPaste: false,
     terminalFocusFollowsMouse: false,
+    terminalClipboardOnSelect: false,
     setupScriptLaunchMode: 'split-vertical',
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: false,

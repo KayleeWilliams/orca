@@ -591,6 +591,11 @@ export type GlobalSettings = {
    *  menu behavior and users can still reach the menu with Ctrl+right-click. */
   terminalRightClickToPaste: boolean
   terminalFocusFollowsMouse: boolean
+  /** Why: mirrors X11 / gnome-terminal "copy on select" UX — making a terminal
+   *  selection copies it to the system clipboard automatically, so users can
+   *  paste with Cmd/Ctrl+V without an intervening Cmd/Ctrl+Shift+C. Defaults
+   *  to false so existing users keep the explicit-copy behavior. */
+  terminalClipboardOnSelect: boolean
   /** Where the repo setup script runs on workspace create. Defaults to a
    *  background "Setup" tab so the user's main terminal stays immediately
    *  usable without the setup output crowding the initial pane. */

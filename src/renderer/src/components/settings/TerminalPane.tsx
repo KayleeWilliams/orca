@@ -368,6 +368,50 @@ export function TerminalPane({
             />
           </button>
         </SearchableSetting>
+
+        <SearchableSetting
+          title="Copy on Select"
+          description="Automatically copy terminal selections to the clipboard as soon as a selection is made."
+          keywords={[
+            'clipboard',
+            'copy',
+            'select',
+            'selection',
+            'auto',
+            'automatic',
+            'x11',
+            'linux',
+            'gnome',
+            'paste'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Copy on Select</Label>
+            <p className="text-xs text-muted-foreground">
+              Automatically copy terminal selections to the clipboard as soon as a selection is
+              made.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.terminalClipboardOnSelect}
+            onClick={() =>
+              updateSettings({
+                terminalClipboardOnSelect: !settings.terminalClipboardOnSelect
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.terminalClipboardOnSelect ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.terminalClipboardOnSelect ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
       </section>
     ) : null,
     matchesSettingsSearch(searchQuery, TERMINAL_DARK_THEME_SEARCH_ENTRIES) ? (

@@ -47,6 +47,23 @@ export const TERMINAL_PANE_STYLE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     description:
       "Hovering a terminal pane activates it without needing to click. Mirrors Ghostty's focus-follows-mouse setting. Selections and window switching stay safe.",
     keywords: ['focus', 'follows', 'mouse', 'hover', 'pane', 'ghostty', 'active']
+  },
+  {
+    title: 'Copy on Select',
+    description:
+      'Automatically copy terminal selections to the clipboard as soon as a selection is made.',
+    keywords: [
+      'clipboard',
+      'copy',
+      'select',
+      'selection',
+      'auto',
+      'automatic',
+      'x11',
+      'linux',
+      'gnome',
+      'paste'
+    ]
   }
 ]
 

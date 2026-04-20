@@ -160,6 +160,9 @@ export function useTerminalPaneLifecycle({
   const systemPrefersDarkRef = useRef(systemPrefersDark)
   systemPrefersDarkRef.current = systemPrefersDark
   const linkProviderDisposablesRef = useRef(new Map<number, IDisposable>())
+  // Why: read settingsRef at fire time so toggling "copy on select" takes
+  // effect without recreating panes.
+  const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
 
   const applyAppearance = (manager: PaneManager): void => {
     const currentSettings = settingsRef.current
@@ -186,6 +189,7 @@ export function useTerminalPaneLifecycle({
     const panePtyBindings = panePtyBindingsRef.current
     const pendingWrites = pendingWritesRef.current
     const linkDisposables = linkProviderDisposablesRef.current
+    const selectionDisposables = selectionDisposablesRef.current
     const worktreePath =
       useAppStore
         .getState()
@@ -273,6 +277,21 @@ export function useTerminalPaneLifecycle({
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
         linkProviderDisposablesRef.current.set(pane.id, linkProviderDisposable)
+        // Why: skip empty selections so clicking to deselect doesn't clobber
+        // whatever the user last copied elsewhere.
+        const selectionDisposable = pane.terminal.onSelectionChange(() => {
+          if (!settingsRef.current?.terminalClipboardOnSelect) {
+            return
+          }
+          const selection = pane.terminal.getSelection()
+          if (!selection) {
+            return
+          }
+          void window.api.ui.writeClipboardText(selection).catch(() => {
+            /* ignore clipboard write failures */
+          })
+        })
+        selectionDisposablesRef.current.set(pane.id, selectionDisposable)
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
           activate: (event, text) => handleOscLink(text, event as MouseEvent | undefined, linkDeps),
@@ -315,6 +334,11 @@ export function useTerminalPaneLifecycle({
         if (linkProviderDisposable) {
           linkProviderDisposable.dispose()
           linkProviderDisposablesRef.current.delete(paneId)
+        }
+        const selectionDisposable = selectionDisposablesRef.current.get(paneId)
+        if (selectionDisposable) {
+          selectionDisposable.dispose()
+          selectionDisposablesRef.current.delete(paneId)
         }
         const transport = paneTransportsRef.current.get(paneId)
         const panePtyBinding = panePtyBindings.get(paneId)
@@ -555,6 +579,10 @@ export function useTerminalPaneLifecycle({
         disposable.dispose()
       }
       linkDisposables.clear()
+      for (const disposable of selectionDisposables.values()) {
+        disposable.dispose()
+      }
+      selectionDisposables.clear()
       for (const transport of paneTransports.values()) {
         if (tabStillExists && transport.getPtyId()) {
           // Why: moving a terminal tab between groups currently rehomes the
