@@ -168,6 +168,16 @@ type ResolvedWorktree = {
   comment: string
 }
 
+type BrowserCommandTargetParams = {
+  worktree?: string
+  page?: string
+}
+
+type ResolvedBrowserCommandTarget = {
+  worktreeId?: string
+  browserPageId?: string
+}
+
 type ResolvedWorktreeCache = {
   expiresAt: number
   worktrees: ResolvedWorktree[]
@@ -1202,6 +1212,28 @@ export class OrcaRuntimeService {
     }
   }
 
+  private async resolveBrowserCommandTarget(
+    params: BrowserCommandTargetParams
+  ): Promise<ResolvedBrowserCommandTarget> {
+    const browserPageId =
+      typeof params.page === 'string' && params.page.length > 0 ? params.page : undefined
+    if (!browserPageId) {
+      return {
+        worktreeId: await this.resolveBrowserWorktreeId(params.worktree)
+      }
+    }
+
+    return {
+      // Why: explicit browserPageId is already a stable tab identity, so we do
+      // not auto-resolve cwd worktree scoping on top of it. Only honor an
+      // explicit --worktree when the caller asked for that extra validation.
+      worktreeId: params.worktree
+        ? await this.resolveBrowserWorktreeId(params.worktree)
+        : undefined,
+      browserPageId
+    }
+  }
+
   // Why: browser tabs only mount (and become operable) when their worktree is
   // the active worktree in the renderer AND activeTabType is 'browser'. If either
   // condition is false, the webview stays in display:none and Electron won't start
@@ -1236,104 +1268,137 @@ export class OrcaRuntimeService {
     }
   }
 
-  async browserSnapshot(params: { worktree?: string }): Promise<BrowserSnapshotResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().snapshot(worktreeId)
+  async browserSnapshot(params: BrowserCommandTargetParams): Promise<BrowserSnapshotResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().snapshot(target.worktreeId, target.browserPageId)
   }
 
-  async browserClick(params: { element: string; worktree?: string }): Promise<BrowserClickResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserClick(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<BrowserClickResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     const bridge = this.requireAgentBrowserBridge()
-    const result = await bridge.click(params.element, worktreeId)
+    const result = await bridge.click(params.element, target.worktreeId, target.browserPageId)
     // Why: clicks can trigger navigation (e.g. submitting a form, clicking a link).
-    // Read the live URL/title after the click and push to renderer so the UI updates.
-    const pageId = bridge.getActivePageId(worktreeId)
-    if (pageId) {
-      const tabs = bridge.tabList(worktreeId)
-      const active = tabs.tabs.find((t) => t.active)
-      if (active) {
-        this.notifyRendererNavigation(pageId, active.url, active.title)
-      }
+    // Read the target tab's live URL/title after the click and push to the
+    // renderer so the UI updates even when automation targeted a non-active page.
+    const page = bridge.getPageInfo(target.worktreeId, target.browserPageId)
+    if (page) {
+      this.notifyRendererNavigation(page.browserPageId, page.url, page.title)
     }
     return result
   }
 
-  async browserGoto(params: { url: string; worktree?: string }): Promise<BrowserGotoResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserGoto(
+    params: { url: string } & BrowserCommandTargetParams
+  ): Promise<BrowserGotoResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     const bridge = this.requireAgentBrowserBridge()
-    const result = await bridge.goto(params.url, worktreeId)
-    const pageId = bridge.getActivePageId(worktreeId)
+    const result = await bridge.goto(params.url, target.worktreeId, target.browserPageId)
+    const pageId = bridge.getActivePageId(target.worktreeId, target.browserPageId)
     if (pageId) {
       this.notifyRendererNavigation(pageId, result.url, result.title)
     }
     return result
   }
 
-  async browserFill(params: {
-    element: string
-    value: string
-    worktree?: string
-  }): Promise<BrowserFillResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().fill(params.element, params.value, worktreeId)
+  async browserFill(
+    params: {
+      element: string
+      value: string
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserFillResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().fill(
+      params.element,
+      params.value,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserType(params: { input: string; worktree?: string }): Promise<BrowserTypeResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().type(params.input, worktreeId)
+  async browserType(
+    params: { input: string } & BrowserCommandTargetParams
+  ): Promise<BrowserTypeResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().type(
+      params.input,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSelect(params: {
-    element: string
-    value: string
-    worktree?: string
-  }): Promise<BrowserSelectResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().select(params.element, params.value, worktreeId)
+  async browserSelect(
+    params: {
+      element: string
+      value: string
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserSelectResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().select(
+      params.element,
+      params.value,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserScroll(params: {
-    direction: 'up' | 'down'
-    amount?: number
-    worktree?: string
-  }): Promise<BrowserScrollResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().scroll(params.direction, params.amount, worktreeId)
+  async browserScroll(
+    params: { direction: 'up' | 'down'; amount?: number } & BrowserCommandTargetParams
+  ): Promise<BrowserScrollResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().scroll(
+      params.direction,
+      params.amount,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserBack(params: { worktree?: string }): Promise<BrowserBackResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserBack(params: BrowserCommandTargetParams): Promise<BrowserBackResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     const bridge = this.requireAgentBrowserBridge()
-    const result = await bridge.back(worktreeId)
-    const pageId = bridge.getActivePageId(worktreeId)
+    const result = await bridge.back(target.worktreeId, target.browserPageId)
+    const pageId = bridge.getActivePageId(target.worktreeId, target.browserPageId)
     if (pageId) {
       this.notifyRendererNavigation(pageId, result.url, result.title)
     }
     return result
   }
 
-  async browserReload(params: { worktree?: string }): Promise<BrowserReloadResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserReload(params: BrowserCommandTargetParams): Promise<BrowserReloadResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     const bridge = this.requireAgentBrowserBridge()
-    const result = await bridge.reload(worktreeId)
-    const pageId = bridge.getActivePageId(worktreeId)
+    const result = await bridge.reload(target.worktreeId, target.browserPageId)
+    const pageId = bridge.getActivePageId(target.worktreeId, target.browserPageId)
     if (pageId) {
       this.notifyRendererNavigation(pageId, result.url, result.title)
     }
     return result
   }
 
-  async browserScreenshot(params: {
-    format?: 'png' | 'jpeg'
-    worktree?: string
-  }): Promise<BrowserScreenshotResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().screenshot(params.format, worktreeId)
+  async browserScreenshot(
+    params: {
+      format?: 'png' | 'jpeg'
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserScreenshotResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().screenshot(
+      params.format,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserEval(params: { expression: string; worktree?: string }): Promise<BrowserEvalResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().evaluate(params.expression, worktreeId)
+  async browserEval(
+    params: { expression: string } & BrowserCommandTargetParams
+  ): Promise<BrowserEvalResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().evaluate(
+      params.expression,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   async browserTabList(params: { worktree?: string }): Promise<BrowserTabListResult> {
@@ -1341,435 +1406,650 @@ export class OrcaRuntimeService {
     return this.requireAgentBrowserBridge().tabList(worktreeId)
   }
 
-  async browserTabSwitch(params: {
-    index: number
-    worktree?: string
-  }): Promise<BrowserTabSwitchResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().tabSwitch(params.index, worktreeId)
+  async browserTabSwitch(
+    params: {
+      index?: number
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserTabSwitchResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().tabSwitch(
+      params.index,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserHover(params: { element: string; worktree?: string }): Promise<BrowserHoverResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().hover(params.element, worktreeId)
+  async browserHover(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<BrowserHoverResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().hover(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserDrag(params: {
-    from: string
-    to: string
-    worktree?: string
-  }): Promise<BrowserDragResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().drag(params.from, params.to, worktreeId)
+  async browserDrag(
+    params: {
+      from: string
+      to: string
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserDragResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().drag(
+      params.from,
+      params.to,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserUpload(params: {
-    element: string
-    files: string[]
-    worktree?: string
-  }): Promise<BrowserUploadResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().upload(params.element, params.files, worktreeId)
+  async browserUpload(
+    params: { element: string; files: string[] } & BrowserCommandTargetParams
+  ): Promise<BrowserUploadResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().upload(
+      params.element,
+      params.files,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserWait(params: {
-    selector?: string
-    timeout?: number
-    text?: string
-    url?: string
-    load?: string
-    fn?: string
-    state?: string
-    worktree?: string
-  }): Promise<BrowserWaitResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    const { worktree: _, ...options } = params
-    return this.requireAgentBrowserBridge().wait(options, worktreeId)
+  async browserWait(
+    params: {
+      selector?: string
+      timeout?: number
+      text?: string
+      url?: string
+      load?: string
+      fn?: string
+      state?: string
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserWaitResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    const { worktree: _, page: __, ...options } = params
+    return this.requireAgentBrowserBridge().wait(options, target.worktreeId, target.browserPageId)
   }
 
-  async browserCheck(params: {
-    element: string
-    checked: boolean
-    worktree?: string
-  }): Promise<BrowserCheckResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().check(params.element, params.checked, worktreeId)
+  async browserCheck(
+    params: { element: string; checked: boolean } & BrowserCommandTargetParams
+  ): Promise<BrowserCheckResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().check(
+      params.element,
+      params.checked,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserFocus(params: { element: string; worktree?: string }): Promise<BrowserFocusResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().focus(params.element, worktreeId)
+  async browserFocus(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<BrowserFocusResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().focus(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserClear(params: { element: string; worktree?: string }): Promise<BrowserClearResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().clear(params.element, worktreeId)
+  async browserClear(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<BrowserClearResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().clear(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSelectAll(params: {
-    element: string
-    worktree?: string
-  }): Promise<BrowserSelectAllResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().selectAll(params.element, worktreeId)
+  async browserSelectAll(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<BrowserSelectAllResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().selectAll(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserKeypress(params: {
-    key: string
-    worktree?: string
-  }): Promise<BrowserKeypressResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().keypress(params.key, worktreeId)
+  async browserKeypress(
+    params: { key: string } & BrowserCommandTargetParams
+  ): Promise<BrowserKeypressResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().keypress(
+      params.key,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserPdf(params: { worktree?: string }): Promise<BrowserPdfResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().pdf(worktreeId)
+  async browserPdf(params: BrowserCommandTargetParams): Promise<BrowserPdfResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().pdf(target.worktreeId, target.browserPageId)
   }
 
-  async browserFullScreenshot(params: {
-    format?: 'png' | 'jpeg'
-    worktree?: string
-  }): Promise<BrowserScreenshotResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().fullPageScreenshot(params.format, worktreeId)
+  async browserFullScreenshot(
+    params: {
+      format?: 'png' | 'jpeg'
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserScreenshotResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().fullPageScreenshot(
+      params.format,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Cookie management ──
 
-  async browserCookieGet(params: {
-    url?: string
-    worktree?: string
-  }): Promise<BrowserCookieGetResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().cookieGet(params.url, worktreeId)
+  async browserCookieGet(
+    params: { url?: string } & BrowserCommandTargetParams
+  ): Promise<BrowserCookieGetResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().cookieGet(
+      params.url,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserCookieSet(params: {
-    name: string
-    value: string
-    domain?: string
-    path?: string
-    secure?: boolean
-    httpOnly?: boolean
-    sameSite?: string
-    expires?: number
-    worktree?: string
-  }): Promise<BrowserCookieSetResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().cookieSet(params, worktreeId)
+  async browserCookieSet(
+    params: {
+      name: string
+      value: string
+      domain?: string
+      path?: string
+      secure?: boolean
+      httpOnly?: boolean
+      sameSite?: string
+      expires?: number
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserCookieSetResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().cookieSet(
+      params,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserCookieDelete(params: {
-    name: string
-    domain?: string
-    url?: string
-    worktree?: string
-  }): Promise<BrowserCookieDeleteResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserCookieDelete(
+    params: {
+      name: string
+      domain?: string
+      url?: string
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserCookieDeleteResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     return this.requireAgentBrowserBridge().cookieDelete(
       params.name,
       params.domain,
       params.url,
-      worktreeId
+      target.worktreeId,
+      target.browserPageId
     )
   }
 
   // ── Viewport ──
 
-  async browserSetViewport(params: {
-    width: number
-    height: number
-    deviceScaleFactor?: number
-    mobile?: boolean
-    worktree?: string
-  }): Promise<BrowserViewportResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserSetViewport(
+    params: {
+      width: number
+      height: number
+      deviceScaleFactor?: number
+      mobile?: boolean
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserViewportResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     return this.requireAgentBrowserBridge().setViewport(
       params.width,
       params.height,
       params.deviceScaleFactor,
       params.mobile,
-      worktreeId
+      target.worktreeId,
+      target.browserPageId
     )
   }
 
   // ── Geolocation ──
 
-  async browserSetGeolocation(params: {
-    latitude: number
-    longitude: number
-    accuracy?: number
-    worktree?: string
-  }): Promise<BrowserGeolocationResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserSetGeolocation(
+    params: {
+      latitude: number
+      longitude: number
+      accuracy?: number
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserGeolocationResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
     return this.requireAgentBrowserBridge().setGeolocation(
       params.latitude,
       params.longitude,
       params.accuracy,
-      worktreeId
+      target.worktreeId,
+      target.browserPageId
     )
   }
 
   // ── Request interception ──
 
-  async browserInterceptEnable(params: {
-    patterns?: string[]
-    worktree?: string
-  }): Promise<BrowserInterceptEnableResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().interceptEnable(params.patterns, worktreeId)
+  async browserInterceptEnable(
+    params: {
+      patterns?: string[]
+    } & BrowserCommandTargetParams
+  ): Promise<BrowserInterceptEnableResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().interceptEnable(
+      params.patterns,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserInterceptDisable(params: {
-    worktree?: string
-  }): Promise<BrowserInterceptDisableResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().interceptDisable(worktreeId)
+  async browserInterceptDisable(
+    params: BrowserCommandTargetParams
+  ): Promise<BrowserInterceptDisableResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().interceptDisable(
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserInterceptList(params: { worktree?: string }): Promise<{ requests: unknown[] }> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().interceptList(worktreeId)
+  async browserInterceptList(params: BrowserCommandTargetParams): Promise<{ requests: unknown[] }> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().interceptList(target.worktreeId, target.browserPageId)
   }
 
   // ── Console/network capture ──
 
-  async browserCaptureStart(params: { worktree?: string }): Promise<BrowserCaptureStartResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().captureStart(worktreeId)
+  async browserCaptureStart(
+    params: BrowserCommandTargetParams
+  ): Promise<BrowserCaptureStartResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().captureStart(target.worktreeId, target.browserPageId)
   }
 
-  async browserCaptureStop(params: { worktree?: string }): Promise<BrowserCaptureStopResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().captureStop(worktreeId)
+  async browserCaptureStop(params: BrowserCommandTargetParams): Promise<BrowserCaptureStopResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().captureStop(target.worktreeId, target.browserPageId)
   }
 
-  async browserConsoleLog(params: {
-    limit?: number
-    worktree?: string
-  }): Promise<BrowserConsoleResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().consoleLog(params.limit, worktreeId)
+  async browserConsoleLog(
+    params: { limit?: number } & BrowserCommandTargetParams
+  ): Promise<BrowserConsoleResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().consoleLog(
+      params.limit,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserNetworkLog(params: {
-    limit?: number
-    worktree?: string
-  }): Promise<BrowserNetworkLogResult> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().networkLog(params.limit, worktreeId)
+  async browserNetworkLog(
+    params: { limit?: number } & BrowserCommandTargetParams
+  ): Promise<BrowserNetworkLogResult> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().networkLog(
+      params.limit,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Additional core commands ──
 
-  async browserDblclick(params: { element: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().dblclick(params.element, worktreeId)
+  async browserDblclick(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().dblclick(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserForward(params: { worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().forward(worktreeId)
+  async browserForward(params: BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().forward(target.worktreeId, target.browserPageId)
   }
 
-  async browserScrollIntoView(params: { element: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().scrollIntoView(params.element, worktreeId)
+  async browserScrollIntoView(
+    params: { element: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().scrollIntoView(
+      params.element,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserGet(params: {
-    what: string
-    selector?: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().get(params.what, params.selector, worktreeId)
+  async browserGet(
+    params: {
+      what: string
+      selector?: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().get(
+      params.what,
+      params.selector,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserIs(params: { what: string; selector: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().is(params.what, params.selector, worktreeId)
+  async browserIs(
+    params: { what: string; selector: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().is(
+      params.what,
+      params.selector,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Keyboard insert text ──
 
-  async browserKeyboardInsertText(params: { text: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().keyboardInsertText(params.text, worktreeId)
+  async browserKeyboardInsertText(
+    params: { text: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().keyboardInsertText(
+      params.text,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Mouse commands ──
 
-  async browserMouseMove(params: { x: number; y: number; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().mouseMove(params.x, params.y, worktreeId)
+  async browserMouseMove(
+    params: { x: number; y: number } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().mouseMove(
+      params.x,
+      params.y,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserMouseDown(params: { button?: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().mouseDown(params.button, worktreeId)
+  async browserMouseDown(
+    params: { button?: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().mouseDown(
+      params.button,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserMouseUp(params: { button?: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().mouseUp(params.button, worktreeId)
+  async browserMouseUp(params: { button?: string } & BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().mouseUp(
+      params.button,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserMouseWheel(params: {
-    dy: number
-    dx?: number
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().mouseWheel(params.dy, params.dx, worktreeId)
+  async browserMouseWheel(
+    params: {
+      dy: number
+      dx?: number
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().mouseWheel(
+      params.dy,
+      params.dx,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Find (semantic locators) ──
 
-  async browserFind(params: {
-    locator: string
-    value: string
-    action: string
-    text?: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserFind(
+    params: {
+      locator: string
+      value: string
+      action: string
+      text?: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
     return this.requireAgentBrowserBridge().find(
       params.locator,
       params.value,
       params.action,
       params.text,
-      worktreeId
+      target.worktreeId,
+      target.browserPageId
     )
   }
 
   // ── Set commands ──
 
-  async browserSetDevice(params: { name: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setDevice(params.name, worktreeId)
+  async browserSetDevice(params: { name: string } & BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().setDevice(
+      params.name,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSetOffline(params: { state?: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setOffline(params.state, worktreeId)
+  async browserSetOffline(
+    params: { state?: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().setOffline(
+      params.state,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSetHeaders(params: { headers: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setHeaders(params.headers, worktreeId)
+  async browserSetHeaders(
+    params: { headers: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().setHeaders(
+      params.headers,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSetCredentials(params: {
-    user: string
-    pass: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().setCredentials(params.user, params.pass, worktreeId)
+  async browserSetCredentials(
+    params: {
+      user: string
+      pass: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().setCredentials(
+      params.user,
+      params.pass,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserSetMedia(params: {
-    colorScheme?: string
-    reducedMotion?: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
+  async browserSetMedia(
+    params: {
+      colorScheme?: string
+      reducedMotion?: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
     return this.requireAgentBrowserBridge().setMedia(
       params.colorScheme,
       params.reducedMotion,
-      worktreeId
+      target.worktreeId,
+      target.browserPageId
     )
   }
 
   // ── Clipboard commands ──
 
-  async browserClipboardRead(params: { worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().clipboardRead(worktreeId)
+  async browserClipboardRead(params: BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().clipboardRead(target.worktreeId, target.browserPageId)
   }
 
-  async browserClipboardWrite(params: { text: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().clipboardWrite(params.text, worktreeId)
+  async browserClipboardWrite(
+    params: { text: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().clipboardWrite(
+      params.text,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Dialog commands ──
 
-  async browserDialogAccept(params: { text?: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().dialogAccept(params.text, worktreeId)
+  async browserDialogAccept(
+    params: { text?: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().dialogAccept(
+      params.text,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserDialogDismiss(params: { worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().dialogDismiss(worktreeId)
+  async browserDialogDismiss(params: BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().dialogDismiss(target.worktreeId, target.browserPageId)
   }
 
   // ── Storage commands ──
 
-  async browserStorageLocalGet(params: { key: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageLocalGet(params.key, worktreeId)
+  async browserStorageLocalGet(
+    params: { key: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageLocalGet(
+      params.key,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserStorageLocalSet(params: {
-    key: string
-    value: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageLocalSet(params.key, params.value, worktreeId)
+  async browserStorageLocalSet(
+    params: {
+      key: string
+      value: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageLocalSet(
+      params.key,
+      params.value,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserStorageLocalClear(params: { worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageLocalClear(worktreeId)
+  async browserStorageLocalClear(params: BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageLocalClear(
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserStorageSessionGet(params: { key: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageSessionGet(params.key, worktreeId)
+  async browserStorageSessionGet(
+    params: { key: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageSessionGet(
+      params.key,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserStorageSessionSet(params: {
-    key: string
-    value: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageSessionSet(params.key, params.value, worktreeId)
+  async browserStorageSessionSet(
+    params: {
+      key: string
+      value: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageSessionSet(
+      params.key,
+      params.value,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
-  async browserStorageSessionClear(params: { worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().storageSessionClear(worktreeId)
+  async browserStorageSessionClear(params: BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().storageSessionClear(
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Download command ──
 
-  async browserDownload(params: {
-    selector: string
-    path: string
-    worktree?: string
-  }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().download(params.selector, params.path, worktreeId)
+  async browserDownload(
+    params: {
+      selector: string
+      path: string
+    } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().download(
+      params.selector,
+      params.path,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── Highlight command ──
 
-  async browserHighlight(params: { selector: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().highlight(params.selector, worktreeId)
+  async browserHighlight(
+    params: { selector: string } & BrowserCommandTargetParams
+  ): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().highlight(
+      params.selector,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   // ── New: exec passthrough + tab lifecycle ──
 
-  async browserExec(params: { command: string; worktree?: string }): Promise<unknown> {
-    const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
-    return this.requireAgentBrowserBridge().exec(params.command, worktreeId)
+  async browserExec(params: { command: string } & BrowserCommandTargetParams): Promise<unknown> {
+    const target = await this.resolveBrowserCommandTarget(params)
+    return this.requireAgentBrowserBridge().exec(
+      params.command,
+      target.worktreeId,
+      target.browserPageId
+    )
   }
 
   async browserTabCreate(params: {
@@ -1850,7 +2130,7 @@ export class OrcaRuntimeService {
     // so agent-browser's CDP session tracks the correct page state.
     if (url && url !== 'about:blank') {
       try {
-        const result = await bridge.goto(url, worktreeId)
+        const result = await bridge.goto(url, worktreeId, browserPageId)
         this.notifyRendererNavigation(browserPageId, result.url, result.title)
       } catch {
         // Tab exists but navigation failed — caller can retry with explicit goto
@@ -1862,6 +2142,7 @@ export class OrcaRuntimeService {
 
   async browserTabClose(params: {
     index?: number
+    page?: string
     worktree?: string
   }): Promise<{ closed: boolean }> {
     const win = this.getAuthoritativeWindow()
@@ -1869,7 +2150,9 @@ export class OrcaRuntimeService {
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
 
     let tabId: string | null = null
-    if (params.index !== undefined) {
+    if (typeof params.page === 'string' && params.page.length > 0) {
+      tabId = params.page
+    } else if (params.index !== undefined) {
       const tabs = bridge.getRegisteredTabs(worktreeId)
       const entries = [...tabs.entries()]
       if (params.index < 0 || params.index >= entries.length) {

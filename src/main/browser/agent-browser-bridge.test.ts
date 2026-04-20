@@ -167,7 +167,34 @@ describe('AgentBrowserBridge', () => {
   it('translates success response to result', async () => {
     succeedWith({ snapshot: 'tree output' })
     const result = await bridge.snapshot()
-    expect(result).toEqual({ snapshot: 'tree output' })
+    expect(result).toEqual({ browserPageId: 'tab-1', snapshot: 'tree output' })
+  })
+
+  it('routes snapshot to an explicit browser page id without changing the active tab', async () => {
+    const tabs = new Map([
+      ['tab-a', 1],
+      ['tab-b', 2]
+    ])
+    const wc1 = mockWebContents(1, 'https://a.com', 'A')
+    const wc2 = mockWebContents(2, 'https://b.com', 'B')
+    webContentsFromIdMock.mockImplementation((id: number) => (id === 1 ? wc1 : wc2))
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs))
+    b.setActiveTab(1)
+
+    succeedWith({ snapshot: 'tree output' })
+    const result = await b.snapshot(undefined, 'tab-b')
+
+    const snapshotCall = execFileMock.mock.calls.find((c: unknown[]) =>
+      (c[1] as string[]).includes('snapshot')
+    )
+    expect(snapshotCall).toBeTruthy()
+    expect(snapshotCall![1]).toContain('--session')
+    expect(
+      (snapshotCall![1] as string[])[(snapshotCall![1] as string[]).indexOf('--session') + 1]
+    ).toBe('orca-tab-tab-b')
+    expect(result).toEqual({ browserPageId: 'tab-b', snapshot: 'tree output' })
+    expect(b.getActiveWebContentsId()).toBe(1)
   })
 
   it('translates error response to BrowserError', async () => {
@@ -232,6 +259,7 @@ describe('AgentBrowserBridge', () => {
       const b = new AgentBrowserBridge(mockBrowserManager(tabs, worktrees))
       const result = b.tabList('wt-1')
       expect(result.tabs).toHaveLength(1)
+      expect(result.tabs[0].browserPageId).toBe('tab-a')
       expect(result.tabs[0].url).toBe('https://a.com')
     })
   })
@@ -262,7 +290,7 @@ describe('AgentBrowserBridge', () => {
     )
 
     const [r1, r2] = await Promise.all([bridge.snapshot(), bridge.click('@e1')])
-    expect(r1).toEqual({ ok: true })
+    expect(r1).toEqual({ browserPageId: 'tab-1', ok: true })
     expect(r2).toEqual({ ok: true })
     // Why: close runs first (stale session cleanup), then commands execute sequentially
     const snapshotIdx = commandCalls.findIndex((a) => a.includes('snapshot'))
@@ -431,7 +459,10 @@ describe('AgentBrowserBridge', () => {
 
     releaseDestroyClose!()
     await destroyPromise
-    await expect(nextSnapshot).resolves.toEqual({ snapshot: 'after-destroy' })
+    await expect(nextSnapshot).resolves.toEqual({
+      browserPageId: 'tab-1',
+      snapshot: 'after-destroy'
+    })
     expect(commandCalls.filter((args) => args.includes('close'))).toHaveLength(2)
   })
 
@@ -497,8 +528,51 @@ describe('AgentBrowserBridge', () => {
     b.setActiveTab(1)
 
     const result = await b.tabSwitch(1)
-    expect(result).toEqual({ switched: 1 })
+    expect(result).toEqual({ switched: 1, browserPageId: 'tab-b' })
     expect(b.getActiveWebContentsId()).toBe(2)
+  })
+
+  it('switches tabs by explicit browser page id', async () => {
+    const tabs = new Map([
+      ['tab-a', 1],
+      ['tab-b', 2]
+    ])
+    const wc1 = mockWebContents(1)
+    const wc2 = mockWebContents(2)
+    webContentsFromIdMock.mockImplementation((id: number) => (id === 1 ? wc1 : wc2))
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs))
+    b.setActiveTab(1)
+
+    const result = await b.tabSwitch(undefined, undefined, 'tab-b')
+    expect(result).toEqual({ switched: 1, browserPageId: 'tab-b' })
+    expect(b.getActiveWebContentsId()).toBe(2)
+  })
+
+  it('updates the owning worktree active tab when switching by browser page id', async () => {
+    const tabs = new Map([
+      ['tab-a', 1],
+      ['tab-b', 2]
+    ])
+    const worktrees = new Map([
+      ['tab-a', 'wt-1'],
+      ['tab-b', 'wt-1']
+    ])
+    const wc1 = mockWebContents(1, 'https://a.com', 'A')
+    const wc2 = mockWebContents(2, 'https://b.com', 'B')
+    webContentsFromIdMock.mockImplementation((id: number) => (id === 1 ? wc1 : wc2))
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs, worktrees))
+    b.setActiveTab(2, 'wt-1')
+
+    await expect(b.tabSwitch(undefined, undefined, 'tab-a')).resolves.toEqual({
+      switched: 0,
+      browserPageId: 'tab-a'
+    })
+    expect(b.tabList('wt-1').tabs).toMatchObject([
+      { browserPageId: 'tab-a', active: true },
+      { browserPageId: 'tab-b', active: false }
+    ])
   })
 
   it('queues tabSwitch behind in-flight commands on the current session', async () => {
@@ -547,8 +621,8 @@ describe('AgentBrowserBridge', () => {
     expect(releaseSnapshot).not.toBeNull()
 
     releaseSnapshot!()
-    await expect(snapshot).resolves.toEqual({ snapshot: 'tree' })
-    await expect(switched).resolves.toEqual({ switched: 1 })
+    await expect(snapshot).resolves.toEqual({ browserPageId: 'tab-a', snapshot: 'tree' })
+    await expect(switched).resolves.toEqual({ switched: 1, browserPageId: 'tab-b' })
     expect(b.getActiveWebContentsId()).toBe(2)
   })
 

@@ -707,8 +707,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.snapshot') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSnapshot({ worktree })
+        const result = await this.runtime.browserSnapshot(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -722,8 +721,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserClick({ element, worktree })
+        const result = await this.runtime.browserClick({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -737,8 +738,7 @@ export class OrcaRuntimeRpcServer {
         if (!url) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --url')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserGoto({ url, worktree })
+        const result = await this.runtime.browserGoto({ url, ...this.extractBrowserTarget(params) })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -756,8 +756,11 @@ export class OrcaRuntimeRpcServer {
         if (value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserFill({ element, value, worktree })
+        const result = await this.runtime.browserFill({
+          element,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -771,8 +774,10 @@ export class OrcaRuntimeRpcServer {
         if (!input) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --input')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserType({ input, worktree })
+        const result = await this.runtime.browserType({
+          input,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -790,8 +795,11 @@ export class OrcaRuntimeRpcServer {
         if (value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSelect({ element, value, worktree })
+        const result = await this.runtime.browserSelect({
+          element,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -811,8 +819,11 @@ export class OrcaRuntimeRpcServer {
         }
         const amount =
           typeof params?.amount === 'number' && params.amount > 0 ? params.amount : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserScroll({ direction, amount, worktree })
+        const result = await this.runtime.browserScroll({
+          direction,
+          amount,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -822,8 +833,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.back') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserBack({ worktree })
+        const result = await this.runtime.browserBack(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -833,8 +843,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.reload') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserReload({ worktree })
+        const result = await this.runtime.browserReload(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -849,8 +858,10 @@ export class OrcaRuntimeRpcServer {
           (params.format === 'png' || params.format === 'jpeg')
             ? params.format
             : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserScreenshot({ format, worktree })
+        const result = await this.runtime.browserScreenshot({
+          format,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -864,8 +875,10 @@ export class OrcaRuntimeRpcServer {
         if (!expression) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --expression')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserEval({ expression, worktree })
+        const result = await this.runtime.browserEval({
+          expression,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -886,16 +899,20 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.tabSwitch') {
       try {
         const params = this.extractParams(request)
-        const index = typeof params?.index === 'number' ? params.index : null
-        if (index === null || !Number.isInteger(index) || index < 0) {
+        const index = typeof params?.index === 'number' ? params.index : undefined
+        const page =
+          typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+        if (page === undefined && (index === undefined || !Number.isInteger(index) || index < 0)) {
           return this.errorResponse(
             request.id,
             'invalid_argument',
-            'Missing required --index (non-negative integer)'
+            'Missing required --index (non-negative integer) or --page'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserTabSwitch({ index, worktree })
+        const result = await this.runtime.browserTabSwitch({
+          index,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -909,8 +926,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserHover({ element, worktree })
+        const result = await this.runtime.browserHover({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -929,8 +948,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --from and --to element refs'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserDrag({ from, to, worktree })
+        const result = await this.runtime.browserDrag({
+          from,
+          to,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -949,8 +971,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --element and --files'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserUpload({ element, files, worktree })
+        const result = await this.runtime.browserUpload({
+          element,
+          files,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -968,7 +993,6 @@ export class OrcaRuntimeRpcServer {
         const load = typeof params?.load === 'string' ? params.load : undefined
         const fn = typeof params?.fn === 'string' ? params.fn : undefined
         const state = typeof params?.state === 'string' ? params.state : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserWait({
           selector,
           timeout,
@@ -977,7 +1001,7 @@ export class OrcaRuntimeRpcServer {
           load,
           fn,
           state,
-          worktree
+          ...this.extractBrowserTarget(params)
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -993,8 +1017,11 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserCheck({ element, checked, worktree })
+        const result = await this.runtime.browserCheck({
+          element,
+          checked,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1008,8 +1035,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserFocus({ element, worktree })
+        const result = await this.runtime.browserFocus({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1023,8 +1052,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserClear({ element, worktree })
+        const result = await this.runtime.browserClear({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1038,8 +1069,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSelectAll({ element, worktree })
+        const result = await this.runtime.browserSelectAll({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1053,8 +1086,10 @@ export class OrcaRuntimeRpcServer {
         if (!key) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserKeypress({ key, worktree })
+        const result = await this.runtime.browserKeypress({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1064,8 +1099,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.pdf') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserPdf({ worktree })
+        const result = await this.runtime.browserPdf(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1076,8 +1110,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const format = params?.format === 'jpeg' ? ('jpeg' as const) : ('png' as const)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserFullScreenshot({ format, worktree })
+        const result = await this.runtime.browserFullScreenshot({
+          format,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1090,8 +1126,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const url = typeof params?.url === 'string' ? params.url : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserCookieGet({ url, worktree })
+        const result = await this.runtime.browserCookieGet({
+          url,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1106,7 +1144,6 @@ export class OrcaRuntimeRpcServer {
         if (!name || value === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing name or value')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserCookieSet({
           name,
           value,
@@ -1116,7 +1153,7 @@ export class OrcaRuntimeRpcServer {
           httpOnly: typeof params?.httpOnly === 'boolean' ? params.httpOnly : undefined,
           sameSite: typeof params?.sameSite === 'string' ? params.sameSite : undefined,
           expires: typeof params?.expires === 'number' ? params.expires : undefined,
-          worktree
+          ...this.extractBrowserTarget(params)
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1131,12 +1168,11 @@ export class OrcaRuntimeRpcServer {
         if (!name) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing cookie name')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserCookieDelete({
           name,
           domain: typeof params?.domain === 'string' ? params.domain : undefined,
           url: typeof params?.url === 'string' ? params.url : undefined,
-          worktree
+          ...this.extractBrowserTarget(params)
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1158,14 +1194,13 @@ export class OrcaRuntimeRpcServer {
             'Width and height must be positive numbers'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserSetViewport({
           width,
           height,
           deviceScaleFactor:
             typeof params?.deviceScaleFactor === 'number' ? params.deviceScaleFactor : undefined,
           mobile: typeof params?.mobile === 'boolean' ? params.mobile : undefined,
-          worktree
+          ...this.extractBrowserTarget(params)
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1183,12 +1218,11 @@ export class OrcaRuntimeRpcServer {
         if (latitude === null || longitude === null) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing latitude or longitude')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
         const result = await this.runtime.browserSetGeolocation({
           latitude,
           longitude,
           accuracy: typeof params?.accuracy === 'number' ? params.accuracy : undefined,
-          worktree
+          ...this.extractBrowserTarget(params)
         })
         return this.successResponse(request.id, result)
       } catch (error) {
@@ -1202,8 +1236,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const patterns = Array.isArray(params?.patterns) ? (params.patterns as string[]) : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserInterceptEnable({ patterns, worktree })
+        const result = await this.runtime.browserInterceptEnable({
+          patterns,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1213,8 +1249,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.intercept.disable') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserInterceptDisable({ worktree })
+        const result = await this.runtime.browserInterceptDisable(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1224,8 +1259,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.intercept.list') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserInterceptList({ worktree })
+        const result = await this.runtime.browserInterceptList(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1237,8 +1271,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.capture.start') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserCaptureStart({ worktree })
+        const result = await this.runtime.browserCaptureStart(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1248,8 +1281,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.capture.stop') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserCaptureStop({ worktree })
+        const result = await this.runtime.browserCaptureStop(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1260,8 +1292,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const limit = typeof params?.limit === 'number' ? params.limit : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserConsoleLog({ limit, worktree })
+        const result = await this.runtime.browserConsoleLog({
+          limit,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1272,8 +1306,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const limit = typeof params?.limit === 'number' ? params.limit : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserNetworkLog({ limit, worktree })
+        const result = await this.runtime.browserNetworkLog({
+          limit,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1289,8 +1325,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserDblclick({ element, worktree })
+        const result = await this.runtime.browserDblclick({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1300,8 +1338,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.forward') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserForward({ worktree })
+        const result = await this.runtime.browserForward(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1315,8 +1352,10 @@ export class OrcaRuntimeRpcServer {
         if (!element) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserScrollIntoView({ element, worktree })
+        const result = await this.runtime.browserScrollIntoView({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1331,8 +1370,11 @@ export class OrcaRuntimeRpcServer {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --what')
         }
         const selector = typeof params?.selector === 'string' ? params.selector : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserGet({ what, selector, worktree })
+        const result = await this.runtime.browserGet({
+          what,
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1351,8 +1393,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --what and --element'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserIs({ what, selector, worktree })
+        const result = await this.runtime.browserIs({
+          what,
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1368,8 +1413,10 @@ export class OrcaRuntimeRpcServer {
         if (!text) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserKeyboardInsertText({ text, worktree })
+        const result = await this.runtime.browserKeyboardInsertText({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1390,8 +1437,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required x and y coordinates'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserMouseMove({ x, y, worktree })
+        const result = await this.runtime.browserMouseMove({
+          x,
+          y,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1402,8 +1452,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const button = typeof params?.button === 'string' ? params.button : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserMouseDown({ button, worktree })
+        const result = await this.runtime.browserMouseDown({
+          button,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1414,8 +1466,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const button = typeof params?.button === 'string' ? params.button : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserMouseUp({ button, worktree })
+        const result = await this.runtime.browserMouseUp({
+          button,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1430,8 +1484,11 @@ export class OrcaRuntimeRpcServer {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --dy')
         }
         const dx = typeof params?.dx === 'number' ? params.dx : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserMouseWheel({ dy, dx, worktree })
+        const result = await this.runtime.browserMouseWheel({
+          dy,
+          dx,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1454,8 +1511,13 @@ export class OrcaRuntimeRpcServer {
           )
         }
         const text = typeof params?.text === 'string' ? params.text : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserFind({ locator, value, action, text, worktree })
+        const result = await this.runtime.browserFind({
+          locator,
+          value,
+          action,
+          text,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1471,8 +1533,10 @@ export class OrcaRuntimeRpcServer {
         if (!name) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --name')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetDevice({ name, worktree })
+        const result = await this.runtime.browserSetDevice({
+          name,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1483,8 +1547,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const state = typeof params?.state === 'string' ? params.state : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetOffline({ state, worktree })
+        const result = await this.runtime.browserSetOffline({
+          state,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1502,8 +1568,10 @@ export class OrcaRuntimeRpcServer {
             'Missing required --headers (JSON string)'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetHeaders({ headers, worktree })
+        const result = await this.runtime.browserSetHeaders({
+          headers,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1522,8 +1590,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --user and --pass'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetCredentials({ user, pass, worktree })
+        const result = await this.runtime.browserSetCredentials({
+          user,
+          pass,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1536,8 +1607,11 @@ export class OrcaRuntimeRpcServer {
         const colorScheme = typeof params?.colorScheme === 'string' ? params.colorScheme : undefined
         const reducedMotion =
           typeof params?.reducedMotion === 'string' ? params.reducedMotion : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserSetMedia({ colorScheme, reducedMotion, worktree })
+        const result = await this.runtime.browserSetMedia({
+          colorScheme,
+          reducedMotion,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1549,8 +1623,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.clipboardRead') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserClipboardRead({ worktree })
+        const result = await this.runtime.browserClipboardRead(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1564,8 +1637,10 @@ export class OrcaRuntimeRpcServer {
         if (!text) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserClipboardWrite({ text, worktree })
+        const result = await this.runtime.browserClipboardWrite({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1578,8 +1653,10 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const text = typeof params?.text === 'string' ? params.text : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserDialogAccept({ text, worktree })
+        const result = await this.runtime.browserDialogAccept({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1589,8 +1666,7 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.dialogDismiss') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserDialogDismiss({ worktree })
+        const result = await this.runtime.browserDialogDismiss(this.extractBrowserTarget(params))
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1606,8 +1682,10 @@ export class OrcaRuntimeRpcServer {
         if (!key) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageLocalGet({ key, worktree })
+        const result = await this.runtime.browserStorageLocalGet({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1626,8 +1704,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --key and --value'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageLocalSet({ key, value, worktree })
+        const result = await this.runtime.browserStorageLocalSet({
+          key,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1637,8 +1718,9 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.storage.local.clear') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageLocalClear({ worktree })
+        const result = await this.runtime.browserStorageLocalClear(
+          this.extractBrowserTarget(params)
+        )
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1652,8 +1734,10 @@ export class OrcaRuntimeRpcServer {
         if (!key) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageSessionGet({ key, worktree })
+        const result = await this.runtime.browserStorageSessionGet({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1672,8 +1756,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --key and --value'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageSessionSet({ key, value, worktree })
+        const result = await this.runtime.browserStorageSessionSet({
+          key,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1683,8 +1770,9 @@ export class OrcaRuntimeRpcServer {
     if (request.method === 'browser.storage.session.clear') {
       try {
         const params = this.extractParams(request)
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserStorageSessionClear({ worktree })
+        const result = await this.runtime.browserStorageSessionClear(
+          this.extractBrowserTarget(params)
+        )
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1705,8 +1793,11 @@ export class OrcaRuntimeRpcServer {
             'Missing required --selector and --path'
           )
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserDownload({ selector, path, worktree })
+        const result = await this.runtime.browserDownload({
+          selector,
+          path,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1722,8 +1813,10 @@ export class OrcaRuntimeRpcServer {
         if (!selector) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --selector')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserHighlight({ selector, worktree })
+        const result = await this.runtime.browserHighlight({
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1739,8 +1832,10 @@ export class OrcaRuntimeRpcServer {
         if (!command) {
           return this.errorResponse(request.id, 'invalid_argument', 'Missing required --command')
         }
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserExec({ command, worktree })
+        const result = await this.runtime.browserExec({
+          command,
+          ...this.extractBrowserTarget(params)
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1763,8 +1858,13 @@ export class OrcaRuntimeRpcServer {
       try {
         const params = this.extractParams(request)
         const index = typeof params?.index === 'number' ? params.index : undefined
-        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
-        const result = await this.runtime.browserTabClose({ index, worktree })
+        const page =
+          typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+        const result = await this.runtime.browserTabClose({
+          index,
+          page,
+          worktree: typeof params?.worktree === 'string' ? params.worktree : undefined
+        })
         return this.successResponse(request.id, result)
       } catch (error) {
         return this.browserErrorResponse(request.id, error)
@@ -1803,6 +1903,16 @@ export class OrcaRuntimeRpcServer {
     return request.params && typeof request.params === 'object' && request.params !== null
       ? (request.params as Record<string, unknown>)
       : null
+  }
+
+  private extractBrowserTarget(params: Record<string, unknown> | null): {
+    worktree?: string
+    page?: string
+  } {
+    return {
+      worktree: typeof params?.worktree === 'string' ? params.worktree : undefined,
+      page: typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+    }
   }
 
   // Why: browser errors carry a structured .code property (BrowserError from

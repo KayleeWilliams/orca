@@ -72,6 +72,11 @@ type CommandSpec = {
   notes?: string[]
 }
 
+type BrowserCliTarget = {
+  worktree?: string
+  page?: string
+}
+
 const DEFAULT_TERMINAL_WAIT_RPC_TIMEOUT_MS = 5 * 60 * 1000
 const GLOBAL_FLAGS = ['help', 'json']
 export const COMMAND_SPECS: CommandSpec[] = [
@@ -854,55 +859,55 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Browser automation dispatch ──
 
     if (matches(commandPath, ['snapshot'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserSnapshotResult>('browser.snapshot', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserSnapshotResult>('browser.snapshot', target)
       return printResult(result, json, formatSnapshot)
     }
 
     if (matches(commandPath, ['screenshot'])) {
       const format = getOptionalStringFlag(parsed.flags, 'format')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserScreenshotResult>('browser.screenshot', {
         format: format === 'jpeg' ? 'jpeg' : undefined,
-        worktree
+        ...target
       })
       return printResult(result, json, formatScreenshot)
     }
 
     if (matches(commandPath, ['click'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserClickResult>('browser.click', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserClickResult>('browser.click', { element, ...target })
       return printResult(result, json, (v) => `Clicked ${v.clicked}`)
     }
 
     if (matches(commandPath, ['fill'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserFillResult>('browser.fill', {
         element,
         value,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Filled ${v.filled}`)
     }
 
     if (matches(commandPath, ['type'])) {
       const input = getRequiredStringFlag(parsed.flags, 'input')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserTypeResult>('browser.type', { input, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserTypeResult>('browser.type', { input, ...target })
       return printResult(result, json, () => 'Typed input')
     }
 
     if (matches(commandPath, ['select'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserSelectResult>('browser.select', {
         element,
         value,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Selected ${v.selected}`)
     }
@@ -913,47 +918,45 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         throw new RuntimeClientError('invalid_argument', '--direction must be "up" or "down"')
       }
       const amount = getOptionalPositiveIntegerFlag(parsed.flags, 'amount')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserScrollResult>('browser.scroll', {
         direction,
         amount,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Scrolled ${v.scrolled}`)
     }
 
     if (matches(commandPath, ['goto'])) {
       const url = getRequiredStringFlag(parsed.flags, 'url')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       // Why: navigation waits for network idle which can exceed the default 15s RPC timeout
       const result = await client.call<BrowserGotoResult>(
         'browser.goto',
-        { url, worktree },
+        { url, ...target },
         { timeoutMs: 60_000 }
       )
       return printResult(result, json, (v) => `Navigated to ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['back'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserBackResult>('browser.back', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserBackResult>('browser.back', target)
       return printResult(result, json, (v) => `Back to ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['reload'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserReloadResult>(
-        'browser.reload',
-        { worktree },
-        { timeoutMs: 60_000 }
-      )
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserReloadResult>('browser.reload', target, {
+        timeoutMs: 60_000
+      })
       return printResult(result, json, (v) => `Reloaded ${v.url} — ${v.title}`)
     }
 
     if (matches(commandPath, ['eval'])) {
       const expression = getRequiredStringFlag(parsed.flags, 'expression')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserEvalResult>('browser.eval', { expression, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserEvalResult>('browser.eval', { expression, ...target })
       return printResult(result, json, (v) => v.result)
     }
 
@@ -965,15 +968,17 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['tab', 'switch'])) {
       const index = getOptionalNonNegativeIntegerFlag(parsed.flags, 'index')
-      if (index === undefined) {
-        throw new RuntimeClientError('invalid_argument', 'Missing required --index')
+      const page = getOptionalStringFlag(parsed.flags, 'page')
+      if (index === undefined && !page) {
+        throw new RuntimeClientError('invalid_argument', 'Missing required --index or --page')
       }
       const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', {
         index,
+        page,
         worktree
       })
-      return printResult(result, json, (v) => `Switched to tab ${v.switched}`)
+      return printResult(result, json, (v) => `Switched to tab ${v.switched} (${v.browserPageId})`)
     }
 
     if (matches(commandPath, ['tab', 'create'])) {
@@ -989,15 +994,18 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['tab', 'close'])) {
       const index = getOptionalNonNegativeIntegerFlag(parsed.flags, 'index')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<{ closed: boolean }>('browser.tabClose', { index, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<{ closed: boolean }>('browser.tabClose', {
+        index,
+        ...target
+      })
       return printResult(result, json, () => 'Tab closed')
     }
 
     if (matches(commandPath, ['exec'])) {
       const command = getRequiredStringFlag(parsed.flags, 'command')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.exec', { command, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.exec', { command, ...target })
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
@@ -1009,7 +1017,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const load = getOptionalStringFlag(parsed.flags, 'load')
       const fn = getOptionalStringFlag(parsed.flags, 'fn')
       const state = getOptionalStringFlag(parsed.flags, 'state')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserWaitResult>('browser.wait', {
         selector,
         timeout,
@@ -1018,7 +1026,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         load,
         fn,
         state,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
@@ -1026,11 +1034,11 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     if (matches(commandPath, ['check']) || matches(commandPath, ['uncheck'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const checked = matches(commandPath, ['check'])
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserCheckResult>('browser.check', {
         element,
         checked,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) =>
         v.checked ? `Checked ${element}` : `Unchecked ${element}`
@@ -1039,63 +1047,66 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['focus'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserFocusResult>('browser.focus', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserFocusResult>('browser.focus', { element, ...target })
       return printResult(result, json, (v) => `Focused ${v.focused}`)
     }
 
     if (matches(commandPath, ['clear'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserClearResult>('browser.clear', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserClearResult>('browser.clear', { element, ...target })
       return printResult(result, json, (v) => `Cleared ${v.cleared}`)
     }
 
     if (matches(commandPath, ['select-all'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserSelectAllResult>('browser.selectAll', {
         element,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Selected all in ${v.selected}`)
     }
 
     if (matches(commandPath, ['keypress'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserKeypressResult>('browser.keypress', { key, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserKeypressResult>('browser.keypress', {
+        key,
+        ...target
+      })
       return printResult(result, json, (v) => `Pressed ${v.pressed}`)
     }
 
     if (matches(commandPath, ['pdf'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserPdfResult>('browser.pdf', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserPdfResult>('browser.pdf', target)
       return printResult(result, json, (v) => `PDF exported (${v.data.length} bytes base64)`)
     }
 
     if (matches(commandPath, ['full-screenshot'])) {
       const format = getOptionalStringFlag(parsed.flags, 'format') === 'jpeg' ? 'jpeg' : 'png'
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserScreenshotResult>('browser.fullScreenshot', {
         format,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Full-page screenshot captured (${v.format})`)
     }
 
     if (matches(commandPath, ['hover'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserHoverResult>('browser.hover', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserHoverResult>('browser.hover', { element, ...target })
       return printResult(result, json, (v) => `Hovered ${v.hovered}`)
     }
 
     if (matches(commandPath, ['drag'])) {
       const from = getRequiredStringFlag(parsed.flags, 'from')
       const to = getRequiredStringFlag(parsed.flags, 'to')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserDragResult>('browser.drag', { from, to, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserDragResult>('browser.drag', { from, to, ...target })
       return printResult(result, json, (v) => `Dragged ${v.dragged.from} → ${v.dragged.to}`)
     }
 
@@ -1103,11 +1114,11 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const element = getRequiredStringFlag(parsed.flags, 'element')
       const filesStr = getRequiredStringFlag(parsed.flags, 'files')
       const files = filesStr.split(',').map((f) => f.trim())
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserUploadResult>('browser.upload', {
         element,
         files,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Uploaded ${v.uploaded} file(s)`)
     }
@@ -1116,10 +1127,10 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['cookie', 'get'])) {
       const url = getOptionalStringFlag(parsed.flags, 'url')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserCookieGetResult>('browser.cookie.get', {
         url,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => {
         if (v.cookies.length === 0) {
@@ -1155,8 +1166,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (expires) {
         params.expires = Number(expires)
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserCookieSetResult>('browser.cookie.set', params)
       return printResult(result, json, (v) =>
         v.success ? `Cookie "${name}" set` : `Failed to set cookie "${name}"`
@@ -1174,8 +1184,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (url) {
         params.url = url
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserCookieDeleteResult>('browser.cookie.delete', params)
       return printResult(result, json, () => `Cookie "${name}" deleted`)
     }
@@ -1197,8 +1206,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (parsed.flags.has('mobile')) {
         params.mobile = true
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserViewportResult>('browser.viewport', params)
       return printResult(
         result,
@@ -1221,8 +1229,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         }
         params.accuracy = n
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserGeolocationResult>('browser.geolocation', params)
       return printResult(result, json, (v) => `Geolocation set to ${v.latitude}, ${v.longitude}`)
     }
@@ -1235,8 +1242,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (patternsStr) {
         params.patterns = patternsStr.split(',').map((p) => p.trim())
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserInterceptEnableResult>(
         'browser.intercept.enable',
         params
@@ -1249,18 +1255,19 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     }
 
     if (matches(commandPath, ['intercept', 'disable'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserInterceptDisableResult>('browser.intercept.disable', {
-        worktree
-      })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserInterceptDisableResult>(
+        'browser.intercept.disable',
+        target
+      )
       return printResult(result, json, () => 'Interception disabled')
     }
 
     if (matches(commandPath, ['intercept', 'list'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<{ requests: BrowserInterceptedRequest[] }>(
         'browser.intercept.list',
-        { worktree }
+        target
       )
       return printResult(result, json, (v) => {
         if (v.requests.length === 0) {
@@ -1275,18 +1282,14 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Console/network capture ──
 
     if (matches(commandPath, ['capture', 'start'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserCaptureStartResult>('browser.capture.start', {
-        worktree
-      })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserCaptureStartResult>('browser.capture.start', target)
       return printResult(result, json, () => 'Capture started (console + network)')
     }
 
     if (matches(commandPath, ['capture', 'stop'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<BrowserCaptureStopResult>('browser.capture.stop', {
-        worktree
-      })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<BrowserCaptureStopResult>('browser.capture.stop', target)
       return printResult(result, json, () => 'Capture stopped')
     }
 
@@ -1296,8 +1299,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (limit !== undefined) {
         params.limit = limit
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserConsoleResult>('browser.console', params)
       return printResult(result, json, (v) => {
         if (v.entries.length === 0) {
@@ -1313,8 +1315,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (limit !== undefined) {
         params.limit = limit
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      params.worktree = worktree
+      Object.assign(params, await getBrowserCommandTarget(parsed.flags, cwd, client))
       const result = await client.call<BrowserNetworkLogResult>('browser.network', params)
       return printResult(result, json, (v) => {
         if (v.entries.length === 0) {
@@ -1328,14 +1329,14 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['dblclick'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.dblclick', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dblclick', { element, ...target })
       return printResult(result, json, () => `Double-clicked ${element}`)
     }
 
     if (matches(commandPath, ['forward'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.forward', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.forward', target)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return printResult(result, json, (v: any) =>
         v?.url ? `Navigated forward to ${v.url}` : 'Navigated forward'
@@ -1344,19 +1345,19 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['scrollintoview'])) {
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.scrollIntoView', { element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.scrollIntoView', { element, ...target })
       return printResult(result, json, () => `Scrolled ${element} into view`)
     }
 
     if (matches(commandPath, ['get'])) {
       const what = getRequiredStringFlag(parsed.flags, 'what')
       const element = getOptionalStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<unknown>('browser.get', {
         what,
         selector: element,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) =>
         typeof v === 'string' ? v : JSON.stringify(v, null, 2)
@@ -1366,8 +1367,12 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     if (matches(commandPath, ['is'])) {
       const what = getRequiredStringFlag(parsed.flags, 'what')
       const element = getRequiredStringFlag(parsed.flags, 'element')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.is', { what, selector: element, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.is', {
+        what,
+        selector: element,
+        ...target
+      })
       return printResult(result, json, (v) => String(v))
     }
 
@@ -1375,8 +1380,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['inserttext'])) {
       const text = getRequiredStringFlag(parsed.flags, 'text')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.keyboardInsertText', { text, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.keyboardInsertText', { text, ...target })
       return printResult(result, json, () => 'Text inserted')
     }
 
@@ -1385,30 +1390,30 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     if (matches(commandPath, ['mouse', 'move'])) {
       const x = getRequiredFiniteNumber(parsed.flags, 'x')
       const y = getRequiredFiniteNumber(parsed.flags, 'y')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.mouseMove', { x, y, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseMove', { x, y, ...target })
       return printResult(result, json, () => `Mouse moved to ${x},${y}`)
     }
 
     if (matches(commandPath, ['mouse', 'down'])) {
       const button = getOptionalStringFlag(parsed.flags, 'button')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.mouseDown', { button, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseDown', { button, ...target })
       return printResult(result, json, () => `Mouse button ${button ?? 'left'} pressed`)
     }
 
     if (matches(commandPath, ['mouse', 'up'])) {
       const button = getOptionalStringFlag(parsed.flags, 'button')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.mouseUp', { button, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseUp', { button, ...target })
       return printResult(result, json, () => `Mouse button ${button ?? 'left'} released`)
     }
 
     if (matches(commandPath, ['mouse', 'wheel'])) {
       const dy = getRequiredFiniteNumber(parsed.flags, 'dy')
       const dx = getOptionalNumberFlag(parsed.flags, 'dx')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.mouseWheel', { dy, dx, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.mouseWheel', { dy, dx, ...target })
       return printResult(
         result,
         json,
@@ -1423,13 +1428,13 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const value = getRequiredStringFlag(parsed.flags, 'value')
       const action = getRequiredStringFlag(parsed.flags, 'action')
       const text = getOptionalStringFlag(parsed.flags, 'text')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<unknown>('browser.find', {
         locator,
         value,
         action,
         text,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
@@ -1438,41 +1443,45 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['set', 'device'])) {
       const name = getRequiredStringFlag(parsed.flags, 'name')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.setDevice', { name, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setDevice', { name, ...target })
       return printResult(result, json, () => `Device emulation set to ${name}`)
     }
 
     if (matches(commandPath, ['set', 'offline'])) {
       const state = getOptionalStringFlag(parsed.flags, 'state')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.setOffline', { state, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setOffline', { state, ...target })
       return printResult(result, json, () => `Offline mode ${state ?? 'toggled'}`)
     }
 
     if (matches(commandPath, ['set', 'headers'])) {
       const headers = getRequiredStringFlag(parsed.flags, 'headers')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.setHeaders', { headers, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setHeaders', { headers, ...target })
       return printResult(result, json, () => 'Extra HTTP headers set')
     }
 
     if (matches(commandPath, ['set', 'credentials'])) {
       const user = getRequiredStringFlag(parsed.flags, 'user')
       const pass = getRequiredStringFlag(parsed.flags, 'pass')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.setCredentials', { user, pass, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.setCredentials', {
+        user,
+        pass,
+        ...target
+      })
       return printResult(result, json, () => `HTTP auth credentials set for ${user}`)
     }
 
     if (matches(commandPath, ['set', 'media'])) {
       const colorScheme = getOptionalStringFlag(parsed.flags, 'color-scheme')
       const reducedMotion = getOptionalStringFlag(parsed.flags, 'reduced-motion')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<unknown>('browser.setMedia', {
         colorScheme,
         reducedMotion,
-        worktree
+        ...target
       })
       return printResult(result, json, () => 'Media preferences set')
     }
@@ -1480,15 +1489,15 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     // ── Clipboard commands ──
 
     if (matches(commandPath, ['clipboard', 'read'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.clipboardRead', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.clipboardRead', target)
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
     if (matches(commandPath, ['clipboard', 'write'])) {
       const text = getRequiredStringFlag(parsed.flags, 'text')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.clipboardWrite', { text, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.clipboardWrite', { text, ...target })
       return printResult(result, json, () => 'Clipboard updated')
     }
 
@@ -1496,14 +1505,14 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['dialog', 'accept'])) {
       const text = getOptionalStringFlag(parsed.flags, 'text')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.dialogAccept', { text, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dialogAccept', { text, ...target })
       return printResult(result, json, () => 'Dialog accepted')
     }
 
     if (matches(commandPath, ['dialog', 'dismiss'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.dialogDismiss', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.dialogDismiss', target)
       return printResult(result, json, () => 'Dialog dismissed')
     }
 
@@ -1511,51 +1520,51 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['storage', 'local', 'get'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.storage.local.get', { key, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.local.get', { key, ...target })
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
     if (matches(commandPath, ['storage', 'local', 'set'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<unknown>('browser.storage.local.set', {
         key,
         value,
-        worktree
+        ...target
       })
       return printResult(result, json, () => `localStorage["${key}"] set`)
     }
 
     if (matches(commandPath, ['storage', 'local', 'clear'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.storage.local.clear', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.local.clear', target)
       return printResult(result, json, () => 'localStorage cleared')
     }
 
     if (matches(commandPath, ['storage', 'session', 'get'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.storage.session.get', { key, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.session.get', { key, ...target })
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
     if (matches(commandPath, ['storage', 'session', 'set'])) {
       const key = getRequiredStringFlag(parsed.flags, 'key')
       const value = getRequiredStringFlag(parsed.flags, 'value')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<unknown>('browser.storage.session.set', {
         key,
         value,
-        worktree
+        ...target
       })
       return printResult(result, json, () => `sessionStorage["${key}"] set`)
     }
 
     if (matches(commandPath, ['storage', 'session', 'clear'])) {
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.storage.session.clear', { worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.storage.session.clear', target)
       return printResult(result, json, () => 'sessionStorage cleared')
     }
 
@@ -1564,8 +1573,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
     if (matches(commandPath, ['download'])) {
       const selector = getRequiredStringFlag(parsed.flags, 'selector')
       const path = getRequiredStringFlag(parsed.flags, 'path')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.download', { selector, path, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.download', { selector, path, ...target })
       return printResult(result, json, () => `Downloaded to ${path}`)
     }
 
@@ -1573,8 +1582,8 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['highlight'])) {
       const selector = getRequiredStringFlag(parsed.flags, 'selector')
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
-      const result = await client.call<unknown>('browser.highlight', { selector, worktree })
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
+      const result = await client.call<unknown>('browser.highlight', { selector, ...target })
       return printResult(result, json, () => `Highlighted ${selector}`)
     }
 
@@ -1648,7 +1657,10 @@ export function validateCommandAndFlags(parsed: ParsedArgs): void {
   }
 
   for (const flag of parsed.flags.keys()) {
-    if (!spec.allowedFlags.includes(flag)) {
+    if (
+      !spec.allowedFlags.includes(flag) &&
+      !(flag === 'page' && supportsBrowserPageFlag(spec.path))
+    ) {
       throw new RuntimeClientError(
         'invalid_argument',
         `Unknown flag --${flag} for command: ${spec.path.join(' ')}`
@@ -1659,6 +1671,17 @@ export function validateCommandAndFlags(parsed: ParsedArgs): void {
 
 export function findCommandSpec(commandPath: string[]): CommandSpec | undefined {
   return COMMAND_SPECS.find((spec) => matches(spec.path, commandPath))
+}
+
+function supportsBrowserPageFlag(commandPath: string[]): boolean {
+  const joined = commandPath.join(' ')
+  if (['open', 'status'].includes(commandPath[0])) {
+    return false
+  }
+  if (['repo', 'worktree', 'terminal'].includes(commandPath[0])) {
+    return false
+  }
+  return !['tab list', 'tab create'].includes(joined)
 }
 
 function isCommandGroup(commandPath: string[]): boolean {
@@ -1791,6 +1814,34 @@ async function getBrowserWorktreeSelector(
   } catch {
     // Not inside a managed worktree — no filter
     return undefined
+  }
+}
+
+async function getBrowserCommandTarget(
+  flags: Map<string, string | boolean>,
+  cwd: string,
+  client: RuntimeClient
+): Promise<BrowserCliTarget> {
+  const page = getOptionalStringFlag(flags, 'page')
+  if (!page) {
+    return {
+      worktree: await getBrowserWorktreeSelector(flags, cwd, client)
+    }
+  }
+
+  const explicitWorktree = getOptionalStringFlag(flags, 'worktree')
+  if (!explicitWorktree || explicitWorktree === 'all') {
+    return { page }
+  }
+  if (explicitWorktree === 'active' || explicitWorktree === 'current') {
+    return {
+      page,
+      worktree: await resolveCurrentWorktreeSelector(cwd, client)
+    }
+  }
+  return {
+    page,
+    worktree: normalizeWorktreeSelector(explicitWorktree, cwd)
   }
 }
 
@@ -2031,7 +2082,7 @@ function formatWorktreeShow(result: { worktree: RuntimeWorktreeRecord }): string
 }
 
 function formatSnapshot(result: BrowserSnapshotResult): string {
-  const header = `${result.title} — ${result.url}\n`
+  const header = `page: ${result.browserPageId}\n${result.title} — ${result.url}\n`
   return header + result.snapshot
 }
 
@@ -2046,7 +2097,7 @@ function formatTabList(result: BrowserTabListResult): string {
   return result.tabs
     .map((t) => {
       const marker = t.active ? '* ' : '  '
-      return `${marker}[${t.index}] ${t.title} — ${t.url}`
+      return `${marker}[${t.index}] ${t.browserPageId}  ${t.title} — ${t.url}`
     })
     .join('\n')
 }
@@ -2203,6 +2254,8 @@ Browser Workflow:
                           orca goto --url https://example.com
   2. Inspect the page:    orca snapshot
      (Returns an accessibility tree with element refs like e1, e2, e3)
+     For concurrent workflows, prefer: orca tab list --json
+     then reuse tabs[].browserPageId with --page <id> on later commands.
   3. Interact:            orca click --element e2
                           orca fill --element e5 --value "search query"
                           orca keypress --key Enter
@@ -2219,6 +2272,7 @@ Browser Options:
   --direction <dir>         Scroll direction: up, down, left, right
   --amount <pixels>         Scroll distance in pixels (default: viewport height)
   --index <n>               Tab index (from \`tab list\`)
+  --page <id>               Stable browser page id (preferred for concurrent workflows)
   --format <png|jpeg>       Screenshot image format
   --from <ref>              Drag source element ref
   --to <ref>                Drag target element ref
@@ -2250,10 +2304,13 @@ Examples:
 
 function formatCommandHelp(spec: CommandSpec): string {
   const lines = [`orca ${spec.path.join(' ')}`, '', `Usage: ${spec.usage}`, '', spec.summary]
+  const displayedFlags = supportsBrowserPageFlag(spec.path)
+    ? [...spec.allowedFlags, 'page']
+    : spec.allowedFlags
 
-  if (spec.allowedFlags.length > 0) {
+  if (displayedFlags.length > 0) {
     lines.push('', 'Options:')
-    for (const flag of spec.allowedFlags) {
+    for (const flag of displayedFlags) {
       lines.push(`  ${formatFlagHelp(flag)}`)
     }
   }
@@ -2309,7 +2366,7 @@ function formatFlagHelp(flag: string): string {
     worktree:
       '--worktree <selector>  Worktree selector such as id:<id>, branch:<branch>, issue:<number>, path:<path>, or active/current',
     // Browser automation flags
-    element: '--element <ref>        Element ref from snapshot (e.g. @e3)',
+    element: '--element <ref>        Element ref from snapshot (e.g. e3)',
     url: '--url <url>            URL to navigate to',
     value: '--value <text>         Value to fill or select',
     input: '--input <text>         Text to type at current focus',
@@ -2317,6 +2374,7 @@ function formatFlagHelp(flag: string): string {
     direction: '--direction <up|down>  Scroll direction',
     amount: '--amount <pixels>      Scroll distance in pixels',
     index: '--index <n>            Tab index to switch to',
+    page: '--page <id>            Stable browser page id from `orca tab list --json`',
     format: '--format <png|jpeg>    Screenshot image format'
   }
 

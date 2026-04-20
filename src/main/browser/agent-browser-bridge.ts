@@ -71,6 +71,11 @@ type QueuedCommand = {
   reject: (reason: unknown) => void
 }
 
+type ResolvedBrowserCommandTarget = {
+  browserPageId: string
+  webContentsId: number
+}
+
 function agentBrowserNativeName(): string {
   const ext = process.platform === 'win32' ? '.exe' : ''
   return `agent-browser-${platform()}-${arch()}${ext}`
@@ -219,6 +224,26 @@ export class AgentBrowserBridge {
     return this.activeWebContentsId
   }
 
+  getPageInfo(
+    worktreeId?: string,
+    browserPageId?: string
+  ): { browserPageId: string; url: string; title: string } | null {
+    try {
+      const target = this.resolveCommandTarget(worktreeId, browserPageId)
+      const wc = this.getWebContents(target.webContentsId)
+      if (!wc) {
+        return null
+      }
+      return {
+        browserPageId: target.browserPageId,
+        url: wc.getURL() ?? '',
+        title: wc.getTitle() ?? ''
+      }
+    } catch {
+      return null
+    }
+  }
+
   onTabChanged(webContentsId: number, worktreeId?: string): void {
     this.activeWebContentsId = webContentsId
     if (worktreeId) {
@@ -278,7 +303,7 @@ export class AgentBrowserBridge {
     const result: BrowserTabInfo[] = []
     let index = 0
     let firstLiveWcId: number | null = null
-    for (const [, wcId] of tabs) {
+    for (const [tabId, wcId] of tabs) {
       const wc = this.getWebContents(wcId)
       if (!wc) {
         continue
@@ -287,6 +312,7 @@ export class AgentBrowserBridge {
         firstLiveWcId = wcId
       }
       result.push({
+        browserPageId: tabId,
         index: index++,
         url: wc.getURL() ?? '',
         title: wc.getTitle() ?? '',
@@ -310,65 +336,100 @@ export class AgentBrowserBridge {
 
   // Why: tab switch must go through the command queue to prevent race conditions
   // with in-flight commands that target the previously active tab.
-  async tabSwitch(index: number, worktreeId?: string): Promise<BrowserTabSwitchResult> {
+  async tabSwitch(
+    index: number | undefined,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserTabSwitchResult> {
     return this.enqueueCommand(worktreeId, async () => {
       const tabs = this.getRegisteredTabs(worktreeId)
       // Why: queue delay means the tab list can change between RPC arrival and
       // execution time. Recompute against live webContents here so we never
       // activate a tab index that disappeared while earlier commands were running.
       const liveEntries = [...tabs.entries()].filter(([, wcId]) => this.getWebContents(wcId))
-      if (index < 0 || index >= liveEntries.length) {
+      let switchedIndex = index ?? -1
+      let resolvedPageId = browserPageId
+      if (resolvedPageId) {
+        switchedIndex = liveEntries.findIndex(([tabId]) => tabId === resolvedPageId)
+      }
+      if (switchedIndex < 0 || switchedIndex >= liveEntries.length) {
+        const targetLabel =
+          resolvedPageId != null ? `Browser page ${resolvedPageId}` : `Tab index ${index}`
         throw new BrowserError(
           'browser_tab_not_found',
-          `Tab index ${index} out of range (0-${liveEntries.length - 1})`
+          `${targetLabel} out of range (0-${liveEntries.length - 1})`
         )
       }
-      const [, wcId] = liveEntries[index]
+      const [tabId, wcId] = liveEntries[switchedIndex]
       this.activeWebContentsId = wcId
       // Why: resolveActiveTab prefers the per-worktree map over the global when
       // worktreeId is provided. Without this update, subsequent commands would
       // still route to the previous tab despite tabSwitch reporting success.
-      if (worktreeId) {
-        this.activeWebContentsPerWorktree.set(worktreeId, wcId)
+      const owningWorktreeId = worktreeId ?? this.browserManager.getWorktreeIdForTab(tabId)
+      // Why: `tab switch --page <id>` may omit --worktree because the page id is
+      // already a stable target. We still need to update the owning worktree's
+      // active-tab slot so later worktree-scoped commands follow the tab that was
+      // just activated instead of the previously active one.
+      if (owningWorktreeId) {
+        this.activeWebContentsPerWorktree.set(owningWorktreeId, wcId)
       }
-      return { switched: index }
+      return { switched: switchedIndex, browserPageId: tabId }
     })
   }
 
   // ── Core commands (typed) ──
 
-  async snapshot(worktreeId?: string): Promise<BrowserSnapshotResult> {
+  async snapshot(worktreeId?: string, browserPageId?: string): Promise<BrowserSnapshotResult> {
     // Why: snapshot creates fresh refs so it must bypass the stale-ref guard
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
-      return (await this.execAgentBrowser(sessionName, ['snapshot'])) as BrowserSnapshotResult
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName, target) => {
+      const result = (await this.execAgentBrowser(sessionName, [
+        'snapshot'
+      ])) as BrowserSnapshotResult
+      return {
+        ...result,
+        browserPageId: target.browserPageId
+      }
     })
   }
 
-  async click(element: string, worktreeId?: string): Promise<BrowserClickResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async click(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserClickResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['click', element])) as BrowserClickResult
     })
   }
 
-  async dblclick(element: string, worktreeId?: string): Promise<BrowserClickResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async dblclick(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserClickResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['dblclick', element])) as BrowserClickResult
     })
   }
 
-  async goto(url: string, worktreeId?: string): Promise<BrowserGotoResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async goto(url: string, worktreeId?: string, browserPageId?: string): Promise<BrowserGotoResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['goto', url])) as BrowserGotoResult
     })
   }
 
-  async fill(element: string, value: string, worktreeId?: string): Promise<BrowserFillResult> {
+  async fill(
+    element: string,
+    value: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserFillResult> {
     // Why: Input.insertText via Electron's debugger API does not deliver text to
     // focused inputs in webviews — this is a fundamental Electron limitation.
     // Agent-browser's fill and click also fail for the same reason.
     // Workaround: use agent-browser's focus to resolve the ref, then set the value
     // directly via JS and dispatch input/change events for React/framework compat.
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       await this.execAgentBrowser(sessionName, ['focus', element])
       const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
       await this.execAgentBrowser(sessionName, [
@@ -379,8 +440,12 @@ export class AgentBrowserBridge {
     })
   }
 
-  async type(input: string, worktreeId?: string): Promise<BrowserTypeResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async type(
+    input: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserTypeResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'keyboard',
         'type',
@@ -389,8 +454,13 @@ export class AgentBrowserBridge {
     })
   }
 
-  async select(element: string, value: string, worktreeId?: string): Promise<BrowserSelectResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async select(
+    element: string,
+    value: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserSelectResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'select',
         element,
@@ -402,9 +472,10 @@ export class AgentBrowserBridge {
   async scroll(
     direction: string,
     amount?: number,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserScrollResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['scroll', direction]
       if (amount != null) {
         args.push(String(amount))
@@ -413,14 +484,23 @@ export class AgentBrowserBridge {
     })
   }
 
-  async scrollIntoView(element: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async scrollIntoView(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['scrollintoview', element])
     })
   }
 
-  async get(what: string, selector?: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async get(
+    what: string,
+    selector?: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['get', what]
       if (selector) {
         args.push(selector)
@@ -429,30 +509,44 @@ export class AgentBrowserBridge {
     })
   }
 
-  async is(what: string, selector: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async is(
+    what: string,
+    selector: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['is', what, selector])
     })
   }
 
   // ── Keyboard commands ──
 
-  async keyboardInsertText(text: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async keyboardInsertText(
+    text: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['keyboard', 'inserttext', text])
     })
   }
 
   // ── Mouse commands ──
 
-  async mouseMove(x: number, y: number, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async mouseMove(
+    x: number,
+    y: number,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['mouse', 'move', String(x), String(y)])
     })
   }
 
-  async mouseDown(button?: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async mouseDown(button?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['mouse', 'down']
       if (button) {
         args.push(button)
@@ -461,8 +555,8 @@ export class AgentBrowserBridge {
     })
   }
 
-  async mouseUp(button?: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async mouseUp(button?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['mouse', 'up']
       if (button) {
         args.push(button)
@@ -471,8 +565,13 @@ export class AgentBrowserBridge {
     })
   }
 
-  async mouseWheel(dy: number, dx?: number, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async mouseWheel(
+    dy: number,
+    dx?: number,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['mouse', 'wheel', String(dy)]
       if (dx != null) {
         args.push(String(dx))
@@ -488,9 +587,10 @@ export class AgentBrowserBridge {
     value: string,
     action: string,
     text?: string,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['find', locator, value, action]
       if (text) {
         args.push(text)
@@ -501,14 +601,14 @@ export class AgentBrowserBridge {
 
   // ── Set commands ──
 
-  async setDevice(name: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async setDevice(name: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['set', 'device', name])
     })
   }
 
-  async setOffline(state?: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async setOffline(state?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['set', 'offline']
       if (state) {
         args.push(state)
@@ -517,14 +617,23 @@ export class AgentBrowserBridge {
     })
   }
 
-  async setHeaders(headersJson: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async setHeaders(
+    headersJson: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['set', 'headers', headersJson])
     })
   }
 
-  async setCredentials(user: string, pass: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async setCredentials(
+    user: string,
+    pass: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['set', 'credentials', user, pass])
     })
   }
@@ -532,9 +641,10 @@ export class AgentBrowserBridge {
   async setMedia(
     colorScheme?: string,
     reducedMotion?: string,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['set', 'media']
       if (colorScheme) {
         args.push(colorScheme)
@@ -548,22 +658,26 @@ export class AgentBrowserBridge {
 
   // ── Clipboard commands ──
 
-  async clipboardRead(worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async clipboardRead(worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['clipboard', 'read'])
     })
   }
 
-  async clipboardWrite(text: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async clipboardWrite(
+    text: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['clipboard', 'write', text])
     })
   }
 
   // ── Dialog commands ──
 
-  async dialogAccept(text?: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async dialogAccept(text?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['dialog', 'accept']
       if (text) {
         args.push(text)
@@ -572,86 +686,108 @@ export class AgentBrowserBridge {
     })
   }
 
-  async dialogDismiss(worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async dialogDismiss(worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['dialog', 'dismiss'])
     })
   }
 
   // ── Storage commands ──
 
-  async storageLocalGet(key: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageLocalGet(
+    key: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'local', 'get', key])
     })
   }
 
-  async storageLocalSet(key: string, value: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageLocalSet(
+    key: string,
+    value: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'local', 'set', key, value])
     })
   }
 
-  async storageLocalClear(worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageLocalClear(worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'local', 'clear'])
     })
   }
 
-  async storageSessionGet(key: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageSessionGet(
+    key: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'session', 'get', key])
     })
   }
 
-  async storageSessionSet(key: string, value: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageSessionSet(
+    key: string,
+    value: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'session', 'set', key, value])
     })
   }
 
-  async storageSessionClear(worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async storageSessionClear(worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['storage', 'session', 'clear'])
     })
   }
 
   // ── Download command ──
 
-  async download(selector: string, path: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async download(
+    selector: string,
+    path: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['download', selector, path])
     })
   }
 
   // ── Highlight command ──
 
-  async highlight(selector: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async highlight(selector: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return await this.execAgentBrowser(sessionName, ['highlight', selector])
     })
   }
 
-  async back(worktreeId?: string): Promise<BrowserBackResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async back(worktreeId?: string, browserPageId?: string): Promise<BrowserBackResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['back'])) as BrowserBackResult
     })
   }
 
-  async forward(worktreeId?: string): Promise<BrowserBackResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async forward(worktreeId?: string, browserPageId?: string): Promise<BrowserBackResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['forward'])) as BrowserBackResult
     })
   }
 
-  async reload(worktreeId?: string): Promise<BrowserReloadResult> {
+  async reload(worktreeId?: string, browserPageId?: string): Promise<BrowserReloadResult> {
     // Why: reload can trigger a process swap in Electron (site-isolation), which
     // destroys the session mid-command. Use the webContents directly for reload
     // instead of going through agent-browser to avoid the session lifecycle issue.
     // Routed through enqueueCommand so it serializes with other in-flight commands.
-    return this.enqueueCommand(worktreeId, async () => {
-      const { webContentsId } = this.resolveActiveTab(worktreeId)
-      const wc = this.getWebContents(webContentsId)
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (_sessionName, target) => {
+      const wc = this.getWebContents(target.webContentsId)
       if (!wc) {
         throw new BrowserError('browser_no_tab', 'Tab is no longer available')
       }
@@ -675,16 +811,24 @@ export class AgentBrowserBridge {
     })
   }
 
-  async screenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
+  async screenshot(
+    format?: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserScreenshotResult> {
     // Why: agent-browser writes the screenshot to a temp file and returns
     // { "path": "/tmp/screenshot-xxx.png" }. We read the file and return base64.
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return this.captureScreenshotCommand(sessionName, ['screenshot'], 300, format)
     })
   }
 
-  async fullPageScreenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async fullPageScreenshot(
+    format?: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserScreenshotResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return this.captureScreenshotCommand(sessionName, ['screenshot', '--full-page'], 500, format)
     })
   }
@@ -740,20 +884,33 @@ export class AgentBrowserBridge {
     }
   }
 
-  async evaluate(expression: string, worktreeId?: string): Promise<BrowserEvalResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async evaluate(
+    expression: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserEvalResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['eval', expression])) as BrowserEvalResult
     })
   }
 
-  async hover(element: string, worktreeId?: string): Promise<BrowserHoverResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async hover(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserHoverResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['hover', element])) as BrowserHoverResult
     })
   }
 
-  async drag(from: string, to: string, worktreeId?: string): Promise<BrowserDragResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async drag(
+    from: string,
+    to: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserDragResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['drag', from, to])) as BrowserDragResult
     })
   }
@@ -761,9 +918,10 @@ export class AgentBrowserBridge {
   async upload(
     element: string,
     filePaths: string[],
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserUploadResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'upload',
         element,
@@ -782,9 +940,10 @@ export class AgentBrowserBridge {
       fn?: string
       state?: string
     },
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserWaitResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['wait']
       if (options?.selector) {
         args.push(options.selector)
@@ -810,28 +969,45 @@ export class AgentBrowserBridge {
     })
   }
 
-  async check(element: string, checked: boolean, worktreeId?: string): Promise<BrowserCheckResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async check(
+    element: string,
+    checked: boolean,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserCheckResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = checked ? ['check', element] : ['uncheck', element]
       return (await this.execAgentBrowser(sessionName, args)) as BrowserCheckResult
     })
   }
 
-  async focus(element: string, worktreeId?: string): Promise<BrowserFocusResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async focus(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserFocusResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['focus', element])) as BrowserFocusResult
     })
   }
 
-  async clear(element: string, worktreeId?: string): Promise<BrowserClearResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async clear(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserClearResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       // Why: agent-browser has no clear command — use fill with empty string
       return (await this.execAgentBrowser(sessionName, ['fill', element, ''])) as BrowserClearResult
     })
   }
 
-  async selectAll(element: string, worktreeId?: string): Promise<BrowserSelectAllResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async selectAll(
+    element: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserSelectAllResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       // Why: agent-browser has no select-all command — implement as focus + Ctrl+A
       await this.execAgentBrowser(sessionName, ['focus', element])
       return (await this.execAgentBrowser(sessionName, [
@@ -841,19 +1017,22 @@ export class AgentBrowserBridge {
     })
   }
 
-  async keypress(key: string, worktreeId?: string): Promise<BrowserKeypressResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async keypress(
+    key: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserKeypressResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['press', key])) as BrowserKeypressResult
     })
   }
 
-  async pdf(worktreeId?: string): Promise<BrowserPdfResult> {
+  async pdf(worktreeId?: string, browserPageId?: string): Promise<BrowserPdfResult> {
     // Why: agent-browser's pdf command via CDP Page.printToPDF hangs in Electron
     // webviews. Use Electron's native webContents.printToPDF() which is reliable.
     // Routed through enqueueCommand so it serializes with other in-flight commands.
-    return this.enqueueCommand(worktreeId, async () => {
-      const { webContentsId } = this.resolveActiveTab(worktreeId)
-      const wc = this.getWebContents(webContentsId)
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (_sessionName, target) => {
+      const wc = this.getWebContents(target.webContentsId)
       if (!wc) {
         throw new BrowserError('browser_no_tab', 'Tab is no longer available')
       }
@@ -867,8 +1046,12 @@ export class AgentBrowserBridge {
 
   // ── Cookie commands ──
 
-  async cookieGet(_url?: string, worktreeId?: string): Promise<BrowserCookieGetResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async cookieGet(
+    _url?: string,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserCookieGetResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'cookies',
         'get'
@@ -878,9 +1061,10 @@ export class AgentBrowserBridge {
 
   async cookieSet(
     cookie: Partial<BrowserCookie>,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserCookieSetResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['cookies', 'set', cookie.name ?? '', cookie.value ?? '']
       if (cookie.domain) {
         args.push('--domain', cookie.domain)
@@ -908,9 +1092,10 @@ export class AgentBrowserBridge {
     name?: string,
     domain?: string,
     _url?: string,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserCookieDeleteResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['cookies', 'clear']
       if (name) {
         args.push('--name', name)
@@ -929,9 +1114,10 @@ export class AgentBrowserBridge {
     height: number,
     scale?: number,
     _mobile?: boolean,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserViewportResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['set', 'viewport', String(width), String(height)]
       if (scale != null) {
         args.push(String(scale))
@@ -944,9 +1130,10 @@ export class AgentBrowserBridge {
     lat: number,
     lon: number,
     _accuracy?: number,
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserGeolocationResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'set',
         'geo',
@@ -960,9 +1147,10 @@ export class AgentBrowserBridge {
 
   async interceptEnable(
     patterns?: string[],
-    worktreeId?: string
+    worktreeId?: string,
+    browserPageId?: string
   ): Promise<BrowserInterceptEnableResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       // Why: agent-browser uses "network route <url>" to intercept. Route each pattern individually.
       const urlPattern = patterns?.[0] ?? '**/*'
       const args = ['network', 'route', urlPattern]
@@ -978,8 +1166,11 @@ export class AgentBrowserBridge {
     })
   }
 
-  async interceptDisable(worktreeId?: string): Promise<BrowserInterceptDisableResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async interceptDisable(
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserInterceptDisableResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const result = (await this.execAgentBrowser(sessionName, [
         'network',
         'unroute'
@@ -992,8 +1183,11 @@ export class AgentBrowserBridge {
     })
   }
 
-  async interceptList(worktreeId?: string): Promise<{ requests: unknown[] }> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async interceptList(
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<{ requests: unknown[] }> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['network', 'requests'])) as {
         requests: unknown[]
       }
@@ -1006,8 +1200,11 @@ export class AgentBrowserBridge {
 
   // ── Capture commands ──
 
-  async captureStart(worktreeId?: string): Promise<BrowserCaptureStartResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async captureStart(
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserCaptureStartResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const result = (await this.execAgentBrowser(sessionName, [
         'network',
         'har',
@@ -1021,8 +1218,11 @@ export class AgentBrowserBridge {
     })
   }
 
-  async captureStop(worktreeId?: string): Promise<BrowserCaptureStopResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async captureStop(
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserCaptureStopResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const result = (await this.execAgentBrowser(sessionName, [
         'network',
         'har',
@@ -1036,14 +1236,22 @@ export class AgentBrowserBridge {
     })
   }
 
-  async consoleLog(_limit?: number, worktreeId?: string): Promise<BrowserConsoleResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async consoleLog(
+    _limit?: number,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserConsoleResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, ['console'])) as BrowserConsoleResult
     })
   }
 
-  async networkLog(_limit?: number, worktreeId?: string): Promise<BrowserNetworkLogResult> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async networkLog(
+    _limit?: number,
+    worktreeId?: string,
+    browserPageId?: string
+  ): Promise<BrowserNetworkLogResult> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'network',
         'requests'
@@ -1053,8 +1261,8 @@ export class AgentBrowserBridge {
 
   // ── Generic passthrough ──
 
-  async exec(command: string, worktreeId?: string): Promise<unknown> {
-    return this.enqueueCommand(worktreeId, async (sessionName) => {
+  async exec(command: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       // Why: strip --cdp and --session from raw command to prevent session/target injection
       const sanitized = command
         .replace(/--cdp\s+\S+/g, '')
@@ -1081,10 +1289,20 @@ export class AgentBrowserBridge {
     worktreeId: string | undefined,
     execute: (sessionName: string) => Promise<T>
   ): Promise<T> {
-    const { browserPageId, webContentsId } = this.resolveActiveTab(worktreeId)
-    const sessionName = `orca-tab-${browserPageId}`
+    return this.enqueueTargetedCommand(worktreeId, undefined, async (sessionName) =>
+      execute(sessionName)
+    )
+  }
 
-    await this.ensureSession(sessionName, browserPageId, webContentsId)
+  private async enqueueTargetedCommand<T>(
+    worktreeId: string | undefined,
+    browserPageId: string | undefined,
+    execute: (sessionName: string, target: ResolvedBrowserCommandTarget) => Promise<T>
+  ): Promise<T> {
+    const target = this.resolveCommandTarget(worktreeId, browserPageId)
+    const sessionName = `orca-tab-${target.browserPageId}`
+
+    await this.ensureSession(sessionName, target.browserPageId, target.webContentsId)
 
     return new Promise<T>((resolve, reject) => {
       let queue = this.commandQueues.get(sessionName)
@@ -1093,7 +1311,7 @@ export class AgentBrowserBridge {
         this.commandQueues.set(sessionName, queue)
       }
       queue.push({
-        execute: (() => execute(sessionName)) as () => Promise<unknown>,
+        execute: (() => execute(sessionName, target)) as () => Promise<unknown>,
         resolve: resolve as (value: unknown) => void,
         reject
       })
@@ -1121,15 +1339,43 @@ export class AgentBrowserBridge {
     this.processingQueues.delete(sessionName)
   }
 
-  getActivePageId(worktreeId?: string): string | null {
+  getActivePageId(worktreeId?: string, browserPageId?: string): string | null {
     try {
-      return this.resolveActiveTab(worktreeId).browserPageId
+      return this.resolveCommandTarget(worktreeId, browserPageId).browserPageId
     } catch {
       return null
     }
   }
 
-  private resolveActiveTab(worktreeId?: string): { browserPageId: string; webContentsId: number } {
+  private resolveCommandTarget(
+    worktreeId?: string,
+    browserPageId?: string
+  ): ResolvedBrowserCommandTarget {
+    if (!browserPageId) {
+      return this.resolveActiveTab(worktreeId)
+    }
+
+    const tabs = this.getRegisteredTabs(worktreeId)
+    const webContentsId = tabs.get(browserPageId)
+    if (webContentsId == null) {
+      const scope = worktreeId ? ' in this worktree' : ''
+      throw new BrowserError(
+        'browser_tab_not_found',
+        `Browser page ${browserPageId} was not found${scope}`
+      )
+    }
+
+    if (!this.getWebContents(webContentsId)) {
+      throw new BrowserError(
+        'browser_tab_not_found',
+        `Browser page ${browserPageId} is no longer available`
+      )
+    }
+
+    return { browserPageId, webContentsId }
+  }
+
+  private resolveActiveTab(worktreeId?: string): ResolvedBrowserCommandTarget {
     const tabs = this.getRegisteredTabs(worktreeId)
 
     if (tabs.size === 0) {

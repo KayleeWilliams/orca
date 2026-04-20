@@ -163,6 +163,7 @@ export type BrowserSnapshotRef = {
 }
 
 export type BrowserSnapshotResult = {
+  browserPageId: string
   snapshot: string
   refs: BrowserSnapshotRef[]
   url: string
@@ -215,6 +216,7 @@ export type BrowserEvalResult = {
 }
 
 export type BrowserTabInfo = {
+  browserPageId: string
   index: number
   url: string
   title: string
@@ -227,6 +229,7 @@ export type BrowserTabListResult = {
 
 export type BrowserTabSwitchResult = {
   switched: number
+  browserPageId: string
 }
 
 export type BrowserHoverResult = {

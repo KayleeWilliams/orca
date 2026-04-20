@@ -764,4 +764,78 @@ describe('OrcaRuntimeService', () => {
       }
     ])
   })
+
+  describe('browser page targeting', () => {
+    it('passes explicit page ids through without resolving the current worktree', async () => {
+      vi.mocked(listWorktrees).mockClear()
+      const runtime = createRuntime()
+      const snapshotMock = vi.fn().mockResolvedValue({
+        browserPageId: 'page-1',
+        snapshot: 'tree',
+        refs: [],
+        url: 'https://example.com',
+        title: 'Example'
+      })
+
+      runtime.setAgentBrowserBridge({
+        snapshot: snapshotMock
+      } as never)
+
+      const result = await runtime.browserSnapshot({ page: 'page-1' })
+
+      expect(result.browserPageId).toBe('page-1')
+      expect(snapshotMock).toHaveBeenCalledWith(undefined, 'page-1')
+      expect(listWorktrees).not.toHaveBeenCalled()
+    })
+
+    it('resolves explicit worktree selectors when page ids are also provided', async () => {
+      vi.mocked(listWorktrees).mockClear()
+      const runtime = createRuntime()
+      const snapshotMock = vi.fn().mockResolvedValue({
+        browserPageId: 'page-1',
+        snapshot: 'tree',
+        refs: [],
+        url: 'https://example.com',
+        title: 'Example'
+      })
+
+      runtime.setAgentBrowserBridge({
+        snapshot: snapshotMock,
+        getRegisteredTabs: vi.fn(() => new Map([['page-1', 1]]))
+      } as never)
+
+      await runtime.browserSnapshot({
+        worktree: 'branch:feature/foo',
+        page: 'page-1'
+      })
+
+      expect(snapshotMock).toHaveBeenCalledWith(TEST_WORKTREE_ID, 'page-1')
+    })
+
+    it('routes tab switch and capture start by explicit page id', async () => {
+      const runtime = createRuntime()
+      const tabSwitchMock = vi.fn().mockResolvedValue({
+        switched: 2,
+        browserPageId: 'page-2'
+      })
+      const captureStartMock = vi.fn().mockResolvedValue({
+        capturing: true
+      })
+
+      runtime.setAgentBrowserBridge({
+        tabSwitch: tabSwitchMock,
+        captureStart: captureStartMock
+      } as never)
+
+      await expect(runtime.browserTabSwitch({ page: 'page-2' })).resolves.toEqual({
+        switched: 2,
+        browserPageId: 'page-2'
+      })
+      await expect(runtime.browserCaptureStart({ page: 'page-2' })).resolves.toEqual({
+        capturing: true
+      })
+      expect(tabSwitchMock).toHaveBeenCalledWith(undefined, undefined, 'page-2')
+      expect(captureStartMock).toHaveBeenCalledWith(undefined, 'page-2')
+    })
+  })
 })

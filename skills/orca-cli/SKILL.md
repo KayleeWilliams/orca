@@ -212,6 +212,29 @@ orca tab switch --index 1 --json   # Switches to tab [1] within this worktree
 
 If no tabs are open in the current worktree, commands return `browser_no_tab`.
 
+### Stable Page Targeting
+
+For single-agent flows, bare browser commands are fine: Orca will target the active browser tab in the current worktree.
+
+For concurrent or multi-process browser automation, prefer a stable page id instead of ambient active-tab state:
+
+1. Run `orca tab list --json`.
+2. Read `tabs[].browserPageId` from the result.
+3. Pass `--page <browserPageId>` to follow-up commands like `snapshot`, `click`, `goto`, `screenshot`, `tab switch`, or `tab close`.
+
+Why: active-tab state and tab indices can change while another Orca CLI process is working. `browserPageId` pins the command to one concrete tab.
+
+```bash
+orca tab list --json
+orca snapshot --page page-123 --json
+orca click --page page-123 --element @e3 --json
+orca screenshot --page page-123 --json
+orca tab switch --page page-123 --json
+orca tab close --page page-123 --json
+```
+
+If you also pass `--worktree`, Orca treats it as extra scoping/validation for that page id. Without `--page`, commands still fall back to the current worktree's active tab.
+
 ### Navigation
 
 ```bash
@@ -224,40 +247,40 @@ orca reload [--json]                     # Reload the current page
 ### Observation
 
 ```bash
-orca snapshot [--json]                   # Accessibility tree snapshot with element refs
-orca screenshot [--format <png|jpeg>] [--json]  # Viewport screenshot (base64)
-orca full-screenshot [--format <png|jpeg>] [--json]  # Full-page screenshot (base64)
-orca pdf [--json]                        # Export page as PDF (base64)
+orca snapshot [--page <browserPageId>] [--json]                   # Accessibility tree snapshot with element refs
+orca screenshot [--page <browserPageId>] [--format <png|jpeg>] [--json]  # Viewport screenshot (base64)
+orca full-screenshot [--page <browserPageId>] [--format <png|jpeg>] [--json]  # Full-page screenshot (base64)
+orca pdf [--page <browserPageId>] [--json]                        # Export page as PDF (base64)
 ```
 
 ### Interaction
 
 ```bash
-orca click --element <ref> [--json]      # Click an element by ref
-orca dblclick --element <ref> [--json]   # Double-click an element
-orca fill --element <ref> --value <text> [--json]  # Clear and fill an input
-orca type --input <text> [--json]        # Type at current focus (no element targeting)
-orca select --element <ref> --value <value> [--json]  # Select dropdown option
-orca check --element <ref> [--json]      # Check a checkbox
-orca uncheck --element <ref> [--json]    # Uncheck a checkbox
-orca scroll --direction <up|down> [--amount <pixels>] [--json]  # Scroll viewport
-orca scrollintoview --element <ref> [--json]  # Scroll element into view
-orca hover --element <ref> [--json]      # Hover over an element
-orca focus --element <ref> [--json]      # Focus an element
-orca drag --from <ref> --to <ref> [--json]  # Drag from one element to another
-orca clear --element <ref> [--json]      # Clear an input field
-orca select-all --element <ref> [--json] # Select all text in an element
-orca keypress --key <key> [--json]       # Press a key (Enter, Tab, Escape, etc.)
-orca upload --element <ref> --files <paths> [--json]  # Upload files to a file input
+orca click --element <ref> [--page <browserPageId>] [--json]      # Click an element by ref
+orca dblclick --element <ref> [--page <browserPageId>] [--json]   # Double-click an element
+orca fill --element <ref> --value <text> [--page <browserPageId>] [--json]  # Clear and fill an input
+orca type --input <text> [--page <browserPageId>] [--json]        # Type at current focus (no element targeting)
+orca select --element <ref> --value <value> [--page <browserPageId>] [--json]  # Select dropdown option
+orca check --element <ref> [--page <browserPageId>] [--json]      # Check a checkbox
+orca uncheck --element <ref> [--page <browserPageId>] [--json]    # Uncheck a checkbox
+orca scroll --direction <up|down> [--amount <pixels>] [--page <browserPageId>] [--json]  # Scroll viewport
+orca scrollintoview --element <ref> [--page <browserPageId>] [--json]  # Scroll element into view
+orca hover --element <ref> [--page <browserPageId>] [--json]      # Hover over an element
+orca focus --element <ref> [--page <browserPageId>] [--json]      # Focus an element
+orca drag --from <ref> --to <ref> [--page <browserPageId>] [--json]  # Drag from one element to another
+orca clear --element <ref> [--page <browserPageId>] [--json]      # Clear an input field
+orca select-all --element <ref> [--page <browserPageId>] [--json] # Select all text in an element
+orca keypress --key <key> [--page <browserPageId>] [--json]       # Press a key (Enter, Tab, Escape, etc.)
+orca upload --element <ref> --files <paths> [--page <browserPageId>] [--json]  # Upload files to a file input
 ```
 
 ### Tab Management
 
 ```bash
 orca tab list [--json]                   # List open browser tabs
-orca tab switch --index <n> [--json]     # Switch active tab (invalidates refs)
+orca tab switch (--index <n> | --page <browserPageId>) [--json]     # Switch active tab (invalidates refs)
 orca tab create [--url <url>] [--json]   # Open a new browser tab
-orca tab close [--index <n>] [--json]    # Close a browser tab
+orca tab close [--index <n> | --page <browserPageId>] [--json]    # Close a browser tab
 ```
 
 ### Wait / Synchronization
@@ -503,10 +526,12 @@ When `orca tab create` opens a new tab, it is automatically set as the active ta
 - After switching tabs, re-snapshot.
 - If you get `browser_stale_ref`, re-snapshot and retry with the new refs.
 - Use `orca tab list` before `orca tab switch` to know which tabs exist.
+- For concurrent browser workflows, prefer `orca tab list --json` and reuse `tabs[].browserPageId` with `--page` on later commands.
 - Use `orca wait` to synchronize after actions that trigger async updates (form submits, SPA navigation, modals) instead of arbitrary sleeps.
 - Use `orca eval` as an escape hatch for interactions not covered by other commands.
 - Use `orca exec --command "help"` to discover extended commands.
 - Worktree scoping is automatic — you'll only see tabs from your worktree by default.
+- Bare browser commands without `--page` still target the current worktree's active tab, which is convenient but less robust for multi-process automation.
 - Tab creation auto-activates the new tab — no need for `tab switch` after `tab create`.
 - Browser commands auto-switch the active worktree if needed — no manual worktree activation required.
 

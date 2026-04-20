@@ -113,6 +113,32 @@ export class CdpBridge {
     return null
   }
 
+  getPageInfo(
+    _worktreeId?: string,
+    browserPageId?: string
+  ): { browserPageId: string; url: string; title: string } | null {
+    // Why: OrcaRuntimeService pushes navigation/title updates after commands
+    // using a bridge-agnostic contract. The CDP bridge only routes one active
+    // tab at a time, but it still needs to expose the same metadata lookup.
+    const resolvedPageId = browserPageId ?? this.getActivePageId()
+    if (!resolvedPageId) {
+      return null
+    }
+    const webContentsId = this.getRegisteredTabs().get(resolvedPageId)
+    if (webContentsId == null) {
+      return null
+    }
+    const guest = webContents.fromId(webContentsId)
+    if (!guest || guest.isDestroyed()) {
+      return null
+    }
+    return {
+      browserPageId: resolvedPageId,
+      url: guest.getURL(),
+      title: guest.getTitle()
+    }
+  }
+
   async snapshot(): Promise<BrowserSnapshotResult> {
     return this.enqueueCommand(async () => {
       const guest = this.getActiveGuest()
@@ -131,6 +157,7 @@ export class CdpBridge {
       state.navigationId = navId
 
       return {
+        browserPageId: tabId,
         snapshot: result.snapshot,
         refs: result.refs,
         url: guest.getURL(),
@@ -939,12 +966,13 @@ export class CdpBridge {
     const tabs: BrowserTabInfo[] = []
     let index = 0
 
-    for (const [_tabId, wcId] of this.getRegisteredTabs()) {
+    for (const [tabId, wcId] of this.getRegisteredTabs()) {
       const guest = webContents.fromId(wcId)
       if (!guest || guest.isDestroyed()) {
         continue
       }
       tabs.push({
+        browserPageId: tabId,
         index,
         url: guest.getURL(),
         title: guest.getTitle(),
@@ -970,13 +998,13 @@ export class CdpBridge {
       )
     }
 
-    const [_tabId, wcId] = liveEntries[index]
+    const [tabId, wcId] = liveEntries[index]
     if (this.activeWebContentsId !== null) {
       this.invalidateRefMap(this.activeWebContentsId)
     }
     this.activeWebContentsId = wcId
 
-    return { switched: index }
+    return { switched: index, browserPageId: tabId }
   }
 
   onTabClosed(webContentsId: number): void {

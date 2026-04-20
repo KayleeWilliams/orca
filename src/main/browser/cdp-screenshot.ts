@@ -1,5 +1,22 @@
 import type { WebContents } from 'electron'
 
+function encodeNativeImageScreenshot(
+  image: Electron.NativeImage,
+  params: Record<string, unknown> | undefined
+): { data: string } | null {
+  if (image.isEmpty()) {
+    return null
+  }
+
+  const format = params?.format === 'jpeg' ? 'jpeg' : 'png'
+  const quality =
+    typeof params?.quality === 'number' && Number.isFinite(params.quality)
+      ? Math.max(0, Math.min(100, Math.round(params.quality)))
+      : undefined
+  const buffer = format === 'jpeg' ? image.toJPEG(quality ?? 90) : image.toPNG()
+  return { data: buffer.toString('base64') }
+}
+
 // Why: Electron's capturePage() is unreliable on webview guests — the compositor
 // may not produce frames when the webview panel is inactive, unfocused, or in a
 // split-pane layout. Instead, use the debugger's Page.captureScreenshot which
@@ -40,12 +57,33 @@ export function captureScreenshot(
   }
 
   let settled = false
-  const timer = setTimeout(() => {
+  // Why: a compositor invalidate is cheap and can recover guest instances that
+  // are visible but have not produced a fresh frame since being reclaimed into
+  // the active browser tab.
+  try {
+    webContents.invalidate()
+  } catch {
+    // Some guest teardown paths reject repaint requests. Fall through to CDP.
+  }
+  const timer = setTimeout(async () => {
     if (!settled) {
-      settled = true
-      onError(
-        'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
-      )
+      try {
+        const fallback = encodeNativeImageScreenshot(await webContents.capturePage(), params)
+        if (fallback) {
+          settled = true
+          onResult(fallback)
+          return
+        }
+      } catch {
+        // Fall through to the original timeout error below.
+      }
+
+      if (!settled) {
+        settled = true
+        onError(
+          'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
+        )
+      }
     }
   }, 8000)
 

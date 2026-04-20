@@ -1,3 +1,5 @@
+/* oxlint-disable max-lines -- Why: CLI parsing behavior is exercised end-to-end
+in one file so command and flag interactions stay visible in a single suite. */
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -316,6 +318,158 @@ describe('orca cli worktree awareness', () => {
     expect(callMock).toHaveBeenNthCalledWith(2, 'terminal.list', {
       worktree: `path:${path.resolve('/tmp/repo/feature')}`,
       limit: undefined
+    })
+  })
+})
+
+describe('orca cli browser page targeting', () => {
+  beforeEach(() => {
+    callMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('passes explicit page ids to snapshot without resolving the current worktree', async () => {
+    callMock.mockResolvedValueOnce({
+      id: 'req_snapshot',
+      ok: true,
+      result: {
+        browserPageId: 'page-1',
+        snapshot: 'tree',
+        refs: [],
+        url: 'https://example.com',
+        title: 'Example'
+      },
+      _meta: {
+        runtimeId: 'runtime-1'
+      }
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(['snapshot', '--page', 'page-1', '--json'], '/tmp/not-an-orca-worktree')
+
+    expect(callMock).toHaveBeenCalledTimes(1)
+    expect(callMock).toHaveBeenCalledWith('browser.snapshot', {
+      page: 'page-1'
+    })
+  })
+
+  it('resolves current worktree only when --page is combined with --worktree current', async () => {
+    callMock
+      .mockResolvedValueOnce({
+        id: 'req_list',
+        ok: true,
+        result: {
+          worktrees: [
+            {
+              id: 'repo::/tmp/repo/feature',
+              repoId: 'repo',
+              path: '/tmp/repo/feature',
+              branch: 'feature/foo',
+              linkedIssue: null,
+              git: {
+                path: '/tmp/repo/feature',
+                head: 'abc',
+                branch: 'feature/foo',
+                isBare: false,
+                isMainWorktree: false
+              },
+              displayName: '',
+              comment: ''
+            }
+          ],
+          totalCount: 1,
+          truncated: false
+        },
+        _meta: {
+          runtimeId: 'runtime-1'
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'req_snapshot',
+        ok: true,
+        result: {
+          browserPageId: 'page-1',
+          snapshot: 'tree',
+          refs: [],
+          url: 'https://example.com',
+          title: 'Example'
+        },
+        _meta: {
+          runtimeId: 'runtime-1'
+        }
+      })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['snapshot', '--page', 'page-1', '--worktree', 'current', '--json'],
+      '/tmp/repo/feature/src'
+    )
+
+    expect(callMock).toHaveBeenNthCalledWith(1, 'worktree.list', {
+      limit: 10_000
+    })
+    expect(callMock).toHaveBeenNthCalledWith(2, 'browser.snapshot', {
+      page: 'page-1',
+      worktree: `path:${path.resolve('/tmp/repo/feature')}`
+    })
+  })
+
+  it('scopes tab switch by page id to the current worktree when available', async () => {
+    callMock
+      .mockResolvedValueOnce({
+        id: 'req_list',
+        ok: true,
+        result: {
+          worktrees: [
+            {
+              id: 'repo::/tmp/repo/feature',
+              repoId: 'repo',
+              path: '/tmp/repo/feature',
+              branch: 'feature/foo',
+              linkedIssue: null,
+              git: {
+                path: '/tmp/repo/feature',
+                head: 'abc',
+                branch: 'feature/foo',
+                isBare: false,
+                isMainWorktree: false
+              },
+              displayName: '',
+              comment: ''
+            }
+          ],
+          totalCount: 1,
+          truncated: false
+        },
+        _meta: {
+          runtimeId: 'runtime-1'
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'req_switch',
+        ok: true,
+        result: {
+          switched: 2,
+          browserPageId: 'page-2'
+        },
+        _meta: {
+          runtimeId: 'runtime-1'
+        }
+      })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(['tab', 'switch', '--page', 'page-2', '--json'], '/tmp/repo/feature/src')
+
+    expect(callMock).toHaveBeenNthCalledWith(1, 'worktree.list', {
+      limit: 10_000
+    })
+    expect(callMock).toHaveBeenNthCalledWith(2, 'browser.tabSwitch', {
+      index: undefined,
+      page: 'page-2',
+      worktree: `path:${path.resolve('/tmp/repo/feature')}`
     })
   })
 })
