@@ -302,7 +302,7 @@ export type BrowserViewportResult = {
   mobile: boolean
 }
 
-// ── Geolocation/timezone/locale types ──
+// ── Geolocation types ──
 
 export type BrowserGeolocationResult = {
   latitude: number

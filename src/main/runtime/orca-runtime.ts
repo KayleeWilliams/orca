@@ -1431,7 +1431,7 @@ export class OrcaRuntimeService {
     )
   }
 
-  // ── Geolocation/timezone/locale ──
+  // ── Geolocation ──
 
   async browserSetGeolocation(params: {
     latitude: number

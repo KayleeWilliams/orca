@@ -1207,7 +1207,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       )
     }
 
-    // ── Geolocation/timezone/locale ──
+    // ── Geolocation ──
 
     if (matches(commandPath, ['geolocation'])) {
       const latitude = getRequiredFiniteNumber(parsed.flags, 'latitude')

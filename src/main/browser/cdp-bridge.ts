@@ -726,7 +726,7 @@ export class CdpBridge {
     })
   }
 
-  // ── Geolocation/timezone/locale ──
+  // ── Geolocation ──
 
   async setGeolocation(
     latitude: number,

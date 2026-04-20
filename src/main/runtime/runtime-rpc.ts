@@ -1173,7 +1173,7 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
-    // ── Geolocation/timezone/locale ──
+    // ── Geolocation ──
 
     if (request.method === 'browser.geolocation') {
       try {

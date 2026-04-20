@@ -1207,6 +1207,7 @@ export class AgentBrowserBridge {
       for (const cmd of queue) {
         cmd.reject(err)
       }
+      queue.length = 0
     }
 
     try {
