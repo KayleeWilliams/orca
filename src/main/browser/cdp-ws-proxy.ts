@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http'
 import type { WebContents } from 'electron'
+import { captureScreenshot } from './cdp-screenshot'
 
 export class CdpWsProxy {
   private httpServer: Server | null = null
@@ -15,20 +16,16 @@ export class CdpWsProxy {
   private debuggerMessageHandler: ((...args: unknown[]) => void) | null = null
   private debuggerDetachHandler: ((...args: unknown[]) => void) | null = null
   private attached = false
-  // Why: when agent-browser attaches via Target.attachToTarget, it expects all events
-  // to carry the returned sessionId. We track it here so the event forwarder can tag
-  // events with the correct sessionId that agent-browser filters on.
+  // Why: agent-browser filters events by sessionId from Target.attachToTarget.
   private clientSessionId: string | undefined = undefined
 
   constructor(private readonly webContents: WebContents) {}
 
   async start(): Promise<string> {
     await this.attachDebugger()
-
     return new Promise<string>((resolve, reject) => {
       this.httpServer = createServer((req, res) => this.handleHttpRequest(req, res))
       this.wss = new WebSocketServer({ server: this.httpServer })
-
       this.wss.on('connection', (ws) => {
         if (this.client) {
           this.client.close()
@@ -41,7 +38,6 @@ export class CdpWsProxy {
           }
         })
       })
-
       this.httpServer.listen(0, '127.0.0.1', () => {
         const addr = this.httpServer!.address()
         if (typeof addr === 'object' && addr) {
@@ -51,7 +47,6 @@ export class CdpWsProxy {
           reject(new Error('Failed to bind proxy server'))
         }
       })
-
       this.httpServer.on('error', reject)
     })
   }
@@ -80,16 +75,18 @@ export class CdpWsProxy {
     return this.port
   }
 
-  private sendResult(clientId: number, result: unknown): void {
+  private send(payload: unknown): void {
     if (this.client?.readyState === WebSocket.OPEN) {
-      this.client.send(JSON.stringify({ id: clientId, result }))
+      this.client.send(JSON.stringify(payload))
     }
   }
 
+  private sendResult(clientId: number, result: unknown): void {
+    this.send({ id: clientId, result })
+  }
+
   private sendError(clientId: number, message: string): void {
-    if (this.client?.readyState === WebSocket.OPEN) {
-      this.client.send(JSON.stringify({ id: clientId, error: { code: -32000, message } }))
-    }
+    this.send({ id: clientId, error: { code: -32000, message } })
   }
 
   private buildTargetInfo(): Record<string, unknown> {
@@ -106,7 +103,6 @@ export class CdpWsProxy {
 
   private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
     const url = req.url ?? ''
-
     if (url === '/json/version' || url === '/json/version/') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(
@@ -118,7 +114,6 @@ export class CdpWsProxy {
       )
       return
     }
-
     if (url === '/json' || url === '/json/' || url === '/json/list' || url === '/json/list/') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(
@@ -132,7 +127,6 @@ export class CdpWsProxy {
       )
       return
     }
-
     res.writeHead(404)
     res.end()
   }
@@ -141,7 +135,6 @@ export class CdpWsProxy {
     if (this.attached) {
       return
     }
-
     if (!this.webContents.debugger.isAttached()) {
       try {
         this.webContents.debugger.attach('1.3')
@@ -150,7 +143,6 @@ export class CdpWsProxy {
       }
     }
     this.attached = true
-
     this.debuggerMessageHandler = (_event: unknown, ...rest: unknown[]) => {
       const [method, params, sessionId] = rest as [
         string,
@@ -160,19 +152,16 @@ export class CdpWsProxy {
       if (!this.client || this.client.readyState !== WebSocket.OPEN) {
         return
       }
-
       // Why: Electron passes empty string (not undefined) for root-session events, but
       // agent-browser filters events by the sessionId from Target.attachToTarget.
       const msg: Record<string, unknown> = { method, params }
       msg.sessionId = sessionId || this.clientSessionId
       this.client.send(JSON.stringify(msg))
     }
-
     this.debuggerDetachHandler = () => {
       this.attached = false
       this.stop()
     }
-
     this.webContents.debugger.on('message', this.debuggerMessageHandler as never)
     this.webContents.debugger.on('detach', this.debuggerDetachHandler as never)
   }
@@ -208,9 +197,6 @@ export class CdpWsProxy {
     }
     const clientId = msg.id
 
-    // Why: Target.* and Browser.* commands are browser-level. Electron's per-tab
-    // debugger can't handle them. Intercept with synthetic responses so agent-browser
-    // sees only the proxied webview target.
     if (msg.method === 'Target.getTargets') {
       this.sendResult(clientId, { targetInfos: [this.buildTargetInfo()] })
       return
@@ -247,16 +233,12 @@ export class CdpWsProxy {
       this.sendResult(clientId, {})
       return
     }
-
-    // Why: Page.captureScreenshot via wc.debugger.sendCommand hangs on Electron
-    // webview guests. Intercept and use capturePage() instead.
+    // Why: Page.captureScreenshot via debugger.sendCommand hangs on Electron webview guests.
     if (msg.method === 'Page.captureScreenshot') {
       this.handleScreenshot(clientId, msg.params)
       return
     }
-
-    // Why: Input.insertText requires native focus; Runtime.evaluate/callFunctionOn
-    // need focus for clipboard APIs. dispatchKeyEvent must NOT trigger focus here.
+    // Why: Input.insertText/Runtime.evaluate need native focus for clipboard APIs.
     if (
       (msg.method === 'Input.insertText' ||
         msg.method === 'Runtime.evaluate' ||
@@ -265,16 +247,12 @@ export class CdpWsProxy {
     ) {
       this.webContents.focus()
     }
-
-    // Why: agent-browser waits for network idle (0 pending requests for 500ms) to
-    // detect navigation completion. On Electron webview guests, CDP domain subscriptions
-    // (Network, Page) silently lapse after cross-process swaps. Re-enabling before
-    // every Page.navigate ensures agent-browser receives completion signals.
+    // Why: agent-browser waits for network idle to detect navigation completion.
+    // Electron webview CDP subscriptions silently lapse after cross-process swaps.
     if (msg.method === 'Page.navigate' && !this.webContents.isDestroyed()) {
       void this.navigateWithLifecycleEnsured(clientId, msg.params ?? {})
       return
     }
-
     this.forwardCommand(clientId, msg.method, msg.params ?? {}, msg.sessionId)
   }
 
@@ -287,7 +265,6 @@ export class CdpWsProxy {
     const internalId = this.nextId++
     const sessionId =
       msgSessionId && msgSessionId !== this.clientSessionId ? msgSessionId : undefined
-
     this.webContents.debugger
       .sendCommand(method, params, sessionId)
       .then((result) => {
@@ -298,7 +275,6 @@ export class CdpWsProxy {
         this.inflight.delete(internalId)
         this.sendError(clientId, err.message)
       })
-
     this.inflight.set(internalId, { clientId, resolve: () => {}, reject: () => {} })
   }
 
@@ -308,52 +284,22 @@ export class CdpWsProxy {
   ): Promise<void> {
     try {
       const dbg = this.webContents.debugger
-      // Why: agent-browser's completion signal is network idle — without Network.enable, goto times out.
+      // Why: without Network.enable, agent-browser never sees network idle → goto times out.
       await dbg.sendCommand('Network.enable', {})
       await dbg.sendCommand('Page.enable', {})
       await dbg.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true })
     } catch {
-      /* best-effort — proceed even if re-enable fails */
+      /* best-effort */
     }
     this.forwardCommand(clientId, 'Page.navigate', params)
   }
 
-  // Why: Electron's wc.debugger.sendCommand('Page.captureScreenshot') hangs
-  // indefinitely on webview guest processes. The bridge calls ensureWebviewVisible
-  // before the command reaches here. Retry to tolerate slow compositing.
   private handleScreenshot(clientId: number, params?: Record<string, unknown>): void {
-    if (this.webContents.isDestroyed()) {
-      this.sendError(clientId, 'WebContents destroyed')
-      return
-    }
-    const format = (params?.format as string) ?? 'png'
-
-    const attemptCapture = async (retries: number): Promise<void> => {
-      try {
-        if (this.webContents.isDestroyed()) {
-          this.sendError(clientId, 'WebContents destroyed')
-          return
-        }
-        const image = await this.webContents.capturePage()
-        if (image.isEmpty()) {
-          if (retries > 0) {
-            setTimeout(() => attemptCapture(retries - 1), 200)
-            return
-          }
-          this.sendError(
-            clientId,
-            'Screenshot captured an empty image — the browser tab may not be visible in the Orca UI.'
-          )
-          return
-        }
-        const data =
-          format === 'jpeg' ? image.toJPEG(80).toString('base64') : image.toPNG().toString('base64')
-        this.sendResult(clientId, { data })
-      } catch (err) {
-        this.sendError(clientId, (err as Error).message)
-      }
-    }
-
-    setTimeout(() => attemptCapture(3), 100)
+    captureScreenshot(
+      this.webContents,
+      params,
+      (result) => this.sendResult(clientId, result),
+      (message) => this.sendError(clientId, message)
+    )
   }
 }
