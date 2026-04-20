@@ -5,13 +5,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useAppStore } from '@/store'
 import { getConnectionId } from '@/lib/connection-context'
-import { basename } from '@/lib/path'
+import { basename, joinPath } from '@/lib/path'
 import { normalizeAbsolutePath } from '@/components/right-sidebar/file-explorer-paths'
 import { getExternalFileChangeRelativePath } from '@/components/right-sidebar/useFileExplorerWatch'
 import {
   getOpenFilesForExternalFileChange,
   notifyEditorExternalFileChange
 } from '@/components/editor/editor-autosave'
+import { hasRecentSelfWrite } from '@/components/editor/editor-self-write-registry'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -386,6 +387,16 @@ export function createExternalWatchEventHandler(
         continue
       }
       if (matching.some((f) => f.isDirty)) {
+        continue
+      }
+      // Why: our own save path stamps the registry right before writeFile, so
+      // a fs:changed event arriving within the TTL is the echo of that write
+      // rather than a real external edit. Skipping the reload avoids the
+      // setContent round-trip that would otherwise reset the TipTap cursor
+      // to the end of the document mid-typing. A genuinely external edit
+      // after the TTL still reaches the editor via the next fs event.
+      const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
+      if (hasRecentSelfWrite(absolutePath)) {
         continue
       }
       scheduleDebouncedExternalReload(notification)

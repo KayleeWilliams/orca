@@ -438,6 +438,17 @@ export default function RichMarkdownEditor({
       // triggers a re-sync attempt instead of being short-circuited by the
       // `content === lastCommittedMarkdownRef.current` guard above.
       try {
+        // Why: TipTap's setContent collapses the selection to the end of the
+        // new document by default. When the editor is focused (user is
+        // actively typing), that reads as a spontaneous cursor jump to EOF.
+        // Snapshot the current selection bounds and restore them clamped to
+        // the new doc length after the content swap so the caret stays put
+        // for any genuinely external edit that lands during a typing session.
+        // The old doc's offsets are a best-effort heuristic — for a real
+        // external rewrite they won't map to the semantically equivalent
+        // position, but this is still strictly better than jumping to EOF.
+        const hadFocus = editor.isFocused
+        const { from: prevFrom, to: prevTo } = editor.state.selection
         editor.commands.setContent(encodeRawMarkdownHtmlForRichEditor(content), {
           contentType: 'markdown',
           emitUpdate: false
@@ -446,6 +457,18 @@ export default function RichMarkdownEditor({
         // may re-introduce paragraphs with embedded `\n` characters.
         normalizeSoftBreaks(editor)
         lastCommittedMarkdownRef.current = content
+        if (hadFocus) {
+          // Why: setContent can blur the editor via ProseMirror's focus
+          // handling, so restoring selection alone would leave subsequent
+          // keystrokes going to the browser. Chain focus() after the
+          // selection restore to keep the typing session intact.
+          const docSize = editor.state.doc.content.size
+          editor
+            .chain()
+            .setTextSelection({ from: Math.min(prevFrom, docSize), to: Math.min(prevTo, docSize) })
+            .focus()
+            .run()
+        }
       } catch (err) {
         console.error('[RichMarkdownEditor] failed to apply external content update', err)
       }
