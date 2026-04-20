@@ -194,6 +194,9 @@ export class AgentBrowserBridge {
   // store them here keyed by sessionName so the next ensureSession + first successful
   // command can restore them automatically.
   private readonly pendingInterceptRestore = new Map<string, string[]>()
+  // Why: two concurrent CLI calls can both enter ensureSession before either creates
+  // the session entry. This promise-based lock ensures only one creation proceeds.
+  private readonly pendingSessionCreation = new Map<string, Promise<void>>()
 
   constructor(private readonly browserManager: BrowserManager) {
     this.agentBrowserBin = resolveAgentBrowserBinary()
@@ -636,29 +639,31 @@ export class AgentBrowserBridge {
     // Why: reload can trigger a process swap in Electron (site-isolation), which
     // destroys the session mid-command. Use the webContents directly for reload
     // instead of going through agent-browser to avoid the session lifecycle issue.
-    const { webContentsId } = this.resolveActiveTab(worktreeId)
-    const wc = this.getWebContents(webContentsId)
-    if (!wc) {
-      throw new BrowserError('browser_no_tab', 'Tab is no longer available')
-    }
-    wc.reload()
-    // Why: wait for the page to finish loading before returning.
-    await new Promise<void>((resolve) => {
-      const onFinish = (): void => {
-        wc.removeListener('did-finish-load', onFinish)
-        wc.removeListener('did-fail-load', onFail)
-        resolve()
+    // Routed through enqueueCommand so it serializes with other in-flight commands.
+    return this.enqueueCommand(worktreeId, async () => {
+      const { webContentsId } = this.resolveActiveTab(worktreeId)
+      const wc = this.getWebContents(webContentsId)
+      if (!wc) {
+        throw new BrowserError('browser_no_tab', 'Tab is no longer available')
       }
-      const onFail = (): void => {
-        wc.removeListener('did-finish-load', onFinish)
-        wc.removeListener('did-fail-load', onFail)
-        resolve()
-      }
-      wc.on('did-finish-load', onFinish)
-      wc.on('did-fail-load', onFail)
-      setTimeout(onFinish, 10_000)
+      wc.reload()
+      await new Promise<void>((resolve) => {
+        const onFinish = (): void => {
+          wc.removeListener('did-finish-load', onFinish)
+          wc.removeListener('did-fail-load', onFail)
+          resolve()
+        }
+        const onFail = (): void => {
+          wc.removeListener('did-finish-load', onFinish)
+          wc.removeListener('did-fail-load', onFail)
+          resolve()
+        }
+        wc.on('did-finish-load', onFinish)
+        wc.on('did-fail-load', onFail)
+        setTimeout(onFinish, 10_000)
+      })
+      return { url: wc.getURL(), title: wc.getTitle() }
     })
-    return { url: wc.getURL(), title: wc.getTitle() }
   }
 
   async screenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
@@ -820,16 +825,19 @@ export class AgentBrowserBridge {
   async pdf(worktreeId?: string): Promise<BrowserPdfResult> {
     // Why: agent-browser's pdf command via CDP Page.printToPDF hangs in Electron
     // webviews. Use Electron's native webContents.printToPDF() which is reliable.
-    const { webContentsId } = this.resolveActiveTab(worktreeId)
-    const wc = this.getWebContents(webContentsId)
-    if (!wc) {
-      throw new BrowserError('browser_no_tab', 'Tab is no longer available')
-    }
-    const buffer = await wc.printToPDF({
-      printBackground: true,
-      preferCSSPageSize: true
+    // Routed through enqueueCommand so it serializes with other in-flight commands.
+    return this.enqueueCommand(worktreeId, async () => {
+      const { webContentsId } = this.resolveActiveTab(worktreeId)
+      const wc = this.getWebContents(webContentsId)
+      if (!wc) {
+        throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+      }
+      const buffer = await wc.printToPDF({
+        printBackground: true,
+        preferCSSPageSize: true
+      })
+      return { data: buffer.toString('base64') }
     })
-    return { data: buffer.toString('base64') }
   }
 
   // ── Cookie commands ──
@@ -872,17 +880,20 @@ export class AgentBrowserBridge {
   }
 
   async cookieDelete(
-    _name?: string,
-    _domain?: string,
+    name?: string,
+    domain?: string,
     _url?: string,
     worktreeId?: string
   ): Promise<BrowserCookieDeleteResult> {
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      // Why: agent-browser only supports clearing all cookies, not individual deletion
-      return (await this.execAgentBrowser(sessionName, [
-        'cookies',
-        'clear'
-      ])) as BrowserCookieDeleteResult
+      const args = ['cookies', 'clear']
+      if (name) {
+        args.push('--name', name)
+      }
+      if (domain) {
+        args.push('--domain', domain)
+      }
+      return (await this.execAgentBrowser(sessionName, args)) as BrowserCookieDeleteResult
     })
   }
 
@@ -997,8 +1008,9 @@ export class AgentBrowserBridge {
     _requestId: string,
     worktreeId?: string
   ): Promise<BrowserInterceptContinueResult> {
+    // TODO: agent-browser doesn't support per-request continue — this removes all interception.
+    // The CLI/RPC pass requestId but agent-browser only operates on URL patterns.
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      // Why: agent-browser's route model doesn't have per-request continue/block — unroute removes interception
       return (await this.execAgentBrowser(sessionName, [
         'network',
         'unroute'
@@ -1011,6 +1023,8 @@ export class AgentBrowserBridge {
     _reason?: string,
     worktreeId?: string
   ): Promise<BrowserInterceptBlockResult> {
+    // TODO: RPC passes requestId as urlPattern — agent-browser expects a URL glob, not a request ID.
+    // This is a design mismatch that needs reworking at the CLI/RPC/bridge level.
     return this.enqueueCommand(worktreeId, async (sessionName) => {
       return (await this.execAgentBrowser(sessionName, [
         'network',
@@ -1187,30 +1201,52 @@ export class AgentBrowserBridge {
       return
     }
 
-    const wc = this.getWebContents(webContentsId)
-    if (!wc) {
-      throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+    // Why: two concurrent CLI calls can both reach here before either finishes
+    // creating the session. Without this lock, both would create proxies and the
+    // second would overwrite the first, leaking the first proxy's server/debugger.
+    const pending = this.pendingSessionCreation.get(sessionName)
+    if (pending) {
+      await pending
+      return
     }
 
-    // Why: agent-browser's daemon persists session state (including the CDP port)
-    // across Orca restarts. A stale session would try to connect to a dead port.
-    // Close any pre-existing agent-browser session before creating a new proxy.
-    // Fire-and-forget with a short timeout — never block session creation on cleanup.
-    execFile(this.agentBrowserBin, ['--session', sessionName, 'close'], { timeout: 3000 }, () => {})
+    const createSession = async (): Promise<void> => {
+      const wc = this.getWebContents(webContentsId)
+      if (!wc) {
+        throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+      }
 
-    const proxy = new CdpWsProxy(wc)
+      // Why: agent-browser's daemon persists session state (including the CDP port)
+      // across Orca restarts. A stale session would try to connect to a dead port.
+      // Fire-and-forget with a short timeout — never block session creation on cleanup.
+      execFile(
+        this.agentBrowserBin,
+        ['--session', sessionName, 'close'],
+        { timeout: 3000 },
+        () => {}
+      )
 
-    const cdpEndpoint = await proxy.start()
+      const proxy = new CdpWsProxy(wc)
+      const cdpEndpoint = await proxy.start()
 
-    this.sessions.set(sessionName, {
-      proxy,
-      cdpEndpoint,
-      initialized: false,
-      consecutiveTimeouts: 0,
-      activeInterceptPatterns: [],
-      activeCapture: false,
-      webContentsId
-    })
+      this.sessions.set(sessionName, {
+        proxy,
+        cdpEndpoint,
+        initialized: false,
+        consecutiveTimeouts: 0,
+        activeInterceptPatterns: [],
+        activeCapture: false,
+        webContentsId
+      })
+    }
+
+    const promise = createSession()
+    this.pendingSessionCreation.set(sessionName, promise)
+    try {
+      await promise
+    } finally {
+      this.pendingSessionCreation.delete(sessionName)
+    }
   }
 
   private async destroySession(sessionName: string): Promise<void> {
@@ -1220,8 +1256,19 @@ export class AgentBrowserBridge {
     }
 
     this.sessions.delete(sessionName)
+    this.pendingSessionCreation.delete(sessionName)
+
+    // Why: queued commands would hang forever if we just delete the queue —
+    // their promises would never resolve or reject. Drain and reject them.
+    const queue = this.commandQueues.get(sessionName)
     this.commandQueues.delete(sessionName)
     this.processingQueues.delete(sessionName)
+    if (queue) {
+      const err = new BrowserError('browser_error', 'Session destroyed while commands were queued')
+      for (const cmd of queue) {
+        cmd.reject(err)
+      }
+    }
 
     try {
       await this.runAgentBrowserRaw(sessionName, ['close'])
