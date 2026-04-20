@@ -61,13 +61,13 @@ jobs:
       - name: Run E2E tests
         run: xvfb-run --auto-servernum pnpm run test:e2e
 
-      # Why: the AI suite is gated on STABLY_API_KEY — only present on
-      # in-repo pushes/PRs, never on fork PRs (GitHub does not expose repo
-      # secrets to forks). Running it on push events from the main repo
-      # gives maintainers a signal on trusted refs without leaking the key
-      # to untrusted PR code. `continue-on-error` keeps it non-blocking for
-      # now, matching the project-level guidance that Stably coverage is
-      # additive signal rather than a merge gate.
+      # Why: the AI suite is gated on STABLY_API_KEY and only runs on
+      # release tags — pr.yml intentionally does NOT inherit secrets, so
+      # no PR (in-repo or fork) can reach the Stably API. The key arrives
+      # via `secrets: inherit` from release.yml on trusted release refs.
+      # `continue-on-error` keeps it non-blocking, matching the project-
+      # level guidance that Stably coverage is additive signal rather
+      # than a merge gate.
       - name: Run Stably AI E2E tests
         id: stably
         if: ${{ env.STABLY_API_KEY != '' }}

@@ -46,7 +46,9 @@ jobs:
 
   e2e:
     uses: ./.github/workflows/e2e.yml
-    # Why: inherit secrets so STABLY_API_KEY is available for in-repo PRs.
-    # Fork PRs won't see the value (GitHub returns empty for forks), which
-    # is exactly what we want — the AI step in e2e.yml skips on empty key.
-    secrets: inherit
+    # Why no `secrets: inherit`: the AI suite is not invoked on PRs. Every
+    # PR runs the default Playwright suite only; the Stably step is
+    # release-only (see .github/workflows/release.yml). Avoiding the
+    # secret mount here keeps the PR pipeline auditable — a reader can
+    # see at a glance that no PR run, fork or otherwise, can reach the
+    # Stably API key.
