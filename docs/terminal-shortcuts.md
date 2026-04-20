@@ -1,6 +1,6 @@
 # Terminal Shortcuts
 
-This document is **generated from** `src/renderer/src/components/terminal-pane/terminal-shortcut-table.ts` and is enforced by `terminal-shortcut-table.docs.test.ts`. If the table changes, this file must be regenerated (run the parity test and paste in the expected output).
+This document is **generated from** `src/renderer/src/components/terminal-pane/terminal-shortcut-table.ts` and is enforced by `terminal-shortcut-table.docs.test.ts`. If the table changes, this file must be regenerated: run the parity test in `terminal-shortcut-table.docs.test.ts`, then replace the rows inside the `BEGIN:MAC`/`END:MAC` and `BEGIN:NONMAC`/`END:NONMAC` HTML-comment markers below with the `expected` value from the assertion diff.
 
 Notation:
 - `Mod` = Cmd on macOS, Ctrl on Windows/Linux
@@ -57,6 +57,8 @@ Shortcuts that depend on the Mac "Option as Alt" setting (Option+letter composin
 <!-- END:NONMAC -->
 
 ## Reserved shell chords (never intercepted)
+
+(This section is editorial and is not enforced by the parity test — it describes chords intentionally left out of the table.)
 
 These fall through to xterm.js and the shell regardless of platform:
 

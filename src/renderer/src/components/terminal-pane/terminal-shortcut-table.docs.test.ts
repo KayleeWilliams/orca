@@ -53,7 +53,9 @@ function formatKeyLabel(entry: ShortcutEntry): string {
     }
     return first
   }
-  return '?'
+  // Surface malformed entries at the parity test rather than corrupting the
+  // generated doc with a '?' placeholder that would silently pass review.
+  throw new Error(`ShortcutEntry '${entry.id}' has no key, keyLower, or code`)
 }
 
 function formatChord(entry: ShortcutEntry): string {
@@ -125,5 +127,24 @@ describe('terminal-shortcuts.md parity with TERMINAL_SHORTCUTS', () => {
     const expected = renderTableRows(false)
     const actual = extractSection(doc, 'NONMAC')
     expect(actual).toEqual(expected)
+  })
+
+  it('every entry applies to at least one platform', () => {
+    // An entry with mac=false && nonMac=false is dead code — it can never fire.
+    for (const e of TERMINAL_SHORTCUTS) {
+      expect(e.mac || e.nonMac, `ShortcutEntry '${e.id}' fires on no platform`).toBe(true)
+    }
+  })
+
+  it('formatKeyLabel throws on an entry with no key, keyLower, or code', () => {
+    const malformed: ShortcutEntry = {
+      id: 'malformed-test',
+      description: 'test',
+      mac: true,
+      nonMac: true,
+      match: { modifiers: [] },
+      action: { type: 'toggleSearch' }
+    }
+    expect(() => formatKeyLabel(malformed)).toThrow(/malformed-test/)
   })
 })

@@ -189,8 +189,11 @@ test.describe('Terminal Shortcuts', () => {
     // Why: must run before Cmd+K clears the buffer; selectAll + Mod+Shift+C
     // must route through the shortcut policy and write the selection through
     // the clipboard:writeText IPC (which the spy captured).
-    await selectAllActiveTerminal(orcaPage)
+    // Why: focus must happen BEFORE selectAll — focusing the xterm helper
+    // textarea after a programmatic selection can collapse the selection in
+    // some xterm configurations, so we focus first and then select.
     await focusActiveTerminal(orcaPage)
+    await selectAllActiveTerminal(orcaPage)
     await orcaPage.keyboard.press(`${mod}+Shift+c`)
     await expect
       .poll(async () => (await getClipboardWrites(electronApp)).some((t) => t.includes(marker)), {
