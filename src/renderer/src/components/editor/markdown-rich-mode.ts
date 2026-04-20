@@ -1,4 +1,4 @@
-import { canRoundTripRichMarkdown, getRichMarkdownRoundTripOutput } from './markdown-round-trip'
+import { getRichMarkdownRoundTripOutput } from './markdown-round-trip'
 import { extractFrontMatter } from './markdown-frontmatter'
 
 export type MarkdownRichModeUnsupportedReason =
@@ -43,31 +43,35 @@ export function getMarkdownRichModeUnsupportedMessage(content: string): string |
 
   const contentWithoutCode = stripMarkdownCode(body)
 
-  if (canRoundTripRichMarkdown(body)) {
-    return null
-  }
-
-  // Why: HTML/JSX gets special treatment — if the round-trip output preserves
-  // the embedded markup, we allow rich mode even though the pattern matched.
-  // Looked up by reason (not index) so reordering the array won't break this.
+  // Why: run cheap regex checks first. If no unsupported syntax is detected,
+  // rich mode is safe — no need for the expensive round-trip check. The
+  // round-trip (which synchronously creates a throwaway TipTap editor, parses
+  // the full document, and serializes it back) is only needed as a second
+  // opinion when HTML is detected, to verify the HTML survives the round-trip
+  // before blocking the user from rich mode.
   const htmlMatcher = UNSUPPORTED_PATTERNS.find((m) => m.reason === 'html-or-jsx')
-  if (htmlMatcher && htmlMatcher.pattern.test(contentWithoutCode)) {
-    const roundTripOutput = getRichMarkdownRoundTripOutput(body)
-    if (roundTripOutput && preservesEmbeddedHtml(contentWithoutCode, roundTripOutput)) {
-      return null
-    }
-  }
+  const hasHtml = htmlMatcher && htmlMatcher.pattern.test(contentWithoutCode)
 
   for (const matcher of UNSUPPORTED_PATTERNS) {
+    if (matcher.reason === 'html-or-jsx') {
+      continue
+    }
     if (matcher.pattern.test(contentWithoutCode)) {
       return matcher.message
     }
   }
 
-  // Why: Tiptap rewrites some harmless markdown spellings such as autolinks or
-  // escaped angle brackets even when the rendered document stays equivalent.
-  // Preview mode should stay editable unless we have a specific syntax we know
-  // the editor will drop or reinterpret in a user-visible way.
+  if (hasHtml) {
+    // Why: the round-trip check creates a throwaway TipTap Editor synchronously
+    // on the main thread. For large files this blocks for seconds, so we skip it and conservatively block rich mode for HTML files
+    // above this threshold.
+    const roundTripOutput = body.length <= 50_000 ? getRichMarkdownRoundTripOutput(body) : null
+    if (roundTripOutput && preservesEmbeddedHtml(contentWithoutCode, roundTripOutput)) {
+      return null
+    }
+    return htmlMatcher!.message
+  }
+
   return null
 }
 
