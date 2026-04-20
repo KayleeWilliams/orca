@@ -77,6 +77,10 @@ export class BrowserManager {
   // Why: reverse map enables O(1) guest→tab lookups instead of O(N) linear
   // scans on every mouse event, load failure, permission, and popup event.
   private readonly tabIdByWebContentsId = new Map<number, string>()
+  // Why: guest registration is keyed by browser page id, but renderer
+  // visibility/focus state is keyed by browser workspace id. Screenshot prep
+  // has to bridge that mismatch to activate the right tab before capture.
+  private readonly workspaceIdByPageId = new Map<string, string>()
   private readonly rendererWebContentsIdByTabId = new Map<string, number>()
   private readonly contextMenuCleanupByTabId = new Map<string, () => void>()
   private readonly grabShortcutCleanupByTabId = new Map<string, () => void>()
@@ -110,19 +114,18 @@ export class BrowserManager {
     return renderer
   }
 
-  // Why: agent-driven screenshots need the webview to be rendered by the host
-  // compositor. Three conditions must be met for capturePage() to return content:
-  // 1. The BrowserWindow must be the focused foreground window (compositor only
-  //    paints guest surfaces when the host window has focus — showInactive is not enough)
-  // 2. The webview element must not have `display: none` (hidden class from inactive panel)
-  // 3. The compositor needs ~200ms after focus to produce a painted frame
-  // This method ensures all three and returns a cleanup function to restore prior state.
+  // Why: screenshot sessions target guest page ids, but Orca's visible browser
+  // chrome is keyed by workspace ids. If we activate the page id directly, the
+  // webview stays hidden under the terminal pane and Page.captureScreenshot
+  // times out even though the guest still exists.
   async ensureWebviewVisible(guestWebContentsId: number): Promise<() => void> {
-    const browserTabId = this.resolveBrowserTabIdForGuestWebContentsId(guestWebContentsId)
-    if (!browserTabId) {
+    const browserPageId = this.resolveBrowserTabIdForGuestWebContentsId(guestWebContentsId)
+    if (!browserPageId) {
       return () => {}
     }
-    const renderer = this.resolveRendererForBrowserTab(browserTabId)
+    const browserWorkspaceId = this.workspaceIdByPageId.get(browserPageId) ?? browserPageId
+    const worktreeId = this.worktreeIdByTabId.get(browserPageId) ?? null
+    const renderer = this.resolveRendererForBrowserTab(browserPageId)
     if (!renderer || renderer.isDestroyed()) {
       return () => {}
     }
@@ -130,50 +133,125 @@ export class BrowserManager {
     const win = BrowserWindow.fromWebContents(renderer)
     const wasFocused = win ? win.isFocused() : true
     if (win && !wasFocused) {
-      // Why: win.focus() alone doesn't work if the window is minimized or hidden.
-      // win.show() ensures it's visible, then focus() gives it compositor priority.
       win.show()
       win.focus()
     }
 
-    const wasHidden = await renderer
+    const prev = await renderer
       .executeJavaScript(
         `(function() {
-          var wv = null;
-          var all = document.querySelectorAll('webview');
-          for (var i = 0; i < all.length; i++) {
-            try { if (all[i].getWebContentsId() === ${guestWebContentsId}) { wv = all[i]; break; } } catch(e) {}
+          var store = window.__store;
+          if (!store) return null;
+          var state = store.getState();
+          var prevTabType = state.activeTabType;
+          var prevActiveWorktreeId = state.activeWorktreeId || null;
+          var prevActiveBrowserWorkspaceId = state.activeBrowserTabId || null;
+          var prevFocusedGroupTabId = null;
+          var targetWorktreeId = ${JSON.stringify(worktreeId)};
+          var browserWorkspaceId = ${JSON.stringify(browserWorkspaceId)};
+
+          if (prevActiveWorktreeId) {
+            var prevFocusedGroupId = (state.activeGroupIdByWorktree || {})[prevActiveWorktreeId];
+            var prevGroups = (state.groupsByWorktree || {})[prevActiveWorktreeId] || [];
+            for (var pg = 0; pg < prevGroups.length; pg++) {
+              if (prevGroups[pg].id === prevFocusedGroupId) {
+                prevFocusedGroupTabId = prevGroups[pg].activeTabId;
+                break;
+              }
+            }
           }
-          if (!wv) return false;
-          var wrapper = wv.closest('.hidden');
-          if (!wrapper) return false;
-          wrapper.classList.remove('hidden');
-          wrapper.classList.remove('pointer-events-none');
-          wrapper.dataset.orcaScreenshotRestore = 'true';
-          return true;
+
+          if (
+            targetWorktreeId &&
+            prevActiveWorktreeId !== targetWorktreeId &&
+            typeof state.setActiveWorktree === 'function'
+          ) {
+            state.setActiveWorktree(targetWorktreeId);
+            state = store.getState();
+          }
+
+          var allTabs = state.unifiedTabsByWorktree || {};
+          var found = null;
+          for (var wtId in allTabs) {
+            var tabs = allTabs[wtId];
+            for (var i = 0; i < tabs.length; i++) {
+              if (tabs[i].contentType === 'browser' && tabs[i].entityId === browserWorkspaceId) {
+                found = tabs[i];
+                break;
+              }
+            }
+            if (found) break;
+          }
+
+          if (found) {
+            if (typeof state.setActiveBrowserTab === 'function') {
+              state.setActiveBrowserTab(browserWorkspaceId);
+            } else {
+              state.activateTab(found.id);
+              state.setActiveTabType('browser');
+            }
+          }
+
+          return {
+            prevTabType: prevTabType,
+            prevActiveWorktreeId: prevActiveWorktreeId,
+            prevActiveBrowserWorkspaceId: prevActiveBrowserWorkspaceId,
+            prevFocusedGroupTabId: prevFocusedGroupTabId,
+            targetWorktreeId: targetWorktreeId,
+            targetBrowserWorkspaceId: found ? browserWorkspaceId : null
+          };
         })()`
       )
-      .catch(() => false)
+      .catch(() => null)
 
-    if (!wasHidden && wasFocused) {
+    const needsRestore =
+      prev &&
+      (prev.prevTabType !== 'browser' ||
+        prev.prevActiveWorktreeId !== prev.targetWorktreeId ||
+        prev.prevFocusedGroupTabId !== null ||
+        prev.prevActiveBrowserWorkspaceId !== prev.targetBrowserWorkspaceId)
+
+    if (!needsRestore && wasFocused) {
       return () => {}
     }
 
     return () => {
-      if (wasHidden && renderer && !renderer.isDestroyed()) {
-        renderer
-          .executeJavaScript(
-            `(function() {
-              var el = document.querySelector('[data-orca-screenshot-restore="true"]');
-              if (el) {
-                el.classList.add('hidden');
-                el.classList.add('pointer-events-none');
-                delete el.dataset.orcaScreenshotRestore;
-              }
-            })()`
-          )
-          .catch(() => {})
+      if (!prev || !renderer || renderer.isDestroyed()) {
+        return
       }
+      renderer
+        .executeJavaScript(
+          `(function() {
+            var store = window.__store;
+            if (!store) return;
+            var state = store.getState();
+            if (
+              ${JSON.stringify(prev?.prevActiveWorktreeId)} &&
+              ${JSON.stringify(prev?.prevActiveWorktreeId)} !==
+                ${JSON.stringify(prev?.targetWorktreeId)} &&
+              typeof state.setActiveWorktree === 'function'
+            ) {
+              state.setActiveWorktree(${JSON.stringify(prev?.prevActiveWorktreeId)});
+              state = store.getState();
+            }
+            if (
+              ${JSON.stringify(prev?.prevTabType)} === 'browser' &&
+              ${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)} &&
+              ${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)} !==
+                ${JSON.stringify(prev?.targetBrowserWorkspaceId)} &&
+              typeof state.setActiveBrowserTab === 'function'
+            ) {
+              state.setActiveBrowserTab(${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)});
+              state = store.getState();
+            } else if (${JSON.stringify(prev?.prevFocusedGroupTabId)}) {
+              state.activateTab(${JSON.stringify(prev?.prevFocusedGroupTabId)});
+            }
+            if (${JSON.stringify(prev?.prevTabType)} !== 'browser') {
+              state.setActiveTabType(${JSON.stringify(prev?.prevTabType)});
+            }
+          })()`
+        )
+        .catch(() => {})
     }
   }
 
@@ -265,6 +343,7 @@ export class BrowserManager {
   registerGuest({
     browserPageId,
     browserTabId: legacyBrowserTabId,
+    workspaceId,
     worktreeId,
     webContentsId,
     rendererWebContentsId
@@ -307,6 +386,9 @@ export class BrowserManager {
 
     this.webContentsIdByTabId.set(browserTabId, webContentsId)
     this.tabIdByWebContentsId.set(webContentsId, browserTabId)
+    if (workspaceId) {
+      this.workspaceIdByPageId.set(browserTabId, workspaceId)
+    }
     this.rendererWebContentsIdByTabId.set(browserTabId, rendererWebContentsId)
     if (worktreeId) {
       this.worktreeIdByTabId.set(browserTabId, worktreeId)
@@ -369,6 +451,7 @@ export class BrowserManager {
     }
     this.webContentsIdByTabId.delete(browserTabId)
     this.rendererWebContentsIdByTabId.delete(browserTabId)
+    this.workspaceIdByPageId.delete(browserTabId)
     this.worktreeIdByTabId.delete(browserTabId)
   }
 

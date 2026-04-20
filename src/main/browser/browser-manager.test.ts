@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   shellOpenExternalMock,
+  browserWindowFromWebContentsMock,
   menuBuildFromTemplateMock,
   guestOffMock,
   guestOnMock,
@@ -13,6 +14,7 @@ const {
   screenGetCursorScreenPointMock
 } = vi.hoisted(() => ({
   shellOpenExternalMock: vi.fn(),
+  browserWindowFromWebContentsMock: vi.fn(),
   menuBuildFromTemplateMock: vi.fn(),
   guestOffMock: vi.fn(),
   guestOnMock: vi.fn(),
@@ -24,6 +26,9 @@ const {
 }))
 
 vi.mock('electron', () => ({
+  BrowserWindow: {
+    fromWebContents: browserWindowFromWebContentsMock
+  },
   clipboard: { writeText: vi.fn() },
   shell: { openExternal: shellOpenExternalMock },
   Menu: {
@@ -44,6 +49,7 @@ describe('browserManager', () => {
 
   beforeEach(() => {
     shellOpenExternalMock.mockReset()
+    browserWindowFromWebContentsMock.mockReset()
     menuBuildFromTemplateMock.mockReset()
     guestOffMock.mockReset()
     guestOnMock.mockReset()
@@ -146,6 +152,118 @@ describe('browserManager', () => {
     expect(handler({ url: 'https://example.com/login' })).toEqual({ action: 'deny' })
 
     expect(shellOpenExternalMock).toHaveBeenCalledWith('https://example.com/login')
+  })
+
+  it('activates the owning browser workspace when ensuring a page-backed guest is visible', async () => {
+    const rendererExecuteJavaScriptMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        prevTabType: 'terminal',
+        prevActiveWorktreeId: 'wt-1',
+        prevActiveBrowserWorkspaceId: 'workspace-prev',
+        prevFocusedGroupTabId: 'tab-prev',
+        targetWorktreeId: 'wt-1',
+        targetBrowserWorkspaceId: 'workspace-1'
+      })
+      .mockResolvedValueOnce(undefined)
+    const guest = {
+      id: 707,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock
+    }
+    const renderer = {
+      id: rendererWebContentsId,
+      isDestroyed: vi.fn(() => false),
+      executeJavaScript: rendererExecuteJavaScriptMock
+    }
+    browserWindowFromWebContentsMock.mockReturnValue({ isFocused: vi.fn(() => true) })
+    webContentsFromIdMock.mockImplementation((id: number) => {
+      if (id === guest.id) {
+        return guest
+      }
+      if (id === rendererWebContentsId) {
+        return renderer
+      }
+      return null
+    })
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'page-1',
+      workspaceId: 'workspace-1',
+      worktreeId: 'wt-1',
+      webContentsId: guest.id,
+      rendererWebContentsId
+    })
+
+    const restore = await browserManager.ensureWebviewVisible(guest.id)
+
+    const activationScript = rendererExecuteJavaScriptMock.mock.calls[0]?.[0]
+    expect(activationScript).toContain('var browserWorkspaceId = "workspace-1";')
+    expect(activationScript).toContain('state.setActiveBrowserTab(browserWorkspaceId);')
+    expect(activationScript).toContain('var targetWorktreeId = "wt-1";')
+
+    restore()
+  })
+
+  it('restores the previously focused browser workspace after screenshot prep changes tabs', async () => {
+    const rendererExecuteJavaScriptMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        prevTabType: 'browser',
+        prevActiveWorktreeId: 'wt-prev',
+        prevActiveBrowserWorkspaceId: 'workspace-prev',
+        prevFocusedGroupTabId: 'tab-prev',
+        targetWorktreeId: 'wt-target',
+        targetBrowserWorkspaceId: 'workspace-target'
+      })
+      .mockResolvedValueOnce(undefined)
+    const guest = {
+      id: 708,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock
+    }
+    const renderer = {
+      id: rendererWebContentsId,
+      isDestroyed: vi.fn(() => false),
+      executeJavaScript: rendererExecuteJavaScriptMock
+    }
+    browserWindowFromWebContentsMock.mockReturnValue({ isFocused: vi.fn(() => true) })
+    webContentsFromIdMock.mockImplementation((id: number) => {
+      if (id === guest.id) {
+        return guest
+      }
+      if (id === rendererWebContentsId) {
+        return renderer
+      }
+      return null
+    })
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'page-target',
+      workspaceId: 'workspace-target',
+      worktreeId: 'wt-target',
+      webContentsId: guest.id,
+      rendererWebContentsId
+    })
+
+    const restore = await browserManager.ensureWebviewVisible(guest.id)
+    restore()
+
+    const restoreScript = rendererExecuteJavaScriptMock.mock.calls[1]?.[0]
+    expect(restoreScript).toContain('state.setActiveWorktree("wt-prev");')
+    expect(restoreScript).toContain('state.setActiveBrowserTab("workspace-prev");')
   })
 
   it('offers opening a link in another Orca browser tab from the guest context menu', () => {
