@@ -954,7 +954,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const expression = getRequiredStringFlag(parsed.flags, 'expression')
       const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
       const result = await client.call<BrowserEvalResult>('browser.eval', { expression, worktree })
-      return printResult(result, json, (v) => v.value)
+      return printResult(result, json, (v) => v.result)
     }
 
     if (matches(commandPath, ['tab', 'list'])) {

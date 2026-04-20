@@ -210,7 +210,8 @@ export type BrowserScreenshotResult = {
 }
 
 export type BrowserEvalResult = {
-  value: string
+  result: string
+  origin: string
 }
 
 export type BrowserTabInfo = {
