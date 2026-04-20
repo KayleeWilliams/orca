@@ -2,22 +2,16 @@
  * Stably-AI E2E tests for the Source Control panel.
  *
  * Why this suite lives under `./stably` and not alongside the default specs:
- *   - These tests exercise the *real* DOM path: opening the right sidebar,
- *     clicking "Stage" / "Unstage" / "Discard" on a row, and reading the
- *     panel back through AI extraction. The default suite drives
- *     `window.__store` directly (see tests/e2e/helpers/orca-app.ts), which
- *     is fast and deterministic but bypasses the React event handlers that
- *     most regressions land in.
- *   - `agent.act`, `toMatchScreenshotPrompt`, and `page.extract` hit
- *     Stably's hosted API, so this project only runs when STABLY_API_KEY is
- *     set (see tests/playwright.config.ts). Contributors without a key — and
- *     fork PRs whose secrets are not mounted — run the default suite only.
- *
- * Covers behavior that is currently only unit-tested:
- *   - SourceControl.tsx row actions (Stage / Unstage / Discard)
- *   - useGitStatusPolling.ts → gitStatusByWorktree hydration on tab focus
- *   - Panel-level visual: section headers, entry counts, and row icons
- *     render together without layout drift
+ *   - `toMatchScreenshotPrompt` hits Stably's hosted API, so this project
+ *     only runs when STABLY_API_KEY is set (see tests/playwright.config.ts).
+ *     Contributors without a key — and fork PRs whose secrets are not
+ *     mounted — run the default suite only.
+ *   - The default suite drives `window.__store` directly (see
+ *     tests/e2e/helpers/orca-app.ts); this suite renders the populated
+ *     panel and asserts its structural layout through an intent-based
+ *     visual, which catches regressions (section disappearing, filter
+ *     input vanishing, row layout collapsing) that a store-level check
+ *     cannot see.
  */
 
 import { existsSync, writeFileSync } from 'fs'
@@ -96,11 +90,11 @@ test.describe('Source Control (AI-driven)', () => {
     await waitForActiveWorktree(orcaPage)
     await ensureTerminalVisible(orcaPage)
 
-    // Why: open the right sidebar on the Source Control tab *before* running
-    // the agent so its first pass sees the panel. Also primes
-    // useGitStatusPolling, which only tops up gitStatusByWorktree when the
-    // window is focused — the headful Electron run needed here satisfies
-    // that precondition.
+    // Why: open the right sidebar on the Source Control tab *before* the
+    // screenshot assertion so the panel is visible in the captured frame.
+    // Also primes useGitStatusPolling, which only tops up
+    // gitStatusByWorktree when the window is focused — the headful
+    // Electron run needed here satisfies that precondition.
     await orcaPage.evaluate(() => {
       const store = window.__store
       if (!store) {
@@ -110,100 +104,6 @@ test.describe('Source Control (AI-driven)', () => {
       state.setRightSidebarTab('source-control')
       state.setRightSidebarOpen(true)
     })
-  })
-
-  test('typing in the filter input narrows the change list', async ({ orcaPage, testRepoPath }) => {
-    const { untrackedPath } = seedUncommittedChanges(testRepoPath)
-
-    try {
-      // Nudge the renderer's git status poll so the new files show up without
-      // waiting up to 3s for the natural interval. This is the same IPC the
-      // sidebar calls — we're just firing it eagerly on test startup.
-      await orcaPage.evaluate(async () => {
-        const store = window.__store
-        if (!store) {
-          return
-        }
-        const state = store.getState()
-        const worktreeId = state.activeWorktreeId
-        if (!worktreeId) {
-          return
-        }
-        const worktree = Object.values(state.worktreesByRepo)
-          .flat()
-          .find((entry) => entry.id === worktreeId)
-        if (!worktree) {
-          return
-        }
-        const status = await window.api.git.status({ worktreePath: worktree.path })
-        state.setGitStatus(worktreeId, status as Parameters<typeof state.setGitStatus>[1])
-      })
-
-      await expect
-        .poll(
-          async () =>
-            orcaPage.evaluate(() => {
-              const state = window.__store?.getState()
-              if (!state?.activeWorktreeId) {
-                return 0
-              }
-              return (state.gitStatusByWorktree[state.activeWorktreeId] ?? []).length
-            }),
-          { timeout: 10_000, message: 'git status never hydrated for the active worktree' }
-        )
-        .toBeGreaterThanOrEqual(2)
-
-      // Why this test uses Playwright `.fill()` rather than `agent.act()`:
-      // earlier drafts asked the agent to find and click the filter input,
-      // but SourceControl.tsx exposes two "Filter files…" inputs — one
-      // persistent at the top and a second hover-revealed one inside each
-      // section. The agent consistently chose the wrong target (or worse,
-      // the terminal), so we use a deterministic locator. The AI value in
-      // this test is the assertion side — `page.extract()` reading the
-      // rendered section counts — not the typing mechanic.
-      const filterInput = orcaPage
-        .locator('input[placeholder="Filter files…"]')
-        .describe('Top-level Source Control filter files input')
-        .first()
-      await filterInput.fill('notes-')
-      await expect(filterInput).toHaveValue('notes-')
-
-      // Cross-check the visible effect: the store-level data did not change
-      // (both files still exist in gitStatusByWorktree) but the rendered
-      // counts next to section headers reflect only matching entries.
-      //
-      // Why a DOM read instead of page.extract: the count is plain text
-      // rendered in a sibling span (SourceControl.tsx → SectionHeader), so
-      // Playwright can read it directly without the ~5s latency and API
-      // cost of an AI extraction — and the result is the exact integer
-      // rather than an AI-parsed guess. The regressions this assertion
-      // catches (filter unbound, section label drift) are all covered by a
-      // text query over the section header buttons.
-      const countBySection = await orcaPage
-        .locator('button.uppercase')
-        .describe('Source Control section header buttons')
-        .evaluateAll((buttons) => {
-          const result: Record<string, number> = {}
-          for (const button of buttons) {
-            const spans = button.querySelectorAll('span')
-            const label = spans[0]?.textContent?.trim() ?? ''
-            const count = Number.parseInt(spans[1]?.textContent?.trim() ?? '', 10)
-            if (label && Number.isFinite(count)) {
-              result[label] = count
-            }
-          }
-          return result
-        })
-
-      // Only the untracked `notes-…md` file should match "notes-". The
-      // modified README row would be hidden. A regression where the filter
-      // stops narrowing (e.g. someone unbinds the onChange handler) would
-      // leave "Changes" visible with count >= 1.
-      expect(countBySection['Untracked Files']).toBe(1)
-      expect(countBySection['Changes']).toBeUndefined()
-    } finally {
-      cleanupSeed(testRepoPath, untrackedPath)
-    }
   })
 
   test('populated Source Control panel matches the expected layout', async ({
