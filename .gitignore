@@ -57,6 +57,10 @@ docs/design-*.md
 # Stably CLI (only docs/ are tracked)
 .stably/*
 !.stably/docs/
+# Why: the `npx stably test` runner writes a last-run.json into a .stably/
+# cache directory next to the config (e.g. tests/e2e/.stably/). The root
+# rule above only applies to the repo root, so ignore nested ones too.
+**/.stably/
 .playwright-cli
 .validate-ui-screenshots/
 .stably-browser

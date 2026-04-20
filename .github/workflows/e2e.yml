@@ -7,10 +7,25 @@ on:
         description: Ref to check out (defaults to the calling workflow's ref)
         required: false
         type: string
+    secrets:
+      # Why: secrets flow through `workflow_call` explicitly; we cannot
+      # declare them as inputs. The Stably keys are optional — when missing,
+      # the AI suite simply does not run.
+      STABLY_API_KEY:
+        required: false
+      STABLY_PROJECT_ID:
+        required: false
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # Why: hoist the key to the job level so the conditional on the AI step
+    # can read it. Step-level `env` is set after `if:` is evaluated, which
+    # is why the check has to live here. The value is empty (and the step
+    # skips) whenever secrets aren't available — e.g. fork PR runs.
+    env:
+      STABLY_API_KEY: ${{ secrets.STABLY_API_KEY }}
+      STABLY_PROJECT_ID: ${{ secrets.STABLY_PROJECT_ID }}
 
     steps:
       - name: Checkout
@@ -46,11 +61,32 @@ jobs:
       - name: Run E2E tests
         run: xvfb-run --auto-servernum pnpm run test:e2e
 
+      # Why: the AI suite is gated on STABLY_API_KEY — only present on
+      # in-repo pushes/PRs, never on fork PRs (GitHub does not expose repo
+      # secrets to forks). Running it on push events from the main repo
+      # gives maintainers a signal on trusted refs without leaking the key
+      # to untrusted PR code. `continue-on-error` keeps it non-blocking for
+      # now, matching the project-level guidance that Stably coverage is
+      # additive signal rather than a merge gate.
+      - name: Run Stably AI E2E tests
+        id: stably
+        if: ${{ env.STABLY_API_KEY != '' }}
+        env:
+          # Why: SKIP_BUILD reuses the build artifact from the previous step
+          # instead of rebuilding Electron a second time — cuts ~2min off CI.
+          SKIP_BUILD: '1'
+        continue-on-error: true
+        run: xvfb-run --auto-servernum pnpm run test:e2e:stably
+
       # Why: Playwright retains traces/screenshots only on failure. Uploading
       # them as an artifact makes post-mortem debugging on CI possible without
       # re-running locally.
       - name: Upload Playwright traces
-        if: failure()
+        # Why: `continue-on-error: true` on the Stably step rewrites its outcome
+        # to success, so `failure()` alone won't catch Stably failures. Check
+        # `steps.stably.outcome` explicitly to preserve trace uploads for the
+        # AI suite's retain-on-failure debugging workflow.
+        if: ${{ failure() || steps.stably.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces

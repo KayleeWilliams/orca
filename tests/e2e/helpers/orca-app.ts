@@ -20,6 +20,7 @@ import {
   type ElectronApplication,
   type TestInfo
 } from '@stablyai/playwright-test'
+import { Agent, augmentPage } from '@stablyai/playwright-base'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { execSync } from 'child_process'
 import os from 'os'
@@ -30,6 +31,14 @@ type OrcaTestFixtures = {
   electronApp: ElectronApplication
   sharedPage: Page
   orcaPage: Page
+  // Why: the default `agent` fixture from @stablyai/playwright-test binds to
+  // the Playwright-managed browser context. Our Electron specs launch an
+  // Electron app via `_electron.launch`, which produces its own BrowserContext
+  // that the default fixture never sees — the agent's `tabManager` comes up
+  // empty and the API rejects the request with "Missing required field:
+  // activePageAlias". This override builds an Agent against the Electron
+  // context instead, scoped per-test so each spec gets a fresh tab manager.
+  agent: Agent
 }
 
 type OrcaWorkerFixtures = {
@@ -181,6 +190,13 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
     const page = await electronApp.firstWindow({ timeout: 120_000 })
     await page.waitForLoadState('domcontentloaded')
 
+    // Why: the Stably SDK only augments pages it created via its own browser
+    // fixture. Our Electron page comes from `_electron.firstWindow()`, so we
+    // attach the AI helpers (`page.extract`, `locator.extract`) manually.
+    // Without this the `electron-stably` specs hit "orcaPage.extract is not
+    // a function" at runtime.
+    augmentPage(page)
+
     // Wait for the store to be available
     await page.waitForFunction(() => Boolean(window.__store), null, { timeout: 30_000 })
 
@@ -273,6 +289,22 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
   // Test-scoped: each test gets the shared page
   orcaPage: async ({ sharedPage }, provideFixture) => {
     await provideFixture(sharedPage)
+  },
+
+  // Test-scoped: Agent wired to the Electron context, not the Playwright
+  // browser context. See OrcaTestFixtures.agent for the background on why
+  // the default fixture's `tabManager` is empty for our setup.
+  agent: async ({ electronApp, orcaPage: _orcaPage }, provideFixture) => {
+    // Why: listing `orcaPage` in the destructured fixture args (renamed to
+    // `_orcaPage` to satisfy the unused-var lint, matching the `_unused` env
+    // pattern above) is what forces Playwright to resolve `sharedPage` before
+    // this fixture runs. The dependency — not any statement in the body — is
+    // what guarantees `electronApp.context().pages()` already contains the
+    // initialized renderer window when the Agent snapshots its tab list.
+    // Without the dependency, the Agent could race the renderer mount and
+    // talk to an about:blank page.
+    void _orcaPage
+    await provideFixture(new Agent(electronApp.context()))
   }
 })
 

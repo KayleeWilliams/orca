@@ -74,6 +74,10 @@ jobs:
     uses: ./.github/workflows/e2e.yml
     with:
       ref: ${{ needs.resolve-release.outputs.ref }}
+    # Why: release runs happen on trusted refs, so the Stably AI suite can
+    # always read the repo secret here. On fork PRs the value is empty and
+    # the AI step self-skips; see the STABLY_API_KEY guard in e2e.yml.
+    secrets: inherit
 
   release:
     needs:
