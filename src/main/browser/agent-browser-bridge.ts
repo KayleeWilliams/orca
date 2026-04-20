@@ -671,8 +671,8 @@ export class AgentBrowserBridge {
         : () => {}
       try {
         // Why: after focusing the window and unhiding the webview, the compositor
-        // needs ~300ms to produce a painted frame. Without this delay capturePage()
-        // returns a black/empty surface.
+        // needs ~300ms to produce a painted frame. Without this delay the
+        // screenshot may capture a black/empty surface.
         await new Promise((r) => setTimeout(r, 300))
         const raw = await this.execAgentBrowser(sessionName, ['screenshot'])
         return this.readScreenshotFromResult(raw, format)
@@ -689,7 +689,7 @@ export class AgentBrowserBridge {
         ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
         : () => {}
       try {
-        await new Promise((r) => setTimeout(r, 300))
+        await new Promise((r) => setTimeout(r, 500))
         const raw = await this.execAgentBrowser(sessionName, ['screenshot', '--full-page'])
         return this.readScreenshotFromResult(raw, format)
       } finally {

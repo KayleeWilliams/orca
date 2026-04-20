@@ -1,7 +1,11 @@
 import type { WebContents } from 'electron'
 
-// Why: Electron's debugger.sendCommand('Page.captureScreenshot') hangs on webview
-// guests. Use capturePage() with retry for slow compositing.
+// Why: Electron's capturePage() is unreliable on webview guests — the compositor
+// may not produce frames when the webview panel is inactive, unfocused, or in a
+// split-pane layout. Instead, use the debugger's Page.captureScreenshot which
+// renders server-side in the Blink compositor and doesn't depend on OS-level
+// window focus or display state. Guard with a timeout so agent-browser doesn't
+// hang on its 30s CDP timeout if the debugger stalls.
 export function captureScreenshot(
   webContents: WebContents,
   params: Record<string, unknown> | undefined,
@@ -12,30 +16,53 @@ export function captureScreenshot(
     onError('WebContents destroyed')
     return
   }
-  const format = (params?.format as string) ?? 'png'
-  const attempt = async (retries: number): Promise<void> => {
-    try {
-      if (webContents.isDestroyed()) {
-        onError('WebContents destroyed')
-        return
-      }
-      const image = await webContents.capturePage()
-      if (image.isEmpty()) {
-        if (retries > 0) {
-          setTimeout(() => attempt(retries - 1), 200)
-          return
-        }
-        onError(
-          'Screenshot captured an empty image — the browser tab may not be visible in the Orca UI.'
-        )
-        return
-      }
-      const data =
-        format === 'jpeg' ? image.toJPEG(80).toString('base64') : image.toPNG().toString('base64')
-      onResult({ data })
-    } catch (err) {
-      onError((err as Error).message)
-    }
+  const dbg = webContents.debugger
+  if (!dbg.isAttached()) {
+    onError('Debugger not attached')
+    return
   }
-  setTimeout(() => attempt(3), 100)
+
+  const screenshotParams: Record<string, unknown> = {}
+  if (params?.format) {
+    screenshotParams.format = params.format
+  }
+  if (params?.quality) {
+    screenshotParams.quality = params.quality
+  }
+  if (params?.clip) {
+    screenshotParams.clip = params.clip
+  }
+  if (params?.captureBeyondViewport != null) {
+    screenshotParams.captureBeyondViewport = params.captureBeyondViewport
+  }
+  if (params?.fromSurface != null) {
+    screenshotParams.fromSurface = params.fromSurface
+  }
+
+  let settled = false
+  const timer = setTimeout(() => {
+    if (!settled) {
+      settled = true
+      onError(
+        'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
+      )
+    }
+  }, 8000)
+
+  dbg
+    .sendCommand('Page.captureScreenshot', screenshotParams)
+    .then((result) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
+        onResult(result)
+      }
+    })
+    .catch((err) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
+        onError((err as Error).message)
+      }
+    })
 }
