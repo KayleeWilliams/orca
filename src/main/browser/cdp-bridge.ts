@@ -908,8 +908,17 @@ export class CdpBridge {
         )
       }
 
+      const valueStr =
+        result.value !== undefined ? String(result.value) : (result.description ?? '')
+      // Why: agent-browser returns { result, origin } — match that shape so both
+      // bridges satisfy the same BrowserEvalResult contract.
+      const { result: urlResult } = (await sender('Runtime.evaluate', {
+        expression: 'location.origin',
+        returnByValue: true
+      })) as { result: { value: string } }
       return {
-        value: result.value !== undefined ? String(result.value) : (result.description ?? '')
+        result: valueStr,
+        origin: urlResult.value
       }
     })
   }
