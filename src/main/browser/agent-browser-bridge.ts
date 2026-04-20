@@ -184,6 +184,11 @@ export class AgentBrowserBridge {
   private readonly sessions = new Map<string, SessionState>()
   private readonly commandQueues = new Map<string, QueuedCommand[]>()
   private readonly processingQueues = new Set<string>()
+  // Why: screenshot prep temporarily changes shared renderer visibility/focus
+  // state. Per-session queues only serialize commands within one browser tab, so
+  // concurrent screenshots on different tabs can otherwise interleave
+  // ensureWebviewVisible()/restore and blank each other's capture.
+  private screenshotTurn: Promise<void> = Promise.resolve()
   private readonly agentBrowserBin: string
   // Why: when a process swap destroys a session that had active intercept patterns,
   // store them here keyed by sessionName so the next ensureSession + first successful
@@ -192,6 +197,10 @@ export class AgentBrowserBridge {
   // Why: two concurrent CLI calls can both enter ensureSession before either creates
   // the session entry. This promise-based lock ensures only one creation proceeds.
   private readonly pendingSessionCreation = new Map<string, Promise<void>>()
+  // Why: session destruction shells out to `agent-browser close`, which is async
+  // and keyed by session name. Recreating the same session before that close
+  // finishes can let the old teardown close the new daemon session.
+  private readonly pendingSessionDestruction = new Map<string, Promise<void>>()
 
   constructor(private readonly browserManager: BrowserManager) {
     this.agentBrowserBin = resolveAgentBrowserBinary()
@@ -302,23 +311,28 @@ export class AgentBrowserBridge {
   // Why: tab switch must go through the command queue to prevent race conditions
   // with in-flight commands that target the previously active tab.
   async tabSwitch(index: number, worktreeId?: string): Promise<BrowserTabSwitchResult> {
-    const tabs = this.getRegisteredTabs(worktreeId)
-    const entries = [...tabs.entries()]
-    if (index < 0 || index >= entries.length) {
-      throw new BrowserError(
-        'browser_tab_not_found',
-        `Tab index ${index} out of range (0-${entries.length - 1})`
-      )
-    }
-    const [, wcId] = entries[index]
-    this.activeWebContentsId = wcId
-    // Why: resolveActiveTab prefers the per-worktree map over the global when
-    // worktreeId is provided. Without this update, subsequent commands would
-    // still route to the previous tab despite tabSwitch reporting success.
-    if (worktreeId) {
-      this.activeWebContentsPerWorktree.set(worktreeId, wcId)
-    }
-    return { switched: index }
+    return this.enqueueCommand(worktreeId, async () => {
+      const tabs = this.getRegisteredTabs(worktreeId)
+      // Why: queue delay means the tab list can change between RPC arrival and
+      // execution time. Recompute against live webContents here so we never
+      // activate a tab index that disappeared while earlier commands were running.
+      const liveEntries = [...tabs.entries()].filter(([, wcId]) => this.getWebContents(wcId))
+      if (index < 0 || index >= liveEntries.length) {
+        throw new BrowserError(
+          'browser_tab_not_found',
+          `Tab index ${index} out of range (0-${liveEntries.length - 1})`
+        )
+      }
+      const [, wcId] = liveEntries[index]
+      this.activeWebContentsId = wcId
+      // Why: resolveActiveTab prefers the per-worktree map over the global when
+      // worktreeId is provided. Without this update, subsequent commands would
+      // still route to the previous tab despite tabSwitch reporting success.
+      if (worktreeId) {
+        this.activeWebContentsPerWorktree.set(worktreeId, wcId)
+      }
+      return { switched: index }
+    })
   }
 
   // ── Core commands (typed) ──
@@ -665,36 +679,13 @@ export class AgentBrowserBridge {
     // Why: agent-browser writes the screenshot to a temp file and returns
     // { "path": "/tmp/screenshot-xxx.png" }. We read the file and return base64.
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      const session = this.sessions.get(sessionName)
-      const restore = session
-        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
-        : () => {}
-      try {
-        // Why: after focusing the window and unhiding the webview, the compositor
-        // needs ~300ms to produce a painted frame. Without this delay the
-        // screenshot may capture a black/empty surface.
-        await new Promise((r) => setTimeout(r, 300))
-        const raw = await this.execAgentBrowser(sessionName, ['screenshot'])
-        return this.readScreenshotFromResult(raw, format)
-      } finally {
-        restore()
-      }
+      return this.captureScreenshotCommand(sessionName, ['screenshot'], 300, format)
     })
   }
 
   async fullPageScreenshot(format?: string, worktreeId?: string): Promise<BrowserScreenshotResult> {
     return this.enqueueCommand(worktreeId, async (sessionName) => {
-      const session = this.sessions.get(sessionName)
-      const restore = session
-        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
-        : () => {}
-      try {
-        await new Promise((r) => setTimeout(r, 500))
-        const raw = await this.execAgentBrowser(sessionName, ['screenshot', '--full-page'])
-        return this.readScreenshotFromResult(raw, format)
-      } finally {
-        restore()
-      }
+      return this.captureScreenshotCommand(sessionName, ['screenshot', '--full-page'], 500, format)
     })
   }
 
@@ -708,6 +699,45 @@ export class AgentBrowserBridge {
     }
     const data = readFileSync(parsed.path).toString('base64')
     return { data, format: format === 'jpeg' ? 'jpeg' : 'png' } as BrowserScreenshotResult
+  }
+
+  private async captureScreenshotCommand(
+    sessionName: string,
+    commandArgs: string[],
+    settleMs: number,
+    format?: string
+  ): Promise<BrowserScreenshotResult> {
+    return this.withSerializedScreenshotAccess(async () => {
+      const session = this.sessions.get(sessionName)
+      const restore = session
+        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
+        : () => {}
+      try {
+        // Why: after focusing the window and unhiding the webview, the compositor
+        // needs a short settle period to produce a painted frame. Waiting inside
+        // the global screenshot lock prevents another tab from stealing visible
+        // state before the current capture actually hits CDP.
+        await new Promise((r) => setTimeout(r, settleMs))
+        const raw = await this.execAgentBrowser(sessionName, commandArgs)
+        return this.readScreenshotFromResult(raw, format)
+      } finally {
+        restore()
+      }
+    })
+  }
+
+  private async withSerializedScreenshotAccess<T>(execute: () => Promise<T>): Promise<T> {
+    const previousTurn = this.screenshotTurn.catch(() => {})
+    let releaseTurn!: () => void
+    this.screenshotTurn = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    await previousTurn
+    try {
+      return await execute()
+    } finally {
+      releaseTurn()
+    }
   }
 
   async evaluate(expression: string, worktreeId?: string): Promise<BrowserEvalResult> {
@@ -1144,6 +1174,11 @@ export class AgentBrowserBridge {
     _browserPageId: string,
     webContentsId: number
   ): Promise<void> {
+    const pendingDestruction = this.pendingSessionDestruction.get(sessionName)
+    if (pendingDestruction) {
+      await pendingDestruction
+    }
+
     if (this.sessions.has(sessionName)) {
       return
     }
@@ -1197,6 +1232,12 @@ export class AgentBrowserBridge {
   }
 
   private async destroySession(sessionName: string): Promise<void> {
+    const pendingDestruction = this.pendingSessionDestruction.get(sessionName)
+    if (pendingDestruction) {
+      await pendingDestruction
+      return
+    }
+
     const session = this.sessions.get(sessionName)
     if (!session) {
       return
@@ -1218,13 +1259,21 @@ export class AgentBrowserBridge {
       queue.length = 0
     }
 
-    try {
-      await this.runAgentBrowserRaw(sessionName, ['close'])
-    } catch {
-      // Session may already be dead
-    }
+    const destroy = (async (): Promise<void> => {
+      try {
+        await this.runAgentBrowserRaw(sessionName, ['close'])
+      } catch {
+        // Session may already be dead
+      }
 
-    await session.proxy.stop()
+      await session.proxy.stop()
+    })()
+    this.pendingSessionDestruction.set(sessionName, destroy)
+    try {
+      await destroy
+    } finally {
+      this.pendingSessionDestruction.delete(sessionName)
+    }
   }
 
   private async execAgentBrowser(sessionName: string, commandArgs: string[]): Promise<unknown> {

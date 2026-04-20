@@ -1,15 +1,19 @@
 /* eslint-disable max-lines */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { execFileMock, webContentsFromIdMock, existsSyncMock } = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  webContentsFromIdMock: vi.fn(),
-  existsSyncMock: vi.fn(() => false)
-}))
+const { execFileMock, webContentsFromIdMock, existsSyncMock, readFileSyncMock } = vi.hoisted(
+  () => ({
+    execFileMock: vi.fn(),
+    webContentsFromIdMock: vi.fn(),
+    existsSyncMock: vi.fn(() => false),
+    readFileSyncMock: vi.fn(() => Buffer.from(''))
+  })
+)
 
 vi.mock('child_process', () => ({ execFile: execFileMock }))
 vi.mock('fs', () => ({
   existsSync: existsSyncMock,
+  readFileSync: readFileSyncMock,
   accessSync: vi.fn(),
   chmodSync: vi.fn(),
   constants: { X_OK: 1 }
@@ -58,12 +62,15 @@ import type { BrowserManager } from './browser-manager'
 
 function mockBrowserManager(
   tabs: Map<string, number> = new Map([['tab-1', 100]]),
-  worktrees: Map<string, string> = new Map()
+  worktrees: Map<string, string> = new Map(),
+  overrides: Partial<BrowserManager> = {}
 ): BrowserManager {
   return {
     getWebContentsIdByTabId: () => tabs,
     getWorktreeIdForTab: (tabId: string) => worktrees.get(tabId),
-    getGuestWebContentsId: vi.fn(() => null)
+    getGuestWebContentsId: vi.fn(() => null),
+    ensureWebviewVisible: vi.fn(async () => () => {}),
+    ...overrides
   } as unknown as BrowserManager
 }
 
@@ -101,6 +108,8 @@ describe('AgentBrowserBridge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     CdpWsProxyMock.instances.length = 0
+    existsSyncMock.mockReturnValue(false)
+    readFileSyncMock.mockReturnValue(Buffer.from(''))
     const wc = mockWebContents(100)
     webContentsFromIdMock.mockReturnValue(wc)
     bridge = new AgentBrowserBridge(mockBrowserManager())
@@ -261,6 +270,101 @@ describe('AgentBrowserBridge', () => {
     expect(snapshotIdx).toBeLessThan(clickIdx)
   })
 
+  it('serializes screenshot visibility prep across sessions', async () => {
+    vi.useFakeTimers()
+    try {
+      const tabs = new Map([
+        ['tab-1', 1],
+        ['tab-2', 2]
+      ])
+      const worktrees = new Map([
+        ['tab-1', 'wt-1'],
+        ['tab-2', 'wt-2']
+      ])
+      const lifecycleEvents: string[] = []
+      const ensureWebviewVisibleMock = vi.fn(async (webContentsId: number) => {
+        lifecycleEvents.push(`ensure-${webContentsId}`)
+        return () => {
+          lifecycleEvents.push(`restore-${webContentsId}`)
+        }
+      })
+      const wc1 = mockWebContents(1)
+      const wc2 = mockWebContents(2)
+      webContentsFromIdMock.mockImplementation((id: number) =>
+        id === 1 ? wc1 : id === 2 ? wc2 : null
+      )
+      existsSyncMock.mockReturnValue(true)
+      const screenshotBytes = Buffer.from('serialized-screenshot')
+      readFileSyncMock.mockReturnValue(screenshotBytes)
+
+      const b = new AgentBrowserBridge(
+        mockBrowserManager(tabs, worktrees, {
+          ensureWebviewVisible: ensureWebviewVisibleMock
+        })
+      )
+      b.setActiveTab(1, 'wt-1')
+      b.setActiveTab(2, 'wt-2')
+
+      let releaseFirstScreenshot: (() => void) | null = null
+      execFileMock.mockImplementation(
+        (_bin: string, args: string[], _opts: unknown, cb: Function) => {
+          if (args.includes('close')) {
+            cb(null, JSON.stringify({ success: true, data: null }), '')
+            return
+          }
+          if (args.includes('screenshot')) {
+            const sessionName = args[args.indexOf('--session') + 1]
+            lifecycleEvents.push(`command-${sessionName}`)
+            if (sessionName === 'orca-tab-tab-1' && !releaseFirstScreenshot) {
+              releaseFirstScreenshot = () => {
+                cb(null, JSON.stringify({ success: true, data: { path: '/tmp/tab-1.png' } }), '')
+              }
+              return
+            }
+            cb(
+              null,
+              JSON.stringify({ success: true, data: { path: `/tmp/${sessionName}.png` } }),
+              ''
+            )
+            return
+          }
+          cb(null, JSON.stringify({ success: true, data: { ok: true } }), '')
+        }
+      )
+
+      const first = b.screenshot('png', 'wt-1')
+      const second = b.screenshot('png', 'wt-2')
+
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(lifecycleEvents).toContain('ensure-1')
+      expect(lifecycleEvents).toContain('command-orca-tab-tab-1')
+      expect(lifecycleEvents).not.toContain('ensure-2')
+
+      expect(releaseFirstScreenshot).not.toBeNull()
+      releaseFirstScreenshot!()
+      await expect(first).resolves.toEqual({
+        data: screenshotBytes.toString('base64'),
+        format: 'png'
+      })
+
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(lifecycleEvents.indexOf('restore-1')).toBeLessThan(lifecycleEvents.indexOf('ensure-2'))
+
+      await vi.advanceTimersByTimeAsync(300)
+      await expect(second).resolves.toEqual({
+        data: screenshotBytes.toString('base64'),
+        format: 'png'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // ── Timeout escalation ──
 
   it('destroys session after 3 consecutive timeouts', async () => {
@@ -282,6 +386,53 @@ describe('AgentBrowserBridge', () => {
 
     const lastArgs = execFileMock.mock.calls.at(-1)![1] as string[]
     expect(lastArgs).toContain('--cdp')
+  })
+
+  it('waits for pending session destruction before recreating the same session', async () => {
+    succeedWith({ snapshot: 'initial' })
+    await bridge.snapshot()
+
+    execFileMock.mockClear()
+
+    const commandCalls: string[][] = []
+    let releaseDestroyClose: (() => void) | null = null
+    execFileMock.mockImplementation(
+      (_bin: string, args: string[], _opts: unknown, cb: Function) => {
+        commandCalls.push(args)
+        if (args.includes('close')) {
+          if (!releaseDestroyClose) {
+            releaseDestroyClose = () => {
+              cb(null, JSON.stringify({ success: true, data: null }), '')
+            }
+            return
+          }
+          cb(null, JSON.stringify({ success: true, data: null }), '')
+          return
+        }
+        if (args.includes('snapshot')) {
+          cb(null, JSON.stringify({ success: true, data: { snapshot: 'after-destroy' } }), '')
+          return
+        }
+        cb(null, JSON.stringify({ success: true, data: { ok: true } }), '')
+      }
+    )
+
+    const destroyPromise = (
+      bridge as unknown as { destroySession: (name: string) => Promise<void> }
+    ).destroySession('orca-tab-tab-1')
+    const nextSnapshot = bridge.snapshot()
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(commandCalls.filter((args) => args.includes('close'))).toHaveLength(1)
+    expect(commandCalls.some((args) => args.includes('snapshot'))).toBe(false)
+    expect(releaseDestroyClose).not.toBeNull()
+
+    releaseDestroyClose!()
+    await destroyPromise
+    await expect(nextSnapshot).resolves.toEqual({ snapshot: 'after-destroy' })
+    expect(commandCalls.filter((args) => args.includes('close'))).toHaveLength(2)
   })
 
   // ── Process swap ──
@@ -347,6 +498,57 @@ describe('AgentBrowserBridge', () => {
 
     const result = await b.tabSwitch(1)
     expect(result).toEqual({ switched: 1 })
+    expect(b.getActiveWebContentsId()).toBe(2)
+  })
+
+  it('queues tabSwitch behind in-flight commands on the current session', async () => {
+    const tabs = new Map([
+      ['tab-a', 1],
+      ['tab-b', 2]
+    ])
+    const worktrees = new Map([
+      ['tab-a', 'wt-1'],
+      ['tab-b', 'wt-1']
+    ])
+    const wc1 = mockWebContents(1)
+    const wc2 = mockWebContents(2)
+    webContentsFromIdMock.mockImplementation((id: number) =>
+      id === 1 ? wc1 : id === 2 ? wc2 : null
+    )
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs, worktrees))
+    b.setActiveTab(1, 'wt-1')
+
+    let releaseSnapshot: (() => void) | null = null
+    execFileMock.mockImplementation(
+      (_bin: string, args: string[], _opts: unknown, cb: Function) => {
+        if (args.includes('close')) {
+          cb(null, JSON.stringify({ success: true, data: null }), '')
+          return
+        }
+        if (args.includes('snapshot')) {
+          releaseSnapshot = () => {
+            cb(null, JSON.stringify({ success: true, data: { snapshot: 'tree' } }), '')
+          }
+          return
+        }
+        cb(null, JSON.stringify({ success: true, data: { ok: true } }), '')
+      }
+    )
+
+    const snapshot = b.snapshot('wt-1')
+    const switched = b.tabSwitch(1, 'wt-1')
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(b.getActiveWebContentsId()).toBe(1)
+    expect(releaseSnapshot).not.toBeNull()
+
+    releaseSnapshot!()
+    await expect(snapshot).resolves.toEqual({ snapshot: 'tree' })
+    await expect(switched).resolves.toEqual({ switched: 1 })
     expect(b.getActiveWebContentsId()).toBe(2)
   })
 
