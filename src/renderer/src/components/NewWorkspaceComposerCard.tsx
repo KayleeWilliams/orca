@@ -2,15 +2,7 @@
 composer card markup together so the inline and modal variants share one UI
 surface without splitting the controlled form into hard-to-follow fragments. */
 import React from 'react'
-import {
-  Check,
-  ChevronDown,
-  CornerDownLeft,
-  Folder,
-  FolderPlus,
-  LoaderCircle,
-  Settings2
-} from 'lucide-react'
+import { Check, ChevronDown, CornerDownLeft, LoaderCircle, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -20,13 +12,10 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
 import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
-import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import type { TuiAgent } from '../../../shared/types'
-import { isGitRepoKind } from '../../../shared/repo-kind'
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
 
@@ -34,7 +23,6 @@ type NewWorkspaceComposerCardProps = {
   containerClassName?: string
   composerRef?: React.RefObject<HTMLDivElement | null>
   nameInputRef?: React.RefObject<HTMLInputElement | null>
-  repoAutoOpen?: boolean
   quickAgent: TuiAgent | null
   onQuickAgentChange: (agent: TuiAgent | null) => void
   eligibleRepos: RepoOption[]
@@ -199,7 +187,6 @@ export default function NewWorkspaceComposerCard({
   containerClassName,
   composerRef,
   nameInputRef,
-  repoAutoOpen = false,
   quickAgent,
   onQuickAgentChange,
   eligibleRepos,
@@ -225,9 +212,6 @@ export default function NewWorkspaceComposerCard({
   createError
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
-  const addRepo = useAppStore((s) => s.addRepo)
-  const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
-  const [isAddingRepo, setIsAddingRepo] = React.useState(false)
 
   const focusNameInput = React.useCallback(() => {
     // Why: after the repo picker commits a choice, moving focus to the name
@@ -243,26 +227,6 @@ export default function NewWorkspaceComposerCard({
       AGENT_CATALOG.filter((agent) => detectedAgentIds === null || detectedAgentIds.has(agent.id)),
     [detectedAgentIds]
   )
-
-  const handleAddRepo = React.useCallback(async (): Promise<void> => {
-    if (isAddingRepo) {
-      return
-    }
-    setIsAddingRepo(true)
-    try {
-      const repo = await addRepo()
-      if (!repo) {
-        return
-      }
-      if (isGitRepoKind(repo)) {
-        await fetchWorktrees(repo.id)
-      }
-      onRepoChange(repo.id)
-      focusNameInput()
-    } finally {
-      setIsAddingRepo(false)
-    }
-  }, [addRepo, fetchWorktrees, focusNameInput, isAddingRepo, onRepoChange])
 
   return (
     <div className="grid gap-3">
@@ -285,30 +249,8 @@ export default function NewWorkspaceComposerCard({
         <div className="grid gap-3">
           <div className="grid gap-4">
             <div className="grid gap-1.5">
-              <div className="flex items-center justify-between gap-2 px-1">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Repository
-                </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      disabled={isAddingRepo}
-                      onClick={() => void handleAddRepo()}
-                      className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
-                      aria-label={
-                        isAddingRepo ? 'Adding folder or repository' : 'Add folder or repository'
-                      }
-                    >
-                      <FolderPlus className="size-3" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    Add repo
-                  </TooltipContent>
-                </Tooltip>
+              <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Repository
               </div>
               <RepoCombobox
                 repos={eligibleRepos}
@@ -316,8 +258,13 @@ export default function NewWorkspaceComposerCard({
                 onValueChange={onRepoChange}
                 onValueSelected={focusNameInput}
                 placeholder="Choose repository"
-                triggerClassName="h-9"
-                autoFocusTriggerOnMount={repoAutoOpen}
+                // Why: programmatic .focus() from the Dialog's onOpenAutoFocus
+                // handler does not reliably trigger :focus-visible in
+                // Chromium. Mirror the Input component's standard ring
+                // (border-ring + ring-ring/50, 3px) onto :focus so the
+                // autofocused repo trigger paints the familiar field ring
+                // instead of leaving no visible focus state.
+                triggerClassName="h-9 focus:border-ring focus:ring-[3px] focus:ring-ring/50"
                 showStandaloneAddButton={false}
               />
             </div>
@@ -335,28 +282,9 @@ export default function NewWorkspaceComposerCard({
               />
             </label>
             <div className="grid gap-1.5">
-              <div className="flex items-center justify-between gap-2 px-1">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Agent
-                </span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={onOpenAgentSettings}
-                      className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
-                      aria-label="Open agent settings"
-                    >
-                      <Settings2 className="size-3" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    Configure agents
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+              <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Agent
+              </span>
               <Select
                 value={quickAgent ?? '__none__'}
                 onValueChange={(value) => {
@@ -369,12 +297,12 @@ export default function NewWorkspaceComposerCard({
                       {quickAgent ? (
                         <AgentIcon agent={quickAgent} />
                       ) : (
-                        <Folder className="size-4" />
+                        <Terminal className="size-4" />
                       )}
                       <span>
                         {quickAgent
                           ? (AGENT_CATALOG.find((a) => a.id === quickAgent)?.label ?? quickAgent)
-                          : 'No agent'}
+                          : 'Blank Terminal'}
                       </span>
                     </span>
                   </SelectValue>
@@ -382,8 +310,8 @@ export default function NewWorkspaceComposerCard({
                 <SelectContent align="end">
                   <SelectItem value="__none__">
                     <span className="flex items-center gap-2">
-                      <Folder className="size-4" />
-                      <span>No agent</span>
+                      <Terminal className="size-4" />
+                      <span>Blank Terminal</span>
                     </span>
                   </SelectItem>
                   {visibleQuickAgents.map((option) => (

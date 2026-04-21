@@ -135,14 +135,23 @@ function ComposerModalBody({
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[920px]"
+        className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[480px]"
         showCloseButton={false}
         onOpenAutoFocus={(event) => {
-          // Why: the repo field is still the first keyboard stop, but we no
-          // longer expand its suggestion list on mount. Prevent Dialog from
-          // moving focus elsewhere so the combobox trigger can claim focus
-          // after the dialog settles without covering the rest of the form.
+          // Why: Radix's FocusScope fires this once the dialog has mounted and
+          // the DOM is ready. preventDefault stops it from focusing the first
+          // tabbable (which would otherwise steal focus to whatever ships
+          // first in markup); we then focus the repo combobox trigger so the
+          // guessed value sits as a confirmed selection without opening its
+          // popover — matching the "default = selection, typing = search"
+          // combobox pattern. Doing it here (instead of a child rAF) avoids
+          // Strict-Mode effect double-invocation dropping the focus call.
           event.preventDefault()
+          const content = event.currentTarget as HTMLElement
+          const trigger = content.querySelector<HTMLElement>(
+            '[data-repo-combobox-root="true"][role="combobox"]'
+          )
+          trigger?.focus({ preventScroll: true })
         }}
       >
         <DialogTitle className="sr-only">Create New Workspace</DialogTitle>
@@ -155,7 +164,6 @@ function ComposerModalBody({
           nameInputRef={nameInputRef}
           quickAgent={quickAgent}
           onQuickAgentChange={handleQuickAgentChange}
-          repoAutoOpen
           {...cardProps}
           onCreate={() => void handleCreate()}
         />

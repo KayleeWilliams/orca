@@ -24,7 +24,6 @@ type RepoComboboxProps = {
   placeholder?: string
   triggerClassName?: string
   autoOpenOnMount?: boolean
-  autoFocusTriggerOnMount?: boolean
   showStandaloneAddButton?: boolean
 }
 
@@ -36,7 +35,6 @@ export default function RepoCombobox({
   placeholder = 'Select repo...',
   triggerClassName,
   autoOpenOnMount = false,
-  autoFocusTriggerOnMount = false,
   showStandaloneAddButton = true
 }: RepoComboboxProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -49,7 +47,6 @@ export default function RepoCombobox({
   const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
   const [isAdding, setIsAdding] = useState(false)
   const autoOpenedRef = React.useRef(false)
-  const autoFocusedRef = React.useRef(false)
   const triggerRef = React.useRef<HTMLButtonElement | null>(null)
 
   const selectedRepo = useMemo(
@@ -67,19 +64,6 @@ export default function RepoCombobox({
   }, [autoOpenOnMount])
 
   React.useEffect(() => {
-    if (!autoFocusTriggerOnMount || autoFocusedRef.current) {
-      return
-    }
-    autoFocusedRef.current = true
-    setOpen(false)
-    setQuery('')
-    const frame = requestAnimationFrame(() => {
-      triggerRef.current?.focus()
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [autoFocusTriggerOnMount])
-
-  React.useEffect(() => {
     if (!open) {
       return
     }
@@ -88,8 +72,15 @@ export default function RepoCombobox({
       const repoSearchInput = document.querySelector<HTMLInputElement>(
         '[data-repo-combobox-root="true"] [data-slot="command-input"]'
       )
-      repoSearchInput?.focus()
-      repoSearchInput?.select()
+      if (!repoSearchInput) {
+        return
+      }
+      repoSearchInput.focus()
+      // Why: when a printable keydown on the trigger seeded the query, the
+      // user expects the next keystroke to append to what they typed — not
+      // replace it — so drop the caret at the end instead of selecting all.
+      const end = repoSearchInput.value.length
+      repoSearchInput.setSelectionRange(end, end)
     })
     return () => cancelAnimationFrame(frame)
   }, [open, value])
@@ -112,6 +103,36 @@ export default function RepoCombobox({
       onValueSelected?.(repoId)
     },
     [onValueChange, onValueSelected]
+  )
+
+  // Why: the button-style trigger treats the current value as a confirmed
+  // selection — plain focus does not open the dropdown. We only open on
+  // explicit intent: ArrowDown/ArrowUp opens without filtering, and a printable
+  // non-whitespace character opens *and* seeds the search query (treating the
+  // keystroke as the start of a new search per the combobox pattern).
+  const handleTriggerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (open) {
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        setOpen(true)
+        return
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+      // Why: restrict to visible characters so whitespace/Enter keep their
+      // native button semantics (Space/Enter = click = open-without-filter via
+      // the PopoverTrigger) instead of leaking into the query as a stray char.
+      if (event.key.length === 1 && /\S/.test(event.key)) {
+        event.preventDefault()
+        setQuery(event.key)
+        setOpen(true)
+      }
+    },
+    [open]
   )
 
   const handleAddFolder = useCallback(async () => {
@@ -144,6 +165,7 @@ export default function RepoCombobox({
             variant="outline"
             role="combobox"
             aria-expanded={open}
+            onKeyDown={handleTriggerKeyDown}
             className={cn(
               'h-8 min-w-[184px] justify-between px-3 text-xs font-normal',
               triggerClassName
