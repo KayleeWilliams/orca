@@ -5,7 +5,7 @@ across multiple components. Autosave now lives in a smaller headless controller
 so hidden editor UI no longer participates in shutdown. */
 import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import * as monaco from 'monaco-editor'
-import { Columns2, Copy, ExternalLink, FileText, Rows2 } from 'lucide-react'
+import { Columns2, Copy, ExternalLink, FileText, MoreHorizontal, Rows2 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getConnectionId } from '@/lib/connection-context'
@@ -36,6 +36,7 @@ import {
   type EditorPathMutationTarget
 } from './editor-autosave'
 import { UntitledFileRenameDialog } from './UntitledFileRenameDialog'
+import { exportActiveMarkdownToPdf } from './export-active-markdown'
 
 const isMac = navigator.userAgent.includes('Mac')
 const isLinux = navigator.userAgent.includes('Linux')
@@ -67,6 +68,34 @@ type DiffContent = GitDiffResult
 // state with the result.
 const inFlightFileReads = new Map<string, Promise<FileContent>>()
 const inFlightDiffReads = new Map<string, Promise<DiffContent>>()
+
+// Why: the "File → Export as PDF..." menu IPC fans out to every EditorPanel
+// instance, and split-pane layouts mount N panels concurrently. Without a
+// guard, a single menu click would spawn N concurrent exports — each racing
+// its own save dialog, toast, and printToPDF — producing duplicate output
+// files and confusing UX. This module-level ref-counted singleton installs
+// exactly one IPC subscription the first time any panel mounts, and tears
+// it down only when the last panel unmounts. A simple "first mounter wins"
+// counter would go dead if the first-mounting panel unmounted while others
+// were still mounted — survivors never re-subscribed and the menu silently
+// stopped working. The singleton pattern avoids that handoff bug entirely.
+let exportPdfListenerOwners = 0
+let exportPdfListenerUnsubscribe: (() => void) | null = null
+function acquireExportPdfListener(): () => void {
+  exportPdfListenerOwners += 1
+  if (exportPdfListenerOwners === 1) {
+    exportPdfListenerUnsubscribe = window.api.ui.onExportPdfRequested(() => {
+      void exportActiveMarkdownToPdf()
+    })
+  }
+  return () => {
+    exportPdfListenerOwners -= 1
+    if (exportPdfListenerOwners === 0 && exportPdfListenerUnsubscribe) {
+      exportPdfListenerUnsubscribe()
+      exportPdfListenerUnsubscribe = null
+    }
+  }
+}
 
 function inFlightReadKey(connectionId: string | undefined, filePath: string): string {
   return `${connectionId ?? ''}::${filePath}`
@@ -150,6 +179,18 @@ function EditorPanelInner({
     window.addEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
     return () => window.removeEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
   }, [])
+
+  // Why: the system "File → Export as PDF..." menu item sends a one-way IPC
+  // event that reaches whichever renderer has focus. The EditorPanel is the
+  // natural owner of the active markdown surface, so the listener lives here
+  // and delegates to the shared export helper. Both entry points (menu and
+  // overflow button) funnel through exportActiveMarkdownToPdf so toasts and
+  // no-op gating stay consistent.
+  // Why (guard): split-pane layouts mount multiple EditorPanelInner instances.
+  // We ref-count via `acquireExportPdfListener` so exactly one IPC subscription
+  // exists regardless of how many panels are mounted — and it survives panel
+  // churn as long as at least one panel is still mounted.
+  useEffect(() => acquireExportPdfListener(), [])
 
   // Why: keepCurrentModel / keepCurrent*Model retain Monaco models after unmount
   // so undo history survives tab switches. When a tab is *closed*, the user has
@@ -803,6 +844,37 @@ function EditorPanelInner({
               mode={mdViewMode}
               onChange={(mode) => setMarkdownViewMode(activeFile.id, mode)}
             />
+          )}
+          {hasViewModeToggle && isMarkdown && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                  aria-label="More actions"
+                  title="More actions"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={4}>
+                <DropdownMenuItem
+                  // Why: the item is disabled (not hidden) only in source/Monaco
+                  // mode, which has no document DOM to export. We intentionally
+                  // don't poll the DOM (canExportActiveMarkdown) at render time:
+                  // the Radix content renders in a Portal and the lookup can
+                  // race with the active surface's paint, producing a stuck
+                  // disabled state. exportActiveMarkdownToPdf is a safe no-op
+                  // when no subtree is found.
+                  disabled={mdViewMode === 'source'}
+                  onSelect={() => {
+                    void exportActiveMarkdownToPdf()
+                  }}
+                >
+                  Export as PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       )}

@@ -56,6 +56,26 @@ export function registerAppMenu({
       ]
     },
     {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Export as PDF...',
+          accelerator: 'CmdOrCtrl+Shift+E',
+          click: () => {
+            // Why: fire a one-way event into the focused renderer. The renderer
+            // owns the knowledge of whether a markdown surface is active and
+            // what DOM to extract — when no markdown surface is active this is
+            // a silent no-op on that side (see design doc §4 "Renderer UI
+            // trigger"). Keeping this as a send (not an invoke) avoids main
+            // needing to reason about surface state. Using
+            // BrowserWindow.getFocusedWindow() rather than the menu's
+            // focusedWindow param avoids the BaseWindow typing gap.
+            BrowserWindow.getFocusedWindow()?.webContents.send('export:requestPdf')
+          }
+        }
+      ]
+    },
+    {
       label: 'Edit',
       submenu: [
         { role: 'undo' },

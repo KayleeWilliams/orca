@@ -22,7 +22,8 @@ const {
   registerBrowserHandlersMock,
   setTrustedBrowserRendererWebContentsIdMock,
   registerFilesystemWatcherHandlersMock,
-  registerAppHandlersMock
+  registerAppHandlersMock,
+  registerExportHandlersMock
 } = vi.hoisted(() => ({
   registerCliHandlersMock: vi.fn(),
   registerPreflightHandlersMock: vi.fn(),
@@ -45,7 +46,8 @@ const {
   registerBrowserHandlersMock: vi.fn(),
   setTrustedBrowserRendererWebContentsIdMock: vi.fn(),
   registerFilesystemWatcherHandlersMock: vi.fn(),
-  registerAppHandlersMock: vi.fn()
+  registerAppHandlersMock: vi.fn(),
+  registerExportHandlersMock: vi.fn()
 }))
 
 vi.mock('./cli', () => ({
@@ -70,6 +72,10 @@ vi.mock('./github', () => ({
 
 vi.mock('./feedback', () => ({
   registerFeedbackHandlers: registerFeedbackHandlersMock
+}))
+
+vi.mock('./export', () => ({
+  registerExportHandlers: registerExportHandlersMock
 }))
 
 vi.mock('./stats', () => ({
@@ -156,6 +162,7 @@ describe('registerCoreHandlers', () => {
     setTrustedBrowserRendererWebContentsIdMock.mockReset()
     registerFilesystemWatcherHandlersMock.mockReset()
     registerAppHandlersMock.mockReset()
+    registerExportHandlersMock.mockReset()
   })
 
   it('passes the store through to handler registrars that need it', () => {

@@ -336,6 +336,15 @@ const api = {
       ipcRenderer.invoke('feedback:submit', args)
   },
 
+  export: {
+    htmlToPdf: (args: {
+      html: string
+      title: string
+    }): Promise<
+      { success: true; filePath: string } | { success: false; cancelled?: boolean; error?: string }
+    > => ipcRenderer.invoke('export:html-to-pdf', args)
+  },
+
   gh: {
     viewer: (): Promise<unknown> => ipcRenderer.invoke('gh:viewer'),
 
@@ -1089,6 +1098,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:toggleStatusBar', listener)
       return () => ipcRenderer.removeListener('ui:toggleStatusBar', listener)
+    },
+    onExportPdfRequested: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('export:requestPdf', listener)
+      return () => ipcRenderer.removeListener('export:requestPdf', listener)
     },
     onActivateWorktree: (
       callback: (data: {

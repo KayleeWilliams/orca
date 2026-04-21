@@ -10,6 +10,7 @@ import { registerClaudeUsageHandlers } from './claude-usage'
 import { registerCodexUsageHandlers } from './codex-usage'
 import { registerGitHubHandlers } from './github'
 import { registerFeedbackHandlers } from './feedback'
+import { registerExportHandlers } from './export'
 import { registerStatsHandlers } from './stats'
 import { registerRateLimitHandlers } from './rate-limits'
 import { registerRuntimeHandlers } from './runtime'
@@ -63,6 +64,7 @@ export function registerCoreHandlers(
   registerRateLimitHandlers(rateLimits)
   registerGitHubHandlers(store, stats)
   registerFeedbackHandlers()
+  registerExportHandlers()
   registerStatsHandlers(stats)
   registerNotificationHandlers(store)
   registerSettingsHandlers(store)

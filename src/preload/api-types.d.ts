@@ -171,6 +171,15 @@ export type PreflightApi = {
   refreshAgents: () => Promise<RefreshAgentsResult>
 }
 
+export type ExportApi = {
+  htmlToPdf: (args: {
+    html: string
+    title: string
+  }) => Promise<
+    { success: true; filePath: string } | { success: false; cancelled?: boolean; error?: string }
+  >
+}
+
 export type StatsApi = {
   getSummary: () => Promise<StatsSummary>
 }
@@ -330,6 +339,7 @@ export type PreloadApi = {
       githubEmail: string | null
     }) => Promise<{ ok: true } | { ok: false; status: number | null; error: string }>
   }
+  export: ExportApi
   gh: {
     viewer: () => Promise<GitHubViewer | null>
     repoSlug: (args: { repoPath: string }) => Promise<{ owner: string; repo: string } | null>
@@ -602,6 +612,7 @@ export type PreloadApi = {
     onCloseActiveTab: (callback: () => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
     onToggleStatusBar: (callback: () => void) => () => void
+    onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
       callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
     ) => () => void
