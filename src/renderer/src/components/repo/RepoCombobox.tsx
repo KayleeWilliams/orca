@@ -20,6 +20,7 @@ type RepoComboboxProps = {
   repos: Repo[]
   value: string
   onValueChange: (repoId: string) => void
+  onValueSelected?: (repoId: string) => void
   placeholder?: string
   triggerClassName?: string
   autoOpenOnMount?: boolean
@@ -29,6 +30,7 @@ export default function RepoCombobox({
   repos,
   value,
   onValueChange,
+  onValueSelected,
   placeholder = 'Select repo...',
   triggerClassName,
   autoOpenOnMount = false
@@ -88,8 +90,9 @@ export default function RepoCombobox({
       onValueChange(repoId)
       setOpen(false)
       setQuery('')
+      onValueSelected?.(repoId)
     },
-    [onValueChange]
+    [onValueChange, onValueSelected]
   )
 
   const handleAddFolder = useCallback(async () => {

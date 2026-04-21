@@ -381,6 +381,23 @@ export default function NewWorkspaceComposerCard({
   createError
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
+  const focusNameInput = React.useCallback(() => {
+    // Why: after the repo picker commits a choice, moving focus to the name
+    // field keeps the keyboard flow progressing through the form instead of
+    // trapping the user in the repo popover interaction.
+    requestAnimationFrame(() => {
+      nameInputRef?.current?.focus()
+    })
+  }, [nameInputRef])
+  const focusPromptInput = React.useCallback(() => {
+    // Why: agent selection is usually the last configuration step before the
+    // actual task description, so hand focus to the prompt once Radix closes
+    // the menu and keep the user in a straight keyboard-only flow.
+    requestAnimationFrame(() => {
+      promptTextareaRef?.current?.focus()
+    })
+  }, [promptTextareaRef])
+
   return (
     <div className="grid gap-3">
       <div
@@ -409,6 +426,7 @@ export default function NewWorkspaceComposerCard({
                 repos={eligibleRepos}
                 value={repoId}
                 onValueChange={onRepoChange}
+                onValueSelected={focusNameInput}
                 placeholder="Choose repository"
                 triggerClassName="h-9"
                 autoOpenOnMount={repoAutoOpen}
@@ -629,7 +647,10 @@ export default function NewWorkspaceComposerCard({
 
               <Select
                 value={tuiAgent}
-                onValueChange={(value) => onTuiAgentChange(value as TuiAgent)}
+                onValueChange={(value) => {
+                  onTuiAgentChange(value as TuiAgent)
+                  focusPromptInput()
+                }}
               >
                 <SelectTrigger
                   size="sm"
