@@ -71,6 +71,8 @@ export default function RepoCombobox({
       return
     }
     autoFocusedRef.current = true
+    setOpen(false)
+    setQuery('')
     const frame = requestAnimationFrame(() => {
       triggerRef.current?.focus()
     })
