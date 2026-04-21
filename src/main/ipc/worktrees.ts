@@ -32,6 +32,23 @@ import {
 } from './worktree-remote'
 import { rebuildAuthorizedRootsCache, ensureAuthorizedRootsCache } from './filesystem-auth'
 
+// Why: worktrees discovered on disk (not created via Orca's UI) have no
+// persisted WorktreeMeta, so mergeWorktree falls back to `lastActivityAt: 0`.
+// That makes them sort to the bottom of "Recent" even though the user just
+// added the repo / folder. Stamp discovery time the first time we see a
+// worktree so its very existence counts as a recency signal. Subsequent
+// list calls find the persisted meta and skip the stamp.
+function resolveWorktreeMetaWithDiscoveryStamp(
+  store: Store,
+  worktreeId: string
+): ReturnType<Store['getWorktreeMeta']> {
+  const existing = store.getWorktreeMeta(worktreeId)
+  if (existing) {
+    return existing
+  }
+  return store.setWorktreeMeta(worktreeId, { lastActivityAt: Date.now() })
+}
+
 export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store): void {
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
@@ -72,7 +89,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
           }
           return gitWorktrees.map((gw) => {
             const worktreeId = `${repo.id}::${gw.path}`
-            const meta = store.getWorktreeMeta(worktreeId)
+            const meta = resolveWorktreeMetaWithDiscoveryStamp(store, worktreeId)
             return mergeWorktree(repo.id, gw, meta, repo.displayName)
           })
         } catch {
@@ -111,7 +128,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
     }
     return gitWorktrees.map((gw) => {
       const worktreeId = `${repo.id}::${gw.path}`
-      const meta = store.getWorktreeMeta(worktreeId)
+      const meta = resolveWorktreeMetaWithDiscoveryStamp(store, worktreeId)
       return mergeWorktree(repo.id, gw, meta, repo.displayName)
     })
   })
