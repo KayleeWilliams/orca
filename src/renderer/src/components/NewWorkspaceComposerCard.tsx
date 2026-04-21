@@ -164,13 +164,6 @@ function PromptPrefixTextarea({
         </span>
         <textarea
           ref={setRefs}
-          // Why: native autoFocus reliably focuses the prompt on initial mount
-          // — used by both the full-page composer and the Cmd+J modal so the
-          // user can start typing immediately without an extra tab. Running
-          // during React's mount means it beats Radix Dialog's FocusScope,
-          // which would otherwise land focus on the first focusable child
-          // (the "Workspace name" input that renders above this textarea).
-          autoFocus
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
@@ -399,33 +392,41 @@ export default function NewWorkspaceComposerCard({
         onDragEnter={dragHandlers.onDragEnter}
         onDragLeave={dragHandlers.onDragLeave}
         className={cn(
-          'rounded-[20px] border border-border/50 bg-background/40 p-3 shadow-lg backdrop-blur-xl supports-[backdrop-filter]:bg-background/40 transition',
+          'rounded-2xl border border-border/50 bg-background/40 p-3 shadow-lg backdrop-blur-xl supports-[backdrop-filter]:bg-background/40 transition',
           isFileDragOver && 'border-ring ring-2 ring-ring/30',
           containerClassName
         )}
       >
         <div className="grid gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={name}
-              onChange={onNameChange}
-              placeholder="[Optional] Workspace name"
-              className="h-9 min-w-0 flex-1 bg-transparent px-1 text-[14px] font-medium text-foreground outline-none placeholder:text-muted-foreground/80"
-            />
-            <div className="w-[240px] shrink-0">
+          <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-end">
+            <div className="grid gap-1.5">
+              <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Repository
+              </div>
               <RepoCombobox
                 repos={eligibleRepos}
                 value={repoId}
                 onValueChange={onRepoChange}
-                placeholder="Select a repository"
-                triggerClassName="h-9 w-full rounded-[10px] border border-border/50 bg-background/50 px-3 text-sm font-medium shadow-sm transition hover:bg-muted/50 focus:ring-2 focus:ring-ring/20 focus:outline-none backdrop-blur-md supports-[backdrop-filter]:bg-background/50"
+                placeholder="Choose repository"
+                triggerClassName="h-9"
               />
             </div>
+            <label className="grid gap-1.5">
+              <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Workspace
+              </span>
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={name}
+                onChange={onNameChange}
+                placeholder="[Optional] Workspace name"
+                className="h-9 min-w-0 flex-1 bg-transparent px-1 text-[14px] font-medium text-foreground outline-none placeholder:text-muted-foreground/80"
+              />
+            </label>
           </div>
 
-          <div className="flex flex-col rounded-[16px] border border-border/60 bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+          <div className="flex flex-col rounded-xl border border-input bg-input/30 shadow-xs transition focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
             {/* Why: the `>` is rendered as a visual overlay (aria-hidden) so
                 it's never part of the submitted prompt value. It must behave
                 like the first character of line 1 — inline with line 1's text
@@ -457,14 +458,16 @@ export default function NewWorkspaceComposerCard({
                     <span className="truncate" title={linkedWorkItem.url}>
                       {linkedWorkItem.title}
                     </span>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-xs"
                       aria-label={`Remove linked ${linkedWorkItem.type} #${linkedWorkItem.number}`}
                       onClick={onRemoveLinkedWorkItem}
-                      className="shrink-0 text-muted-foreground transition hover:text-foreground"
+                      className="size-5 shrink-0 rounded-full text-muted-foreground"
                     >
                       <X className="size-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
                 {attachmentPaths.map((pathValue) => (
@@ -476,14 +479,16 @@ export default function NewWorkspaceComposerCard({
                     <span className="truncate" title={pathValue}>
                       {getAttachmentLabel(pathValue)}
                     </span>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-xs"
                       aria-label={`Remove attachment ${getAttachmentLabel(pathValue)}`}
                       onClick={() => onRemoveAttachment(pathValue)}
-                      className="shrink-0 text-muted-foreground transition hover:text-foreground"
+                      className="size-5 shrink-0 rounded-full text-muted-foreground"
                     >
                       <X className="size-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -498,9 +503,8 @@ export default function NewWorkspaceComposerCard({
                         <DropdownMenuTrigger asChild>
                           <Button
                             type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-full bg-transparent p-0 text-foreground hover:bg-muted/60 hover:text-foreground"
+                            variant="outline"
+                            size="icon-sm"
                             aria-label="Add attachment"
                           >
                             <Plus className="size-4" />
@@ -528,8 +532,8 @@ export default function NewWorkspaceComposerCard({
                         <PopoverTrigger asChild>
                           <Button
                             type="button"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-full bg-muted/55 p-0 text-foreground backdrop-blur-md hover:bg-muted/75 hover:text-foreground supports-[backdrop-filter]:bg-muted/50"
+                            variant="outline"
+                            size="icon-sm"
                             aria-label="Link GitHub issue or pull request"
                           >
                             <Github className="size-3.5" />
@@ -604,9 +608,10 @@ export default function NewWorkspaceComposerCard({
                     <span>
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="outline"
+                        size="icon-sm"
                         disabled
-                        className="h-8 w-8 rounded-full bg-muted/35 p-0 text-muted-foreground/70 backdrop-blur-md supports-[backdrop-filter]:bg-muted/30"
+                        className="text-muted-foreground/70"
                         aria-label="Link Linear issue"
                       >
                         <LinearIcon className="size-3.5" />
@@ -626,7 +631,7 @@ export default function NewWorkspaceComposerCard({
                 <SelectTrigger
                   size="sm"
                   className={cn(
-                    'h-8 rounded-full border-border/50 bg-background/50 px-3 backdrop-blur-md supports-[backdrop-filter]:bg-background/50 transition-opacity',
+                    'h-8 min-w-[124px] transition-opacity',
                     !agentPrompt.trim() &&
                       !linkedOnlyTemplatePreview &&
                       'opacity-60 hover:opacity-100 grayscale-[0.5]'
@@ -653,7 +658,7 @@ export default function NewWorkspaceComposerCard({
                   <div className="border-t border-border/50 px-1 pb-0.5 pt-1">
                     <button
                       type="button"
-                      className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                      className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={onOpenAgentSettings}
                     >
@@ -675,13 +680,7 @@ export default function NewWorkspaceComposerCard({
           </div>
 
           <div className="flex items-center justify-between">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="rounded-full px-2.5 text-muted-foreground hover:text-foreground"
-              onClick={onToggleAdvanced}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={onToggleAdvanced}>
               Advanced
               <ChevronDown
                 className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
@@ -689,16 +688,11 @@ export default function NewWorkspaceComposerCard({
             </Button>
 
             <div className="flex justify-end">
-              <Button
-                onClick={() => void onCreate()}
-                disabled={createDisabled}
-                size="sm"
-                className="rounded-full px-3"
-              >
+              <Button onClick={() => void onCreate()} disabled={createDisabled} size="sm">
                 {creating ? <LoaderCircle className="size-4 animate-spin" /> : null}
                 {agentPrompt.trim() || linkedOnlyTemplatePreview
                   ? 'Start Agent'
-                  : 'Create Worktree'}
+                  : 'Create Workspace'}
                 <span className="ml-1 rounded-full border border-white/20 p-1 text-current/80">
                   <CornerDownLeft className="size-3" />
                 </span>
@@ -723,7 +717,7 @@ export default function NewWorkspaceComposerCard({
                     value={note}
                     onChange={(event) => onNoteChange(event.target.value)}
                     placeholder="Write a note"
-                    className="h-10 rounded-xl border-border/60 bg-input/30 shadow-sm"
+                    className="h-10"
                   />
                 </div>
 
@@ -781,30 +775,22 @@ export default function NewWorkspaceComposerCard({
                           Run setup now?
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <button
+                          <Button
                             type="button"
                             onClick={() => onSetupDecisionChange('run')}
-                            className={cn(
-                              'rounded-full border px-3.5 py-2 text-xs font-medium transition',
-                              setupDecision === 'run'
-                                ? 'border-emerald-500/40 bg-emerald-500/12 text-foreground shadow-sm'
-                                : 'border-border/70 bg-muted/35 text-foreground/75 hover:text-foreground'
-                            )}
+                            variant={setupDecision === 'run' ? 'default' : 'outline'}
+                            size="sm"
                           >
                             Run setup now
-                          </button>
-                          <button
+                          </Button>
+                          <Button
                             type="button"
                             onClick={() => onSetupDecisionChange('skip')}
-                            className={cn(
-                              'rounded-full border px-3.5 py-2 text-xs font-medium transition',
-                              setupDecision === 'skip'
-                                ? 'border-border/70 bg-foreground/10 text-foreground shadow-sm'
-                                : 'border-border/70 bg-muted/35 text-foreground/75 hover:text-foreground'
-                            )}
+                            variant={setupDecision === 'skip' ? 'secondary' : 'outline'}
+                            size="sm"
                           >
                             Skip for now
-                          </button>
+                          </Button>
                         </div>
                         {!setupDecision ? (
                           <div className="text-xs text-muted-foreground">

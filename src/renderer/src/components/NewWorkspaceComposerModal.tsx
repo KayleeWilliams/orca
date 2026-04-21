@@ -62,13 +62,15 @@ function ComposerModalBody({
       onCreated: onClose
     })
 
-  // Autofocus the prompt textarea on open.
+  // Why: focusing the first text field is more predictable than landing on a
+  // combobox trigger; users can immediately type a name while the repo choice
+  // remains visible and one click away.
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      promptTextareaRef.current?.focus()
+      nameInputRef.current?.focus()
     })
     return () => cancelAnimationFrame(frame)
-  }, [promptTextareaRef])
+  }, [nameInputRef])
 
   // Enter submits, Esc first blurs the focused input (like the full page).
   useEffect(() => {
@@ -116,11 +118,11 @@ function ComposerModalBody({
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[880px]"
+        className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[920px]"
         showCloseButton={false}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
-          promptTextareaRef.current?.focus()
+          nameInputRef.current?.focus()
         }}
       >
         <DialogTitle className="sr-only">Create New Workspace</DialogTitle>
