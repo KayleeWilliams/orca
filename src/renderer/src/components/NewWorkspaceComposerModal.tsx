@@ -1,14 +1,15 @@
-import React, { useCallback, useEffect } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/store'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
 import { useComposerState } from '@/hooks/useComposerState'
+import { AGENT_CATALOG } from '@/lib/agent-catalog'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
 import { shouldSuppressEnterSubmit } from '@/lib/new-workspace-enter-guard'
+import type { TuiAgent } from '../../../shared/types'
 
 type ComposerModalData = {
   prefilledName?: string
-  prefilledPrompt?: string
   initialRepoId?: string
   linkedWorkItem?: LinkedWorkItemSummary | null
 }
@@ -52,15 +53,41 @@ function ComposerModalBody({
   onClose: () => void
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
-  const { cardProps, composerRef, promptTextareaRef, nameInputRef, submit, createDisabled } =
-    useComposerState({
-      initialName: modalData.prefilledName ?? '',
-      initialPrompt: modalData.prefilledPrompt ?? '',
-      initialLinkedWorkItem: modalData.linkedWorkItem ?? null,
-      initialRepoId: modalData.initialRepoId,
-      persistDraft: false,
-      onCreated: onClose
-    })
+  const settings = useAppStore((s) => s.settings)
+  const { cardProps, composerRef, nameInputRef, submitQuick, createDisabled } = useComposerState({
+    initialName: modalData.prefilledName ?? '',
+    // Why: the modal is quick-create only now, so prompt-prefill state is
+    // intentionally ignored even if older callers still send it.
+    initialPrompt: '',
+    initialLinkedWorkItem: modalData.linkedWorkItem ?? null,
+    initialRepoId: modalData.initialRepoId,
+    persistDraft: false,
+    onCreated: onClose
+  })
+  const [quickAgentTouched, setQuickAgentTouched] = useState(false)
+  const preferredQuickAgent = useMemo<TuiAgent | null>(() => {
+    if (settings?.defaultTuiAgent) {
+      return settings.defaultTuiAgent
+    }
+    const detected = cardProps.detectedAgentIds
+    return AGENT_CATALOG.find((agent) => detected === null || detected.has(agent.id))?.id ?? null
+  }, [cardProps.detectedAgentIds, settings?.defaultTuiAgent])
+  const [quickAgent, setQuickAgent] = useState<TuiAgent | null>(preferredQuickAgent)
+
+  useEffect(() => {
+    if (!quickAgentTouched) {
+      setQuickAgent(preferredQuickAgent)
+    }
+  }, [preferredQuickAgent, quickAgentTouched])
+
+  const handleQuickAgentChange = useCallback((agent: TuiAgent | null) => {
+    setQuickAgentTouched(true)
+    setQuickAgent(agent)
+  }, [])
+
+  const handleCreate = useCallback(async (): Promise<void> => {
+    await submitQuick(quickAgent)
+  }, [quickAgent, submitQuick])
 
   // Enter submits, Esc first blurs the focused input (like the full page).
   useEffect(() => {
@@ -95,15 +122,15 @@ function ComposerModalBody({
       if (createDisabled) {
         return
       }
-      if (shouldSuppressEnterSubmit(event, target instanceof HTMLTextAreaElement)) {
+      if (shouldSuppressEnterSubmit(event, false)) {
         return
       }
       event.preventDefault()
-      void submit()
+      void handleCreate()
     }
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [composerRef, createDisabled, onClose, submit])
+  }, [composerRef, createDisabled, handleCreate, onClose])
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -111,9 +138,10 @@ function ComposerModalBody({
         className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[920px]"
         showCloseButton={false}
         onOpenAutoFocus={(event) => {
-          // Why: the repo combobox opens itself on mount and then focuses the
-          // search input inside its popover. Prevent Dialog from stealing focus
-          // to another control before that handoff completes.
+          // Why: the repo field is still the first keyboard stop, but we no
+          // longer expand its suggestion list on mount. Prevent Dialog from
+          // moving focus elsewhere so the combobox trigger can claim focus
+          // after the dialog settles without covering the rest of the form.
           event.preventDefault()
         }}
       >
@@ -125,9 +153,11 @@ function ComposerModalBody({
           containerClassName="bg-card/98 shadow-2xl supports-[backdrop-filter]:bg-card/95"
           composerRef={composerRef}
           nameInputRef={nameInputRef}
-          promptTextareaRef={promptTextareaRef}
+          quickAgent={quickAgent}
+          onQuickAgentChange={handleQuickAgentChange}
           repoAutoOpen
           {...cardProps}
+          onCreate={() => void handleCreate()}
         />
       </DialogContent>
     </Dialog>

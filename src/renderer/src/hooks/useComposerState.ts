@@ -108,6 +108,7 @@ export type UseComposerStateResult = {
   promptTextareaRef: React.RefObject<HTMLTextAreaElement | null>
   nameInputRef: React.RefObject<HTMLInputElement | null>
   submit: () => Promise<void>
+  submitQuick: (agent: TuiAgent | null) => Promise<void>
   /** Invoked by the Enter handler to re-check whether submission should fire. */
   createDisabled: boolean
 }
@@ -168,6 +169,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setSidebarOpen: s.setSidebarOpen,
       setRightSidebarOpen: s.setRightSidebarOpen,
       setRightSidebarTab: s.setRightSidebarTab,
+      closeModal: s.closeModal,
       openSettingsPage: s.openSettingsPage,
       openSettingsTarget: s.openSettingsTarget
     }))
@@ -180,6 +182,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     setSidebarOpen,
     setRightSidebarOpen,
     setRightSidebarTab,
+    closeModal,
     openSettingsPage,
     openSettingsTarget
   } = actions
@@ -841,7 +844,29 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const handleOpenAgentSettings = useCallback((): void => {
     openSettingsTarget({ pane: 'agents', repoId: null })
     openSettingsPage()
-  }, [openSettingsPage, openSettingsTarget])
+    closeModal()
+  }, [closeModal, openSettingsPage, openSettingsTarget])
+
+  const applyWorktreeMeta = useCallback(
+    async (
+      worktreeId: string,
+      meta: {
+        linkedIssue?: number
+        linkedPR?: number
+        comment?: string
+      }
+    ): Promise<void> => {
+      if (Object.keys(meta).length === 0) {
+        return
+      }
+      try {
+        await updateWorktreeMeta(worktreeId, meta)
+      } catch {
+        console.error('Failed to update worktree meta after creation')
+      }
+    },
+    [updateWorktreeMeta]
+  )
 
   const submit = useCallback(async (): Promise<void> => {
     const workspaceName = workspaceSeedName
@@ -867,27 +892,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       )
       const worktree = result.worktree
 
-      try {
-        const metaUpdates: {
-          linkedIssue?: number
-          linkedPR?: number
-          comment?: string
-        } = {}
-        if (parsedLinkedIssueNumber !== null) {
-          metaUpdates.linkedIssue = parsedLinkedIssueNumber
-        }
-        if (linkedPR !== null) {
-          metaUpdates.linkedPR = linkedPR
-        }
-        if (note.trim()) {
-          metaUpdates.comment = note.trim()
-        }
-        if (Object.keys(metaUpdates).length > 0) {
-          await updateWorktreeMeta(worktree.id, metaUpdates)
-        }
-      } catch {
-        console.error('Failed to update worktree meta after creation')
-      }
+      await applyWorktreeMeta(worktree.id, {
+        ...(parsedLinkedIssueNumber !== null ? { linkedIssue: parsedLinkedIssueNumber } : {}),
+        ...(linkedPR !== null ? { linkedPR } : {}),
+        ...(note.trim() ? { comment: note.trim() } : {})
+      })
 
       const issueCommand = shouldRunIssueAutomation
         ? {
@@ -934,6 +943,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   }, [
     clearNewWorkspaceDraft,
     createWorktree,
+    applyWorktreeMeta,
     issueCommandTemplate,
     linkedPR,
     linkedWorkItem?.url,
@@ -956,9 +966,100 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     shouldWaitForIssueAutomationCheck,
     shouldWaitForSetupCheck,
     startupPrompt,
-    updateWorktreeMeta,
     workspaceSeedName
   ])
+
+  const submitQuick = useCallback(
+    async (agent: TuiAgent | null): Promise<void> => {
+      const workspaceName = getWorkspaceSeedName({
+        explicitName: name,
+        prompt: '',
+        linkedIssueNumber: null,
+        linkedPR: null
+      })
+      if (
+        !repoId ||
+        !workspaceName ||
+        !selectedRepo ||
+        shouldWaitForSetupCheck ||
+        (requiresExplicitSetupChoice && !setupDecision)
+      ) {
+        return
+      }
+
+      setCreateError(null)
+      setCreating(true)
+      try {
+        const result = await createWorktree(
+          repoId,
+          workspaceName,
+          undefined,
+          (resolvedSetupDecision ?? 'inherit') as SetupDecision
+        )
+        const worktree = result.worktree
+
+        const trimmedNote = note.trim()
+        await applyWorktreeMeta(worktree.id, trimmedNote ? { comment: trimmedNote } : {})
+
+        const startupPlan =
+          agent === null
+            ? null
+            : buildAgentStartupPlan({
+                agent,
+                prompt: '',
+                cmdOverrides: settings?.agentCmdOverrides ?? {},
+                platform: CLIENT_PLATFORM,
+                allowEmptyPromptLaunch: true
+              })
+
+        activateAndRevealWorktree(worktree.id, {
+          setup: result.setup,
+          ...(startupPlan ? { startup: { command: startupPlan.launchCommand } } : {})
+        })
+        if (startupPlan) {
+          void ensureAgentStartupInTerminal({
+            worktreeId: worktree.id,
+            startup: startupPlan
+          })
+        }
+        setSidebarOpen(true)
+        if (settings?.rightSidebarOpenByDefault) {
+          setRightSidebarTab('explorer')
+          setRightSidebarOpen(true)
+        }
+        if (persistDraft) {
+          clearNewWorkspaceDraft()
+        }
+        onCreated?.()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to create worktree.'
+        setCreateError(message)
+        toast.error(message)
+      } finally {
+        setCreating(false)
+      }
+    },
+    [
+      applyWorktreeMeta,
+      clearNewWorkspaceDraft,
+      createWorktree,
+      name,
+      note,
+      onCreated,
+      persistDraft,
+      repoId,
+      requiresExplicitSetupChoice,
+      resolvedSetupDecision,
+      selectedRepo,
+      settings?.agentCmdOverrides,
+      settings?.rightSidebarOpenByDefault,
+      setRightSidebarOpen,
+      setRightSidebarTab,
+      setSidebarOpen,
+      setupDecision,
+      shouldWaitForSetupCheck
+    ]
+  )
 
   const createDisabled =
     !repoId ||
@@ -1021,6 +1122,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     promptTextareaRef,
     nameInputRef,
     submit,
+    submitQuick,
     createDisabled
   }
 }

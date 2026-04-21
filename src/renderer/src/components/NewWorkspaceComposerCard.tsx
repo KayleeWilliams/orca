@@ -5,25 +5,14 @@ import React from 'react'
 import {
   Check,
   ChevronDown,
-  CircleDot,
   CornerDownLeft,
-  GitPullRequest,
-  Github,
+  Folder,
+  FolderPlus,
   LoaderCircle,
-  Paperclip,
-  Plus,
-  X
+  Settings2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList
-} from '@/components/ui/command'
 import {
   Select,
   SelectContent,
@@ -31,65 +20,28 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
 import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
+import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
-import type { GitHubWorkItem, TuiAgent } from '../../../shared/types'
+import type { TuiAgent } from '../../../shared/types'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
-
-type LinkedWorkItemSummary = {
-  type: 'issue' | 'pr'
-  number: number
-  title: string
-  url: string
-} | null
 
 type NewWorkspaceComposerCardProps = {
   containerClassName?: string
   composerRef?: React.RefObject<HTMLDivElement | null>
   nameInputRef?: React.RefObject<HTMLInputElement | null>
-  promptTextareaRef?: React.RefObject<HTMLTextAreaElement | null>
   repoAutoOpen?: boolean
+  quickAgent: TuiAgent | null
+  onQuickAgentChange: (agent: TuiAgent | null) => void
   eligibleRepos: RepoOption[]
   repoId: string
   onRepoChange: (value: string) => void
   name: string
   onNameChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  agentPrompt: string
-  onAgentPromptChange: (value: string) => void
-  onPromptKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  linkedOnlyTemplatePreview: string | null
-  attachmentPaths: string[]
-  getAttachmentLabel: (pathValue: string) => string
-  onAddAttachment: () => void
-  onRemoveAttachment: (pathValue: string) => void
-  addAttachmentShortcut: string
-  linkedWorkItem: LinkedWorkItemSummary
-  onRemoveLinkedWorkItem: () => void
-  linkPopoverOpen: boolean
-  onLinkPopoverOpenChange: (open: boolean) => void
-  linkQuery: string
-  onLinkQueryChange: (value: string) => void
-  filteredLinkItems: GitHubWorkItem[]
-  linkItemsLoading: boolean
-  linkDirectLoading: boolean
-  normalizedLinkQuery: {
-    query: string
-    repoMismatch: string | null
-  }
-  onSelectLinkedItem: (item: GitHubWorkItem) => void
-  tuiAgent: TuiAgent
-  onTuiAgentChange: (value: TuiAgent) => void
   detectedAgentIds: Set<TuiAgent> | null
   onOpenAgentSettings: () => void
   advancedOpen: boolean
@@ -106,93 +58,6 @@ type NewWorkspaceComposerCardProps = {
   shouldWaitForSetupCheck: boolean
   resolvedSetupDecision: 'run' | 'skip' | null
   createError: string | null
-}
-
-function PromptPrefixTextarea({
-  textareaRef,
-  value,
-  onChange,
-  onKeyDown,
-  placeholder,
-  placeholderTone
-}: {
-  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
-  value: string
-  onChange: (value: string) => void
-  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  placeholder: string
-  placeholderTone: 'muted' | 'ghost-prompt'
-}): React.JSX.Element {
-  const internalRef = React.useRef<HTMLTextAreaElement | null>(null)
-
-  const setRefs = React.useCallback(
-    (node: HTMLTextAreaElement | null) => {
-      internalRef.current = node
-      if (textareaRef) {
-        textareaRef.current = node
-      }
-    },
-    [textareaRef]
-  )
-
-  // Why: auto-size the textarea to its content and hoist scrolling onto the
-  // outer wrapper. Any JS-driven overlay sync (listening to `scroll`, updating
-  // `translateY`) always paints a frame behind the textarea's own scroll — on
-  // momentum scroll that shows up as visible wobble between the `>` and the
-  // typed text. Putting both elements inside the same native scroll container
-  // makes them move in lockstep with zero JS and no cross-layer paint delay.
-  React.useLayoutEffect(() => {
-    const el = internalRef.current
-    if (!el) {
-      return
-    }
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
-
-  return (
-    // Why: allow the composer to grow with the user's prompt up to ~20 rows
-    // (560px at leading-7 ≈ 28px/row) before scrolling. The inner textarea's
-    // JS-driven auto-resize sets its own height to scrollHeight, so the wrapper
-    // simply follows until the max-height cap engages and hands off to scroll.
-    <div className="scrollbar-sleek max-h-[560px] overflow-auto">
-      <div className="relative">
-        <span
-          aria-hidden
-          className="pointer-events-none absolute left-4 top-4 select-none text-[15px] leading-7 font-semibold text-foreground"
-        >
-          {'>'}
-        </span>
-        <textarea
-          ref={setRefs}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={placeholder}
-          // Why: the "ghost-prompt" tone previews the exact issueCommand
-          // template that will be sent to the agent when the user submits with
-          // only a linked work item. Emphasising it with higher contrast makes
-          // it obvious this is a real pending prompt, not instructional copy.
-          className={cn(
-            'block min-h-[110px] w-full resize-none overflow-hidden bg-transparent py-4 pl-4 pr-4 text-[15px] leading-7 text-foreground outline-none',
-            placeholderTone === 'ghost-prompt'
-              ? 'placeholder:text-foreground/70'
-              : 'placeholder:text-muted-foreground/50'
-          )}
-          style={{ textIndent: '2ch' }}
-          spellCheck={false}
-        />
-      </div>
-    </div>
-  )
-}
-
-function LinearIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={className} fill="currentColor">
-      <path d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z" />
-    </svg>
-  )
 }
 
 function renderSetupYamlPreview(command: string): React.JSX.Element[] {
@@ -334,35 +199,14 @@ export default function NewWorkspaceComposerCard({
   containerClassName,
   composerRef,
   nameInputRef,
-  promptTextareaRef,
   repoAutoOpen = false,
+  quickAgent,
+  onQuickAgentChange,
   eligibleRepos,
   repoId,
   onRepoChange,
   name,
   onNameChange,
-  agentPrompt,
-  onAgentPromptChange,
-  onPromptKeyDown,
-  linkedOnlyTemplatePreview,
-  attachmentPaths,
-  getAttachmentLabel,
-  onAddAttachment,
-  onRemoveAttachment,
-  addAttachmentShortcut,
-  linkedWorkItem,
-  onRemoveLinkedWorkItem,
-  linkPopoverOpen,
-  onLinkPopoverOpenChange,
-  linkQuery,
-  onLinkQueryChange,
-  filteredLinkItems,
-  linkItemsLoading,
-  linkDirectLoading,
-  normalizedLinkQuery,
-  onSelectLinkedItem,
-  tuiAgent,
-  onTuiAgentChange,
   detectedAgentIds,
   onOpenAgentSettings,
   advancedOpen,
@@ -381,6 +225,10 @@ export default function NewWorkspaceComposerCard({
   createError
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
+  const addRepo = useAppStore((s) => s.addRepo)
+  const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
+  const [isAddingRepo, setIsAddingRepo] = React.useState(false)
+
   const focusNameInput = React.useCallback(() => {
     // Why: after the repo picker commits a choice, moving focus to the name
     // field keeps the keyboard flow progressing through the form instead of
@@ -389,14 +237,32 @@ export default function NewWorkspaceComposerCard({
       nameInputRef?.current?.focus()
     })
   }, [nameInputRef])
-  const focusPromptInput = React.useCallback(() => {
-    // Why: agent selection is usually the last configuration step before the
-    // actual task description, so hand focus to the prompt once Radix closes
-    // the menu and keep the user in a straight keyboard-only flow.
-    requestAnimationFrame(() => {
-      promptTextareaRef?.current?.focus()
-    })
-  }, [promptTextareaRef])
+
+  const visibleQuickAgents = React.useMemo(
+    () =>
+      AGENT_CATALOG.filter((agent) => detectedAgentIds === null || detectedAgentIds.has(agent.id)),
+    [detectedAgentIds]
+  )
+
+  const handleAddRepo = React.useCallback(async (): Promise<void> => {
+    if (isAddingRepo) {
+      return
+    }
+    setIsAddingRepo(true)
+    try {
+      const repo = await addRepo()
+      if (!repo) {
+        return
+      }
+      if (isGitRepoKind(repo)) {
+        await fetchWorktrees(repo.id)
+      }
+      onRepoChange(repo.id)
+      focusNameInput()
+    } finally {
+      setIsAddingRepo(false)
+    }
+  }, [addRepo, fetchWorktrees, focusNameInput, isAddingRepo, onRepoChange])
 
   return (
     <div className="grid gap-3">
@@ -417,10 +283,32 @@ export default function NewWorkspaceComposerCard({
         )}
       >
         <div className="grid gap-3">
-          <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-end">
+          <div className="grid gap-4">
             <div className="grid gap-1.5">
-              <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Repository
+              <div className="flex items-center justify-between gap-2 px-1">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Repository
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      disabled={isAddingRepo}
+                      onClick={() => void handleAddRepo()}
+                      className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                      aria-label={
+                        isAddingRepo ? 'Adding folder or repository' : 'Add folder or repository'
+                      }
+                    >
+                      <FolderPlus className="size-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={6}>
+                    Add repo
+                  </TooltipContent>
+                </Tooltip>
               </div>
               <RepoCombobox
                 repos={eligibleRepos}
@@ -429,10 +317,11 @@ export default function NewWorkspaceComposerCard({
                 onValueSelected={focusNameInput}
                 placeholder="Choose repository"
                 triggerClassName="h-9"
-                autoOpenOnMount={repoAutoOpen}
+                autoFocusTriggerOnMount={repoAutoOpen}
+                showStandaloneAddButton={false}
               />
             </div>
-            <label className="grid gap-1.5">
+            <label className="grid max-w-full gap-1.5">
               <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Workspace
               </span>
@@ -445,233 +334,59 @@ export default function NewWorkspaceComposerCard({
                 className="h-9 min-w-0 flex-1 bg-transparent px-1 text-[14px] font-medium text-foreground outline-none placeholder:text-muted-foreground/80"
               />
             </label>
-          </div>
-
-          <div className="flex flex-col rounded-xl border border-input bg-input/30 shadow-xs transition focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-            {/* Why: the `>` is rendered as a visual overlay (aria-hidden) so
-                it's never part of the submitted prompt value. It must behave
-                like the first character of line 1 — inline with line 1's text
-                and scrolling out of view with it. See PromptPrefixTextarea for
-                how the shared-scroll-container approach avoids wobble. */}
-            <PromptPrefixTextarea
-              textareaRef={promptTextareaRef}
-              value={agentPrompt}
-              onChange={onAgentPromptChange}
-              onKeyDown={onPromptKeyDown}
-              placeholder={
-                linkedOnlyTemplatePreview ?? 'Describe a task to start an agent, or leave blank...'
-              }
-              placeholderTone={linkedOnlyTemplatePreview ? 'ghost-prompt' : 'muted'}
-            />
-
-            {attachmentPaths.length > 0 || linkedWorkItem ? (
-              <div className="flex flex-wrap gap-2 px-3">
-                {linkedWorkItem ? (
-                  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50">
-                    {linkedWorkItem.type === 'pr' ? (
-                      <GitPullRequest className="size-3.5 shrink-0" />
-                    ) : (
-                      <CircleDot className="size-3.5 shrink-0" />
-                    )}
-                    <span className="shrink-0 font-mono text-muted-foreground">
-                      #{linkedWorkItem.number}
-                    </span>
-                    <span className="truncate" title={linkedWorkItem.url}>
-                      {linkedWorkItem.title}
-                    </span>
+            <div className="grid gap-1.5">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Agent
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Remove linked ${linkedWorkItem.type} #${linkedWorkItem.number}`}
-                      onClick={onRemoveLinkedWorkItem}
-                      className="size-5 shrink-0 rounded-full text-muted-foreground"
+                      onClick={onOpenAgentSettings}
+                      className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                      aria-label="Open agent settings"
                     >
-                      <X className="size-3.5" />
+                      <Settings2 className="size-3" />
                     </Button>
-                  </div>
-                ) : null}
-                {attachmentPaths.map((pathValue) => (
-                  <div
-                    key={pathValue}
-                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
-                  >
-                    <Paperclip className="size-3.5 shrink-0" />
-                    <span className="truncate" title={pathValue}>
-                      {getAttachmentLabel(pathValue)}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Remove attachment ${getAttachmentLabel(pathValue)}`}
-                      onClick={() => onRemoveAttachment(pathValue)}
-                      className="size-5 shrink-0 rounded-full text-muted-foreground"
-                    >
-                      <X className="size-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="flex items-center justify-between px-3 pb-3 pt-2">
-              <div className="flex items-center gap-1.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div>
-                      <DropdownMenu modal={false}>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label="Add attachment"
-                          >
-                            <Plus className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem onSelect={() => onAddAttachment()}>
-                            <Paperclip className="size-4" />
-                            Add attachment
-                            <DropdownMenuShortcut>{addAttachmentShortcut}</DropdownMenuShortcut>
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
                   </TooltipTrigger>
                   <TooltipContent side="top" sideOffset={6}>
-                    Add files
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div>
-                      <Popover open={linkPopoverOpen} onOpenChange={onLinkPopoverOpenChange}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label="Link GitHub issue or pull request"
-                          >
-                            <Github className="size-3.5" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-80 p-0">
-                          <Command shouldFilter={false}>
-                            <CommandInput
-                              autoFocus
-                              placeholder="Search issues or pull requests..."
-                              value={linkQuery}
-                              onValueChange={onLinkQueryChange}
-                            />
-                            <CommandList className="max-h-[280px]">
-                              {filteredLinkItems.length === 0 ? (
-                                <CommandEmpty>
-                                  {normalizedLinkQuery.repoMismatch
-                                    ? `GitHub URL must match ${normalizedLinkQuery.repoMismatch}.`
-                                    : linkItemsLoading || linkDirectLoading
-                                      ? normalizedLinkQuery.query.trim()
-                                        ? 'Searching...'
-                                        : 'Loading...'
-                                      : normalizedLinkQuery.query.trim()
-                                        ? 'No issues or pull requests found.'
-                                        : 'No recent issues or pull requests found.'}
-                                </CommandEmpty>
-                              ) : null}
-                              {filteredLinkItems.length > 0 ? (
-                                <CommandGroup
-                                  heading={
-                                    normalizedLinkQuery.query.trim()
-                                      ? `${filteredLinkItems.length} result${filteredLinkItems.length === 1 ? '' : 's'}`
-                                      : 'Recent issues & pull requests'
-                                  }
-                                >
-                                  {filteredLinkItems.map((item) => (
-                                    <CommandItem
-                                      key={item.id}
-                                      value={`${item.type}-${item.number}-${item.title}`}
-                                      onSelect={() => onSelectLinkedItem(item)}
-                                      className="group"
-                                    >
-                                      {item.type === 'pr' ? (
-                                        <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
-                                      ) : (
-                                        <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
-                                      )}
-                                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                                        #{item.number}
-                                      </span>
-                                      <span className="min-w-0 flex-1 truncate text-xs">
-                                        {item.title}
-                                      </span>
-                                      <Check className="size-3.5 shrink-0 opacity-0 group-data-[selected=true]:opacity-100" />
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              ) : null}
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    Add GH Issue / PR
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        disabled
-                        className="text-muted-foreground/70"
-                        aria-label="Link Linear issue"
-                      >
-                        <LinearIcon className="size-3.5" />
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    coming soon
+                    Configure agents
                   </TooltipContent>
                 </Tooltip>
               </div>
-
               <Select
-                value={tuiAgent}
+                value={quickAgent ?? '__none__'}
                 onValueChange={(value) => {
-                  onTuiAgentChange(value as TuiAgent)
-                  focusPromptInput()
+                  onQuickAgentChange(value === '__none__' ? null : (value as TuiAgent))
                 }}
               >
-                <SelectTrigger
-                  size="sm"
-                  className={cn(
-                    'h-8 min-w-[124px] transition-opacity',
-                    !agentPrompt.trim() &&
-                      !linkedOnlyTemplatePreview &&
-                      'opacity-60 hover:opacity-100 grayscale-[0.5]'
-                  )}
-                >
+                <SelectTrigger size="sm" className="h-9 min-w-[148px]">
                   <SelectValue>
                     <span className="flex items-center gap-2">
-                      <AgentIcon agent={tuiAgent} />
-                      <span>{AGENT_CATALOG.find((a) => a.id === tuiAgent)?.label ?? tuiAgent}</span>
+                      {quickAgent ? (
+                        <AgentIcon agent={quickAgent} />
+                      ) : (
+                        <Folder className="size-4" />
+                      )}
+                      <span>
+                        {quickAgent
+                          ? (AGENT_CATALOG.find((a) => a.id === quickAgent)?.label ?? quickAgent)
+                          : 'No agent'}
+                      </span>
                     </span>
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent align="end">
-                  {AGENT_CATALOG.filter(
-                    (a) => detectedAgentIds === null || detectedAgentIds.has(a.id)
-                  ).map((option) => (
+                  <SelectItem value="__none__">
+                    <span className="flex items-center gap-2">
+                      <Folder className="size-4" />
+                      <span>No agent</span>
+                    </span>
+                  </SelectItem>
+                  {visibleQuickAgents.map((option) => (
                     <SelectItem key={option.id} value={option.id}>
                       <span className="flex items-center gap-2">
                         <AgentIcon agent={option.id} />
@@ -714,9 +429,7 @@ export default function NewWorkspaceComposerCard({
             <div className="flex justify-end">
               <Button onClick={() => void onCreate()} disabled={createDisabled} size="sm">
                 {creating ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                {agentPrompt.trim() || linkedOnlyTemplatePreview
-                  ? 'Start Agent'
-                  : 'Create Workspace'}
+                Create Workspace
                 <span className="ml-1 rounded-full border border-white/20 p-1 text-current/80">
                   <CornerDownLeft className="size-3" />
                 </span>

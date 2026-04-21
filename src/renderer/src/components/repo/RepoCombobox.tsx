@@ -24,6 +24,8 @@ type RepoComboboxProps = {
   placeholder?: string
   triggerClassName?: string
   autoOpenOnMount?: boolean
+  autoFocusTriggerOnMount?: boolean
+  showStandaloneAddButton?: boolean
 }
 
 export default function RepoCombobox({
@@ -33,7 +35,9 @@ export default function RepoCombobox({
   onValueSelected,
   placeholder = 'Select repo...',
   triggerClassName,
-  autoOpenOnMount = false
+  autoOpenOnMount = false,
+  autoFocusTriggerOnMount = false,
+  showStandaloneAddButton = true
 }: RepoComboboxProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -45,6 +49,8 @@ export default function RepoCombobox({
   const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
   const [isAdding, setIsAdding] = useState(false)
   const autoOpenedRef = React.useRef(false)
+  const autoFocusedRef = React.useRef(false)
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null)
 
   const selectedRepo = useMemo(
     () => repos.find((repo) => repo.id === value) ?? null,
@@ -61,6 +67,17 @@ export default function RepoCombobox({
   }, [autoOpenOnMount])
 
   React.useEffect(() => {
+    if (!autoFocusTriggerOnMount || autoFocusedRef.current) {
+      return
+    }
+    autoFocusedRef.current = true
+    const frame = requestAnimationFrame(() => {
+      triggerRef.current?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [autoFocusTriggerOnMount])
+
+  React.useEffect(() => {
     if (!open) {
       return
     }
@@ -73,7 +90,7 @@ export default function RepoCombobox({
       repoSearchInput?.select()
     })
     return () => cancelAnimationFrame(frame)
-  }, [open])
+  }, [open, value])
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -120,6 +137,7 @@ export default function RepoCombobox({
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
+            ref={triggerRef}
             type="button"
             variant="outline"
             role="combobox"
@@ -217,19 +235,21 @@ export default function RepoCombobox({
         </PopoverContent>
       </Popover>
 
-      {/* Why: keep the add-repo action visible even when the repo selector is
-          collapsed so adding a new source stays one click away in the compact composer header. */}
-      <Button
-        type="button"
-        variant="outline"
-        size="default"
-        disabled={isAdding}
-        onClick={() => void handleAddFolder()}
-        className="size-9 shrink-0 p-0"
-        aria-label={isAdding ? 'Adding folder or repository' : 'Add folder or repository'}
-      >
-        <FolderPlus className="size-3.5" />
-      </Button>
+      {showStandaloneAddButton ? (
+        /* Why: keep the add-repo action visible even when the repo selector is
+            collapsed so adding a new source stays one click away in the compact composer header. */
+        <Button
+          type="button"
+          variant="outline"
+          size="default"
+          disabled={isAdding}
+          onClick={() => void handleAddFolder()}
+          className="size-9 shrink-0 p-0"
+          aria-label={isAdding ? 'Adding folder or repository' : 'Add folder or repository'}
+        >
+          <FolderPlus className="size-3.5" />
+        </Button>
+      ) : null}
     </div>
   )
 }
