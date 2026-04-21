@@ -160,7 +160,16 @@ export async function initDaemonPtyProvider(): Promise<void> {
   const newAdapter = new DaemonPtyAdapter({
     socketPath: info.socketPath,
     tokenPath: info.tokenPath,
-    historyPath: getHistoryDir()
+    historyPath: getHistoryDir(),
+    // Why: when the daemon process dies (e.g. killed by a signal, OOM, or
+    // cascading from a force-quit of child processes), the adapter's
+    // ensureConnected() detects the dead socket and calls this to fork a
+    // replacement daemon before retrying the connection.
+    respawn: async () => {
+      console.warn('[daemon] Daemon process died — respawning')
+      newSpawner.resetHandle()
+      await newSpawner.ensureRunning()
+    }
   })
 
   spawner = newSpawner

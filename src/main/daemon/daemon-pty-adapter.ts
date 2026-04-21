@@ -17,6 +17,9 @@ export type DaemonPtyAdapterOptions = {
   /** Directory for disk-based terminal history. When set, the adapter writes
    *  raw PTY output to disk for cold restore on daemon crash. */
   historyPath?: string
+  /** Called when the daemon socket is unreachable (process died). Expected to
+   *  fork a fresh daemon so the next connection attempt can succeed. */
+  respawn?: () => Promise<void>
 }
 
 const MAX_TOMBSTONES = 1000
@@ -32,6 +35,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private client: DaemonClient
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
+  private respawnFn: (() => Promise<void>) | null
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
   private removeEventListener: (() => void) | null = null
@@ -54,6 +58,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     })
     this.historyManager = opts.historyPath ? new HistoryManager(opts.historyPath) : null
     this.historyReader = opts.historyPath ? new HistoryReader(opts.historyPath) : null
+    this.respawnFn = opts.respawn ?? null
   }
 
   getHistoryManager(): HistoryManager | null {
@@ -61,6 +66,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
+    return this.withDaemonRetry(() => this.doSpawn(opts))
+  }
+
+  private async doSpawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     await this.ensureConnected()
 
     const sessionId =
@@ -366,6 +375,28 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.setupEventRouting()
   }
 
+  // Why: when the daemon process dies, operations fail with ENOENT (socket
+  // gone), ECONNREFUSED, or "Connection lost" (socket closed mid-request).
+  // Rather than leaving all terminals permanently broken until app restart,
+  // this wrapper detects daemon-death errors, tears down the stale client
+  // state, forks a fresh daemon via respawnFn, reconnects, and retries the
+  // operation once. If respawn itself fails, the error propagates normally.
+  private async withDaemonRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!this.respawnFn || !isDaemonGoneError(err)) {
+        throw err
+      }
+      console.warn('[daemon] Operation failed, respawning:', (err as Error).message)
+      this.removeEventListener?.()
+      this.removeEventListener = null
+      this.client.disconnect()
+      await this.respawnFn()
+      return await fn()
+    }
+  }
+
   private setupEventRouting(): void {
     if (this.removeEventListener) {
       return
@@ -401,4 +432,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
     })
   }
+}
+
+// Why: ENOENT means the socket file was deleted (daemon crashed and cleaned
+// up, or was killed). ECONNREFUSED means the file exists but nothing is
+// listening (rare race). "Connection lost" / "Not connected" mean the daemon
+// died while we had an active or stale connection — the client detected the
+// socket close but we still tried to use it. All indicate the daemon is
+// gone and a respawn should be attempted.
+function isDaemonGoneError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false
+  }
+  const code = (err as NodeJS.ErrnoException).code
+  if (code === 'ENOENT' || code === 'ECONNREFUSED') {
+    return true
+  }
+  const msg = err.message
+  return msg === 'Connection lost' || msg === 'Not connected'
 }

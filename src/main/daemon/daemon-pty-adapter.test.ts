@@ -641,4 +641,50 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       )
     })
   })
+
+  describe('respawn on daemon death', () => {
+    it('respawns the daemon and retries when the socket disappears', async () => {
+      let respawnServer: DaemonServer | undefined
+      const respawnFn = vi.fn(async () => {
+        respawnServer = new DaemonServer({
+          socketPath,
+          tokenPath,
+          spawnSubprocess: () => createMockSubprocess()
+        })
+        await respawnServer.start()
+      })
+
+      const respawnAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn: respawnFn })
+
+      // First spawn succeeds normally
+      const r1 = await respawnAdapter.spawn({ cols: 80, rows: 24 })
+      expect(r1.id).toBeDefined()
+
+      // Kill the server to simulate daemon death
+      await server.shutdown()
+
+      // Next spawn should detect the dead socket, call respawn, and succeed
+      const r2 = await respawnAdapter.spawn({ cols: 80, rows: 24 })
+      expect(r2.id).toBeDefined()
+      expect(respawnFn).toHaveBeenCalledOnce()
+
+      respawnAdapter.dispose()
+      await respawnServer?.shutdown()
+    })
+
+    it('propagates the error when no respawn callback is provided', async () => {
+      const noRespawnAdapter = new DaemonPtyAdapter({ socketPath, tokenPath })
+
+      // First spawn succeeds
+      await noRespawnAdapter.spawn({ cols: 80, rows: 24 })
+
+      // Kill the server
+      await server.shutdown()
+
+      // Next spawn should fail with the original socket error
+      await expect(noRespawnAdapter.spawn({ cols: 80, rows: 24 })).rejects.toThrow()
+
+      noRespawnAdapter.dispose()
+    })
+  })
 })
