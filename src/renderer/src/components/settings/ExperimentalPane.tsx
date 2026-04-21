@@ -14,7 +14,7 @@ type ExperimentalPaneProps = {
   settings: GlobalSettings
   updateSettings: (updates: Partial<GlobalSettings>) => void
   /** Hidden-experimental group is only rendered once the user has unlocked
-   *  it via Cmd+Shift-clicking the Experimental sidebar entry. */
+   *  it via Shift-clicking the Experimental sidebar entry. */
   hiddenExperimentalUnlocked?: boolean
 }
 

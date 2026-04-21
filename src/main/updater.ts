@@ -25,10 +25,10 @@ let currentStatus: UpdateStatus = { state: 'idle' }
 let userInitiatedCheck = false
 let onBeforeQuitCleanup: (() => void) | null = null
 let autoUpdaterInitialized = false
-// Why: Cmd+Shift-clicking "Check for Updates" opts the user into the RC
-// release channel for the rest of this process. We switch to the GitHub
-// provider with allowPrerelease=true so both the check AND any follow-up
-// download resolve against the same (possibly prerelease) release manifest.
+// Why: Shift-clicking "Check for Updates" opts the user into the RC release
+// channel for the rest of this process. We switch to the GitHub provider
+// with allowPrerelease=true so both the check AND any follow-up download
+// resolve against the same (possibly prerelease) release manifest.
 // Resetting only after the check would leave a downloaded RC pointing at a
 // feed URL that no longer advertises it. See design comment in
 // enableIncludePrerelease.

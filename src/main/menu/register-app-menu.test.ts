@@ -110,7 +110,7 @@ describe('registerAppMenu', () => {
     expect(reloadMock).not.toHaveBeenCalled()
   })
 
-  it('includes prereleases when Check for Updates is clicked with cmd+shift', () => {
+  it('includes prereleases when Check for Updates is clicked with shift held', () => {
     const options = buildMenuOptions()
     registerAppMenu(options)
 
@@ -119,15 +119,11 @@ describe('registerAppMenu', () => {
     const submenu = appMenu?.submenu as Electron.MenuItemConstructorOptions[]
     const item = submenu.find((entry) => entry.label === 'Check for Updates...')
 
+    item?.click?.({} as never, undefined as never, { shiftKey: true } as Electron.KeyboardEvent)
     item?.click?.(
       {} as never,
       undefined as never,
       { metaKey: true, shiftKey: true } as Electron.KeyboardEvent
-    )
-    item?.click?.(
-      {} as never,
-      undefined as never,
-      { ctrlKey: true, shiftKey: true } as Electron.KeyboardEvent
     )
     item?.click?.({} as never, undefined as never, {} as Electron.KeyboardEvent)
     item?.click?.({} as never, undefined as never, { metaKey: true } as Electron.KeyboardEvent)

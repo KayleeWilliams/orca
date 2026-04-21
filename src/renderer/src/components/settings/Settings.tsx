@@ -137,7 +137,7 @@ function Settings(): React.JSX.Element {
     getFallbackTerminalFonts()
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
-  // Why: the hidden-experimental group is an unlock — Cmd+Shift-clicking the
+  // Why: the hidden-experimental group is an unlock — Shift-clicking the
   // Experimental sidebar entry reveals it for the remainder of the session.
   // Not persisted on purpose: it's a power-user affordance we don't want to
   // leak through into a normal reopen of Settings.
@@ -474,17 +474,12 @@ function Settings(): React.JSX.Element {
       sectionId: string,
       modifiers?: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
     ) => {
-      // Why: Cmd+Shift-clicking (Ctrl+Shift on win/linux) the Experimental
-      // sidebar entry unlocks a hidden power-user group. Keep this scoped to
-      // the Experimental row so normal shortcut combos on other rows don't
-      // accidentally flip state. The unlock persists for the life of the
-      // Settings view (resets when Settings is reopened).
-      if (
-        sectionId === 'experimental' &&
-        modifiers &&
-        (modifiers.metaKey || modifiers.ctrlKey) &&
-        modifiers.shiftKey
-      ) {
+      // Why: Shift-clicking the Experimental sidebar entry unlocks a hidden
+      // power-user group. Keep this scoped to the Experimental row so normal
+      // shortcut combos on other rows don't accidentally flip state. The
+      // unlock persists for the life of the Settings view (resets when
+      // Settings is reopened).
+      if (sectionId === 'experimental' && modifiers?.shiftKey) {
         setHiddenExperimentalUnlocked((previous) => !previous)
       }
       scrollSectionIntoView(sectionId, contentScrollRef.current)
