@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { execFile } from 'child_process'
+import { execFile, type ChildProcess } from 'child_process'
 import { existsSync, accessSync, chmodSync, readFileSync, constants } from 'fs'
 import { join } from 'path'
 import { platform, arch } from 'os'
@@ -63,6 +63,7 @@ type SessionState = {
   // Why: store the webContentsId so we can verify the tab is still alive at execution time,
   // not just at enqueue time. The queue delay can allow the tab to be destroyed in between.
   webContentsId: number
+  activeProcess: ChildProcess | null
 }
 
 type QueuedCommand = {
@@ -206,6 +207,7 @@ export class AgentBrowserBridge {
   // and keyed by session name. Recreating the same session before that close
   // finishes can let the old teardown close the new daemon session.
   private readonly pendingSessionDestruction = new Map<string, Promise<void>>()
+  private readonly cancelledProcesses = new WeakSet<ChildProcess>()
 
   constructor(private readonly browserManager: BrowserManager) {
     this.agentBrowserBin = resolveAgentBrowserBinary()
@@ -829,7 +831,10 @@ export class AgentBrowserBridge {
     browserPageId?: string
   ): Promise<BrowserScreenshotResult> {
     return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
-      return this.captureScreenshotCommand(sessionName, ['screenshot', '--full-page'], 500, format)
+      // Why: agent-browser's screenshot CLI uses `--full` for full-page capture.
+      // Passing `--full-page` is parsed as an unexpected selector-like token and
+      // can surface unrelated "Element not found" errors instead of capturing.
+      return this.captureScreenshotCommand(sessionName, ['screenshot', '--full'], 500, format)
     })
   }
 
@@ -1160,6 +1165,7 @@ export class AgentBrowserBridge {
       )) as BrowserInterceptEnableResult
       const session = this.sessions.get(sessionName)
       if (session) {
+        this.pendingInterceptRestore.delete(sessionName)
         session.activeInterceptPatterns = patterns ?? ['*']
       }
       return result
@@ -1177,6 +1183,7 @@ export class AgentBrowserBridge {
       ])) as BrowserInterceptDisableResult
       const session = this.sessions.get(sessionName)
       if (session) {
+        this.pendingInterceptRestore.delete(sessionName)
         session.activeInterceptPatterns = []
       }
       return result
@@ -1464,7 +1471,8 @@ export class AgentBrowserBridge {
         consecutiveTimeouts: 0,
         activeInterceptPatterns: [],
         activeCapture: false,
-        webContentsId
+        webContentsId,
+        activeProcess: null
       })
     }
 
@@ -1505,6 +1513,19 @@ export class AgentBrowserBridge {
       queue.length = 0
     }
 
+    if (session.activeProcess) {
+      // Why: queued command rejection is not enough when a daemon command is
+      // already running. Kill the active process so callers do not wait for the
+      // generic exec timeout after the session/tab has already been destroyed.
+      this.cancelledProcesses.add(session.activeProcess)
+      try {
+        session.activeProcess.kill()
+      } catch {
+        // Process may already be exiting.
+      }
+      session.activeProcess = null
+    }
+
     const destroy = (async (): Promise<void> => {
       try {
         await this.runAgentBrowserRaw(sessionName, ['close'])
@@ -1536,6 +1557,8 @@ export class AgentBrowserBridge {
     }
 
     const args = ['--session', sessionName]
+    const managesInterceptRoutes =
+      commandArgs[0] === 'network' && (commandArgs[1] === 'route' || commandArgs[1] === 'unroute')
 
     // Why: --cdp is session-initialization only — first command needs it, subsequent don't.
     // Pass as port number (not ws:// URL) so agent-browser hits the proxy's HTTP /json
@@ -1562,8 +1585,11 @@ export class AgentBrowserBridge {
       session.initialized = true
 
       // Why: after a process swap, intercept patterns are lost because the session
-      // was destroyed and recreated. Restore them now that the new session is live.
-      const pendingPatterns = this.pendingInterceptRestore.get(sessionName)
+      // was destroyed and recreated. Restore them now that the new session is live,
+      // unless the caller's first command explicitly reconfigured routing.
+      const pendingPatterns = managesInterceptRoutes
+        ? undefined
+        : this.pendingInterceptRestore.get(sessionName)
       if (pendingPatterns && pendingPatterns.length > 0) {
         this.pendingInterceptRestore.delete(sessionName)
         try {
@@ -1589,19 +1615,30 @@ export class AgentBrowserBridge {
 
   private runAgentBrowserRaw(sessionName: string, args: string[]): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      execFile(
+      const session = this.sessions.get(sessionName)
+      let child: ChildProcess | null = null
+      child = execFile(
         this.agentBrowserBin,
         args,
         // Why: screenshots return large base64 strings that exceed Node's default
         // 1MB maxBuffer, causing ENOBUFS and a timeout-like failure.
         { timeout: EXEC_TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
         (error, stdout, stderr) => {
-          const session = this.sessions.get(sessionName)
+          if (session && session.activeProcess === child) {
+            session.activeProcess = null
+          }
+          if (child && this.cancelledProcesses.has(child)) {
+            this.cancelledProcesses.delete(child)
+            reject(new BrowserError('browser_error', 'Session destroyed while command was running'))
+            return
+          }
+
+          const liveSession = this.sessions.get(sessionName)
 
           if (error && (error as NodeJS.ErrnoException & { killed?: boolean }).killed) {
-            if (session) {
-              session.consecutiveTimeouts++
-              if (session.consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_LIMIT) {
+            if (liveSession) {
+              liveSession.consecutiveTimeouts++
+              if (liveSession.consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_LIMIT) {
                 // Why: 3 consecutive timeouts means the daemon is likely stuck — destroy and recreate
                 this.destroySession(sessionName)
               }
@@ -1610,8 +1647,8 @@ export class AgentBrowserBridge {
             return
           }
 
-          if (session) {
-            session.consecutiveTimeouts = 0
+          if (liveSession) {
+            liveSession.consecutiveTimeouts = 0
           }
 
           if (error) {
@@ -1636,6 +1673,9 @@ export class AgentBrowserBridge {
           resolve(stdout)
         }
       )
+      if (session) {
+        session.activeProcess = child
+      }
     })
   }
 

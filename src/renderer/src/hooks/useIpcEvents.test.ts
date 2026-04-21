@@ -384,6 +384,173 @@ describe('useIpcEvents updater integration', () => {
   })
 })
 
+describe('useIpcEvents browser tab close routing', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllGlobals()
+  })
+
+  it('closes the active browser tab for the requested worktree when main does not provide a tab id', async () => {
+    const closeBrowserTab = vi.fn()
+    const replyTabClose = vi.fn()
+    const tabCloseListenerRef: {
+      current:
+        | ((data: { requestId: string; tabId: string | null; worktreeId?: string }) => void)
+        | null
+    } = {
+      current: null
+    }
+
+    vi.doMock('react', async () => {
+      const actual = await vi.importActual<typeof ReactModule>('react')
+      return {
+        ...actual,
+        useEffect: (effect: () => void | (() => void)) => {
+          effect()
+        }
+      }
+    })
+
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        getState: () => ({
+          setUpdateStatus: vi.fn(),
+          fetchRepos: vi.fn(),
+          fetchWorktrees: vi.fn(),
+          setActiveView: vi.fn(),
+          activeModal: null,
+          closeModal: vi.fn(),
+          openModal: vi.fn(),
+          activeWorktreeId: 'wt-1',
+          activeView: 'terminal',
+          setActiveRepo: vi.fn(),
+          setActiveWorktree: vi.fn(),
+          revealWorktreeInSidebar: vi.fn(),
+          setIsFullScreen: vi.fn(),
+          updateBrowserTabPageState: vi.fn(),
+          activeTabType: 'browser',
+          editorFontZoomLevel: 0,
+          setEditorFontZoomLevel: vi.fn(),
+          setRateLimitsFromPush: vi.fn(),
+          setSshConnectionState: vi.fn(),
+          setSshTargetLabels: vi.fn(),
+          enqueueSshCredentialRequest: vi.fn(),
+          removeSshCredentialRequest: vi.fn(),
+          settings: { terminalFontSize: 13 },
+          activeBrowserTabId: 'workspace-global',
+          activeBrowserTabIdByWorktree: {
+            'wt-1': 'workspace-global',
+            'wt-2': 'workspace-target'
+          },
+          browserTabsByWorktree: {
+            'wt-1': [{ id: 'workspace-global' }],
+            'wt-2': [{ id: 'workspace-target' }]
+          },
+          browserPagesByWorkspace: {},
+          closeBrowserTab
+        })
+      }
+    }))
+
+    vi.doMock('@/lib/ui-zoom', () => ({
+      applyUIZoom: vi.fn()
+    }))
+    vi.doMock('@/lib/worktree-activation', () => ({
+      activateAndRevealWorktree: vi.fn(),
+      ensureWorktreeHasInitialTerminal: vi.fn()
+    }))
+    vi.doMock('@/components/sidebar/visible-worktrees', () => ({
+      getVisibleWorktreeIds: () => []
+    }))
+    vi.doMock('@/lib/editor-font-zoom', () => ({
+      nextEditorFontZoomLevel: vi.fn(() => 0),
+      computeEditorFontSize: vi.fn(() => 13)
+    }))
+    vi.doMock('@/components/settings/SettingsConstants', () => ({
+      zoomLevelToPercent: vi.fn(() => 100),
+      ZOOM_MIN: -3,
+      ZOOM_MAX: 3
+    }))
+    vi.doMock('@/lib/zoom-events', () => ({
+      dispatchZoomLevelChanged: vi.fn()
+    }))
+
+    vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(),
+      api: {
+        repos: { onChanged: () => () => {} },
+        worktrees: { onChanged: () => () => {} },
+        ui: {
+          onOpenSettings: () => () => {},
+          onToggleLeftSidebar: () => () => {},
+          onToggleRightSidebar: () => () => {},
+          onToggleWorktreePalette: () => () => {},
+          onOpenQuickOpen: () => () => {},
+          onJumpToWorktreeIndex: () => () => {},
+          onActivateWorktree: () => () => {},
+          onNewBrowserTab: () => () => {},
+          onRequestTabCreate: () => () => {},
+          replyTabCreate: () => {},
+          onRequestTabClose: (
+            listener: (data: {
+              requestId: string
+              tabId: string | null
+              worktreeId?: string
+            }) => void
+          ) => {
+            tabCloseListenerRef.current = listener
+            return () => {}
+          },
+          replyTabClose,
+          onNewTerminalTab: () => () => {},
+          onCloseActiveTab: () => () => {},
+          onSwitchTab: () => () => {},
+          onToggleStatusBar: () => () => {},
+          onFullscreenChanged: () => () => {},
+          onTerminalZoom: () => () => {},
+          getZoomLevel: () => 0,
+          set: vi.fn()
+        },
+        updater: {
+          getStatus: () => Promise.resolve({ state: 'idle' }),
+          onStatus: () => () => {},
+          onClearDismissal: () => () => {}
+        },
+        browser: {
+          onGuestLoadFailed: () => () => {},
+          onOpenLinkInOrcaTab: () => () => {},
+          onNavigationUpdate: () => () => {},
+          onActivateView: () => () => {}
+        },
+        rateLimits: {
+          get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
+          onUpdate: () => () => {}
+        },
+        ssh: {
+          listTargets: () => Promise.resolve([]),
+          getState: () => Promise.resolve(null),
+          onStateChanged: () => () => {},
+          onCredentialRequest: () => () => {},
+          onCredentialResolved: () => () => {}
+        }
+      }
+    })
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+    useIpcEvents()
+
+    expect(tabCloseListenerRef.current).toBeTypeOf('function')
+    tabCloseListenerRef.current?.({
+      requestId: 'req-1',
+      tabId: null,
+      worktreeId: 'wt-2'
+    })
+
+    expect(closeBrowserTab).toHaveBeenCalledWith('workspace-target')
+    expect(replyTabClose).toHaveBeenCalledWith({ requestId: 'req-1' })
+  })
+})
+
 describe('useIpcEvents shortcut hint clearing', () => {
   beforeEach(() => {
     vi.resetModules()

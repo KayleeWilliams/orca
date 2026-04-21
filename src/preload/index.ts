@@ -1090,11 +1090,11 @@ const api = {
       ipcRenderer.send('browser:tabCreateReply', reply)
     },
     onRequestTabClose: (
-      callback: (data: { requestId: string; tabId: string }) => void
+      callback: (data: { requestId: string; tabId: string | null; worktreeId?: string }) => void
     ): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
-        data: { requestId: string; tabId: string }
+        data: { requestId: string; tabId: string | null; worktreeId?: string }
       ) => callback(data)
       ipcRenderer.on('browser:requestTabClose', listener)
       return () => ipcRenderer.removeListener('browser:requestTabClose', listener)

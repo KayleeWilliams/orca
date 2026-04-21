@@ -369,7 +369,7 @@ export const COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['tab', 'switch'],
     summary: 'Switch the active browser tab',
-    usage: 'orca tab switch --index <n> [--worktree <selector>] [--json]',
+    usage: 'orca tab switch (--index <n> | --page <id>) [--worktree <selector>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'index', 'worktree']
   },
   {
@@ -972,11 +972,14 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       if (index === undefined && !page) {
         throw new RuntimeClientError('invalid_argument', 'Missing required --index or --page')
       }
-      const worktree = await getBrowserWorktreeSelector(parsed.flags, cwd, client)
+      // Why: a stable browser page id is globally unique across Orca, so page-
+      // targeted tab switches should match the rest of the --page command model:
+      // global by default, with --worktree only acting as explicit validation.
+      const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
       const result = await client.call<BrowserTabSwitchResult>('browser.tabSwitch', {
         index,
         page,
-        worktree
+        ...target
       })
       return printResult(result, json, (v) => `Switched to tab ${v.switched} (${v.browserPageId})`)
     }

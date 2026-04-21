@@ -837,5 +837,41 @@ describe('OrcaRuntimeService', () => {
       expect(tabSwitchMock).toHaveBeenCalledWith(undefined, undefined, 'page-2')
       expect(captureStartMock).toHaveBeenCalledWith(undefined, 'page-2')
     })
+
+    it('does not silently drop invalid explicit worktree selectors for page-targeted commands', async () => {
+      vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      const runtime = createRuntime()
+      const snapshotMock = vi.fn()
+
+      runtime.setAgentBrowserBridge({
+        snapshot: snapshotMock,
+        getRegisteredTabs: vi.fn(() => new Map([['page-1', 1]]))
+      } as never)
+
+      await expect(
+        runtime.browserSnapshot({
+          worktree: 'path:/tmp/missing-worktree',
+          page: 'page-1'
+        })
+      ).rejects.toThrow('selector_not_found')
+      expect(snapshotMock).not.toHaveBeenCalled()
+    })
+
+    it('does not silently drop invalid explicit worktree selectors for non-page browser commands', async () => {
+      vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      const runtime = createRuntime()
+      const tabListMock = vi.fn()
+
+      runtime.setAgentBrowserBridge({
+        tabList: tabListMock
+      } as never)
+
+      await expect(
+        runtime.browserTabList({
+          worktree: 'path:/tmp/missing-worktree'
+        })
+      ).rejects.toThrow('selector_not_found')
+      expect(tabListMock).not.toHaveBeenCalled()
+    })
   })
 })

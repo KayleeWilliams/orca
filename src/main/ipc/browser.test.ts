@@ -5,6 +5,8 @@ const {
   handleMock,
   registerGuestMock,
   unregisterGuestMock,
+  getGuestWebContentsIdMock,
+  getWorktreeIdForTabMock,
   openDevToolsMock,
   getDownloadPromptMock,
   acceptDownloadMock,
@@ -16,6 +18,8 @@ const {
   handleMock: vi.fn(),
   registerGuestMock: vi.fn(),
   unregisterGuestMock: vi.fn(),
+  getGuestWebContentsIdMock: vi.fn(),
+  getWorktreeIdForTabMock: vi.fn(),
   openDevToolsMock: vi.fn().mockResolvedValue(true),
   getDownloadPromptMock: vi.fn(),
   acceptDownloadMock: vi.fn(),
@@ -41,6 +45,8 @@ vi.mock('../browser/browser-manager', () => ({
   browserManager: {
     registerGuest: registerGuestMock,
     unregisterGuest: unregisterGuestMock,
+    getGuestWebContentsId: getGuestWebContentsIdMock,
+    getWorktreeIdForTab: getWorktreeIdForTabMock,
     openDevTools: openDevToolsMock,
     getDownloadPrompt: getDownloadPromptMock,
     acceptDownload: acceptDownloadMock,
@@ -48,7 +54,7 @@ vi.mock('../browser/browser-manager', () => ({
   }
 }))
 
-import { registerBrowserHandlers } from './browser'
+import { registerBrowserHandlers, setAgentBrowserBridgeRef } from './browser'
 
 describe('registerBrowserHandlers', () => {
   beforeEach(() => {
@@ -56,6 +62,8 @@ describe('registerBrowserHandlers', () => {
     handleMock.mockReset()
     registerGuestMock.mockReset()
     unregisterGuestMock.mockReset()
+    getGuestWebContentsIdMock.mockReset()
+    getWorktreeIdForTabMock.mockReset()
     openDevToolsMock.mockReset()
     getDownloadPromptMock.mockReset()
     acceptDownloadMock.mockReset()
@@ -63,6 +71,7 @@ describe('registerBrowserHandlers', () => {
     showSaveDialogMock.mockReset()
     browserWindowFromWebContentsMock.mockReset()
     openDevToolsMock.mockResolvedValue(true)
+    setAgentBrowserBridgeRef(null)
   })
 
   it('rejects non-window callers', async () => {
@@ -117,5 +126,32 @@ describe('registerBrowserHandlers', () => {
       savePath: '/tmp/report.csv'
     })
     expect(result).toEqual({ ok: true })
+  })
+
+  it('updates the bridge active tab for the owning worktree', async () => {
+    const onTabChangedMock = vi.fn()
+    getGuestWebContentsIdMock.mockReturnValue(4242)
+    getWorktreeIdForTabMock.mockReturnValue('wt-browser')
+
+    setAgentBrowserBridgeRef({ onTabChanged: onTabChangedMock } as never)
+    registerBrowserHandlers()
+
+    const activeTabChangedHandler = handleMock.mock.calls.find(
+      ([channel]) => channel === 'browser:activeTabChanged'
+    )?.[1] as (event: { sender: Electron.WebContents }, args: { browserPageId: string }) => boolean
+
+    const result = activeTabChangedHandler(
+      {
+        sender: {
+          isDestroyed: () => false,
+          getType: () => 'window',
+          getURL: () => 'file:///renderer/index.html'
+        } as Electron.WebContents
+      },
+      { browserPageId: 'page-1' }
+    )
+
+    expect(result).toBe(true)
+    expect(onTabChangedMock).toHaveBeenCalledWith(4242, 'wt-browser')
   })
 })

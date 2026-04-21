@@ -4,7 +4,7 @@ cleanup even after extracting the grab/session helpers. Keeping that ownership
 in one file avoids scattering the browser security boundary across modules. */
 import { randomUUID } from 'node:crypto'
 
-import { BrowserWindow, shell, webContents } from 'electron'
+import { shell, webContents } from 'electron'
 import {
   normalizeBrowserNavigationUrl,
   normalizeExternalBrowserUrl
@@ -130,13 +130,6 @@ export class BrowserManager {
       return () => {}
     }
 
-    const win = BrowserWindow.fromWebContents(renderer)
-    const wasFocused = win ? win.isFocused() : true
-    if (win && !wasFocused) {
-      win.show()
-      win.focus()
-    }
-
     const prev = await renderer
       .executeJavaScript(
         `(function() {
@@ -146,9 +139,12 @@ export class BrowserManager {
           var prevTabType = state.activeTabType;
           var prevActiveWorktreeId = state.activeWorktreeId || null;
           var prevActiveBrowserWorkspaceId = state.activeBrowserTabId || null;
+          var prevActiveBrowserPageId = null;
           var prevFocusedGroupTabId = null;
           var targetWorktreeId = ${JSON.stringify(worktreeId)};
           var browserWorkspaceId = ${JSON.stringify(browserWorkspaceId)};
+          var browserPageId = ${JSON.stringify(browserPageId)};
+          var browserTabsByWorktree = state.browserTabsByWorktree || {};
 
           if (prevActiveWorktreeId) {
             var prevFocusedGroupId = (state.activeGroupIdByWorktree || {})[prevActiveWorktreeId];
@@ -161,6 +157,19 @@ export class BrowserManager {
             }
           }
 
+          if (prevActiveBrowserWorkspaceId) {
+            for (var prevWtId in browserTabsByWorktree) {
+              var prevBrowserTabs = browserTabsByWorktree[prevWtId] || [];
+              for (var pbt = 0; pbt < prevBrowserTabs.length; pbt++) {
+                if (prevBrowserTabs[pbt].id === prevActiveBrowserWorkspaceId) {
+                  prevActiveBrowserPageId = prevBrowserTabs[pbt].activePageId || null;
+                  break;
+                }
+              }
+              if (prevActiveBrowserPageId) break;
+            }
+          }
+
           if (
             targetWorktreeId &&
             prevActiveWorktreeId !== targetWorktreeId &&
@@ -170,25 +179,66 @@ export class BrowserManager {
             state = store.getState();
           }
 
-          var allTabs = state.unifiedTabsByWorktree || {};
-          var found = null;
-          for (var wtId in allTabs) {
-            var tabs = allTabs[wtId];
+          var foundWorkspace = null;
+          for (var wtId in browserTabsByWorktree) {
+            var tabs = browserTabsByWorktree[wtId] || [];
             for (var i = 0; i < tabs.length; i++) {
-              if (tabs[i].contentType === 'browser' && tabs[i].entityId === browserWorkspaceId) {
-                found = tabs[i];
+              if (tabs[i].id === browserWorkspaceId) {
+                foundWorkspace = tabs[i];
+                if (!targetWorktreeId) {
+                  targetWorktreeId = wtId;
+                }
                 break;
               }
             }
-            if (found) break;
+            if (foundWorkspace) break;
           }
 
-          if (found) {
+          var hasTargetPage = false;
+          var targetPages = (state.browserPagesByWorkspace || {})[browserWorkspaceId] || [];
+          for (var pageIndex = 0; pageIndex < targetPages.length; pageIndex++) {
+            if (targetPages[pageIndex].id === browserPageId) {
+              hasTargetPage = true;
+              break;
+            }
+          }
+
+          if (foundWorkspace) {
             if (typeof state.setActiveBrowserTab === 'function') {
               state.setActiveBrowserTab(browserWorkspaceId);
+              state = store.getState();
             } else {
-              state.activateTab(found.id);
+              var allTabs = state.unifiedTabsByWorktree || {};
+              var found = null;
+              for (var unifiedWtId in allTabs) {
+                var unifiedTabs = allTabs[unifiedWtId] || [];
+                for (var unifiedIndex = 0; unifiedIndex < unifiedTabs.length; unifiedIndex++) {
+                  if (
+                    unifiedTabs[unifiedIndex].contentType === 'browser' &&
+                    unifiedTabs[unifiedIndex].entityId === browserWorkspaceId
+                  ) {
+                    found = unifiedTabs[unifiedIndex];
+                    break;
+                  }
+                }
+                if (found) break;
+              }
+              if (found) {
+                state.activateTab(found.id);
+              }
               state.setActiveTabType('browser');
+              state = store.getState();
+            }
+            // Why: activating the workspace alone is not enough for screenshot
+            // capture when a browser workspace contains multiple pages. The
+            // compositor only paints the currently mounted page guest.
+            if (
+              hasTargetPage &&
+              foundWorkspace.activePageId !== browserPageId &&
+              typeof state.setActiveBrowserPage === 'function'
+            ) {
+              state.setActiveBrowserPage(browserWorkspaceId, browserPageId);
+              state = store.getState();
             }
           }
 
@@ -196,9 +246,11 @@ export class BrowserManager {
             prevTabType: prevTabType,
             prevActiveWorktreeId: prevActiveWorktreeId,
             prevActiveBrowserWorkspaceId: prevActiveBrowserWorkspaceId,
+            prevActiveBrowserPageId: prevActiveBrowserPageId,
             prevFocusedGroupTabId: prevFocusedGroupTabId,
             targetWorktreeId: targetWorktreeId,
-            targetBrowserWorkspaceId: found ? browserWorkspaceId : null
+            targetBrowserWorkspaceId: foundWorkspace ? browserWorkspaceId : null,
+            targetBrowserPageId: foundWorkspace && hasTargetPage ? browserPageId : null
           };
         })()`
       )
@@ -209,9 +261,10 @@ export class BrowserManager {
       (prev.prevTabType !== 'browser' ||
         prev.prevActiveWorktreeId !== prev.targetWorktreeId ||
         prev.prevFocusedGroupTabId !== null ||
-        prev.prevActiveBrowserWorkspaceId !== prev.targetBrowserWorkspaceId)
+        prev.prevActiveBrowserWorkspaceId !== prev.targetBrowserWorkspaceId ||
+        prev.prevActiveBrowserPageId !== prev.targetBrowserPageId)
 
-    if (!needsRestore && wasFocused) {
+    if (!needsRestore) {
       return () => {}
     }
 
@@ -242,6 +295,20 @@ export class BrowserManager {
               typeof state.setActiveBrowserTab === 'function'
             ) {
               state.setActiveBrowserTab(${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)});
+              state = store.getState();
+            }
+            if (
+              ${JSON.stringify(prev?.prevTabType)} === 'browser' &&
+              ${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)} &&
+              ${JSON.stringify(prev?.prevActiveBrowserPageId)} &&
+              ${JSON.stringify(prev?.prevActiveBrowserPageId)} !==
+                ${JSON.stringify(prev?.targetBrowserPageId)} &&
+              typeof state.setActiveBrowserPage === 'function'
+            ) {
+              state.setActiveBrowserPage(
+                ${JSON.stringify(prev?.prevActiveBrowserWorkspaceId)},
+                ${JSON.stringify(prev?.prevActiveBrowserPageId)}
+              );
               state = store.getState();
             } else if (${JSON.stringify(prev?.prevFocusedGroupTabId)}) {
               state.activateTab(${JSON.stringify(prev?.prevFocusedGroupTabId)});
@@ -340,6 +407,25 @@ export class BrowserManager {
     })
   }
 
+  private retireStaleGuestWebContents(previousWebContentsId: number): void {
+    // Why: a browser page can re-register with a new guest id after Chromium
+    // swaps renderer processes. Late events from the dead guest must stop
+    // resolving to the live page, or stale download/popup/permission callbacks
+    // can be delivered to the wrong session after the swap.
+    this.tabIdByWebContentsId.delete(previousWebContentsId)
+
+    const policyCleanup = this.policyCleanupByGuestId.get(previousWebContentsId)
+    if (policyCleanup) {
+      policyCleanup()
+      this.policyCleanupByGuestId.delete(previousWebContentsId)
+    }
+    this.policyAttachedGuestIds.delete(previousWebContentsId)
+    this.pendingLoadFailuresByGuestId.delete(previousWebContentsId)
+    this.pendingPermissionEventsByGuestId.delete(previousWebContentsId)
+    this.pendingPopupEventsByGuestId.delete(previousWebContentsId)
+    this.pendingDownloadIdsByGuestId.delete(previousWebContentsId)
+  }
+
   registerGuest({
     browserPageId,
     browserTabId: legacyBrowserTabId,
@@ -382,6 +468,11 @@ export class BrowserManager {
       // installation; otherwise a trusted renderer could point us at some other
       // arbitrary webview and bypass the intended host-window attach boundary.
       return
+    }
+
+    const previousWebContentsId = this.webContentsIdByTabId.get(browserTabId)
+    if (previousWebContentsId !== undefined && previousWebContentsId !== webContentsId) {
+      this.retireStaleGuestWebContents(previousWebContentsId)
     }
 
     this.webContentsIdByTabId.set(browserTabId, webContentsId)

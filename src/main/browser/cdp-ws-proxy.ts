@@ -8,11 +8,6 @@ export class CdpWsProxy {
   private wss: WebSocketServer | null = null
   private client: WebSocket | null = null
   private port = 0
-  private nextId = 1
-  private readonly inflight = new Map<
-    number,
-    { clientId: number; resolve: (v: unknown) => void; reject: (e: Error) => void }
-  >()
   private debuggerMessageHandler: ((...args: unknown[]) => void) | null = null
   private debuggerDetachHandler: ((...args: unknown[]) => void) | null = null
   private attached = false
@@ -31,7 +26,7 @@ export class CdpWsProxy {
           this.client.close()
         }
         this.client = ws
-        ws.on('message', (data) => this.handleClientMessage(data.toString()))
+        ws.on('message', (data) => this.handleClientMessage(ws, data.toString()))
         ws.on('close', () => {
           if (this.client === ws) {
             this.client = null
@@ -65,28 +60,24 @@ export class CdpWsProxy {
       this.httpServer.close()
       this.httpServer = null
     }
-    for (const { reject } of this.inflight.values()) {
-      reject(new Error('Proxy stopped'))
-    }
-    this.inflight.clear()
   }
 
   getPort(): number {
     return this.port
   }
 
-  private send(payload: unknown): void {
-    if (this.client?.readyState === WebSocket.OPEN) {
-      this.client.send(JSON.stringify(payload))
+  private send(payload: unknown, client = this.client): void {
+    if (client?.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(payload))
     }
   }
 
-  private sendResult(clientId: number, result: unknown): void {
-    this.send({ id: clientId, result })
+  private sendResult(clientId: number, result: unknown, client = this.client): void {
+    this.send({ id: clientId, result }, client)
   }
 
-  private sendError(clientId: number, message: string): void {
-    this.send({ id: clientId, error: { code: -32000, message } })
+  private sendError(clientId: number, message: string, client = this.client): void {
+    this.send({ id: clientId, error: { code: -32000, message } }, client)
   }
 
   private buildTargetInfo(): Record<string, unknown> {
@@ -185,7 +176,7 @@ export class CdpWsProxy {
     }
   }
 
-  private handleClientMessage(raw: string): void {
+  private handleClientMessage(client: WebSocket, raw: string): void {
     let msg: { id?: number; method?: string; params?: Record<string, unknown>; sessionId?: string }
     try {
       msg = JSON.parse(raw)
@@ -198,44 +189,48 @@ export class CdpWsProxy {
     const clientId = msg.id
 
     if (msg.method === 'Target.getTargets') {
-      this.sendResult(clientId, { targetInfos: [this.buildTargetInfo()] })
+      this.sendResult(clientId, { targetInfos: [this.buildTargetInfo()] }, client)
       return
     }
     if (msg.method === 'Target.getTargetInfo') {
-      this.sendResult(clientId, { targetInfo: this.buildTargetInfo() })
+      this.sendResult(clientId, { targetInfo: this.buildTargetInfo() }, client)
       return
     }
     if (msg.method === 'Target.setDiscoverTargets' || msg.method === 'Target.detachFromTarget') {
       if (msg.method === 'Target.detachFromTarget') {
         this.clientSessionId = undefined
       }
-      this.sendResult(clientId, {})
+      this.sendResult(clientId, {}, client)
       return
     }
     if (msg.method === 'Target.attachToTarget') {
       this.clientSessionId = 'orca-proxy-session'
-      this.sendResult(clientId, { sessionId: this.clientSessionId })
+      this.sendResult(clientId, { sessionId: this.clientSessionId }, client)
       return
     }
     if (msg.method === 'Browser.getVersion') {
-      this.sendResult(clientId, {
-        protocolVersion: '1.3',
-        product: 'Orca/Electron',
-        userAgent: '',
-        jsVersion: ''
-      })
+      this.sendResult(
+        clientId,
+        {
+          protocolVersion: '1.3',
+          product: 'Orca/Electron',
+          userAgent: '',
+          jsVersion: ''
+        },
+        client
+      )
       return
     }
     if (msg.method === 'Page.bringToFront') {
       if (!this.webContents.isDestroyed()) {
         this.webContents.focus()
       }
-      this.sendResult(clientId, {})
+      this.sendResult(clientId, {}, client)
       return
     }
     // Why: Page.captureScreenshot via debugger.sendCommand hangs on Electron webview guests.
     if (msg.method === 'Page.captureScreenshot') {
-      this.handleScreenshot(clientId, msg.params)
+      this.handleScreenshot(client, clientId, msg.params)
       return
     }
     // Why: Input.insertText/Runtime.evaluate need native focus for clipboard APIs.
@@ -250,35 +245,33 @@ export class CdpWsProxy {
     // Why: agent-browser waits for network idle to detect navigation completion.
     // Electron webview CDP subscriptions silently lapse after cross-process swaps.
     if (msg.method === 'Page.navigate' && !this.webContents.isDestroyed()) {
-      void this.navigateWithLifecycleEnsured(clientId, msg.params ?? {})
+      void this.navigateWithLifecycleEnsured(client, clientId, msg.params ?? {})
       return
     }
-    this.forwardCommand(clientId, msg.method, msg.params ?? {}, msg.sessionId)
+    this.forwardCommand(client, clientId, msg.method, msg.params ?? {}, msg.sessionId)
   }
 
   private forwardCommand(
+    client: WebSocket,
     clientId: number,
     method: string,
     params: Record<string, unknown>,
     msgSessionId?: string
   ): void {
-    const internalId = this.nextId++
     const sessionId =
       msgSessionId && msgSessionId !== this.clientSessionId ? msgSessionId : undefined
     this.webContents.debugger
       .sendCommand(method, params, sessionId)
       .then((result) => {
-        this.inflight.delete(internalId)
-        this.sendResult(clientId, result)
+        this.sendResult(clientId, result, client)
       })
       .catch((err: Error) => {
-        this.inflight.delete(internalId)
-        this.sendError(clientId, err.message)
+        this.sendError(clientId, err.message, client)
       })
-    this.inflight.set(internalId, { clientId, resolve: () => {}, reject: () => {} })
   }
 
   private async navigateWithLifecycleEnsured(
+    client: WebSocket,
     clientId: number,
     params: Record<string, unknown>
   ): Promise<void> {
@@ -291,15 +284,19 @@ export class CdpWsProxy {
     } catch {
       /* best-effort */
     }
-    this.forwardCommand(clientId, 'Page.navigate', params)
+    this.forwardCommand(client, clientId, 'Page.navigate', params)
   }
 
-  private handleScreenshot(clientId: number, params?: Record<string, unknown>): void {
+  private handleScreenshot(
+    client: WebSocket,
+    clientId: number,
+    params?: Record<string, unknown>
+  ): void {
     captureScreenshot(
       this.webContents,
       params,
-      (result) => this.sendResult(clientId, result),
-      (message) => this.sendError(clientId, message)
+      (result) => this.sendResult(clientId, result, client),
+      (message) => this.sendError(clientId, message, client)
     )
   }
 }

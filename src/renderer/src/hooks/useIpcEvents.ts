@@ -241,7 +241,11 @@ export function useIpcEvents(): void {
       window.api.ui.onRequestTabClose((data) => {
         try {
           const store = useAppStore.getState()
-          let tabToClose = data.tabId ?? store.activeBrowserTabId
+          let tabToClose =
+            data.tabId ??
+            (data.worktreeId
+              ? (store.activeBrowserTabIdByWorktree?.[data.worktreeId] ?? null)
+              : store.activeBrowserTabId)
           if (!tabToClose) {
             window.api.ui.replyTabClose({
               requestId: data.requestId,

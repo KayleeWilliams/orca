@@ -605,7 +605,7 @@ export type PreloadApi = {
     ) => () => void
     replyTabCreate: (reply: { requestId: string; browserPageId?: string; error?: string }) => void
     onRequestTabClose: (
-      callback: (data: { requestId: string; tabId: string | null }) => void
+      callback: (data: { requestId: string; tabId: string | null; worktreeId?: string }) => void
     ) => () => void
     replyTabClose: (reply: { requestId: string; error?: string }) => void
     onNewTerminalTab: (callback: () => void) => () => void

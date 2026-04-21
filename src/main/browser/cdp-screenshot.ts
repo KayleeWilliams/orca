@@ -1,5 +1,56 @@
 import type { WebContents } from 'electron'
 
+function applyFallbackClip(
+  image: Electron.NativeImage,
+  params: Record<string, unknown> | undefined
+): Electron.NativeImage | null {
+  if (params?.captureBeyondViewport) {
+    // Why: capturePage() can only see the currently painted viewport. If the
+    // caller asked for beyond-viewport pixels, returning a viewport-sized image
+    // would silently lie about what was captured.
+    return null
+  }
+
+  const clip = params?.clip
+  if (!clip || typeof clip !== 'object') {
+    return image
+  }
+  const clipRect = clip as Record<string, unknown>
+
+  const x = typeof clipRect.x === 'number' ? clipRect.x : NaN
+  const y = typeof clipRect.y === 'number' ? clipRect.y : NaN
+  const width = typeof clipRect.width === 'number' ? clipRect.width : NaN
+  const height = typeof clipRect.height === 'number' ? clipRect.height : NaN
+  const scale =
+    typeof clipRect.scale === 'number' && Number.isFinite(clipRect.scale) && clipRect.scale > 0
+      ? clipRect.scale
+      : 1
+
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null
+  }
+
+  const cropRect = {
+    x: Math.round(x * scale),
+    y: Math.round(y * scale),
+    width: Math.round(width * scale),
+    height: Math.round(height * scale)
+  }
+  const imageSize = image.getSize()
+  if (
+    cropRect.x < 0 ||
+    cropRect.y < 0 ||
+    cropRect.width <= 0 ||
+    cropRect.height <= 0 ||
+    cropRect.x + cropRect.width > imageSize.width ||
+    cropRect.y + cropRect.height > imageSize.height
+  ) {
+    return null
+  }
+
+  return image.crop(cropRect)
+}
+
 function encodeNativeImageScreenshot(
   image: Electron.NativeImage,
   params: Record<string, unknown> | undefined
@@ -8,12 +59,17 @@ function encodeNativeImageScreenshot(
     return null
   }
 
+  const clippedImage = applyFallbackClip(image, params)
+  if (!clippedImage || clippedImage.isEmpty()) {
+    return null
+  }
+
   const format = params?.format === 'jpeg' ? 'jpeg' : 'png'
   const quality =
     typeof params?.quality === 'number' && Number.isFinite(params.quality)
       ? Math.max(0, Math.min(100, Math.round(params.quality)))
       : undefined
-  const buffer = format === 'jpeg' ? image.toJPEG(quality ?? 90) : image.toPNG()
+  const buffer = format === 'jpeg' ? clippedImage.toJPEG(quality ?? 90) : clippedImage.toPNG()
   return { data: buffer.toString('base64') }
 }
 
@@ -68,8 +124,15 @@ export function captureScreenshot(
   const timer = setTimeout(async () => {
     if (!settled) {
       try {
-        const fallback = encodeNativeImageScreenshot(await webContents.capturePage(), params)
+        const image = await webContents.capturePage()
+        if (settled) {
+          return
+        }
+        const fallback = encodeNativeImageScreenshot(image, params)
         if (fallback) {
+          if (settled) {
+            return
+          }
           settled = true
           onResult(fallback)
           return

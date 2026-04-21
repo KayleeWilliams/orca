@@ -1197,19 +1197,22 @@ export class OrcaRuntimeService {
       }
       return undefined
     }
-    try {
-      const worktreeId = (await this.resolveWorktreeSelector(selector)).id
-      // Why: if the worktree has no registered tabs in the bridge, it's likely
-      // not the active worktree in the UI (webviews only mount for the active
-      // worktree). Activate it so existing tabs become operable.
-      const bridge = this.agentBrowserBridge
-      if (bridge && bridge.getRegisteredTabs(worktreeId).size === 0) {
+
+    const worktreeId = (await this.resolveWorktreeSelector(selector)).id
+    // Why: explicit worktree selectors are user intent, so resolution errors
+    // must surface instead of silently widening browser routing scope. Only the
+    // activation step remains best-effort because missing windows during tests
+    // or startup should not erase the validated worktree target itself.
+    const bridge = this.agentBrowserBridge
+    if (bridge && bridge.getRegisteredTabs(worktreeId).size === 0) {
+      try {
         await this.ensureBrowserWorktreeActive(worktreeId)
+      } catch {
+        // Fall through with the validated worktree id so downstream routing
+        // still stays scoped to the caller's explicit selector.
       }
-      return worktreeId
-    } catch {
-      return undefined
     }
+    return worktreeId
   }
 
   private async resolveBrowserCommandTarget(
@@ -2194,7 +2197,12 @@ export class OrcaRuntimeService {
         }
       }
       ipcMain.on('browser:tabCloseReply', handler)
-      win.webContents.send('browser:requestTabClose', { requestId, tabId })
+      // Why: when main cannot resolve a concrete tab id itself (for example if a
+      // browser workspace exists in the renderer before its guest mounts), the
+      // renderer still needs the intended worktree scope. Otherwise it falls
+      // back to the globally active browser tab and can close a tab in the
+      // wrong worktree.
+      win.webContents.send('browser:requestTabClose', { requestId, tabId, worktreeId })
     })
 
     return { closed: true }

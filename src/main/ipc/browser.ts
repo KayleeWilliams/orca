@@ -154,7 +154,13 @@ export function registerBrowserHandlers(): void {
     }
     const wcId = browserManager.getGuestWebContentsId(args.browserPageId)
     if (wcId !== null) {
-      agentBrowserBridgeRef.onTabChanged(wcId)
+      // Why: renderer tab changes are scoped to a worktree. If we only update
+      // the global active guest, later worktree-scoped commands can still
+      // resolve to the previously active page inside that worktree.
+      agentBrowserBridgeRef.onTabChanged(
+        wcId,
+        browserManager.getWorktreeIdForTab(args.browserPageId)
+      )
     }
     return true
   })

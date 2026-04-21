@@ -417,7 +417,30 @@ describe('orca cli browser page targeting', () => {
     })
   })
 
-  it('scopes tab switch by page id to the current worktree when available', async () => {
+  it('passes page-targeted tab switches through without auto-scoping to the current worktree', async () => {
+    callMock.mockResolvedValueOnce({
+      id: 'req_switch',
+      ok: true,
+      result: {
+        switched: 2,
+        browserPageId: 'page-2'
+      },
+      _meta: {
+        runtimeId: 'runtime-1'
+      }
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(['tab', 'switch', '--page', 'page-2', '--json'], '/tmp/repo/feature/src')
+
+    expect(callMock).toHaveBeenCalledTimes(1)
+    expect(callMock).toHaveBeenCalledWith('browser.tabSwitch', {
+      index: undefined,
+      page: 'page-2'
+    })
+  })
+
+  it('still resolves the current worktree when tab switch --page is combined with --worktree current', async () => {
     callMock
       .mockResolvedValueOnce({
         id: 'req_list',
@@ -461,7 +484,10 @@ describe('orca cli browser page targeting', () => {
       })
     vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    await main(['tab', 'switch', '--page', 'page-2', '--json'], '/tmp/repo/feature/src')
+    await main(
+      ['tab', 'switch', '--page', 'page-2', '--worktree', 'current', '--json'],
+      '/tmp/repo/feature/src'
+    )
 
     expect(callMock).toHaveBeenNthCalledWith(1, 'worktree.list', {
       limit: 10_000

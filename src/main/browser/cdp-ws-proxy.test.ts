@@ -158,6 +158,38 @@ describe('CdpWsProxy', () => {
     client.close()
   })
 
+  it('does not deliver a late response from a closed client to a newer websocket', async () => {
+    let resolveSlowCommand: ((value: { result: string }) => void) | null = null
+    mock.webContents.debugger.sendCommand
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSlowCommand = resolve
+          })
+      )
+      .mockResolvedValueOnce({ result: 'new-client' })
+
+    const firstClient = await connect()
+    firstClient.send(JSON.stringify({ id: 1, method: 'DOM.enable', params: {} }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const secondClient = await connect()
+    const responses: Record<string, unknown>[] = []
+    secondClient.on('message', (data) => {
+      responses.push(JSON.parse(data.toString()))
+    })
+
+    secondClient.send(JSON.stringify({ id: 2, method: 'Page.enable', params: {} }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    resolveSlowCommand!({ result: 'old-client' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(responses).toEqual([{ id: 2, result: { result: 'new-client' } }])
+
+    secondClient.close()
+  })
+
   // ── sessionId envelope translation ──
 
   it('forwards sessionId to sendCommand for OOPIF support', async () => {
