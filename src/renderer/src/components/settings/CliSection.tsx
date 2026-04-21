@@ -53,21 +53,24 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
   const [hookStatuses, setHookStatuses] = useState<{
     claude: AgentHookInstallStatus | null
     codex: AgentHookInstallStatus | null
+    gemini: AgentHookInstallStatus | null
     loading: boolean
   }>({
     claude: null,
     codex: null,
+    gemini: null,
     loading: true
   })
 
   const refreshHookStatus = useCallback(async (): Promise<void> => {
     setHookStatuses((prev) => ({ ...prev, loading: true }))
     try {
-      const [claude, codex] = await Promise.all([
+      const [claude, codex, gemini] = await Promise.all([
         window.api.agentHooks.claudeStatus(),
-        window.api.agentHooks.codexStatus()
+        window.api.agentHooks.codexStatus(),
+        window.api.agentHooks.geminiStatus()
       ])
-      setHookStatuses({ claude, codex, loading: false })
+      setHookStatuses({ claude, codex, gemini, loading: false })
     } catch {
       setHookStatuses((prev) => ({ ...prev, loading: false }))
     }
@@ -281,14 +284,15 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
                 {/* Why: hooks are auto-installed at app startup. Surfacing the
                 result as read-only status avoids a toggle whose "Remove" would
                 be silently reverted on next launch. */}
-                Orca installs Claude and Codex global hooks at startup so agent lifecycle updates
-                flow into the sidebar automatically.
+                Orca installs Claude, Codex, and Gemini global hooks at startup so agent lifecycle
+                updates flow into the sidebar automatically.
               </p>
               <div className="mt-2 space-y-2">
                 {(
                   [
                     ['claude', hookStatuses.claude],
-                    ['codex', hookStatuses.codex]
+                    ['codex', hookStatuses.codex],
+                    ['gemini', hookStatuses.gemini]
                   ] as const
                 ).map(([agent, status]) => {
                   const installed = status?.managedHooksPresent === true

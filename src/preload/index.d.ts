@@ -156,6 +156,7 @@ type CliApi = {
 type AgentHooksApi = {
   claudeStatus: () => Promise<AgentHookInstallStatus>
   codexStatus: () => Promise<AgentHookInstallStatus>
+  geminiStatus: () => Promise<AgentHookInstallStatus>
 }
 
 type NotificationsApi = {
@@ -202,14 +203,19 @@ type AgentStatusApi = {
   onSet: (
     callback: (data: {
       paneKey: string
+      tabId?: string
+      worktreeId?: string
       state: string
-      summary?: string
-      next?: string
+      prompt?: string
       agentType?: string
     }) => void
   ) => () => void
 }
 
+// Why: Only locally-defined *Api types are listed here. Keys like preflight,
+// hooks, cache, session, updater, fs, git, ui, and runtime are inherited via
+// the PreloadApi intersection (see ./api-types), so re-declaring them would
+// reference undefined type names and risk drifting from the canonical surface.
 type Api = PreloadApi & {
   repos: ReposApi
   worktrees: WorktreesApi
@@ -219,17 +225,8 @@ type Api = PreloadApi & {
   settings: SettingsApi
   cli: CliApi
   agentHooks: AgentHooksApi
-  preflight: PreflightApi
   notifications: NotificationsApi
   shell: ShellApi
-  hooks: HooksApi
-  cache: CacheApi
-  session: SessionApi
-  updater: UpdaterApi
-  fs: FsApi
-  git: GitApi
-  ui: UIApi
-  runtime: RuntimeApi
   agentStatus: AgentStatusApi
 }
 

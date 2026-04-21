@@ -19,9 +19,7 @@ describe('agent status freshness expiry', () => {
     vi.setSystemTime(new Date('2026-04-09T12:00:00.000Z'))
 
     const store = createTestStore()
-    store
-      .getState()
-      .setAgentStatus('tab-1:1', { state: 'working', summary: 'Fix tests', next: '' }, 'codex')
+    store.getState().setAgentStatus('tab-1:1', { state: 'working', prompt: 'Fix tests' }, 'codex')
 
     // setAgentStatus bumps epoch once synchronously
     expect(store.getState().agentStatusEpoch).toBe(1)
@@ -40,9 +38,7 @@ describe('agent status freshness expiry', () => {
     vi.setSystemTime(new Date('2026-04-09T12:00:00.000Z'))
 
     const store = createTestStore()
-    store
-      .getState()
-      .setAgentStatus('tab-1:1', { state: 'working', summary: 'Fix tests', next: '' }, 'codex')
+    store.getState().setAgentStatus('tab-1:1', { state: 'working', prompt: 'Fix tests' }, 'codex')
     // set bumps to 1, remove bumps to 2
     store.getState().removeAgentStatus('tab-1:1')
     expect(store.getState().agentStatusEpoch).toBe(2)

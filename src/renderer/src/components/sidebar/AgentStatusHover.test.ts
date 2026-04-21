@@ -21,8 +21,7 @@ function makeTab(overrides: Partial<TerminalTab> = {}): TerminalTab {
 function makeEntry(overrides: Partial<AgentStatusEntry> & { paneKey: string }): AgentStatusEntry {
   return {
     state: overrides.state ?? 'working',
-    summary: overrides.summary ?? '',
-    next: overrides.next ?? '',
+    prompt: overrides.prompt ?? '',
     updatedAt: overrides.updatedAt ?? NOW - 30_000,
     source: overrides.source ?? 'agent',
     agentType: overrides.agentType ?? 'codex',
@@ -37,11 +36,11 @@ describe('buildAgentStatusHoverRows', () => {
     const rows = buildAgentStatusHoverRows(
       [makeTab({ id: 'tab-1', title: 'codex working' })],
       {
-        'tab-1:1': makeEntry({ paneKey: 'tab-1:1', summary: 'Fix login bug' }),
+        'tab-1:1': makeEntry({ paneKey: 'tab-1:1', prompt: 'Fix login bug' }),
         'tab-1:2': makeEntry({
           paneKey: 'tab-1:2',
           state: 'blocked',
-          summary: 'Waiting on failing test'
+          prompt: 'Waiting on failing test'
         })
       },
       NOW
@@ -58,7 +57,7 @@ describe('buildAgentStatusHoverRows', () => {
     expect(rows[0]?.kind).toBe('heuristic')
   })
 
-  it('keeps stale explicit summaries but orders by heuristic urgency', () => {
+  it('keeps stale explicit prompts but orders by heuristic urgency', () => {
     const rows = buildAgentStatusHoverRows(
       [
         makeTab({ id: 'tab-a', title: 'codex permission needed' }),

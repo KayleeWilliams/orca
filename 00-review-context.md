@@ -155,6 +155,51 @@ See "Changed Files Summary" above. Categories are:
 
 ## Iteration State
 
-Current iteration: 1
-Last completed phase: Setup
-Files fixed this iteration: []
+Current iteration: 2
+Last completed phase: Iteration 1 Fix complete, typecheck clean
+Files fixed iter 1:
+- src/main/agent-hooks/server.ts (C1, C2, M2)
+- src/main/ipc/pty.ts (H1)
+- src/main/claude/hook-service.ts (H2a)
+- src/main/codex/hook-service.ts (H2b)
+- src/renderer/src/components/terminal-pane/pty-transport.ts (H3)
+- src/renderer/src/hooks/useIpcEvents.ts (H4, M5, M6)
+- src/renderer/src/components/terminal-pane/pty-connection.ts (H5)
+- src/renderer/src/store/slices/terminals.ts (M1)
+- src/preload/index.d.ts (M3)
+- src/renderer/src/components/dashboard/useDashboardKeyboard.ts (M4)
+- src/renderer/src/components/dashboard/AgentDashboard.tsx (M4 — container ref)
+
+## Validated Fix Manifest (Iteration 1)
+
+### Critical
+- C1: src/main/agent-hooks/server.ts:20-23 - readJsonBody missing `return` after reject+destroy; no request timeout.
+
+### High
+- H1: src/main/ipc/pty.ts:194 - Hardcoded `:` PATH separator breaks Windows dev.
+- H2a: src/main/claude/hook-service.ts:94-98 - getStatus returns `installed` if ANY event has managed command; should require ALL CLAUDE_EVENTS and return `partial` otherwise.
+- H2b: src/main/codex/hook-service.ts:83-87 - Same as H2a for CODEX_EVENTS.
+- H3: src/renderer/src/components/terminal-pane/pty-transport.ts:107-142 - Unbounded `pending` buffer in OSC processor.
+- H4: src/renderer/src/hooks/useIpcEvents.ts:407,424 - Debug console.log leaks payload contents on every event.
+- H5: src/renderer/src/components/terminal-pane/pty-connection.ts:162-175 - `onAgentStatus` callback on transport not wired from pty-connection, so OSC 9999 payloads are parsed but never forwarded to store.
+
+### Medium
+- M1: src/renderer/src/store/slices/terminals.ts:344-349,404 - Inline agent-status sweep skips epoch bump; call `removeAgentStatusByTabPrefix` instead.
+- M2: src/main/agent-hooks/server.ts:121-168 - Startup `once('error', reject)` never removed, no persistent error listener; runtime errors can crash main process.
+- M3: src/preload/index.d.ts:208-228 - Api type references undefined types (HooksApi, CacheApi, SessionApi, UpdaterApi, FsApi, GitApi, UIApi, RuntimeApi) and duplicates PreloadApi fields.
+- M4: src/renderer/src/components/dashboard/useDashboardKeyboard.ts - Global keydown listener intercepts arrow keys and digits even when focus is in terminal, can break terminal navigation.
+- M5: src/renderer/src/hooks/useIpcEvents.ts:440-452 - findTerminalTitleForPaneKey returns tab-level title not pane-level; wrong for split panes.
+- M6: src/renderer/src/hooks/useIpcEvents.ts:406-431 - No paneKey validation; orphan status entries persist forever.
+
+### Deferred to next iteration (Medium, non-blocking)
+- M7: src/renderer/src/components/sidebar/WorktreeCard.tsx:148-150 - Double Object.values filter.
+- M8: src/renderer/src/components/sidebar/AgentStatusHover.tsx:334-338 - `now` useMemo staleness.
+- M9: src/renderer/src/components/dashboard/useDashboardData.ts:80-82 - O(W*T*P) per render.
+- M10: src/cli/runtime-client.ts:386-391 - ORCA_USER_DATA_PATH no trim/validate.
+
+### Skipped (won't fix)
+- L: Dead exports AgentStatusPayload, WellKnownAgentType — they document the wire contract and cost nothing.
+- L: `'status'` in isCommandGroup — benign per reviewer; callers consult findCommandSpec first.
+- L: normalizeField whitespace collapse scope — matches design intent.
+- L: pty-transport dead regex exports (extractAgentStatusOsc, stripAgentStatusOsc) — may be test helpers; low churn. Will revisit in iter 2.
+- L: `isExplicitAgentStatusFresh` 3x per entry in smart-sort — trivial, defer.

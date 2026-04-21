@@ -1,7 +1,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { app } from 'electron'
-import type { AgentHookInstallStatus } from '../../shared/agent-hook-types'
+import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import {
   readHooksJson,
   removeManagedCommands,
@@ -51,7 +51,7 @@ function getManagedScript(): string {
       'if "%ORCA_AGENT_HOOK_PORT%"=="" exit /b 0',
       'if "%ORCA_AGENT_HOOK_TOKEN%"=="" exit /b 0',
       'if "%ORCA_PANE_KEY%"=="" exit /b 0',
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "$inputData=[Console]::In.ReadToEnd(); if ([string]::IsNullOrWhiteSpace($inputData)) { exit 0 }; try { $body=@{ paneKey=$env:ORCA_PANE_KEY; payload=($inputData | ConvertFrom-Json) } | ConvertTo-Json -Depth 100; Invoke-WebRequest -UseBasicParsing -Method Post -Uri ('http://127.0.0.1:' + $env:ORCA_AGENT_HOOK_PORT + '/hook/claude') -Headers @{ 'Content-Type'='application/json'; 'X-Orca-Agent-Hook-Token'=$env:ORCA_AGENT_HOOK_TOKEN } -Body $body | Out-Null } catch {}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "$inputData=[Console]::In.ReadToEnd(); if ([string]::IsNullOrWhiteSpace($inputData)) { exit 0 }; try { $body=@{ paneKey=$env:ORCA_PANE_KEY; tabId=$env:ORCA_TAB_ID; worktreeId=$env:ORCA_WORKTREE_ID; env=$env:ORCA_AGENT_HOOK_ENV; version=$env:ORCA_AGENT_HOOK_VERSION; payload=($inputData | ConvertFrom-Json) } | ConvertTo-Json -Depth 100; Invoke-WebRequest -UseBasicParsing -Method Post -Uri ('http://127.0.0.1:' + $env:ORCA_AGENT_HOOK_PORT + '/hook/claude') -Headers @{ 'Content-Type'='application/json'; 'X-Orca-Agent-Hook-Token'=$env:ORCA_AGENT_HOOK_TOKEN } -Body $body | Out-Null } catch {}"`,
       'exit /b 0',
       ''
     ].join('\r\n')
@@ -66,7 +66,11 @@ function getManagedScript(): string {
     'if [ -z "$payload" ]; then',
     '  exit 0',
     'fi',
-    `body=$(printf '{"paneKey":"%s","payload":%s}' "$ORCA_PANE_KEY" "$payload")`,
+    // Why: routing/version metadata is included alongside the raw hook payload
+    // so the receiver can (a) group panes by tab/worktree without round-tripping
+    // through paneKey parsing, (b) warn on dev/prod cross-talk, and (c) detect
+    // stale managed scripts installed by an older app build.
+    `body=$(printf '{"paneKey":"%s","tabId":"%s","worktreeId":"%s","env":"%s","version":"%s","payload":%s}' "$ORCA_PANE_KEY" "$ORCA_TAB_ID" "$ORCA_WORKTREE_ID" "$ORCA_AGENT_HOOK_ENV" "$ORCA_AGENT_HOOK_VERSION" "$payload")`,
     'curl -sS -X POST "http://127.0.0.1:${ORCA_AGENT_HOOK_PORT}/hook/claude" \\',
     '  -H "Content-Type: application/json" \\',
     '  -H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}" \\',
@@ -91,19 +95,40 @@ export class ClaudeHookService {
       }
     }
 
-    const managedHooksPresent = Object.values(config.hooks ?? {}).some((definitions) =>
-      definitions.some((definition) =>
-        (definition.hooks ?? []).some((hook) => hook.command === getManagedCommand(scriptPath))
+    // Why: Report `partial` when only some managed events are registered so the
+    // sidebar surfaces a degraded install rather than a false-positive
+    // `installed`. Each CLAUDE_EVENTS entry must contain the managed command for
+    // the integration to function end-to-end.
+    const command = getManagedCommand(scriptPath)
+    const missing: string[] = []
+    let presentCount = 0
+    for (const event of CLAUDE_EVENTS) {
+      const definitions = Array.isArray(config.hooks?.[event.eventName])
+        ? config.hooks![event.eventName]!
+        : []
+      const hasCommand = definitions.some((definition) =>
+        (definition.hooks ?? []).some((hook) => hook.command === command)
       )
-    )
-
-    return {
-      agent: 'claude',
-      state: managedHooksPresent ? 'installed' : 'not_installed',
-      configPath,
-      managedHooksPresent,
-      detail: null
+      if (hasCommand) {
+        presentCount += 1
+      } else {
+        missing.push(event.eventName)
+      }
     }
+    const managedHooksPresent = presentCount > 0
+    let state: AgentHookInstallState
+    let detail: string | null
+    if (missing.length === 0) {
+      state = 'installed'
+      detail = null
+    } else if (presentCount === 0) {
+      state = 'not_installed'
+      detail = null
+    } else {
+      state = 'partial'
+      detail = `Managed hook missing for events: ${missing.join(', ')}`
+    }
+    return { agent: 'claude', state, configPath, managedHooksPresent, detail }
   }
 
   install(): AgentHookInstallStatus {

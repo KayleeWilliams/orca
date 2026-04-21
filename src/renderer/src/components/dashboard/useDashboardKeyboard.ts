@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from 'react'
+import type React from 'react'
 import { useAppStore } from '@/store'
 import type { DashboardRepoGroup } from './useDashboardData'
 import type { DashboardFilter } from './useDashboardFilter'
@@ -10,14 +11,19 @@ type UseDashboardKeyboardParams = {
   setFocusedWorktreeId: (id: string | null) => void
   filter: DashboardFilter
   setFilter: (f: DashboardFilter) => void
+  // Why: the listener must be scoped to the dashboard container so keystrokes
+  // (Arrow keys, digits 1-4, Enter, Escape) only fire when focus is inside the
+  // dashboard. Attaching to window intercepts terminal/xterm navigation (arrow
+  // keys for command history) and shell digit entry while the dashboard pane
+  // is merely open, which breaks those unrelated inputs.
+  containerRef: React.RefObject<HTMLElement | null>
 }
 
 const FILTER_KEYS: Record<string, DashboardFilter> = {
-  '1': 'active',
-  '2': 'all',
-  '3': 'working',
-  '4': 'blocked',
-  '5': 'done'
+  '1': 'all',
+  '2': 'active',
+  '3': 'blocked',
+  '4': 'done'
 }
 
 /** Collect all visible (non-collapsed) worktree IDs in display order. */
@@ -43,17 +49,20 @@ export function useDashboardKeyboard({
   focusedWorktreeId,
   setFocusedWorktreeId,
   filter,
-  setFilter
+  setFilter,
+  containerRef
 }: UseDashboardKeyboardParams): void {
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const setActiveView = useAppStore((s) => s.setActiveView)
-  const rightSidebarTab = useAppStore((s) => s.rightSidebarTab)
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      // Only active when the dashboard pane is open and visible
-      if (!rightSidebarOpen || rightSidebarTab !== 'dashboard') {
+      // Why: the dashboard now docks at the sidebar bottom regardless of
+      // active tab, so gate only on whether the sidebar is visible. The
+      // listener is already scoped to the dashboard container's element,
+      // so focus-based scoping still isolates these shortcuts.
+      if (!rightSidebarOpen) {
         return
       }
 
@@ -80,11 +89,11 @@ export function useDashboardKeyboard({
         return
       }
 
-      // Escape: reset filter to 'active' (the smart default)
+      // Escape: reset filter to 'all' (the default)
       if (e.key === 'Escape') {
-        if (filter !== 'active') {
+        if (filter !== 'all') {
           e.preventDefault()
-          setFilter('active')
+          setFilter('all')
         }
         return
       }
@@ -109,8 +118,13 @@ export function useDashboardKeyboard({
         const nextId = ids[nextIndex]
         setFocusedWorktreeId(nextId)
 
-        // Focus the corresponding DOM card
-        const cardEl = document.querySelector(`[data-worktree-id="${nextId}"]`) as HTMLElement
+        // Focus the corresponding DOM card. Why: scope the lookup to the
+        // dashboard container so we don't accidentally match a card rendered
+        // elsewhere in the app (and so the query fails closed when the
+        // container is unmounted).
+        const cardEl = containerRef.current?.querySelector(
+          `[data-worktree-id="${nextId}"]`
+        ) as HTMLElement | null
         cardEl?.focus()
         return
       }
@@ -124,7 +138,6 @@ export function useDashboardKeyboard({
     },
     [
       rightSidebarOpen,
-      rightSidebarTab,
       filteredGroups,
       collapsedRepos,
       focusedWorktreeId,
@@ -132,12 +145,21 @@ export function useDashboardKeyboard({
       filter,
       setFilter,
       setActiveWorktree,
-      setActiveView
+      setActiveView,
+      containerRef
     ]
   )
 
   useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+    // Why: attach to the dashboard container rather than window so these
+    // shortcuts only fire when focus is inside the dashboard. This prevents
+    // Arrow keys and digits 1-4 from hijacking the terminal (xterm history
+    // navigation) and shell input while the dashboard pane is open.
+    const el = containerRef.current
+    if (!el) {
+      return
+    }
+    el.addEventListener('keydown', handleKeyDown)
+    return () => el.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown, containerRef])
 }

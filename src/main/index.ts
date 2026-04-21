@@ -38,6 +38,7 @@ import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
 import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
+import { geminiHookService } from './gemini/hook-service'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -137,11 +138,25 @@ function openMainWindow(): BrowserWindow {
     }
   })
   mainWindow = window
-  agentHookServer.setListener(({ paneKey, payload }) => {
+  agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
     if (mainWindow?.isDestroyed()) {
+      console.log('[agent-hooks:main] drop (window destroyed)', { paneKey })
       return
     }
-    mainWindow?.webContents.send('agentStatus:set', { paneKey, ...payload })
+    console.log('[agent-hooks:main] forward to renderer', {
+      paneKey,
+      tabId,
+      worktreeId,
+      state: payload.state,
+      promptLen: payload.prompt.length,
+      promptPreview: payload.prompt.slice(0, 80)
+    })
+    mainWindow?.webContents.send('agentStatus:set', {
+      paneKey,
+      tabId,
+      worktreeId,
+      ...payload
+    })
   })
   return window
 }
@@ -172,7 +187,8 @@ app.whenReady().then(async () => {
   // Startup must fail open so a malformed local config never bricks Orca.
   for (const installManagedHooks of [
     () => claudeHookService.install(),
-    () => codexHookService.install()
+    () => codexHookService.install(),
+    () => geminiHookService.install()
   ]) {
     try {
       installManagedHooks()
@@ -245,7 +261,7 @@ app.whenReady().then(async () => {
     openCodeHookService.start().catch((error) => {
       console.error('[opencode] Failed to start local hook server:', error)
     }),
-    agentHookServer.start().catch((error) => {
+    agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' }).catch((error) => {
       // Why: Claude/Codex hook callbacks are sidebar enrichment only. Orca must
       // still boot even if the local loopback receiver cannot bind on this launch.
       console.error('[agent-hooks] Failed to start local hook server:', error)

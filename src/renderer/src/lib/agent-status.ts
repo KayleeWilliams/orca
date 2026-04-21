@@ -1,4 +1,4 @@
-import type { TerminalTab, Worktree } from '../../../shared/types'
+import type { TerminalTab, TuiAgent, Worktree } from '../../../shared/types'
 import type {
   AgentStatusEntry,
   AgentStatusState,
@@ -22,8 +22,6 @@ export {
 import {
   type AgentStatus,
   detectAgentStatusFromTitle,
-  isGeminiTerminalTitle,
-  isClaudeAgent,
   getAgentLabel
 } from '../../../shared/agent-detection'
 
@@ -94,36 +92,6 @@ export function getWorkingAgentsPerWorktree({
   return result
 }
 
-function includesAgentName(title: string, name: string): boolean {
-  return title.toLowerCase().includes(name)
-}
-
-// Why: inferAgentTypeFromTitle classifies a terminal title into a known agent
-// family so the dashboard can display the correct agent icon/label without
-// relying on the explicit hook-based status report (which may not be available
-// for all agent types).
-export function inferAgentTypeFromTitle(title: string | null | undefined): AgentType {
-  if (!title) {
-    return 'unknown'
-  }
-  if (isGeminiTerminalTitle(title)) {
-    return 'gemini'
-  }
-  if (isClaudeAgent(title)) {
-    return 'claude'
-  }
-  if (includesAgentName(title, 'codex')) {
-    return 'codex'
-  }
-  if (includesAgentName(title, 'opencode')) {
-    return 'opencode'
-  }
-  if (includesAgentName(title, 'aider')) {
-    return 'aider'
-  }
-  return 'unknown'
-}
-
 const WELL_KNOWN_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
@@ -138,6 +106,18 @@ export function formatAgentTypeLabel(agentType: AgentType | null | undefined): s
   }
   // Capitalize well-known names nicely; pass through custom names as-is
   return WELL_KNOWN_LABELS[agentType] ?? agentType
+}
+
+// Why: AgentIcon expects a TuiAgent, but AgentType is a broader union that
+// includes 'unknown' and arbitrary strings. Normalize here so both the
+// dashboard row and the sidebar hover pass the same value through to the icon
+// — 'claude' is chosen as the neutral fallback because AgentIcon renders a
+// letter glyph for unknown catalog entries anyway.
+export function agentTypeToIconAgent(agentType: AgentType | null | undefined): TuiAgent {
+  if (!agentType || agentType === 'unknown') {
+    return 'claude'
+  }
+  return agentType as TuiAgent
 }
 
 // Why: explicit agent status entries (from hook-based reports) can go stale if

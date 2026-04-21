@@ -3,7 +3,7 @@ main-process module so spawn-time environment scoping, lifecycle cleanup,
 foreground-process inspection, and renderer IPC stay behind a single audited
 boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
-import { join } from 'path'
+import { join, delimiter } from 'path'
 import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -192,7 +192,7 @@ export function registerPtyHandlers(
           const devUserData = app.getPath('userData')
           baseEnv.ORCA_USER_DATA_PATH ??= devUserData
           const devCliBin = join(devUserData, 'cli', 'bin')
-          baseEnv.PATH = `${devCliBin}:${baseEnv.PATH ?? ''}`
+          baseEnv.PATH = `${devCliBin}${delimiter}${baseEnv.PATH ?? ''}`
         }
 
         return baseEnv
@@ -325,11 +325,18 @@ export function registerPtyHandlers(
       }
     ) => {
       const provider = getProvider(args.connectionId)
+      // Why: agent hook env (ORCA_AGENT_HOOK_PORT/TOKEN) is normally injected by
+      // the LocalPtyProvider's buildSpawnEnv. When the daemon is active, the
+      // local provider is replaced by DaemonPtyAdapter and buildSpawnEnv never
+      // runs — so hook receivers can't find the loopback server. Inject here
+      // as well so both provider paths get the env.
+      const hookEnv = agentHookServer.buildPtyEnv()
+      const effectiveEnv = Object.keys(hookEnv).length > 0 ? { ...args.env, ...hookEnv } : args.env
       const result = await provider.spawn({
         cols: args.cols,
         rows: args.rows,
         cwd: args.cwd,
-        env: args.env,
+        env: effectiveEnv,
         command: args.command,
         worktreeId: args.worktreeId,
         sessionId: args.sessionId

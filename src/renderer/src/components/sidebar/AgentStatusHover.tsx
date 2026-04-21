@@ -3,16 +3,12 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/h
 import { useAppStore } from '@/store'
 import {
   detectAgentStatusFromTitle,
-  formatAgentTypeLabel,
-  inferAgentTypeFromTitle,
+  getAgentLabel,
   isExplicitAgentStatusFresh
 } from '@/lib/agent-status'
 import { cn } from '@/lib/utils'
-import type {
-  AgentStatusEntry,
-  AgentStatusState,
-  AgentType
-} from '../../../../shared/agent-status-types'
+import { AgentStatusBadge, type AgentStatusBadgeState } from '@/components/AgentStatusBadge'
+import type { AgentStatusEntry, AgentType } from '../../../../shared/agent-status-types'
 import { AGENT_STATUS_STALE_AFTER_MS as STALE_THRESHOLD_MS } from '../../../../shared/agent-status-types'
 import type { TerminalTab } from '../../../../shared/types'
 
@@ -40,31 +36,6 @@ type HoverRow =
       agentType: AgentType
       sortTimestamp: number
     }
-
-function stateLabel(state: AgentStatusState): string {
-  switch (state) {
-    case 'working':
-      return 'Working'
-    case 'blocked':
-      return 'Blocked'
-    case 'waiting':
-      return 'Waiting for input'
-    case 'done':
-      return 'Done'
-  }
-}
-
-function stateColor(state: AgentStatusState): string {
-  switch (state) {
-    case 'working':
-      return 'text-emerald-500'
-    case 'blocked':
-    case 'waiting':
-      return 'text-red-500'
-    case 'done':
-      return 'text-emerald-500'
-  }
-}
 
 function sortKeyForExplicit(
   explicit: AgentStatusEntry,
@@ -128,11 +99,19 @@ export function buildAgentStatusHoverRows(
           explicit,
           heuristicState,
           tabTitle,
-          agentType:
-            explicit.agentType ?? inferAgentTypeFromTitle(explicit.terminalTitle ?? tab.title),
+          agentType: explicit.agentType ?? 'unknown',
           sortTimestamp: explicit.updatedAt
         })
       }
+      continue
+    }
+
+    // Why: a live PTY tab is not necessarily running an agent — the user may
+    // have opened a plain shell ("Terminal 1"). Only surface a heuristic row
+    // when the title actually looks like an agent (detectable status or a
+    // recognizable agent name); otherwise the hover falsely reports shells as
+    // "Idle Agent / No task details reported" and inflates "Running agents (N)".
+    if (heuristicState === null && getAgentLabel(tab.title) === null) {
       continue
     }
 
@@ -143,7 +122,10 @@ export function buildAgentStatusHoverRows(
       paneKey: null,
       heuristicState,
       tabTitle,
-      agentType: inferAgentTypeFromTitle(tab.title),
+      // Why: we no longer guess agent family from titles — the explicit
+      // agentType from the hook is the source of truth. Heuristic rows
+      // render with a neutral icon until the hook reports.
+      agentType: 'unknown',
       sortTimestamp: tab.createdAt
     })
   }
@@ -166,24 +148,19 @@ export function buildAgentStatusHoverRows(
   return rows
 }
 
-function StateDot({ state }: { state: AgentStatusState }): React.JSX.Element {
+// Why: the heuristic rollup only distinguishes 'working' / 'permission' /
+// 'idle'. Map it into the shared badge state vocabulary so both the hover and
+// dashboard render identical badges for "agent needs attention".
+function heuristicToBadgeState(
+  state: 'working' | 'permission' | 'idle' | null
+): AgentStatusBadgeState {
   if (state === 'working') {
-    return (
-      <span className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-        <span className="block size-1.5 animate-spin rounded-full border-[1.5px] border-emerald-500 border-t-transparent" />
-      </span>
-    )
+    return 'working'
   }
-  return (
-    <span className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-      <span
-        className={cn(
-          'block size-1.5 rounded-full',
-          state === 'done' ? 'bg-emerald-500' : 'bg-red-500'
-        )}
-      />
-    </span>
-  )
+  if (state === 'permission') {
+    return 'permission'
+  }
+  return 'idle'
 }
 
 function formatTimeAgo(updatedAt: number, now: number): string {
@@ -203,64 +180,25 @@ function AgentRow({ row, now }: { row: HoverRow; now: number }): React.JSX.Eleme
   if (row.kind === 'explicit') {
     const isFresh = isExplicitAgentStatusFresh(row.explicit, now, STALE_THRESHOLD_MS)
     const shouldUseHeuristic = !isFresh && row.heuristicState !== null
+    const badgeState: AgentStatusBadgeState = shouldUseHeuristic
+      ? heuristicToBadgeState(row.heuristicState)
+      : row.explicit.state
 
     return (
       <div className="flex flex-col gap-1 border-b border-border/30 py-1.5 last:border-0">
         <div className="flex items-center gap-1.5">
-          {shouldUseHeuristic ? (
-            <span className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-              <span
-                className={cn(
-                  'block size-1.5 rounded-full',
-                  row.heuristicState === 'working'
-                    ? 'bg-emerald-500'
-                    : row.heuristicState === 'permission'
-                      ? 'bg-red-500'
-                      : 'bg-neutral-500/40'
-                )}
-              />
-            </span>
-          ) : (
-            <StateDot state={row.explicit.state} />
-          )}
-          <span
-            className={cn(
-              'text-[11px] font-medium',
-              shouldUseHeuristic ? 'text-muted-foreground' : stateColor(row.explicit.state)
-            )}
-          >
-            {shouldUseHeuristic
-              ? row.heuristicState === 'permission'
-                ? 'Needs attention'
-                : row.heuristicState === 'working'
-                  ? 'Working'
-                  : 'Idle'
-              : stateLabel(row.explicit.state)}
-          </span>
-          <span className="truncate text-[10px] text-muted-foreground/70">
-            {formatAgentTypeLabel(row.agentType)}
-          </span>
+          <AgentStatusBadge agentType={row.agentType} state={badgeState} />
           <span className="ml-auto text-[10px] text-muted-foreground/50">
             {formatTimeAgo(row.explicit.updatedAt, now)}
           </span>
         </div>
-        {row.explicit.summary && (
-          <div className={cn('pl-4 text-[11px] leading-snug', !isFresh && 'opacity-60')}>
-            {row.explicit.summary}
-          </div>
-        )}
-        {row.explicit.next && (
-          <div
-            className={cn(
-              'pl-4 text-[10.5px] leading-snug text-muted-foreground',
-              !isFresh && 'opacity-60'
-            )}
-          >
-            Next: {row.explicit.next}
+        {row.explicit.prompt && (
+          <div className={cn('pl-5 text-[11px] leading-snug', !isFresh && 'opacity-60')}>
+            {row.explicit.prompt}
           </div>
         )}
         {!isFresh && (
-          <div className="pl-4 text-[10px] italic text-muted-foreground/60">
+          <div className="pl-5 text-[10px] italic text-muted-foreground/60">
             Showing last reported task details; live terminal state has taken precedence.
           </div>
         )}
@@ -268,35 +206,16 @@ function AgentRow({ row, now }: { row: HoverRow; now: number }): React.JSX.Eleme
     )
   }
 
-  const heuristicLabel =
-    row.heuristicState === 'working'
-      ? 'Working'
-      : row.heuristicState === 'permission'
-        ? 'Needs attention'
-        : 'Idle'
-
   return (
     <div className="flex flex-col gap-1 border-b border-border/30 py-1.5 last:border-0">
       <div className="flex items-center gap-1.5">
-        <span className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-          <span
-            className={cn(
-              'block size-1.5 rounded-full',
-              row.heuristicState === 'working'
-                ? 'bg-emerald-500'
-                : row.heuristicState === 'permission'
-                  ? 'bg-red-500'
-                  : 'bg-neutral-500/40'
-            )}
-          />
-        </span>
-        <span className="text-[11px] font-medium text-muted-foreground">{heuristicLabel}</span>
-        <span className="truncate text-[10px] text-muted-foreground/70">
-          {formatAgentTypeLabel(row.agentType)}
-        </span>
+        <AgentStatusBadge
+          agentType={row.agentType}
+          state={heuristicToBadgeState(row.heuristicState)}
+        />
       </div>
-      <div className="truncate pl-4 text-[10.5px] text-muted-foreground/60">{row.tabTitle}</div>
-      <div className="pl-4 text-[10px] italic text-muted-foreground/40">
+      <div className="truncate pl-5 text-[10.5px] text-muted-foreground/60">{row.tabTitle}</div>
+      <div className="pl-5 text-[10px] italic text-muted-foreground/40">
         No task details reported
       </div>
     </div>

@@ -4,12 +4,11 @@ import { parseAgentStatusPayload, AGENT_STATUS_MAX_FIELD_LENGTH } from './agent-
 describe('parseAgentStatusPayload', () => {
   it('parses a valid working payload', () => {
     const result = parseAgentStatusPayload(
-      '{"state":"working","summary":"Investigating test failures","next":"Fix the flaky assertion","agentType":"codex"}'
+      '{"state":"working","prompt":"Fix the flaky assertion","agentType":"codex"}'
     )
     expect(result).toEqual({
       state: 'working',
-      summary: 'Investigating test failures',
-      next: 'Fix the flaky assertion',
+      prompt: 'Fix the flaky assertion',
       agentType: 'codex'
     })
   })
@@ -47,52 +46,46 @@ describe('parseAgentStatusPayload', () => {
     expect(parseAgentStatusPayload('[]')).toBeNull()
   })
 
-  it('normalizes multiline summary to single line', () => {
+  it('normalizes multiline prompt to single line', () => {
     const result = parseAgentStatusPayload(
-      '{"state":"working","summary":"line one\\nline two\\nline three"}'
+      '{"state":"working","prompt":"line one\\nline two\\nline three"}'
     )
-    expect(result!.summary).toBe('line one line two line three')
+    expect(result!.prompt).toBe('line one line two line three')
   })
 
   it('normalizes Windows-style line endings (\\r\\n) to single line', () => {
     const result = parseAgentStatusPayload(
-      '{"state":"working","summary":"line one\\r\\nline two\\r\\nline three"}'
+      '{"state":"working","prompt":"line one\\r\\nline two\\r\\nline three"}'
     )
-    expect(result!.summary).toBe('line one line two line three')
+    expect(result!.prompt).toBe('line one line two line three')
   })
 
-  it('trims whitespace from fields', () => {
-    const result = parseAgentStatusPayload(
-      '{"state":"working","summary":"  padded  ","next":"  also padded  "}'
-    )
-    expect(result!.summary).toBe('padded')
-    expect(result!.next).toBe('also padded')
+  it('trims whitespace from the prompt field', () => {
+    const result = parseAgentStatusPayload('{"state":"working","prompt":"  padded  "}')
+    expect(result!.prompt).toBe('padded')
   })
 
-  it('truncates fields beyond max length', () => {
+  it('truncates the prompt beyond max length', () => {
     const longString = 'x'.repeat(300)
-    const result = parseAgentStatusPayload(`{"state":"working","summary":"${longString}"}`)
-    expect(result!.summary).toHaveLength(AGENT_STATUS_MAX_FIELD_LENGTH)
+    const result = parseAgentStatusPayload(`{"state":"working","prompt":"${longString}"}`)
+    expect(result!.prompt).toHaveLength(AGENT_STATUS_MAX_FIELD_LENGTH)
   })
 
-  it('defaults missing summary and next to empty string', () => {
+  it('defaults missing prompt to empty string', () => {
     const result = parseAgentStatusPayload('{"state":"done"}')
-    expect(result!.summary).toBe('')
-    expect(result!.next).toBe('')
+    expect(result!.prompt).toBe('')
   })
 
-  it('handles non-string summary/next gracefully', () => {
-    const result = parseAgentStatusPayload('{"state":"working","summary":42,"next":true}')
-    expect(result!.summary).toBe('')
-    expect(result!.next).toBe('')
+  it('handles non-string prompt gracefully', () => {
+    const result = parseAgentStatusPayload('{"state":"working","prompt":42}')
+    expect(result!.prompt).toBe('')
   })
 
   it('accepts custom non-empty agentType values', () => {
     const result = parseAgentStatusPayload('{"state":"working","agentType":"cursor"}')
     expect(result).toEqual({
       state: 'working',
-      summary: '',
-      next: '',
+      prompt: '',
       agentType: 'cursor'
     })
   })

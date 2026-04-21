@@ -11,6 +11,8 @@ type Props = {
   focusedWorktreeId: string | null
   onFocusWorktree: (worktreeId: string) => void
   onCheckWorktree: (worktreeId: string) => void
+  onDismissAgent: (paneKey: string) => void
+  onActivateAgentTab: (worktreeId: string, tabId: string) => void
 }
 
 const DashboardRepoGroup = React.memo(function DashboardRepoGroup({
@@ -19,13 +21,15 @@ const DashboardRepoGroup = React.memo(function DashboardRepoGroup({
   onToggleCollapse,
   focusedWorktreeId,
   onFocusWorktree,
-  onCheckWorktree
+  onCheckWorktree,
+  onDismissAgent,
+  onActivateAgentTab
 }: Props) {
   const totalAgents = group.worktrees.reduce((sum, wt) => sum + wt.agents.length, 0)
   const Icon = isCollapsed ? ChevronRight : ChevronDown
 
   return (
-    <div className="rounded-lg bg-accent/20 border border-border/30 overflow-hidden">
+    <div className="rounded-lg bg-accent/20 border border-border overflow-hidden">
       {/* Repo header */}
       <button
         type="button"
@@ -55,7 +59,7 @@ const DashboardRepoGroup = React.memo(function DashboardRepoGroup({
 
       {/* Worktree rows */}
       {!isCollapsed && group.worktrees.length > 0 && (
-        <div className="border-t border-border/20">
+        <div className="border-t border-border">
           {group.worktrees.map((card, i) => (
             <DashboardWorktreeCard
               key={card.worktree.id}
@@ -63,6 +67,8 @@ const DashboardRepoGroup = React.memo(function DashboardRepoGroup({
               isFocused={focusedWorktreeId === card.worktree.id}
               onFocus={() => onFocusWorktree(card.worktree.id)}
               onCheck={() => onCheckWorktree(card.worktree.id)}
+              onDismissAgent={onDismissAgent}
+              onActivateAgentTab={onActivateAgentTab}
               isLast={i === group.worktrees.length - 1}
             />
           ))}
@@ -70,7 +76,7 @@ const DashboardRepoGroup = React.memo(function DashboardRepoGroup({
       )}
 
       {!isCollapsed && group.worktrees.length === 0 && (
-        <div className="border-t border-border/20 px-2.5 py-2 text-[10px] text-muted-foreground/50 italic">
+        <div className="border-t border-border px-2.5 py-2 text-[10px] text-muted-foreground/50 italic">
           (0 worktrees)
         </div>
       )}

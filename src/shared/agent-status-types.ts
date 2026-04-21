@@ -14,7 +14,7 @@ export type AgentType = WellKnownAgentType | (string & {})
 /** A snapshot of a previous agent state, used to render activity blocks. */
 export type AgentStateHistoryEntry = {
   state: AgentStatusState
-  summary: string
+  prompt: string
   /** When this state was first reported. */
   startedAt: number
 }
@@ -24,10 +24,11 @@ export const AGENT_STATE_HISTORY_MAX = 20
 
 export type AgentStatusEntry = {
   state: AgentStatusState
-  /** Short description of what the agent is currently doing. */
-  summary: string
-  /** Short description of what the agent plans to do next. */
-  next: string
+  /** The user's most recent prompt, when the hook payload carried one.
+   *  Cached across the turn — subsequent tool-use events in the same turn do
+   *  not include the prompt, so the renderer receives the last known value
+   *  until a new prompt arrives or the pane resets. Empty when unknown. */
+  prompt: string
   /** Timestamp (ms) of the last status update. */
   updatedAt: number
   /** Whether this entry was reported explicitly by the agent or inferred from heuristics. */
@@ -48,28 +49,26 @@ export type AgentStatusEntry = {
 
 export type AgentStatusPayload = {
   state: AgentStatusState
-  summary?: string
-  next?: string
+  prompt?: string
   agentType?: AgentType
 }
 
 /**
- * The result of `parseAgentStatusPayload`: summary and next are always
- * normalized to strings (empty string when the raw payload omits them),
- * so consumers do not need nullish-coalescing on these fields.
+ * The result of `parseAgentStatusPayload`: prompt is always normalized to a
+ * string (empty string when the raw payload omits it), so consumers do not
+ * need nullish-coalescing on the field.
  */
 export type ParsedAgentStatusPayload = {
   state: AgentStatusState
-  summary: string
-  next: string
+  prompt: string
   agentType?: AgentType
 }
 
-/** Maximum character length for summary and next fields. Truncated on parse. */
+/** Maximum character length for the prompt field. Truncated on parse. */
 export const AGENT_STATUS_MAX_FIELD_LENGTH = 200
 /**
  * Freshness threshold for explicit agent status. After this point the hover still
- * shows the last reported summary, but heuristic state regains precedence for
+ * shows the last reported prompt, but heuristic state regains precedence for
  * ordering and coarse status so stale "done" reports do not mask live prompts.
  */
 export const AGENT_STATUS_STALE_AFTER_MS = 30 * 60 * 1000
@@ -112,8 +111,7 @@ export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload 
     }
     return {
       state: state as AgentStatusState,
-      summary: normalizeField(parsed.summary),
-      next: normalizeField(parsed.next),
+      prompt: normalizeField(parsed.prompt),
       agentType:
         typeof parsed.agentType === 'string' && parsed.agentType.trim().length > 0
           ? parsed.agentType.trim().slice(0, AGENT_TYPE_MAX_LENGTH)

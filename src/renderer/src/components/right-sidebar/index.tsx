@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Files, Search, GitBranch, ListChecks, LayoutDashboard, PanelRight } from 'lucide-react'
+import { Files, Search, GitBranch, ListChecks, PanelRight } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
@@ -19,7 +19,7 @@ import FileExplorer from './FileExplorer'
 import SourceControl from './SourceControl'
 import SearchPanel from './Search'
 import ChecksPanel from './ChecksPanel'
-import AgentDashboard from '../dashboard/AgentDashboard'
+import DashboardBottomPanel from './DashboardBottomPanel'
 
 const MIN_WIDTH = 220
 // Why: long file names (e.g. construction drawing sheets, multi-part document
@@ -112,12 +112,6 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
     title: 'Checks',
     shortcut: `${isMac ? '\u21E7' : 'Shift+'}${mod}K`,
     gitOnly: true
-  },
-  {
-    id: 'dashboard',
-    icon: LayoutDashboard,
-    title: 'Agent Dashboard',
-    shortcut: `${isMac ? '\u21E7' : 'Shift+'}${mod}D`
   }
 ]
 
@@ -170,11 +164,17 @@ function RightSidebarInner(): React.JSX.Element {
           that froze the app for seconds on Windows.  Each panel now reacts
           to activeWorktreeId changes via store subscriptions and reset
           effects, keeping the component instance alive across switches. */}
-      {effectiveTab === 'explorer' && <FileExplorer />}
-      {effectiveTab === 'search' && <SearchPanel />}
-      {effectiveTab === 'source-control' && <SourceControl />}
-      {effectiveTab === 'checks' && <ChecksPanel />}
-      {effectiveTab === 'dashboard' && <AgentDashboard />}
+      {/* Why: the active tab content takes the top of the sidebar. The agent
+          dashboard docks at the bottom regardless of which tab is selected,
+          so users keep a glanceable view of agent status while they browse
+          files, search, etc. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {effectiveTab === 'explorer' && <FileExplorer />}
+        {effectiveTab === 'search' && <SearchPanel />}
+        {effectiveTab === 'source-control' && <SourceControl />}
+        {effectiveTab === 'checks' && <ChecksPanel />}
+      </div>
+      <DashboardBottomPanel />
     </div>
   )
 

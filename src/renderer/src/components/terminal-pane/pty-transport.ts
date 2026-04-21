@@ -41,7 +41,7 @@ export { extractLastOscTitle } from '../../../../shared/agent-detection'
 // ─── OSC 9999: agent status reporting ──────────────────────────────────────
 // Why OSC 9999: avoids known-used codes (7=cwd, 133=VS Code, 777=Superset,
 // 1337=iTerm2, 9001=Warp). Agents report structured status by printing
-// printf '\x1b]9999;{"state":"working","summary":"...","next":"..."}\x07'
+// printf '\x1b]9999;{"state":"working","prompt":"..."}\x07'
 // eslint-disable-next-line no-control-regex -- intentional terminal escape sequence matching
 const OSC_AGENT_STATUS_RE = /\x1b\]9999;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g
 const OSC_AGENT_STATUS_PREFIX = '\x1b]9999;'
@@ -104,6 +104,9 @@ function findAgentStatusTerminator(
  * escape sequence mid-payload and can leak raw control bytes into xterm.
  */
 export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgentStatusChunk {
+  // Why: cap the pending buffer so a malformed or binary stream containing our
+  // OSC 9999 prefix without a valid terminator cannot grow memory unbounded.
+  const MAX_PENDING = 64 * 1024
   let pending = ''
 
   return (data: string): ProcessedAgentStatusChunk => {
@@ -126,7 +129,15 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
       const terminator = findAgentStatusTerminator(combined, payloadStart)
 
       if (terminator === null) {
-        pending = combined.slice(start)
+        const candidate = combined.slice(start)
+        if (candidate.length > MAX_PENDING) {
+          // Why: drop the partial and treat what we held as plain output so a
+          // stream that never terminates the escape cannot leak memory.
+          cleanData += candidate
+          pending = ''
+        } else {
+          pending = candidate
+        }
         break
       }
 

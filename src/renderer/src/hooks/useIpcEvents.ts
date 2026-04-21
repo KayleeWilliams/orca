@@ -404,16 +404,22 @@ export function useIpcEvents(): void {
     // hook callback or an OSC fallback path.
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
-        console.log('[agentStatus:set] Renderer received IPC:', data)
+        console.log('[agent-hooks:renderer] received IPC', {
+          paneKey: data.paneKey,
+          state: data.state,
+          promptLen: data.prompt?.length ?? 0,
+          promptPreview: data.prompt?.slice(0, 80) ?? null,
+          agentType: data.agentType
+        })
         const payload = parseAgentStatusPayload(
           JSON.stringify({
             state: data.state,
-            summary: data.summary,
-            next: data.next,
+            prompt: data.prompt,
             agentType: data.agentType
           })
         )
         if (!payload) {
+          console.log('[agent-hooks:renderer] drop (parse failed)', data)
           return
         }
         const store = useAppStore.getState()
@@ -421,11 +427,29 @@ export function useIpcEvents(): void {
         // payloads do not include the current title, but the store may already
         // know it from OSC title tracking.
         const currentTitle = findTerminalTitleForPaneKey(store, data.paneKey)
-        console.log('[agentStatus:set] Storing:', {
+        // Why: a paneKey that no longer resolves to a live tab belongs to a pane
+        // that has already been torn down. Dropping here prevents orphan entries
+        // from accumulating in agentStatusByPaneKey.
+        const [tabId] = data.paneKey.split(':')
+        if (!tabId) {
+          console.log('[agent-hooks:renderer] drop (no tabId)', data)
+          return
+        }
+        const tabExists = Object.values(store.tabsByWorktree).some((tabs) =>
+          tabs.some((t) => t.id === tabId)
+        )
+        if (!tabExists) {
+          console.log('[agent-hooks:renderer] drop (tab not found)', {
+            paneKey: data.paneKey,
+            tabId
+          })
+          return
+        }
+        console.log('[agent-hooks:renderer] setAgentStatus', {
           paneKey: data.paneKey,
           state: payload.state,
-          summary: payload.summary,
-          currentTitle
+          promptLen: payload.prompt.length,
+          promptPreview: payload.prompt.slice(0, 80)
         })
         store.setAgentStatus(data.paneKey, payload, currentTitle)
       })
@@ -441,7 +465,18 @@ function findTerminalTitleForPaneKey(
   store: ReturnType<typeof useAppStore.getState>,
   paneKey: string
 ): string | undefined {
-  const tabId = paneKey.split(':')[0]
+  const [tabId, paneIdRaw] = paneKey.split(':')
+  if (!tabId) {
+    return undefined
+  }
+  // Why: split panes track per-pane titles in runtimePaneTitlesByTabId; prefer
+  // the pane's own title over the tab-level (last-winning) title so agent type
+  // inference attributes status to the correct pane.
+  const paneTitles = store.runtimePaneTitlesByTabId?.[tabId]
+  const paneIdNum = paneIdRaw !== undefined ? Number(paneIdRaw) : NaN
+  if (paneTitles && !Number.isNaN(paneIdNum) && paneTitles[paneIdNum]) {
+    return paneTitles[paneIdNum]
+  }
   for (const tabs of Object.values(store.tabsByWorktree)) {
     const tab = tabs.find((t) => t.id === tabId)
     if (tab?.title) {

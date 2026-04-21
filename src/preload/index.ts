@@ -457,7 +457,10 @@ const api = {
   agentHooks: {
     claudeStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:claudeStatus'),
-    codexStatus: (): Promise<AgentHookInstallStatus> => ipcRenderer.invoke('agentHooks:codexStatus')
+    codexStatus: (): Promise<AgentHookInstallStatus> =>
+      ipcRenderer.invoke('agentHooks:codexStatus'),
+    geminiStatus: (): Promise<AgentHookInstallStatus> =>
+      ipcRenderer.invoke('agentHooks:geminiStatus')
   },
 
   preflight: {
@@ -1344,9 +1347,10 @@ const api = {
     onSet: (
       callback: (data: {
         paneKey: string
+        tabId?: string
+        worktreeId?: string
         state: string
-        summary?: string
-        next?: string
+        prompt?: string
         agentType?: string
       }) => void
     ): (() => void) => {
@@ -1354,9 +1358,10 @@ const api = {
         _event: Electron.IpcRendererEvent,
         data: {
           paneKey: string
+          tabId?: string
+          worktreeId?: string
           state: string
-          summary?: string
-          next?: string
+          prompt?: string
           agentType?: string
         }
       ) => callback(data)

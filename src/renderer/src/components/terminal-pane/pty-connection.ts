@@ -161,9 +161,13 @@ export function connectPanePty(
   // Why: inject ORCA_PANE_KEY so global Claude/Codex hooks can attribute their
   // callbacks to the correct Orca pane without resolving worktrees from cwd.
   // The key matches the `${tabId}:${paneId}` composite used for cacheTimerByKey.
+  // ORCA_TAB_ID / ORCA_WORKTREE_ID are exposed separately so the receiver has
+  // routing context without having to split paneKey back into its parts.
   const paneEnv = {
     ...paneStartup?.env,
-    ORCA_PANE_KEY: cacheKey
+    ORCA_PANE_KEY: cacheKey,
+    ORCA_TAB_ID: deps.tabId,
+    ORCA_WORKTREE_ID: deps.worktreeId
   }
 
   // Why: remote repos route PTY spawn through the SSH provider. Resolve the
@@ -186,7 +190,14 @@ export function connectPanePty(
     onBell,
     onAgentBecameIdle,
     onAgentBecameWorking,
-    onAgentExited
+    onAgentExited,
+    // Why: forward OSC 9999 payloads from the PTY stream to the agent-status slice.
+    // Without this, the OSC parser in pty-transport strips sequences from xterm
+    // output but the status never reaches the store or dashboard/hover UI.
+    onAgentStatus: (payload) => {
+      const title = useAppStore.getState().runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
+      useAppStore.getState().setAgentStatus(cacheKey, payload, title)
+    }
   })
   const hasExistingPaneTransport = deps.paneTransportsRef.current.size > 0
   deps.paneTransportsRef.current.set(pane.id, transport)

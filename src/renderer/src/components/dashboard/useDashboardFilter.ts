@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { DashboardRepoGroup, DashboardWorktreeCard } from './useDashboardData'
 
-export type DashboardFilter = 'active' | 'all' | 'working' | 'blocked' | 'done'
+export type DashboardFilter = 'active' | 'all' | 'blocked' | 'done'
 
 // Why: every filter requires agents — the dashboard is an agent activity view,
 // not a worktree list. Worktrees with zero agents are never shown regardless
@@ -33,8 +33,6 @@ function matchesFilter(
         return true
       }
       return false
-    case 'working':
-      return card.dominantState === 'working'
     case 'blocked':
       return card.dominantState === 'blocked'
     case 'done':
@@ -56,7 +54,7 @@ export function useDashboardFilter(
   filteredGroups: DashboardRepoGroup[]
   hasResults: boolean
 } {
-  const [filter, setFilter] = useState<DashboardFilter>('active')
+  const [filter, setFilter] = useState<DashboardFilter>('all')
 
   const filteredGroups = useMemo(() => {
     const filtered = groups

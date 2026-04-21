@@ -7,7 +7,6 @@ import {
   type AgentStatusEntry,
   type ParsedAgentStatusPayload
 } from '../../../../shared/agent-status-types'
-import { inferAgentTypeFromTitle } from '@/lib/agent-status'
 
 export type AgentStatusSlice = {
   /** Explicit agent status entries keyed by `${tabId}:${paneId}` composite.
@@ -83,13 +82,13 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
         // Why: build up a rolling log of state transitions so the dashboard can
         // render activity blocks showing what the agent has been doing. Only push
-        // when the state actually changes to avoid duplicate entries from summary-
+        // when the state actually changes to avoid duplicate entries from prompt-
         // only updates within the same state.
         let history: AgentStateHistoryEntry[] = existing?.stateHistory ?? []
         if (existing && existing.state !== payload.state) {
           history = [
             ...history,
-            { state: existing.state, summary: existing.summary, startedAt: existing.updatedAt }
+            { state: existing.state, prompt: existing.prompt, startedAt: existing.updatedAt }
           ]
           if (history.length > AGENT_STATE_HISTORY_MAX) {
             history = history.slice(history.length - AGENT_STATE_HISTORY_MAX)
@@ -98,15 +97,10 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
         const entry: AgentStatusEntry = {
           state: payload.state,
-          summary: payload.summary,
-          next: payload.next,
+          prompt: payload.prompt,
           updatedAt: Date.now(),
           source: 'agent',
-          // Why: the design doc requires agentType in the hover, but the OSC
-          // payload may omit it. Fall back to title inference so older injected
-          // prompts still populate the hover without requiring a coordinated
-          // rollout across every agent integration.
-          agentType: payload.agentType ?? inferAgentTypeFromTitle(effectiveTitle),
+          agentType: payload.agentType,
           paneKey,
           terminalTitle: effectiveTitle,
           stateHistory: history

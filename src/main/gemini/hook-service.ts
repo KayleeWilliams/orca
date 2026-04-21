@@ -10,21 +10,22 @@ import {
   type HookDefinition
 } from '../agent-hooks/installer-utils'
 
-// Why: Codex permission prompts arrive through PreToolUse hook callbacks. Orca
-// maps that event to the waiting state, so the managed hook registration must
-// subscribe to PreToolUse or the sidebar can never show Codex as blocked on
-// approval.
-const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'] as const
+// Why: Gemini CLI fires `BeforeAgent` when a turn starts and `AfterAgent` when
+// it completes. `AfterTool` marks the resumption of model work after a tool
+// call, which maps back to `working`. Gemini has no permission-prompt hook
+// (approvals flow through inline UI), so Orca cannot surface a waiting state
+// for Gemini — that is an upstream limitation, not an Orca bug.
+const GEMINI_EVENTS = ['BeforeAgent', 'AfterAgent', 'AfterTool'] as const
 
 function getConfigPath(): string {
-  return join(homedir(), '.codex', 'hooks.json')
+  return join(homedir(), '.gemini', 'settings.json')
 }
 
 function getManagedScriptPath(): string {
   return join(
     app.getPath('userData'),
     'agent-hooks',
-    process.platform === 'win32' ? 'codex-hook.cmd' : 'codex-hook.sh'
+    process.platform === 'win32' ? 'gemini-hook.cmd' : 'gemini-hook.sh'
   )
 }
 
@@ -37,10 +38,14 @@ function getManagedScript(): string {
     return [
       '@echo off',
       'setlocal',
+      // Why: Gemini expects valid JSON on stdout even when the hook has nothing
+      // to return. Emit `{}` first so the agent never stalls parsing our
+      // output, even if the env-var guards below cause an early exit.
+      'echo {}',
       'if "%ORCA_AGENT_HOOK_PORT%"=="" exit /b 0',
       'if "%ORCA_AGENT_HOOK_TOKEN%"=="" exit /b 0',
       'if "%ORCA_PANE_KEY%"=="" exit /b 0',
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "$inputData=[Console]::In.ReadToEnd(); if ([string]::IsNullOrWhiteSpace($inputData)) { exit 0 }; try { $body=@{ paneKey=$env:ORCA_PANE_KEY; tabId=$env:ORCA_TAB_ID; worktreeId=$env:ORCA_WORKTREE_ID; env=$env:ORCA_AGENT_HOOK_ENV; version=$env:ORCA_AGENT_HOOK_VERSION; payload=($inputData | ConvertFrom-Json) } | ConvertTo-Json -Depth 100; Invoke-WebRequest -UseBasicParsing -Method Post -Uri ('http://127.0.0.1:' + $env:ORCA_AGENT_HOOK_PORT + '/hook/codex') -Headers @{ 'Content-Type'='application/json'; 'X-Orca-Agent-Hook-Token'=$env:ORCA_AGENT_HOOK_TOKEN } -Body $body | Out-Null } catch {}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "$inputData=[Console]::In.ReadToEnd(); if ([string]::IsNullOrWhiteSpace($inputData)) { exit 0 }; try { $body=@{ paneKey=$env:ORCA_PANE_KEY; tabId=$env:ORCA_TAB_ID; worktreeId=$env:ORCA_WORKTREE_ID; env=$env:ORCA_AGENT_HOOK_ENV; version=$env:ORCA_AGENT_HOOK_VERSION; payload=($inputData | ConvertFrom-Json) } | ConvertTo-Json -Depth 100; Invoke-WebRequest -UseBasicParsing -Method Post -Uri ('http://127.0.0.1:' + $env:ORCA_AGENT_HOOK_PORT + '/hook/gemini') -Headers @{ 'Content-Type'='application/json'; 'X-Orca-Agent-Hook-Token'=$env:ORCA_AGENT_HOOK_TOKEN } -Body $body | Out-Null } catch {}"`,
       'exit /b 0',
       ''
     ].join('\r\n')
@@ -48,6 +53,10 @@ function getManagedScript(): string {
 
   return [
     '#!/bin/sh',
+    // Why: Gemini expects valid JSON on stdout even when the hook has nothing
+    // to return. Emit `{}` first so the agent never stalls parsing our output,
+    // even if the env-var guards below cause an early exit.
+    'printf "{}\\n"',
     'if [ -z "$ORCA_AGENT_HOOK_PORT" ] || [ -z "$ORCA_AGENT_HOOK_TOKEN" ] || [ -z "$ORCA_PANE_KEY" ]; then',
     '  exit 0',
     'fi',
@@ -60,7 +69,7 @@ function getManagedScript(): string {
     // through paneKey parsing, (b) warn on dev/prod cross-talk, and (c) detect
     // stale managed scripts installed by an older app build.
     `body=$(printf '{"paneKey":"%s","tabId":"%s","worktreeId":"%s","env":"%s","version":"%s","payload":%s}' "$ORCA_PANE_KEY" "$ORCA_TAB_ID" "$ORCA_WORKTREE_ID" "$ORCA_AGENT_HOOK_ENV" "$ORCA_AGENT_HOOK_VERSION" "$payload")`,
-    'curl -sS -X POST "http://127.0.0.1:${ORCA_AGENT_HOOK_PORT}/hook/codex" \\',
+    'curl -sS -X POST "http://127.0.0.1:${ORCA_AGENT_HOOK_PORT}/hook/gemini" \\',
     '  -H "Content-Type: application/json" \\',
     '  -H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}" \\',
     '  --data-binary "$body" >/dev/null 2>&1 || true',
@@ -69,30 +78,25 @@ function getManagedScript(): string {
   ].join('\n')
 }
 
-export class CodexHookService {
+export class GeminiHookService {
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
       return {
-        agent: 'codex',
+        agent: 'gemini',
         state: 'error',
         configPath,
         managedHooksPresent: false,
-        detail: 'Could not parse Codex hooks.json'
+        detail: 'Could not parse Gemini settings.json'
       }
     }
 
-    // Why: Report `partial` when only some managed events are registered so the
-    // sidebar surfaces a degraded install rather than a false-positive
-    // `installed`. Each CODEX_EVENTS entry must contain the managed command for
-    // the integration to function end-to-end (e.g. PreToolUse is required for
-    // permission-prompt detection per the comment above).
     const command = getManagedCommand(scriptPath)
     const missing: string[] = []
     let presentCount = 0
-    for (const eventName of CODEX_EVENTS) {
+    for (const eventName of GEMINI_EVENTS) {
       const definitions = Array.isArray(config.hooks?.[eventName]) ? config.hooks![eventName]! : []
       const hasCommand = definitions.some((definition) =>
         (definition.hooks ?? []).some((hook) => hook.command === command)
@@ -116,7 +120,7 @@ export class CodexHookService {
       state = 'partial'
       detail = `Managed hook missing for events: ${missing.join(', ')}`
     }
-    return { agent: 'codex', state, configPath, managedHooksPresent, detail }
+    return { agent: 'gemini', state, configPath, managedHooksPresent, detail }
   }
 
   install(): AgentHookInstallStatus {
@@ -125,18 +129,18 @@ export class CodexHookService {
     const config = readHooksJson(configPath)
     if (!config) {
       return {
-        agent: 'codex',
+        agent: 'gemini',
         state: 'error',
         configPath,
         managedHooksPresent: false,
-        detail: 'Could not parse Codex hooks.json'
+        detail: 'Could not parse Gemini settings.json'
       }
     }
 
     const command = getManagedCommand(scriptPath)
     const nextHooks = { ...config.hooks }
 
-    for (const eventName of CODEX_EVENTS) {
+    for (const eventName of GEMINI_EVENTS) {
       const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []
       const cleaned = removeManagedCommands(current, (currentCommand) => currentCommand === command)
       const definition: HookDefinition = {
@@ -157,11 +161,11 @@ export class CodexHookService {
     const config = readHooksJson(configPath)
     if (!config) {
       return {
-        agent: 'codex',
+        agent: 'gemini',
         state: 'error',
         configPath,
         managedHooksPresent: false,
-        detail: 'Could not parse Codex hooks.json'
+        detail: 'Could not parse Gemini settings.json'
       }
     }
 
@@ -184,4 +188,4 @@ export class CodexHookService {
   }
 }
 
-export const codexHookService = new CodexHookService()
+export const geminiHookService = new GeminiHookService()

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useAppStore } from '@/store'
-import { detectAgentStatusFromTitle, inferAgentTypeFromTitle } from '@/lib/agent-status'
+import { detectAgentStatusFromTitle } from '@/lib/agent-status'
 import type { AgentStatusEntry, AgentType } from '../../../../shared/agent-status-types'
 import type { Repo, Worktree, TerminalTab } from '../../../../shared/types'
 
@@ -90,7 +90,7 @@ function buildAgentRowsForWorktree(
           paneKey: entry.paneKey,
           entry,
           tab,
-          agentType: entry.agentType ?? inferAgentTypeFromTitle(entry.terminalTitle ?? tab.title),
+          agentType: entry.agentType ?? 'unknown',
           state: entry.state,
           source: 'agent',
           // Why: the oldest stateHistory entry's startedAt is the agent's original
@@ -107,7 +107,12 @@ function buildAgentRowsForWorktree(
           paneKey: `heuristic:${tab.id}`,
           entry: null,
           tab,
-          agentType: inferAgentTypeFromTitle(tab.title),
+          // Why: heuristic rows are the title-based fallback when the hook
+          // hasn't reported yet. We don't want to guess the agent family
+          // from the title — titles are noisy and mismatches (e.g. Codex
+          // spinner → Claude) show the wrong icon. The hook will provide
+          // the real agentType as soon as it fires.
+          agentType: 'unknown',
           // Map heuristic 'permission' to 'blocked' for dashboard consistency
           state: heuristicStatus === 'permission' ? 'blocked' : heuristicStatus,
           source: 'heuristic',

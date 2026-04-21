@@ -3,9 +3,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { DashboardFilter } from './useDashboardFilter'
 
 const FILTERS: { value: DashboardFilter; label: string }[] = [
-  { value: 'active', label: 'Active' },
   { value: 'all', label: 'All' },
-  { value: 'working', label: 'Working' },
+  { value: 'active', label: 'Active' },
   { value: 'blocked', label: 'Blocked' },
   { value: 'done', label: 'Done' }
 ]

@@ -338,15 +338,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           delete nextCacheTimer[key]
         }
       }
-      // Why: agent status keys use the same `${tabId}:${paneId}` composite.
-      // Sweep all entries for the closing tab so the hover UI doesn't show
-      // status for terminals that no longer exist.
-      const nextAgentStatus = { ...s.agentStatusByPaneKey }
-      for (const key of Object.keys(nextAgentStatus)) {
-        if (key.startsWith(`${tabId}:`)) {
-          delete nextAgentStatus[key]
-        }
-      }
       // Why: keep activeTabIdByWorktree in sync when a tab is closed in a
       // background worktree. Without this, the remembered tab becomes stale
       // and restoring it on worktree switch falls back to tabs[0].
@@ -400,10 +391,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         cacheTimerByKey: nextCacheTimer,
         tabBarOrderByWorktree: nextTabBarOrderByWorktree,
         pendingSnapshotByPtyId: nextSnapshots,
-        pendingColdRestoreByPtyId: nextColdRestores,
-        agentStatusByPaneKey: nextAgentStatus
+        pendingColdRestoreByPtyId: nextColdRestores
       }
     })
+    // Why: delegate agent-status cleanup to its own slice so the epoch and
+    // stale-freshness timer bookkeeping stay consistent with other agent-status
+    // mutations.
+    get().removeAgentStatusByTabPrefix(tabId)
     for (const tabs of Object.values(get().unifiedTabsByWorktree)) {
       const workspaceItem = tabs.find(
         (entry) => entry.contentType === 'terminal' && entry.entityId === tabId
