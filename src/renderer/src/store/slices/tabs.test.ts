@@ -93,6 +93,7 @@ import { createCodexUsageSlice } from './codex-usage'
 import { createBrowserSlice } from './browser'
 import { createRateLimitSlice } from './rate-limits'
 import { createSshSlice } from './ssh'
+import { createAgentStatusSlice } from './agent-status'
 import { createDiffCommentsSlice } from './diffComments'
 
 const WT = 'repo1::/tmp/feature'
@@ -113,6 +114,7 @@ function createTestStore() {
     ...createBrowserSlice(...a),
     ...createRateLimitSlice(...a),
     ...createSshSlice(...a),
+    ...createAgentStatusSlice(...a),
     ...createDiffCommentsSlice(...a)
   }))
 }

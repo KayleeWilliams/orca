@@ -1,4 +1,10 @@
-import type { TerminalTab, Worktree } from '../../../shared/types'
+import type { TerminalTab, TuiAgent, Worktree } from '../../../shared/types'
+import type {
+  AgentStatusEntry,
+  AgentStatusState,
+  AgentType
+} from '../../../shared/agent-status-types'
+import type { Status } from '../components/sidebar/StatusIndicator'
 
 // Re-export from shared module so existing renderer imports continue to work.
 // Why: the main process now needs the same agent detection logic for stat
@@ -84,6 +90,67 @@ export function getWorkingAgentsPerWorktree({
   }
 
   return result
+}
+
+const WELL_KNOWN_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini',
+  opencode: 'OpenCode',
+  aider: 'Aider'
+}
+
+export function formatAgentTypeLabel(agentType: AgentType | null | undefined): string {
+  if (!agentType || agentType === 'unknown') {
+    return 'Agent'
+  }
+  // Capitalize well-known names nicely; pass through custom names as-is
+  return WELL_KNOWN_LABELS[agentType] ?? agentType
+}
+
+// Why: AgentIcon expects a TuiAgent, but AgentType is a broader union that
+// includes 'unknown' and arbitrary strings. Return null for the unknown case
+// so AgentIcon renders a neutral "?" glyph — using 'claude' as a fallback
+// caused Codex panes to briefly show the Claude icon before the hook fired.
+export function agentTypeToIconAgent(agentType: AgentType | null | undefined): TuiAgent | null {
+  if (!agentType || agentType === 'unknown') {
+    return null
+  }
+  return agentType as TuiAgent
+}
+
+// Why: explicit agent status entries (from hook-based reports) can go stale if
+// the agent process exits without sending a final update. This helper lets
+// callers decide whether to trust the entry based on a configurable TTL.
+export function isExplicitAgentStatusFresh(
+  entry: Pick<AgentStatusEntry, 'updatedAt'>,
+  now: number,
+  staleAfterMs: number
+): boolean {
+  return now - entry.updatedAt <= staleAfterMs
+}
+
+/**
+ * Map an explicit AgentStatusState to the visual Status used by
+ * StatusIndicator and WorktreeCard.
+ *
+ * | Explicit State | Visual Status | Meaning                        |
+ * |----------------|---------------|--------------------------------|
+ * | working        | working       | agent actively executing       |
+ * | blocked        | permission    | agent needs user attention     |
+ * | waiting        | permission    | agent needs user attention     |
+ * | done           | active        | task complete but pane live    |
+ */
+export function mapAgentStatusStateToVisualStatus(state: AgentStatusState): Status {
+  switch (state) {
+    case 'working':
+      return 'working'
+    case 'blocked':
+    case 'waiting':
+      return 'permission'
+    case 'done':
+      return 'active'
+  }
 }
 
 export function countWorkingAgents({
