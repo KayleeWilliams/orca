@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeImage, nativeTheme, protocol } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 import devIcon from '../../resources/icon-dev.png?asset'
 import { Store, initDataPath } from './persistence'
@@ -89,6 +89,17 @@ initStatsPath()
 initClaudeUsagePath()
 initCodexUsagePath()
 enableMainProcessGpuFeatures()
+
+// Why: custom schemes must be registered before app.whenReady(). The orca-pdf
+// scheme is used by the PDF viewer webview to load PDFs from a main-process
+// memory store, sidestepping cross-origin blob URL limitations that prevent
+// webviews from loading renderer-created blob URLs.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'orca-pdf',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+])
 
 function openMainWindow(): BrowserWindow {
   if (!store) {

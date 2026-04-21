@@ -1140,23 +1140,9 @@ const api = {
       ipcRenderer.on('ui:findInBrowserPage', listener)
       return () => ipcRenderer.removeListener('ui:findInBrowserPage', listener)
     },
-    rendererFindInPage: (text: string, opts?: { forward?: boolean; findNext?: boolean }): void => {
-      ipcRenderer.send('ui:rendererFindInPage', { text, ...opts })
-    },
-    rendererStopFindInPage: (
-      action: 'clearSelection' | 'keepSelection' | 'activateSelection'
-    ): void => {
-      ipcRenderer.send('ui:rendererStopFindInPage', { action })
-    },
-    onRendererFoundInPage: (
-      callback: (result: { activeMatchOrdinal: number; matches: number }) => void
-    ): (() => void) => {
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        result: { activeMatchOrdinal: number; matches: number }
-      ) => callback(result)
-      ipcRenderer.on('ui:rendererFoundInPage', listener)
-      return () => ipcRenderer.removeListener('ui:rendererFoundInPage', listener)
+    storePdfForViewer: (base64: string): Promise<string> => ipcRenderer.invoke('pdf:store', base64),
+    releasePdfFromViewer: (id: string): void => {
+      ipcRenderer.send('pdf:release', id)
     },
     onReloadBrowserPage: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()

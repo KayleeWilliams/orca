@@ -1,16 +1,8 @@
-import {
-  ChevronDown,
-  ChevronUp,
-  Image as ImageIcon,
-  RotateCcw,
-  Search,
-  X,
-  ZoomIn,
-  ZoomOut
-} from 'lucide-react'
+import { Image as ImageIcon, RotateCcw, Search, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { ORCA_PDF_VIEWER_PARTITION } from '../../../../shared/constants'
+import PdfFind from './PdfFind'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -34,18 +26,18 @@ export default function ImageViewer({
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(
     null
   )
-
   const [findOpen, setFindOpen] = useState(false)
-  const [findQuery, setFindQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [activeMatch, setActiveMatch] = useState(0)
-  const [totalMatches, setTotalMatches] = useState(0)
-  const findInputRef = useRef<HTMLInputElement>(null)
+  const webviewRef = useRef<Electron.WebviewTag | null>(null)
 
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
   const isPdf = mimeType === 'application/pdf'
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  // Why: for PDFs we store content via IPC to a main-process memory store
+  // and load it via the custom orca-pdf: protocol in a webview. This avoids
+  // cross-origin blob URL issues that prevent webviews from loading
+  // renderer-created blob URLs.
+  const [pdfProtocolUrl, setPdfProtocolUrl] = useState<string | null>(null)
   const estimatedSize = useMemo(() => {
     const bytes = Math.floor((cleanedContent.length * 3) / 4)
     if (bytes < 1024) {
@@ -60,15 +52,10 @@ export default function ImageViewer({
 
   useEffect(() => {
     setImageError(false)
-
-    if (!cleanedContent) {
+    if (!cleanedContent || isPdf) {
       setPreviewUrl(null)
       return
     }
-
-    // Why: window.atob() throws a DOMException if cleanedContent contains
-    // invalid base64 characters (e.g. corrupt or truncated data). We catch
-    // that so the component degrades to the error state instead of crashing.
     let binary: string
     try {
       binary = window.atob(cleanedContent)
@@ -76,86 +63,44 @@ export default function ImageViewer({
       setImageError(true)
       return
     }
-
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i += 1) {
       bytes[i] = binary.charCodeAt(i)
     }
-
-    // Why: large binary previews behave better as object URLs than giant
-    // inline data URLs. PDFs especially can surface awkward native viewer UI
-    // when loaded from a data URL, and object URLs avoid keeping megabytes of
-    // base64 text in the DOM.
     const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
     setPreviewUrl(objectUrl)
-
     return () => URL.revokeObjectURL(objectUrl)
-  }, [cleanedContent, mimeType])
-
-  // ── PDF find-in-page via main-window webContents IPC ──────────────
-  // Why: the <embed> PDF viewer is a Chromium plugin whose DOM is in a
-  // separate process. The BrowserWindow's webContents.findInPage() can
-  // search the Chromium PDF viewer's text layer at the compositor level,
-  // so we route find requests through IPC to the main process.
+  }, [cleanedContent, mimeType, isPdf])
 
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(findQuery), 200)
-    return () => clearTimeout(id)
-  }, [findQuery])
-
-  useEffect(() => {
-    if (!findOpen) {
-      window.api.ui.rendererStopFindInPage('clearSelection')
-      setActiveMatch(0)
-      setTotalMatches(0)
+    if (!isPdf || !cleanedContent) {
+      setPdfProtocolUrl(null)
       return
     }
-    findInputRef.current?.focus()
-    findInputRef.current?.select()
-  }, [findOpen])
-
-  useEffect(() => {
-    if (!debouncedQuery || !findOpen) {
-      if (findOpen) {
-        window.api.ui.rendererStopFindInPage('clearSelection')
+    let storeId: string | null = null
+    let cancelled = false
+    window.api.ui.storePdfForViewer(cleanedContent).then((id) => {
+      if (cancelled) {
+        window.api.ui.releasePdfFromViewer(id)
+        return
       }
-      setActiveMatch(0)
-      setTotalMatches(0)
-      return
-    }
-    window.api.ui.rendererFindInPage(debouncedQuery)
-  }, [debouncedQuery, findOpen])
-
-  useEffect(() => {
-    if (!findOpen) {
-      return
-    }
-    return window.api.ui.onRendererFoundInPage((result) => {
-      setActiveMatch(result.activeMatchOrdinal)
-      setTotalMatches(result.matches)
+      storeId = id
+      setPdfProtocolUrl(`orca-pdf://${id}`)
     })
-  }, [findOpen])
-
-  const findNext = useCallback(() => {
-    if (findQuery) {
-      window.api.ui.rendererFindInPage(findQuery, { forward: true, findNext: true })
+    return () => {
+      cancelled = true
+      if (storeId) {
+        window.api.ui.releasePdfFromViewer(storeId)
+      }
     }
-  }, [findQuery])
+  }, [isPdf, cleanedContent])
 
-  const findPrevious = useCallback(() => {
-    if (findQuery) {
-      window.api.ui.rendererFindInPage(findQuery, { forward: false, findNext: true })
-    }
-  }, [findQuery])
+  const closeFindBar = useCallback(() => setFindOpen(false), [])
 
-  const closeFindBar = useCallback(() => {
-    setFindOpen(false)
-  }, [])
-
-  // Why: when the <embed> PDF plugin has focus, keyboard events go to the
-  // plugin process and don't propagate to the renderer's DOM. This handler
-  // only fires when focus is outside the embed (e.g. right after tab switch).
-  // The Search button in the toolbar is the reliable entry point.
+  // Why: when the webview has focus, keyboard events go to the guest process
+  // and don't propagate to the renderer's DOM. This handler only fires when
+  // focus is outside the webview. The Search button in the toolbar is the
+  // reliable entry point when the PDF has focus.
   useEffect(() => {
     if (!isPdf) {
       return
@@ -172,20 +117,6 @@ export default function ImageViewer({
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [isPdf])
 
-  const handleFindKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      e.stopPropagation()
-      if (e.key === 'Escape') {
-        closeFindBar()
-      } else if (e.key === 'Enter' && e.shiftKey) {
-        findPrevious()
-      } else if (e.key === 'Enter') {
-        findNext()
-      }
-    },
-    [closeFindBar, findNext, findPrevious]
-  )
-
   if (imageError) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-muted/20 p-8 text-sm text-muted-foreground">
@@ -196,7 +127,7 @@ export default function ImageViewer({
     )
   }
 
-  if (!previewUrl) {
+  if ((isPdf && !pdfProtocolUrl) || (!isPdf && !previewUrl)) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         Loading preview...
@@ -206,67 +137,18 @@ export default function ImageViewer({
 
   const previewPane = isPdf ? (
     <div className="relative flex flex-1 flex-col overflow-auto">
-      {findOpen ? (
-        <div
-          className="absolute top-2 right-2 z-50 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800/95 px-2 py-1 shadow-lg backdrop-blur-sm"
-          style={{ width: 300 }}
-          onKeyDown={handleFindKeyDown}
-        >
-          <input
-            ref={findInputRef}
-            type="text"
-            value={findQuery}
-            onChange={(e) => setFindQuery(e.target.value)}
-            placeholder="Find in page..."
-            className="min-w-0 flex-1 border-none bg-transparent text-sm text-white outline-none placeholder:text-zinc-500"
-          />
-          {findQuery ? (
-            <span className="shrink-0 text-xs text-zinc-400">
-              {totalMatches > 0 ? `${activeMatch} of ${totalMatches}` : 'No matches'}
-            </span>
-          ) : null}
-          <div className="mx-0.5 h-4 w-px bg-zinc-700" />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={findPrevious}
-            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
-            title="Previous match"
-          >
-            <ChevronUp size={14} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={findNext}
-            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
-            title="Next match"
-          >
-            <ChevronDown size={14} />
-          </Button>
-          <div className="mx-0.5 h-4 w-px bg-zinc-700" />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={closeFindBar}
-            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
-            title="Close"
-          >
-            <X size={14} />
-          </Button>
-        </div>
-      ) : null}
-      {/* Why: Electron's Chromium PDF viewer can fail to initialize inside a
-          sandboxed iframe even when the Blob URL is valid. Using <embed> keeps
-          the preview isolated to the browser's native PDF surface without
-          depending on iframe document execution. */}
-      <embed
-        src={`${previewUrl}#navpanes=0`}
-        type={mimeType}
+      <PdfFind isOpen={findOpen} onClose={closeFindBar} webviewRef={webviewRef} />
+      {/* Why: the PDF viewer webview loads content via the custom orca-pdf:
+          protocol served from a main-process memory store. This sidesteps
+          cross-origin blob URL limitations and data URL issues that prevent
+          Chromium's PDF viewer from activating in webview guests. Using a
+          webview gives us webview.findInPage() to search the PDF text layer. */}
+      <webview
+        ref={webviewRef}
+        src={pdfProtocolUrl!}
+        partition={ORCA_PDF_VIEWER_PARTITION}
         className="flex-1 min-h-[24rem] w-full bg-background"
+        style={{ display: 'inline-flex' }}
       />
     </div>
   ) : (
@@ -280,7 +162,7 @@ export default function ImageViewer({
         style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
       >
         <img
-          src={previewUrl}
+          src={previewUrl!}
           alt={filename}
           className="max-h-full max-w-full object-contain"
           onLoad={(event) => {
@@ -352,10 +234,6 @@ export default function ImageViewer({
           <span>{estimatedSize}</span>
         </div>
       </div>
-      {/* Why: native Chromium PDF embeds need direct pointer input for paging,
-          zoom, selection, and sidebar toggles. Intercepting every click to
-          force a second modal preview breaks those controls on some Macs and
-          can leave the dialog shell visible around a half-initialized viewer. */}
       {!isPdf && (
         <Dialog open={isPopupOpen} onOpenChange={setIsPopupOpen}>
           <DialogContent
@@ -381,7 +259,7 @@ export default function ImageViewer({
                 style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
               >
                 <img
-                  src={previewUrl}
+                  src={previewUrl!}
                   alt={filename}
                   className="block max-h-full max-w-full object-contain"
                 />

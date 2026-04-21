@@ -12,6 +12,10 @@ import { DEFAULT_TERMINAL_FONT_WEIGHT } from './terminal-fonts'
 
 export const SCHEMA_VERSION = 1
 export const ORCA_BROWSER_PARTITION = 'persist:orca-browser'
+// Why: the PDF viewer needs its own non-persisted partition so the
+// will-attach-webview security handler can allow orca-pdf: scheme URLs only
+// for this surface while keeping browser guests restricted to http/https.
+export const ORCA_PDF_VIEWER_PARTITION = 'orca-pdf-viewer'
 // Why: blank browser tabs must start from an inert guest URL that does not
 // navigate the privileged main window to about:blank. Renderer and main both
 // need the exact same value so the attach policy can allow only this one safe

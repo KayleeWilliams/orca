@@ -1,5 +1,6 @@
 /* oxlint-disable max-lines */
-import { BrowserWindow, ipcMain, nativeTheme, screen, shell } from 'electron'
+import { BrowserWindow, ipcMain, nativeTheme, screen, session, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../../resources/icon.png?asset'
@@ -12,6 +13,7 @@ import {
   normalizeExternalBrowserUrl
 } from '../../shared/browser-url'
 import { resolveWindowShortcutAction } from '../../shared/window-shortcut-policy'
+import { ORCA_PDF_VIEWER_PARTITION } from '../../shared/constants'
 import { getMainE2EConfig } from '../e2e-config'
 
 function forceRepaint(window: BrowserWindow): void {
@@ -206,6 +208,13 @@ export function createMainWindow(
     const normalizedSrc = normalizeBrowserNavigationUrl(src)
     const partition = typeof webPreferences.partition === 'string' ? webPreferences.partition : ''
 
+    // Why: the PDF viewer webview loads PDFs via the custom orca-pdf: scheme
+    // served from a main-process memory store. This is the only surface allowed
+    // to use this scheme — browser guests must still pass normalizeBrowserNavigationUrl
+    // which rejects non-http/https protocols.
+    const isPdfViewerGuest =
+      partition === ORCA_PDF_VIEWER_PARTITION && src.startsWith('orca-pdf://')
+
     // Why: arbitrary sites must stay inside an unprivileged guest surface. We
     // fail closed here so a renderer bug cannot smuggle preload, Node, or a
     // non-browser partition into the guest and widen the app privilege boundary.
@@ -215,7 +224,10 @@ export function createMainWindow(
     // persist:orca-browser-session-<uuid>). The registry is the sole authority
     // for which partitions are valid — renderer-provided strings that are not
     // in the allowlist are rejected.
-    if (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition)) {
+    if (
+      !isPdfViewerGuest &&
+      (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition))
+    ) {
       event.preventDefault()
       return
     }
@@ -238,38 +250,39 @@ export function createMainWindow(
     webPreferences.partition = partition
   })
 
-  // Why: the <embed> PDF viewer is a Chromium plugin whose content is in a
-  // separate process. The BrowserWindow's own findInPage() can search the
-  // PDF viewer's text layer at the compositor level, so we expose it via IPC
-  // so the renderer's PDF find bar can drive find-in-page.
-  ipcMain.on(
-    'ui:rendererFindInPage',
-    (event, args: { text: string; forward?: boolean; findNext?: boolean }) => {
-      if (event.sender !== mainWindow.webContents) {
-        return
-      }
-      mainWindow.webContents.findInPage(args.text, {
-        forward: args.forward,
-        findNext: args.findNext
-      })
-    }
-  )
+  // ── PDF viewer protocol ──────────────────────────────────────────────
+  // Why: <embed> renders PDFs but its content lives in a separate plugin
+  // process invisible to findInPage(). A <webview> owns its webContents so
+  // webview.findInPage() can search the PDF text layer. But webviews can't
+  // load blob or data URLs for PDFs (cross-origin / viewer doesn't activate).
+  // A custom orca-pdf: protocol served from a main-process memory store
+  // sidesteps both issues: the webview navigates to orca-pdf://{id} and
+  // the protocol handler responds with the raw PDF bytes + correct MIME type.
+  const pdfDataStore = new Map<string, Uint8Array>()
 
-  ipcMain.on(
-    'ui:rendererStopFindInPage',
-    (event, args: { action: 'clearSelection' | 'keepSelection' | 'activateSelection' }) => {
-      if (event.sender !== mainWindow.webContents) {
-        return
-      }
-      mainWindow.webContents.stopFindInPage(args.action)
+  const pdfSession = session.fromPartition(ORCA_PDF_VIEWER_PARTITION)
+  pdfSession.protocol.handle('orca-pdf', (request) => {
+    const url = new URL(request.url)
+    const id = url.hostname
+    const data = pdfDataStore.get(id)
+    if (!data) {
+      return new Response('Not found', { status: 404 })
     }
-  )
-
-  mainWindow.webContents.on('found-in-page', (_event, result) => {
-    mainWindow.webContents.send('ui:rendererFoundInPage', {
-      activeMatchOrdinal: result.activeMatchOrdinal,
-      matches: result.matches
+    return new Response(data.buffer as ArrayBuffer, {
+      headers: { 'content-type': 'application/pdf' }
     })
+  })
+
+  ipcMain.handle('pdf:store', (_event, base64: string) => {
+    const id = randomUUID()
+    pdfDataStore.set(id, new Uint8Array(Buffer.from(base64, 'base64')))
+    return id
+  })
+
+  ipcMain.on('pdf:release', (_event, id: string) => {
+    if (typeof id === 'string') {
+      pdfDataStore.delete(id)
+    }
   })
 
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
