@@ -2,14 +2,24 @@
 composer card markup together so the inline and modal variants share one UI
 surface without splitting the controlled form into hard-to-follow fragments. */
 import React from 'react'
-import { Check, ChevronDown, CornerDownLeft, LoaderCircle } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  CornerDownLeft,
+  FolderPlus,
+  LoaderCircle,
+  Settings2
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
 import AgentCombobox from '@/components/agent/AgentCombobox'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
+import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import type { TuiAgent } from '../../../shared/types'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 
 const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
 
@@ -44,32 +54,6 @@ type NewWorkspaceComposerCardProps = {
   createError: string | null
 }
 
-function renderSetupYamlPreview(command: string): React.JSX.Element[] {
-  const lines = ['scripts:', '  setup: |', ...command.split('\n').map((line) => `    ${line}`)]
-
-  return lines.map((line, index) => {
-    const keyMatch = line.match(/^(\s*)([a-zA-Z][\w-]*)(:\s*)(\|)?$/)
-    if (keyMatch) {
-      return (
-        <div key={`${line}-${index}`} className="whitespace-pre">
-          <span className="text-muted-foreground">{keyMatch[1]}</span>
-          <span className="font-semibold text-sky-600 dark:text-sky-300">{keyMatch[2]}</span>
-          <span className="text-muted-foreground">{keyMatch[3]}</span>
-          {keyMatch[4] ? (
-            <span className="text-amber-600 dark:text-amber-300">{keyMatch[4]}</span>
-          ) : null}
-        </div>
-      )
-    }
-
-    return (
-      <div key={`${line}-${index}`} className="whitespace-pre">
-        <span className="text-emerald-700 dark:text-emerald-300/95">{line}</span>
-      </div>
-    )
-  })
-}
-
 function SetupCommandPreview({
   setupConfig,
   headerAction
@@ -81,13 +65,11 @@ function SetupCommandPreview({
     return (
       <div className="rounded-2xl border border-border/60 bg-muted/40 shadow-inner">
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            orca.yaml
-          </div>
+          <div className="font-mono text-[11px] text-muted-foreground">orca.yaml</div>
           {headerAction}
         </div>
-        <pre className="overflow-x-auto px-4 py-4 font-mono text-[12px] leading-6 text-foreground">
-          {renderSetupYamlPreview(setupConfig.command)}
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12px] leading-5 text-emerald-700 dark:text-emerald-300/95">
+          {setupConfig.command}
         </pre>
       </div>
     )
@@ -208,6 +190,18 @@ export default function NewWorkspaceComposerCard({
   createError
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
+  const addRepo = useAppStore((s) => s.addRepo)
+  const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
+  const defaultTuiAgent = useAppStore((s) => s.settings?.defaultTuiAgent ?? null)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [isAddingRepo, setIsAddingRepo] = React.useState(false)
+
+  const handleSetDefaultAgent = React.useCallback(
+    (next: TuiAgent | 'blank' | null) => {
+      updateSettings({ defaultTuiAgent: next })
+    },
+    [updateSettings]
+  )
 
   const focusNameInput = React.useCallback(() => {
     // Why: after the repo picker commits a choice, moving focus to the name
@@ -223,6 +217,26 @@ export default function NewWorkspaceComposerCard({
       AGENT_CATALOG.filter((agent) => detectedAgentIds === null || detectedAgentIds.has(agent.id)),
     [detectedAgentIds]
   )
+
+  const handleAddRepo = React.useCallback(async (): Promise<void> => {
+    if (isAddingRepo) {
+      return
+    }
+    setIsAddingRepo(true)
+    try {
+      const repo = await addRepo()
+      if (!repo) {
+        return
+      }
+      if (isGitRepoKind(repo)) {
+        await fetchWorktrees(repo.id)
+      }
+      onRepoChange(repo.id)
+      focusNameInput()
+    } finally {
+      setIsAddingRepo(false)
+    }
+  }, [addRepo, fetchWorktrees, focusNameInput, isAddingRepo, onRepoChange])
 
   return (
     <div
@@ -242,8 +256,33 @@ export default function NewWorkspaceComposerCard({
       )}
     >
       <div className="space-y-4">
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Repository</label>
+        {/* Why: w-fit keeps the label+icon row the same width as the combobox
+            trigger beneath it so the action icon visually anchors to the
+            trigger's right edge rather than stretching to the dialog edge. */}
+        <div className="w-fit space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Repository</label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={isAddingRepo}
+                  onClick={() => void handleAddRepo()}
+                  className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                  aria-label={
+                    isAddingRepo ? 'Adding folder or repository' : 'Add folder or repository'
+                  }
+                >
+                  <FolderPlus className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Add repo
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <RepoCombobox
             repos={eligibleRepos}
             value={repoId}
@@ -262,23 +301,46 @@ export default function NewWorkspaceComposerCard({
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Workspace</label>
+          <label className="text-[11px] font-medium text-muted-foreground">
+            Workspace Name <span className="text-muted-foreground/70">[Optional]</span>
+          </label>
           <Input
             ref={nameInputRef}
             value={name}
             onChange={onNameChange}
-            placeholder="Optional workspace name"
+            placeholder="Workspace name"
             className="h-8 text-xs"
           />
         </div>
 
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Agent</label>
+        <div className="w-fit space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Agent</label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={onOpenAgentSettings}
+                  className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                  aria-label="Open agent settings"
+                >
+                  <Settings2 className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Configure agents
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <AgentCombobox
             agents={visibleQuickAgents}
             value={quickAgent}
             onValueChange={onQuickAgentChange}
             onOpenManageAgents={onOpenAgentSettings}
+            defaultAgent={defaultTuiAgent}
+            onSetDefault={handleSetDefaultAgent}
             triggerClassName="h-8 border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
           />
         </div>
@@ -291,7 +353,11 @@ export default function NewWorkspaceComposerCard({
           aria-hidden={!advancedOpen}
         >
           <div className="min-h-0">
-            <div className="space-y-4 pt-1">
+            {/* Why: px-1 insets the content 4px on each side so the Note
+                textarea's 3px outset focus ring has horizontal breathing room
+                inside the overflow-hidden drawer above. Without it the ring
+                gets clipped on the right edge when the field is focused. */}
+            <div className="space-y-4 px-1 pt-1">
               <div className="space-y-1">
                 <label className="text-[11px] font-medium text-muted-foreground">Note</label>
                 <textarea

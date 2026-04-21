@@ -628,8 +628,11 @@ export type GlobalSettings = {
    *  does not surface commands from other worktrees. Defaults to true.
    *  Disable to revert to shared global shell history. */
   terminalScopeHistoryByWorktree: boolean
-  /** Which agent to pre-select in the new-workspace composer. null = auto (first detected). */
-  defaultTuiAgent: TuiAgent | null
+  /** Which agent to pre-select in the new-workspace composer.
+   *  - null: auto (first detected agent)
+   *  - 'blank': blank terminal (no agent launched)
+   *  - TuiAgent: a specific agent id */
+  defaultTuiAgent: TuiAgent | 'blank' | null
   /** Why: worktree deletion is destructive (git worktree remove + rm -rf of the
    *  working directory), so Orca shows a confirmation dialog by default. Users
    *  who delete frequently can opt into skipping the dialog via a "Don't ask

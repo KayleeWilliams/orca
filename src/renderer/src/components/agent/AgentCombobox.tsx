@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react'
-import { Check, ChevronsUpDown, Terminal } from 'lucide-react'
+import { Check, ChevronsUpDown, Star, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -8,10 +8,18 @@ import {
   CommandItem,
   CommandList
 } from '@/components/ui/command'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentIcon, type AgentCatalogEntry } from '@/lib/agent-catalog'
 import { cn } from '@/lib/utils'
 import type { TuiAgent } from '../../../../shared/types'
+
+type DefaultAgentPreference = TuiAgent | 'blank' | null
 
 type AgentComboboxProps = {
   agents: AgentCatalogEntry[]
@@ -19,10 +27,70 @@ type AgentComboboxProps = {
   onValueChange: (agent: TuiAgent | null) => void
   onValueSelected?: (agent: TuiAgent | null) => void
   onOpenManageAgents?: () => void
+  /** Current saved default agent preference. Used to render a subtle "default"
+   *  indicator in the list and to tell which right-click menu item is the
+   *  currently-applied choice. */
+  defaultAgent?: DefaultAgentPreference
+  /** Optional handler for right-click "Set as default" action. When provided,
+   *  each list item (including Blank Terminal) gets a context menu. */
+  onSetDefault?: (agent: DefaultAgentPreference) => void
   triggerClassName?: string
 }
 
 const BLANK_VALUE = '__none__'
+
+type ItemRenderArgs = {
+  key: string
+  itemValue: string
+  isChecked: boolean
+  isDefault: boolean
+  onSelect: () => void
+  onSetDefault?: () => void
+  icon: React.ReactNode
+  label: string
+}
+
+function renderItem({
+  key,
+  itemValue,
+  isChecked,
+  isDefault,
+  onSelect,
+  onSetDefault,
+  icon,
+  label
+}: ItemRenderArgs): React.ReactNode {
+  const row = (
+    <CommandItem
+      key={key}
+      value={itemValue}
+      onSelect={onSelect}
+      className="items-center gap-2 px-3 py-1.5"
+    >
+      <Check className={cn('size-4 text-foreground', isChecked ? 'opacity-100' : 'opacity-0')} />
+      <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+        {icon}
+        <span className="truncate">{label}</span>
+      </span>
+    </CommandItem>
+  )
+  if (!onSetDefault) {
+    return row
+  }
+  return (
+    // Why: z-[70] sits above PopoverContent's z-[60] so the right-click menu
+    // renders in front of the still-open combobox popover instead of behind it.
+    <ContextMenu key={key}>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="z-[70]">
+        <ContextMenuItem onSelect={onSetDefault} disabled={isDefault}>
+          <Star className="size-3.5" />
+          {isDefault ? 'Current default' : 'Set as default'}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
 
 function searchAgents(agents: AgentCatalogEntry[], rawQuery: string): AgentCatalogEntry[] {
   const query = rawQuery.trim().toLowerCase()
@@ -51,6 +119,8 @@ export default function AgentCombobox({
   onValueChange,
   onValueSelected,
   onOpenManageAgents,
+  defaultAgent,
+  onSetDefault,
   triggerClassName
 }: AgentComboboxProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -181,44 +251,30 @@ export default function AgentCombobox({
             <CommandInput placeholder="Search agents..." value={query} onValueChange={setQuery} />
             <CommandList>
               <CommandEmpty>No agents match your search.</CommandEmpty>
-              {blankMatchesQuery ? (
-                <CommandItem
-                  key={BLANK_VALUE}
-                  value={BLANK_VALUE}
-                  onSelect={() => handleSelect(null)}
-                  className="items-center gap-2 px-3 py-1.5"
-                >
-                  <Check
-                    className={cn(
-                      'size-4 text-foreground',
-                      value === null ? 'opacity-100' : 'opacity-0'
-                    )}
-                  />
-                  <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-                    <Terminal className="size-3.5" />
-                    <span className="truncate">Blank Terminal</span>
-                  </span>
-                </CommandItem>
-              ) : null}
-              {filteredAgents.map((agent) => (
-                <CommandItem
-                  key={agent.id}
-                  value={agent.id}
-                  onSelect={() => handleSelect(agent.id)}
-                  className="items-center gap-2 px-3 py-1.5"
-                >
-                  <Check
-                    className={cn(
-                      'size-4 text-foreground',
-                      value === agent.id ? 'opacity-100' : 'opacity-0'
-                    )}
-                  />
-                  <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-                    <AgentIcon agent={agent.id} />
-                    <span className="truncate">{agent.label}</span>
-                  </span>
-                </CommandItem>
-              ))}
+              {blankMatchesQuery
+                ? renderItem({
+                    key: BLANK_VALUE,
+                    itemValue: BLANK_VALUE,
+                    isChecked: value === null,
+                    isDefault: defaultAgent === 'blank',
+                    onSelect: () => handleSelect(null),
+                    onSetDefault: onSetDefault ? () => onSetDefault('blank') : undefined,
+                    icon: <Terminal className="size-3.5" />,
+                    label: 'Blank Terminal'
+                  })
+                : null}
+              {filteredAgents.map((agent) =>
+                renderItem({
+                  key: agent.id,
+                  itemValue: agent.id,
+                  isChecked: value === agent.id,
+                  isDefault: defaultAgent === agent.id,
+                  onSelect: () => handleSelect(agent.id),
+                  onSetDefault: onSetDefault ? () => onSetDefault(agent.id) : undefined,
+                  icon: <AgentIcon agent={agent.id} />,
+                  label: agent.label
+                })
+              )}
             </CommandList>
             {onOpenManageAgents ? (
               <div className="border-t border-border">

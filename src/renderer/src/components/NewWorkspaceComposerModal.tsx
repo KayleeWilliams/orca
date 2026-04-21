@@ -8,6 +8,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
+import AgentSettingsDialog from '@/components/agent/AgentSettingsDialog'
 import { useComposerState } from '@/hooks/useComposerState'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
@@ -70,10 +71,22 @@ function ComposerModalBody({
     persistDraft: false,
     onCreated: onClose
   })
+  // Why: the composer's built-in `onOpenAgentSettings` handler navigates to
+  // the settings page and closes the modal. For the quick-create flow we want
+  // a less disruptive affordance — a nested dialog layered over the composer
+  // so the user can tweak agents without losing their in-progress workspace
+  // name/repo selection.
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false)
   const [quickAgentTouched, setQuickAgentTouched] = useState(false)
   const preferredQuickAgent = useMemo<TuiAgent | null>(() => {
-    if (settings?.defaultTuiAgent) {
-      return settings.defaultTuiAgent
+    const pref = settings?.defaultTuiAgent
+    if (pref === 'blank') {
+      // Why: 'blank' is the explicit "no agent" preference — the quick agent
+      // model already uses null to mean "blank terminal", so translate here.
+      return null
+    }
+    if (pref) {
+      return pref
     }
     const detected = cardProps.detectedAgentIds
     return AGENT_CATALOG.find((agent) => detected === null || detected.has(agent.id))?.id ?? null
@@ -179,9 +192,11 @@ function ComposerModalBody({
           quickAgent={quickAgent}
           onQuickAgentChange={handleQuickAgentChange}
           {...cardProps}
+          onOpenAgentSettings={() => setAgentSettingsOpen(true)}
           onCreate={() => void handleCreate()}
         />
       </DialogContent>
+      <AgentSettingsDialog open={agentSettingsOpen} onOpenChange={setAgentSettingsOpen} />
     </Dialog>
   )
 }

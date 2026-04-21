@@ -247,10 +247,16 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
     return initialLinkedWorkItem?.type === 'pr' ? initialLinkedWorkItem.number : null
   })
+  // Why: the long-form composer's agent selection is a required TuiAgent (not
+  // null/blank), so 'blank' preferences from global settings must collapse to
+  // the Claude default here — the blank-terminal affordance only lives in the
+  // quick-create flow.
+  const fallbackDefaultAgent: TuiAgent =
+    settings?.defaultTuiAgent && settings.defaultTuiAgent !== 'blank'
+      ? settings.defaultTuiAgent
+      : 'claude'
   const [tuiAgent, setTuiAgent] = useState<TuiAgent>(
-    persistDraft
-      ? (newWorkspaceDraft?.agent ?? settings?.defaultTuiAgent ?? 'claude')
-      : (settings?.defaultTuiAgent ?? 'claude')
+    persistDraft ? (newWorkspaceDraft?.agent ?? fallbackDefaultAgent) : fallbackDefaultAgent
   )
   const [detectedAgentIds, setDetectedAgentIds] = useState<Set<TuiAgent> | null>(null)
 
