@@ -18,6 +18,9 @@ type CreateBrowserTabOptions = {
   activate?: boolean
   title?: string
   sessionProfileId?: string | null
+  // Why: callers like "Open Preview to the Side" need to place the new browser
+  // tab in a specific (sibling or newly-split) group rather than the ambient
+  // active group. Defaults to the worktree's current active group.
   targetGroupId?: string
 }
 

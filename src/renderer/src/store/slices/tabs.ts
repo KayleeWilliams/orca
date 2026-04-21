@@ -159,7 +159,7 @@ function findFirstLeaf(root: TabGroupLayoutNode): string {
   return root.type === 'leaf' ? root.groupId : findFirstLeaf(root.first)
 }
 
-function findSiblingGroupId(root: TabGroupLayoutNode, targetGroupId: string): string | null {
+export function findSiblingGroupId(root: TabGroupLayoutNode, targetGroupId: string): string | null {
   if (root.type === 'leaf') {
     return null
   }
