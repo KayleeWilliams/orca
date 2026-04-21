@@ -22,6 +22,7 @@ type RepoComboboxProps = {
   onValueChange: (repoId: string) => void
   placeholder?: string
   triggerClassName?: string
+  autoOpenOnMount?: boolean
 }
 
 export default function RepoCombobox({
@@ -29,7 +30,8 @@ export default function RepoCombobox({
   value,
   onValueChange,
   placeholder = 'Select repo...',
-  triggerClassName
+  triggerClassName,
+  autoOpenOnMount = false
 }: RepoComboboxProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -40,12 +42,36 @@ export default function RepoCombobox({
   const addRepo = useAppStore((s) => s.addRepo)
   const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
   const [isAdding, setIsAdding] = useState(false)
+  const autoOpenedRef = React.useRef(false)
 
   const selectedRepo = useMemo(
     () => repos.find((repo) => repo.id === value) ?? null,
     [repos, value]
   )
   const filteredRepos = useMemo(() => searchRepos(repos, query), [repos, query])
+
+  React.useEffect(() => {
+    if (!autoOpenOnMount || autoOpenedRef.current) {
+      return
+    }
+    autoOpenedRef.current = true
+    setOpen(true)
+  }, [autoOpenOnMount])
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+    setCommandValue(value)
+    const frame = requestAnimationFrame(() => {
+      const repoSearchInput = document.querySelector<HTMLInputElement>(
+        '[data-repo-combobox-root="true"] [data-slot="command-input"]'
+      )
+      repoSearchInput?.focus()
+      repoSearchInput?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open])
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -121,10 +147,14 @@ export default function RepoCombobox({
             <ChevronsUpDown className="size-3.5 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-80 p-0" data-repo-combobox-root="true">
+        <PopoverContent
+          align="start"
+          className="w-80 p-0"
+          data-repo-combobox-root="true"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
           <Command shouldFilter={false} value={commandValue} onValueChange={setCommandValue}>
             <CommandInput
-              autoFocus
               placeholder="Search repos/folders..."
               value={query}
               onValueChange={setQuery}
@@ -192,7 +222,7 @@ export default function RepoCombobox({
         size="default"
         disabled={isAdding}
         onClick={() => void handleAddFolder()}
-        className="size-9 p-0"
+        className="size-9 shrink-0 p-0"
         aria-label={isAdding ? 'Adding folder or repository' : 'Add folder or repository'}
       >
         <FolderPlus className="size-3.5" />

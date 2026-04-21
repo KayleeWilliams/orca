@@ -62,16 +62,6 @@ function ComposerModalBody({
       onCreated: onClose
     })
 
-  // Why: focusing the first text field is more predictable than landing on a
-  // combobox trigger; users can immediately type a name while the repo choice
-  // remains visible and one click away.
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      nameInputRef.current?.focus()
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [nameInputRef])
-
   // Enter submits, Esc first blurs the focused input (like the full page).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -121,8 +111,10 @@ function ComposerModalBody({
         className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[920px]"
         showCloseButton={false}
         onOpenAutoFocus={(event) => {
+          // Why: the repo combobox opens itself on mount and then focuses the
+          // search input inside its popover. Prevent Dialog from stealing focus
+          // to another control before that handoff completes.
           event.preventDefault()
-          nameInputRef.current?.focus()
         }}
       >
         <DialogTitle className="sr-only">Create New Workspace</DialogTitle>
@@ -134,6 +126,7 @@ function ComposerModalBody({
           composerRef={composerRef}
           nameInputRef={nameInputRef}
           promptTextareaRef={promptTextareaRef}
+          repoAutoOpen
           {...cardProps}
         />
       </DialogContent>

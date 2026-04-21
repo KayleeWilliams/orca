@@ -59,6 +59,7 @@ type NewWorkspaceComposerCardProps = {
   composerRef?: React.RefObject<HTMLDivElement | null>
   nameInputRef?: React.RefObject<HTMLInputElement | null>
   promptTextareaRef?: React.RefObject<HTMLTextAreaElement | null>
+  repoAutoOpen?: boolean
   eligibleRepos: RepoOption[]
   repoId: string
   onRepoChange: (value: string) => void
@@ -334,6 +335,7 @@ export default function NewWorkspaceComposerCard({
   composerRef,
   nameInputRef,
   promptTextareaRef,
+  repoAutoOpen = false,
   eligibleRepos,
   repoId,
   onRepoChange,
@@ -409,6 +411,7 @@ export default function NewWorkspaceComposerCard({
                 onValueChange={onRepoChange}
                 placeholder="Choose repository"
                 triggerClassName="h-9"
+                autoOpenOnMount={repoAutoOpen}
               />
             </div>
             <label className="grid gap-1.5">
