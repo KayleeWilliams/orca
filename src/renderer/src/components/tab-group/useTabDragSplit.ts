@@ -1,4 +1,7 @@
-import { useCallback, useMemo, useState } from 'react'
+/* eslint-disable max-lines -- Why: split-tab drag state, pane-drop resolution,
+   and webview pointer-passthrough all belong together in one dnd-kit hook; the
+   cross-file alternative would fragment an otherwise cohesive unit. */
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   closestCenter,
   pointerWithin,
@@ -16,6 +19,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import type { TabGroup } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import type { TabSplitDirection } from '../../store/slices/tabs'
+import { setBrowserWebviewsDragPassthrough } from '../browser-pane/webview-drag-passthrough'
 
 export type TabDropZone = 'center' | TabSplitDirection
 
@@ -182,6 +186,19 @@ export function useTabDragSplit({
     setActiveDrag(null)
     setHoveredDropTarget(null)
   }, [])
+
+  // Why: Electron `<webview>` guests run in a separate Chromium process and
+  // capture pointerup off the host's event loop. Without passthrough during a
+  // drag, onDragEnd never fires over a browser pane, so splitting an
+  // editor/terminal tab onto a browser tab silently fails. Cleanup guarantees
+  // pointer input is restored even if this hook unmounts mid-drag.
+  useEffect(() => {
+    if (!activeDrag) {
+      return
+    }
+    setBrowserWebviewsDragPassthrough(true)
+    return () => setBrowserWebviewsDragPassthrough(false)
+  }, [activeDrag])
 
   const updateHoveredPane = useCallback(
     (event: DragMoveEvent | DragOverEvent) => {

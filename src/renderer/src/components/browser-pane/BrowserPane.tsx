@@ -42,6 +42,11 @@ import {
   markEvictedBrowserTab,
   rememberLiveBrowserUrl
 } from './browser-runtime'
+import {
+  registerBrowserWebviewForDragPassthrough,
+  setBrowserWebviewsDragPassthrough,
+  unregisterBrowserWebviewForDragPassthrough
+} from './webview-drag-passthrough'
 import type {
   BrowserDownloadRequestedEvent,
   BrowserDownloadProgressEvent,
@@ -105,12 +110,6 @@ function getHiddenContainer(): HTMLDivElement {
   return hiddenContainer
 }
 
-function setWebviewsDragPassthrough(passthrough: boolean): void {
-  for (const webview of webviewRegistry.values()) {
-    webview.style.pointerEvents = passthrough ? 'none' : ''
-  }
-}
-
 if (typeof window !== 'undefined') {
   type DragListenerRegistry = {
     dragstart: () => void
@@ -125,9 +124,9 @@ if (typeof window !== 'undefined') {
     window.removeEventListener('drop', existingListeners.drop, true)
   }
 
-  const dragstart = (): void => setWebviewsDragPassthrough(true)
-  const dragend = (): void => setWebviewsDragPassthrough(false)
-  const drop = (): void => setWebviewsDragPassthrough(false)
+  const dragstart = (): void => setBrowserWebviewsDragPassthrough(true)
+  const dragend = (): void => setBrowserWebviewsDragPassthrough(false)
+  const drop = (): void => setBrowserWebviewsDragPassthrough(false)
 
   window.addEventListener('dragstart', dragstart, true)
   window.addEventListener('dragend', dragend, true)
@@ -147,6 +146,7 @@ export function destroyPersistentWebview(browserTabId: string): void {
     return
   }
   void window.api.browser.unregisterGuest({ browserPageId: browserTabId })
+  unregisterBrowserWebviewForDragPassthrough(webview)
   webview.remove()
   webviewRegistry.delete(browserTabId)
   registeredWebContentsIds.delete(browserTabId)
@@ -986,6 +986,10 @@ function BrowserPagePane({
       webview.style.border = 'none'
       webview.style.background = 'transparent'
       webviewRegistry.set(browserTab.id, webview)
+      // Why: register with the drag-passthrough module so an in-progress tab
+      // drag can disable this guest's pointer capture; otherwise Chromium's
+      // guest process swallows pointerup and onDragEnd never fires on the host.
+      registerBrowserWebviewForDragPassthrough(webview)
       container.appendChild(webview)
       needsInitialNavigation = true
     }
