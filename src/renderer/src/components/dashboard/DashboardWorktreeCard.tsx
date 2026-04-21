@@ -4,23 +4,6 @@ import { useAppStore } from '@/store'
 import DashboardAgentRow from './DashboardAgentRow'
 import type { DashboardWorktreeCard as DashboardWorktreeCardData } from './useDashboardData'
 
-// Why: the worktree badge collapses to a single status dot — avoids the visual
-// triple-up of Done/Done/Done (agent row + badge + agent column). Tooltip
-// preserves accessibility. Blocked/waiting roll up into "Working" since the
-// agent is mid-turn; idle worktrees show no dot at all.
-function dominantStateDot(state: string): { label: string; className: string } | null {
-  switch (state) {
-    case 'working':
-    case 'blocked':
-    case 'waiting':
-      return { label: 'Working', className: 'bg-emerald-500' }
-    case 'done':
-      return { label: 'Done', className: 'bg-sky-500/70' }
-    default:
-      return null
-  }
-}
-
 type Props = {
   card: DashboardWorktreeCardData
   isFocused: boolean
@@ -75,7 +58,6 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
   )
 
   const branchName = card.worktree.branch?.replace(/^refs\/heads\//, '') ?? ''
-  const dot = dominantStateDot(card.dominantState)
 
   return (
     <div
@@ -90,21 +72,26 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
         'hover:bg-accent/20',
         'focus-visible:outline-none focus-visible:bg-accent/30',
         isFocused && 'bg-accent/25',
-        !isLast && 'border-b border-border'
+        !isLast && 'border-b border-border/60'
       )}
     >
       {/* Worktree header row */}
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-semibold text-foreground truncate leading-tight">
+      <div className="flex items-center gap-1.5 min-w-0">
+        {/* Why: the repo indicator (dot + name) sits on every row now that the
+            per-repo card has been flattened — without it, the user can't tell
+            which repo a worktree belongs to at a glance. */}
+        <span
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: card.repo.badgeColor }}
+          aria-hidden
+        />
+        <span className="text-[10px] text-muted-foreground/70 truncate shrink-0 max-w-[40%]">
+          {card.repo.displayName}
+        </span>
+        <span className="text-[10px] text-muted-foreground/40 shrink-0">/</span>
+        <span className="text-[11px] font-semibold text-foreground truncate leading-tight min-w-0">
           {card.worktree.displayName}
         </span>
-        {dot && (
-          <span
-            className={cn('ml-auto size-2 shrink-0 rounded-full', dot.className)}
-            title={dot.label}
-            aria-label={dot.label}
-          />
-        )}
       </div>
 
       {/* Branch name */}

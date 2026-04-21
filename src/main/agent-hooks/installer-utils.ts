@@ -1,5 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'fs'
-import { dirname } from 'path'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+  copyFileSync,
+  renameSync,
+  unlinkSync
+} from 'fs'
+import { dirname, join } from 'path'
 
 export type HookCommandConfig = {
   type: 'command'
@@ -63,6 +72,30 @@ export function writeManagedScript(scriptPath: string, content: string): void {
 }
 
 export function writeHooksJson(configPath: string, config: HooksConfig): void {
-  mkdirSync(dirname(configPath), { recursive: true })
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
+  const dir = dirname(configPath)
+  mkdirSync(dir, { recursive: true })
+
+  // Why: write to a temp file then rename so a crash or disk-full mid-write
+  // leaves the original untouched. This is the only safe way to update a
+  // config file the user may have hand-edited.
+  const tmpPath = join(dir, `.${Date.now()}.tmp`)
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
+    // Why: single rolling backup — one file, no accumulation in ~/.claude.
+    // Protects against a merge-logic bug producing bad JSON; the original is
+    // always recoverable from <configPath>.bak until the next write.
+    if (existsSync(configPath)) {
+      copyFileSync(configPath, `${configPath}.bak`)
+    }
+    renameSync(tmpPath, configPath)
+  } finally {
+    // Clean up temp file if rename failed.
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        // best effort
+      }
+    }
+  }
 }

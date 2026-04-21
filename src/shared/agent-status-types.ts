@@ -17,6 +17,11 @@ export type AgentStateHistoryEntry = {
   prompt: string
   /** When this state was first reported. */
   startedAt: number
+  /** True when this `done` was a cancellation (user hit ESC/Ctrl+C). Reported
+   *  by the agent itself — Claude Code sets `is_interrupt: true` on its `Stop`
+   *  hook when the turn ended via interrupt. Always falsy for non-`done`
+   *  states, so retention logic can preserve this signal. */
+  interrupted?: boolean
 }
 
 /** Maximum number of history entries kept per agent to bound memory. */
@@ -44,6 +49,12 @@ export type AgentStatusEntry = {
   toolInput?: string
   /** Most recent assistant message preview, when the hook carried one. */
   lastAssistantMessage?: string
+  /** True when the current `done` state was reached via an interrupt rather
+   *  than a normal turn completion (Claude Code's `is_interrupt: true`).
+   *  Orthogonal to `state`: the agent still finished the turn, but the user
+   *  cancelled it. Undefined while the agent is working or for non-Claude
+   *  agents that don't surface this signal. */
+  interrupted?: boolean
 }
 
 // ─── Agent status payload shape (what hook receivers send via IPC) ──────────
@@ -58,6 +69,7 @@ export type AgentStatusPayload = {
   toolName?: string
   toolInput?: string
   lastAssistantMessage?: string
+  interrupted?: boolean
 }
 
 /**
@@ -73,6 +85,7 @@ export type ParsedAgentStatusPayload = {
   toolName?: string
   toolInput?: string
   lastAssistantMessage?: string
+  interrupted?: boolean
 }
 
 /** Maximum character length for the prompt field. Truncated on parse. */
@@ -179,7 +192,10 @@ export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload 
       lastAssistantMessage: normalizeOptionalMultilineField(
         parsed.lastAssistantMessage,
         AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH
-      )
+      ),
+      // Why: only meaningful on `done`. Coerce to undefined on other states so
+      // the field doesn't leak stale truth through state transitions.
+      interrupted: parsed.interrupted === true && state === 'done' ? true : undefined
     }
   } catch {
     return null

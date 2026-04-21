@@ -457,6 +457,13 @@ function normalizeClaudeEvent(
     resetOnNewTurn: isNewTurnEvent('claude', eventName)
   })
 
+  // Why: Claude Code's `Stop` hook sets `is_interrupt: true` when the turn
+  // ended because the user hit ESC / Ctrl+C rather than completing normally.
+  // This is the authoritative signal (the agent itself reports it), so we
+  // forward it through only on Stop — other hook events don't carry it.
+  const interrupted =
+    eventName === 'Stop' && hookPayload['is_interrupt'] === true ? true : undefined
+
   return parseAgentStatusPayload(
     JSON.stringify({
       state,
@@ -464,7 +471,8 @@ function normalizeClaudeEvent(
       agentType: 'claude',
       toolName: snapshot.toolName,
       toolInput: snapshot.toolInput,
-      lastAssistantMessage: snapshot.lastAssistantMessage
+      lastAssistantMessage: snapshot.lastAssistantMessage,
+      interrupted
     })
   )
 }

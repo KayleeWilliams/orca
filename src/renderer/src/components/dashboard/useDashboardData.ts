@@ -18,6 +18,7 @@ export type DashboardAgentRow = {
 }
 
 export type DashboardWorktreeCard = {
+  repo: Repo
   worktree: Worktree
   agents: DashboardAgentRow[]
   /** Highest-priority agent state for filtering.
@@ -125,6 +126,7 @@ function buildDashboardData(
         // card around while the user is reading.
         const earliestStartedAt = agents.length > 0 ? agents[0].startedAt : 0
         return {
+          repo,
           worktree,
           agents,
           dominantState: computeDominantState(agents),

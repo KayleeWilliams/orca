@@ -201,6 +201,16 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             and the dismiss-X all live in one flex group on the right so
             the eye can find "who/what/when/close" in a single sweep. */}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* Why: call out cancellations explicitly — a `done` that was
+              interrupted looks visually identical to a clean finish without a
+              label, but the user cares a lot about the difference (their turn
+              didn't complete). The tag sits before the timestamp so it reads
+              as a qualifier on "done 3m ago". */}
+          {agent.entry.interrupted && (
+            <span className="rounded-sm bg-rose-500/15 px-1 py-px text-[9px] font-medium leading-none text-rose-400/90">
+              interrupted
+            </span>
+          )}
           {(startedAt !== null || doneAt !== null) && (
             <span className="text-[10px] leading-none text-muted-foreground/60">
               {doneAt !== null
@@ -221,7 +231,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={4}>
-              {agentStateLabel(asDotState(agent.state))}
+              {agent.entry.interrupted ? 'Interrupted' : agentStateLabel(asDotState(agent.state))}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -258,11 +268,22 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
         </span>
       </div>
       {toolName && (
-        <div className="mt-1 flex min-w-0 items-center gap-1 pl-5 text-[11px] leading-snug text-muted-foreground/70">
-          <Wrench className="size-2.5 shrink-0" />
-          <code className="font-mono text-[11px]">{toolName}</code>
+        <div
+          className={cn(
+            'mt-1 flex min-w-0 gap-1 pl-5 text-[11px] leading-snug text-muted-foreground/70',
+            expanded ? 'items-start' : 'items-center'
+          )}
+        >
+          <Wrench className="mt-[2px] size-2.5 shrink-0" />
+          <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
           {toolInput && (
-            <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
+            <span
+              className={cn(
+                'min-w-0 text-muted-foreground/60',
+                expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+              )}
+              title={expanded ? undefined : toolInput}
+            >
               {toolInput}
             </span>
           )}

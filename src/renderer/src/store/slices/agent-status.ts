@@ -125,7 +125,14 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         if (existing && existing.state !== payload.state) {
           history = [
             ...history,
-            { state: existing.state, prompt: existing.prompt, startedAt: existing.updatedAt }
+            {
+              state: existing.state,
+              prompt: existing.prompt,
+              startedAt: existing.updatedAt,
+              // Why: preserve the interrupt flag on the historical `done` entry
+              // so activity-block views can render past cancellations as such.
+              interrupted: existing.interrupted
+            }
           ]
           if (history.length > AGENT_STATE_HISTORY_MAX) {
             history = history.slice(history.length - AGENT_STATE_HISTORY_MAX)
@@ -147,7 +154,12 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           stateHistory: history,
           toolName: payload.toolName,
           toolInput: payload.toolInput,
-          lastAssistantMessage: payload.lastAssistantMessage
+          lastAssistantMessage: payload.lastAssistantMessage,
+          // Why: interrupted lives on `done` only. parseAgentStatusPayload
+          // already clamps it to `undefined` for non-done states, so writing
+          // the field through directly preserves truth for done and resets
+          // it when a new turn starts (working → Stop reprices it).
+          interrupted: payload.interrupted
         }
         return {
           agentStatusByPaneKey: { ...s.agentStatusByPaneKey, [paneKey]: entry },

@@ -1,12 +1,11 @@
 import { useEffect, useCallback } from 'react'
 import type React from 'react'
 import { useAppStore } from '@/store'
-import type { DashboardRepoGroup } from './useDashboardData'
+import type { DashboardWorktreeCard } from './useDashboardData'
 import type { DashboardFilter } from './useDashboardFilter'
 
 type UseDashboardKeyboardParams = {
-  filteredGroups: DashboardRepoGroup[]
-  collapsedRepos: Set<string>
+  filteredWorktrees: DashboardWorktreeCard[]
   focusedWorktreeId: string | null
   setFocusedWorktreeId: (id: string | null) => void
   filter: DashboardFilter
@@ -26,26 +25,8 @@ const FILTER_KEYS: Record<string, DashboardFilter> = {
   '4': 'done'
 }
 
-/** Collect all visible (non-collapsed) worktree IDs in display order. */
-function getVisibleWorktreeIds(
-  groups: DashboardRepoGroup[],
-  collapsedRepos: Set<string>
-): string[] {
-  const ids: string[] = []
-  for (const group of groups) {
-    if (collapsedRepos.has(group.repo.id)) {
-      continue
-    }
-    for (const card of group.worktrees) {
-      ids.push(card.worktree.id)
-    }
-  }
-  return ids
-}
-
 export function useDashboardKeyboard({
-  filteredGroups,
-  collapsedRepos,
+  filteredWorktrees,
   focusedWorktreeId,
   setFocusedWorktreeId,
   filter,
@@ -101,7 +82,7 @@ export function useDashboardKeyboard({
       // Arrow key navigation
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         e.preventDefault()
-        const ids = getVisibleWorktreeIds(filteredGroups, collapsedRepos)
+        const ids = filteredWorktrees.map((wt) => wt.worktree.id)
         if (ids.length === 0) {
           return
         }
@@ -138,8 +119,7 @@ export function useDashboardKeyboard({
     },
     [
       rightSidebarOpen,
-      filteredGroups,
-      collapsedRepos,
+      filteredWorktrees,
       focusedWorktreeId,
       setFocusedWorktreeId,
       filter,
