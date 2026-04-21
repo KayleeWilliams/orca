@@ -52,6 +52,7 @@ import type {
 // agent-browser's own timeout fires and returns a proper error.
 const EXEC_TIMEOUT_MS = 90_000
 const CONSECUTIVE_TIMEOUT_LIMIT = 3
+const WAIT_PROCESS_TIMEOUT_GRACE_MS = 1_000
 
 type SessionState = {
   proxy: CdpWsProxy
@@ -76,6 +77,12 @@ type QueuedCommand = {
 type ResolvedBrowserCommandTarget = {
   browserPageId: string
   webContentsId: number
+}
+
+type AgentBrowserExecOptions = {
+  envOverrides?: NodeJS.ProcessEnv
+  timeoutMs?: number
+  timeoutError?: BrowserError
 }
 
 function agentBrowserNativeName(): string {
@@ -982,9 +989,11 @@ export class AgentBrowserBridge {
   ): Promise<BrowserWaitResult> {
     return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
       const args = ['wait']
+      const hasCondition =
+        !!options?.selector || !!options?.text || !!options?.url || !!options?.load || !!options?.fn
       if (options?.selector) {
         args.push(options.selector)
-      } else if (options?.timeout != null) {
+      } else if (options?.timeout != null && !hasCondition) {
         args.push(String(options.timeout))
       }
       if (options?.text) {
@@ -999,10 +1008,28 @@ export class AgentBrowserBridge {
       if (options?.fn) {
         args.push('--fn', options.fn)
       }
-      if (options?.state) {
-        args.push('--state', options.state)
+      const normalizedState = options?.state === 'visible' ? undefined : options?.state
+      if (normalizedState) {
+        args.push('--state', normalizedState)
       }
-      return (await this.execAgentBrowser(sessionName, args)) as BrowserWaitResult
+      // Why: agent-browser's selector wait surface does not support `--state visible`
+      // or a documented per-command `--timeout`. Orca normalizes "visible" back
+      // to the default selector wait semantics and enforces the requested timeout
+      // at the bridge layer so missing selectors fail as browser_timeout instead
+      // of hanging until the generic runtime RPC timeout fires.
+      return (await this.execAgentBrowser(sessionName, args, {
+        timeoutMs:
+          options?.timeout != null && hasCondition
+            ? options.timeout + WAIT_PROCESS_TIMEOUT_GRACE_MS
+            : undefined,
+        timeoutError:
+          options?.timeout != null && hasCondition
+            ? new BrowserError(
+                'browser_timeout',
+                `Timed out waiting for browser condition after ${options.timeout}ms.`
+              )
+            : undefined
+      })) as BrowserWaitResult
     })
   }
 
@@ -1149,17 +1176,37 @@ export class AgentBrowserBridge {
   async setViewport(
     width: number,
     height: number,
-    scale?: number,
-    _mobile?: boolean,
+    scale = 1,
+    mobile = false,
     worktreeId?: string,
     browserPageId?: string
   ): Promise<BrowserViewportResult> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
-      const args = ['set', 'viewport', String(width), String(height)]
-      if (scale != null) {
-        args.push(String(scale))
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (_sessionName, target) => {
+      const wc = this.getWebContents(target.webContentsId)
+      if (!wc) {
+        throw new BrowserError('browser_tab_not_found', 'Tab is no longer available')
       }
-      return (await this.execAgentBrowser(sessionName, args)) as BrowserViewportResult
+      const dbg = wc.debugger
+      if (!dbg.isAttached()) {
+        throw new BrowserError('browser_error', 'Debugger not attached')
+      }
+
+      // Why: agent-browser only supports width/height/scale for `set viewport`;
+      // it has no `mobile` flag. Orca's CLI exposes `--mobile`, so apply the
+      // emulation directly through CDP to keep the public CLI contract honest.
+      await dbg.sendCommand('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: scale,
+        mobile
+      })
+
+      return {
+        width,
+        height,
+        deviceScaleFactor: scale,
+        mobile
+      }
     })
   }
 
@@ -1575,7 +1622,11 @@ export class AgentBrowserBridge {
     }
   }
 
-  private async execAgentBrowser(sessionName: string, commandArgs: string[]): Promise<unknown> {
+  private async execAgentBrowser(
+    sessionName: string,
+    commandArgs: string[],
+    execOptions?: AgentBrowserExecOptions
+  ): Promise<unknown> {
     const session = this.sessions.get(sessionName)
     if (!session) {
       throw new BrowserError('browser_error', 'Session not found')
@@ -1604,7 +1655,7 @@ export class AgentBrowserBridge {
 
     args.push(...commandArgs, '--json')
 
-    const stdout = await this.runAgentBrowserRaw(sessionName, args)
+    const stdout = await this.runAgentBrowserRaw(sessionName, args, execOptions)
     const translated = translateResult(stdout)
 
     if (!translated.ok) {
@@ -1645,7 +1696,11 @@ export class AgentBrowserBridge {
     return translated.result
   }
 
-  private runAgentBrowserRaw(sessionName: string, args: string[]): Promise<string> {
+  private runAgentBrowserRaw(
+    sessionName: string,
+    args: string[],
+    execOptions?: AgentBrowserExecOptions
+  ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const session = this.sessions.get(sessionName)
       let child: ChildProcess | null = null
@@ -1654,7 +1709,13 @@ export class AgentBrowserBridge {
         args,
         // Why: screenshots return large base64 strings that exceed Node's default
         // 1MB maxBuffer, causing ENOBUFS and a timeout-like failure.
-        { timeout: EXEC_TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
+        {
+          timeout: execOptions?.timeoutMs ?? EXEC_TIMEOUT_MS,
+          maxBuffer: 50 * 1024 * 1024,
+          env: execOptions?.envOverrides
+            ? { ...process.env, ...execOptions.envOverrides }
+            : process.env
+        },
         (error, stdout, stderr) => {
           if (session && session.activeProcess === child) {
             session.activeProcess = null
@@ -1668,6 +1729,10 @@ export class AgentBrowserBridge {
           const liveSession = this.sessions.get(sessionName)
 
           if (error && (error as NodeJS.ErrnoException & { killed?: boolean }).killed) {
+            if (execOptions?.timeoutError) {
+              reject(execOptions.timeoutError)
+              return
+            }
             if (liveSession) {
               liveSession.consecutiveTimeouts++
               if (liveSession.consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_LIMIT) {

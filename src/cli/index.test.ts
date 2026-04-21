@@ -43,6 +43,7 @@ import {
   main,
   normalizeWorktreeSelector
 } from './index'
+import { RuntimeClientError } from './runtime-client'
 
 describe('COMMAND_SPECS collision check', () => {
   it('has no duplicate command paths', () => {
@@ -496,6 +497,137 @@ describe('orca cli browser page targeting', () => {
       index: undefined,
       page: 'page-2',
       worktree: `path:${path.resolve('/tmp/repo/feature')}`
+    })
+  })
+})
+
+describe('orca cli browser waits and viewport flags', () => {
+  beforeEach(() => {
+    callMock.mockReset()
+    process.exitCode = undefined
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('gives selector waits an explicit RPC timeout budget', async () => {
+    callMock.mockResolvedValueOnce({
+      id: 'req_wait',
+      ok: true,
+      result: { ok: true },
+      _meta: {
+        runtimeId: 'runtime-1'
+      }
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['wait', '--selector', '#ready', '--worktree', 'all', '--json'],
+      '/tmp/not-an-orca-worktree'
+    )
+
+    expect(callMock).toHaveBeenCalledWith(
+      'browser.wait',
+      {
+        selector: '#ready',
+        timeout: undefined,
+        text: undefined,
+        url: undefined,
+        load: undefined,
+        fn: undefined,
+        state: undefined,
+        worktree: undefined
+      },
+      { timeoutMs: 60_000 }
+    )
+  })
+
+  it('extends selector wait RPC timeout when the user passes --timeout', async () => {
+    callMock.mockResolvedValueOnce({
+      id: 'req_wait',
+      ok: true,
+      result: { ok: true },
+      _meta: {
+        runtimeId: 'runtime-1'
+      }
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['wait', '--selector', '#ready', '--timeout', '12000', '--worktree', 'all', '--json'],
+      '/tmp/not-an-orca-worktree'
+    )
+
+    expect(callMock).toHaveBeenCalledWith(
+      'browser.wait',
+      {
+        selector: '#ready',
+        timeout: 12000,
+        text: undefined,
+        url: undefined,
+        load: undefined,
+        fn: undefined,
+        state: undefined,
+        worktree: undefined
+      },
+      { timeoutMs: 17000 }
+    )
+  })
+
+  it('does not tell users Orca is down for a generic runtime timeout', async () => {
+    callMock.mockRejectedValueOnce(
+      new RuntimeClientError(
+        'runtime_timeout',
+        'Timed out waiting for the Orca runtime to respond.'
+      )
+    )
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await main(['wait', '--selector', '#ready', '--worktree', 'all'], '/tmp/not-an-orca-worktree')
+
+    expect(errorSpy).toHaveBeenCalledWith('Timed out waiting for the Orca runtime to respond.')
+  })
+
+  it('passes the mobile viewport flag through to browser.viewport', async () => {
+    callMock.mockResolvedValueOnce({
+      id: 'req_viewport',
+      ok: true,
+      result: {
+        width: 375,
+        height: 812,
+        deviceScaleFactor: 2,
+        mobile: true
+      },
+      _meta: {
+        runtimeId: 'runtime-1'
+      }
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      [
+        'viewport',
+        '--width',
+        '375',
+        '--height',
+        '812',
+        '--scale',
+        '2',
+        '--mobile',
+        '--worktree',
+        'all',
+        '--json'
+      ],
+      '/tmp/not-an-orca-worktree'
+    )
+
+    expect(callMock).toHaveBeenCalledWith('browser.viewport', {
+      width: 375,
+      height: 812,
+      deviceScaleFactor: 2,
+      mobile: true,
+      worktree: undefined
     })
   })
 })

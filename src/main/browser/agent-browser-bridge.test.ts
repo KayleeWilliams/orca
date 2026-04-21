@@ -830,17 +830,69 @@ describe('AgentBrowserBridge', () => {
 
   // ── Viewport command arg building ──
 
-  it('builds viewport args with scale', async () => {
-    succeedWith({ width: 375, height: 812, mobile: true })
+  it('applies viewport emulation through CDP so mobile mode is preserved', async () => {
+    const wc = mockWebContents(100)
+    webContentsFromIdMock.mockReturnValue(wc)
+
     await bridge.setViewport(375, 812, 2, true)
 
-    // Why: calls[0] is the stale-session 'close'; the actual command is the last call
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith('Emulation.setDeviceMetricsOverride', {
+      width: 375,
+      height: 812,
+      deviceScaleFactor: 2,
+      mobile: true
+    })
+    const viewportCall = execFileMock.mock.calls.find((call: unknown[]) =>
+      (call[1] as string[]).includes('viewport')
+    )
+    expect(viewportCall).toBeUndefined()
+  })
+
+  it('normalizes selector wait state=visible to the default supported semantics', async () => {
+    succeedWith({ selector: 'h1', waited: 'selector' })
+
+    await bridge.wait({ selector: 'h1', state: 'visible' })
+
     const args = execFileMock.mock.calls.at(-1)![1] as string[]
-    expect(args).toContain('set')
-    expect(args).toContain('viewport')
-    expect(args).toContain('375')
-    expect(args).toContain('812')
-    expect(args).toContain('2')
+    expect(args).toContain('wait')
+    expect(args).toContain('h1')
+    expect(args).not.toContain('--state')
+  })
+
+  it('enforces conditional wait timeouts at the bridge layer', async () => {
+    succeedWith({ selector: '#ready', waited: 'selector' })
+
+    await bridge.wait({ selector: '#ready', timeout: 1200 })
+
+    const args = execFileMock.mock.calls.at(-1)![1] as string[]
+    const options = execFileMock.mock.calls.at(-1)![2] as { timeout?: number; env?: unknown }
+    expect(args).toContain('wait')
+    expect(args).toContain('#ready')
+    expect(options.timeout).toBe(2200)
+    expect(options.env).toBe(process.env)
+  })
+
+  it('returns browser_timeout for timed conditional waits without recycling the session', async () => {
+    const killedError = Object.assign(new Error('timeout'), { killed: true })
+    execFileMock.mockImplementation(
+      (_bin: string, args: string[], _opts: unknown, cb: Function) => {
+        if (args.includes('wait')) {
+          cb(killedError, '', '')
+          return
+        }
+        cb(null, JSON.stringify({ success: true, data: { snapshot: 'fresh' } }), '')
+      }
+    )
+
+    for (let i = 0; i < 3; i++) {
+      await expect(bridge.wait({ selector: '.missing', timeout: 1200 })).rejects.toThrow(
+        'Timed out waiting for browser condition after 1200ms.'
+      )
+    }
+
+    await bridge.snapshot()
+
+    expect(CdpWsProxyMock.instances).toHaveLength(1)
   })
 
   // ── Stderr passthrough on non-timeout errors ──

@@ -78,6 +78,7 @@ type BrowserCliTarget = {
 }
 
 const DEFAULT_TERMINAL_WAIT_RPC_TIMEOUT_MS = 5 * 60 * 1000
+const DEFAULT_BROWSER_WAIT_RPC_TIMEOUT_MS = 60_000
 const GLOBAL_FLAGS = ['help', 'json']
 export const COMMAND_SPECS: CommandSpec[] = [
   {
@@ -1021,16 +1022,26 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const fn = getOptionalStringFlag(parsed.flags, 'fn')
       const state = getOptionalStringFlag(parsed.flags, 'state')
       const target = await getBrowserCommandTarget(parsed.flags, cwd, client)
-      const result = await client.call<BrowserWaitResult>('browser.wait', {
-        selector,
-        timeout,
-        text,
-        url,
-        load,
-        fn,
-        state,
-        ...target
-      })
+      const result = await client.call<BrowserWaitResult>(
+        'browser.wait',
+        {
+          selector,
+          timeout,
+          text,
+          url,
+          load,
+          fn,
+          state,
+          ...target
+        },
+        {
+          // Why: selector/text/url waits can legitimately take longer than a
+          // normal RPC round-trip, even when Orca is healthy. Give browser.wait
+          // an explicit timeout budget so slow waits do not get mislabeled as
+          // "Orca is not running" by the generic client timeout path.
+          timeoutMs: timeout ? timeout + 5000 : DEFAULT_BROWSER_WAIT_RPC_TIMEOUT_MS
+        }
+      )
       return printResult(result, json, (v) => JSON.stringify(v, null, 2))
     }
 
@@ -1955,10 +1966,7 @@ function formatCliStatus(status: CliStatusResult): string {
 
 function formatCliError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
-  if (
-    error instanceof RuntimeClientError &&
-    (error.code === 'runtime_unavailable' || error.code === 'runtime_timeout')
-  ) {
+  if (error instanceof RuntimeClientError && error.code === 'runtime_unavailable') {
     return `${message}\nOrca is not running. Run 'orca open' first.`
   }
   if (

@@ -83,6 +83,32 @@ Last updated: 2026-04-20
   Resolution: command responses are now sent back to the websocket that originated the request,
   so late results from a closed client are dropped instead of leaking into a newer connection.
 
+## Wait and emulation behavior
+
+- `fixed` `src/cli/index.ts`, `src/cli/index.test.ts`
+  Issue: `orca wait --selector ...` used the generic RPC timeout budget and then surfaced a
+  misleading "Orca is not running" hint when the wait outlived that budget.
+  Resolution: browser waits now use an explicit RPC timeout budget keyed to the requested wait
+  duration, and generic runtime timeouts no longer claim the app is down.
+
+- `fixed` `src/main/browser/agent-browser-bridge.ts`, `src/main/browser/agent-browser-bridge.test.ts`
+  Issue: selector waits relied on undocumented `agent-browser` behavior. `--state visible`
+  timed out even when the selector was already visible, and timed selector waits could still
+  bubble up as generic runtime timeouts when the underlying command never resolved itself.
+  Resolution: Orca now treats `--state visible` as the default selector-wait semantics instead
+  of forwarding an unsupported flag, and it enforces selector/text/url/function/load wait
+  timeouts at the bridge layer so missing conditions fail as `browser_timeout` with the
+  requested timeout in the message. Live verification against `orca-dev` confirmed both
+  `wait --selector h1 --state visible --timeout 2000` and
+  `wait --selector .definitely-not-present --timeout 1000`.
+
+- `fixed` `src/main/browser/agent-browser-bridge.ts`, `src/main/browser/agent-browser-bridge.test.ts`
+  Issue: `orca viewport --mobile` never took effect because the bridge shelled out to
+  `agent-browser set viewport`, which does not support mobile emulation.
+  Resolution: viewport emulation now goes straight through CDP
+  `Emulation.setDeviceMetricsOverride`, so width, scale, and the `mobile` flag all stay aligned
+  with the CLI contract.
+
 ## Console behavior
 
 - `not-a-bug` `src/main/browser/agent-browser-bridge.ts:1252`, `src/main/browser/cdp-ws-proxy.ts`
@@ -91,6 +117,16 @@ Last updated: 2026-04-20
   only returns its own page-scoped marker plus the same Electron security warning. The warning is
   emitted inside each guest renderer context, so the command is page-scoped even though the output
   includes Chromium/Electron-flavored warnings.
+
+## Focus behavior
+
+- `fixed` `src/main/browser/cdp-ws-proxy.ts`, `src/main/browser/cdp-ws-proxy.test.ts`
+  Issue: background browser automation could repeatedly steal app focus because the CDP proxy
+  auto-focused the guest for every `Runtime.evaluate` / `Runtime.callFunctionOn` request, and
+  commands like `wait --selector` poll through those methods.
+  Resolution: proxy auto-focus is now limited to `Input.insertText`. Generic eval/function calls
+  stay background-safe, so waits and read-only probes no longer keep dragging the browser window
+  to the foreground.
 
 ## Session lifecycle and process swaps
 

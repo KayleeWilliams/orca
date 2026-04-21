@@ -33,7 +33,10 @@ function createMockWebContents() {
   return {
     webContents: {
       debugger: debuggerObj,
-      isDestroyed: () => false
+      isDestroyed: () => false,
+      focus: vi.fn(),
+      getTitle: vi.fn(() => 'Example'),
+      getURL: vi.fn(() => 'https://example.com')
     },
     listeners,
     emit(event: string, ...args: unknown[]) {
@@ -239,6 +242,32 @@ describe('CdpWsProxy', () => {
 
     const event = await eventPromise
     expect(event.sessionId).toBe('iframe-session-456')
+    client.close()
+  })
+
+  it('does not focus the guest for Runtime.evaluate polling commands', async () => {
+    const client = await connect()
+
+    await sendAndReceive(client, {
+      id: 9,
+      method: 'Runtime.evaluate',
+      params: { expression: 'document.readyState' }
+    })
+
+    expect(mock.webContents.focus).not.toHaveBeenCalled()
+    client.close()
+  })
+
+  it('still focuses the guest for Input.insertText', async () => {
+    const client = await connect()
+
+    await sendAndReceive(client, {
+      id: 10,
+      method: 'Input.insertText',
+      params: { text: 'hello' }
+    })
+
+    expect(mock.webContents.focus).toHaveBeenCalledTimes(1)
     client.close()
   })
 

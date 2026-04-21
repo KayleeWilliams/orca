@@ -233,13 +233,12 @@ export class CdpWsProxy {
       this.handleScreenshot(client, clientId, msg.params)
       return
     }
-    // Why: Input.insertText/Runtime.evaluate need native focus for clipboard APIs.
-    if (
-      (msg.method === 'Input.insertText' ||
-        msg.method === 'Runtime.evaluate' ||
-        msg.method === 'Runtime.callFunctionOn') &&
-      !this.webContents.isDestroyed()
-    ) {
+    // Why: Input.insertText can still require native focus in Electron webviews.
+    // Do not auto-focus generic Runtime.evaluate/callFunctionOn traffic: wait
+    // polling and read-only JS probes use those methods heavily, and focusing on
+    // every eval steals the user's foreground window while background automation
+    // is running.
+    if (msg.method === 'Input.insertText' && !this.webContents.isDestroyed()) {
       this.webContents.focus()
     }
     // Why: agent-browser waits for network idle to detect navigation completion.
