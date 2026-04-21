@@ -11,9 +11,9 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   const liveGroups = useDashboardData()
   // Why: useRetainedAgents keeps a "done" row visible after the terminal/pane
   // is closed and the explicit status entry is evicted from the store. Without
-  // this, a completed agent flips to 'idle' (from the heuristic title scan) or
-  // vanishes entirely — and the user loses the signal that the agent finished.
-  // Retained rows are dismissed when the user clicks through to the worktree.
+  // this, a completed agent vanishes entirely — and the user loses the signal
+  // that the agent finished. Retained rows are dismissed when the user clicks
+  // through to the worktree.
   const {
     enrichedGroups: groups,
     dismissWorktreeAgents,
@@ -31,9 +31,7 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   // so done agents don't pile up indefinitely in the dashboard.
   const handleDismissAgent = useCallback(
     (paneKey: string) => {
-      if (!paneKey.startsWith('heuristic:')) {
-        removeAgentStatus(paneKey)
-      }
+      removeAgentStatus(paneKey)
       dismissAgent(paneKey)
     },
     [removeAgentStatus, dismissAgent]

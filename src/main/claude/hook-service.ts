@@ -13,6 +13,13 @@ import {
 const CLAUDE_EVENTS = [
   { eventName: 'UserPromptSubmit', definition: { hooks: [{ type: 'command', command: '' }] } },
   { eventName: 'Stop', definition: { hooks: [{ type: 'command', command: '' }] } },
+  // Why: PreToolUse gives the dashboard a live readout of the in-flight tool
+  // (name + input preview) before it completes. Without it, a long-running
+  // Bash/Task step looks like a silent gap between prompt and Stop.
+  {
+    eventName: 'PreToolUse',
+    definition: { matcher: '*', hooks: [{ type: 'command', command: '' }] }
+  },
   {
     eventName: 'PostToolUse',
     definition: { matcher: '*', hooks: [{ type: 'command', command: '' }] }

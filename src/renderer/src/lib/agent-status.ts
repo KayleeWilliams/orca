@@ -109,13 +109,12 @@ export function formatAgentTypeLabel(agentType: AgentType | null | undefined): s
 }
 
 // Why: AgentIcon expects a TuiAgent, but AgentType is a broader union that
-// includes 'unknown' and arbitrary strings. Normalize here so both the
-// dashboard row and the sidebar hover pass the same value through to the icon
-// — 'claude' is chosen as the neutral fallback because AgentIcon renders a
-// letter glyph for unknown catalog entries anyway.
-export function agentTypeToIconAgent(agentType: AgentType | null | undefined): TuiAgent {
+// includes 'unknown' and arbitrary strings. Return null for the unknown case
+// so AgentIcon renders a neutral "?" glyph — using 'claude' as a fallback
+// caused Codex panes to briefly show the Claude icon before the hook fired.
+export function agentTypeToIconAgent(agentType: AgentType | null | undefined): TuiAgent | null {
   if (!agentType || agentType === 'unknown') {
-    return 'claude'
+    return null
   }
   return agentType as TuiAgent
 }

@@ -208,6 +208,9 @@ type AgentStatusApi = {
       state: string
       prompt?: string
       agentType?: string
+      toolName?: string
+      toolInput?: string
+      lastAssistantMessage?: string
     }) => void
   ) => () => void
 }

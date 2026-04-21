@@ -1,37 +1,27 @@
-import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useAppStore } from '@/store'
 import type {
   DashboardRepoGroup,
   DashboardAgentRow,
   DashboardWorktreeCard
 } from './useDashboardData'
+import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 
 // Why: when an agent finishes or its terminal closes, the store cleans up the
-// status entry and the agent vanishes from useDashboardData. This hook captures
-// those disappearances and retains the agents as "done" so the user can see
-// what finished. The retained entry persists until the user clicks the worktree
-// (which navigates to the terminal and dismisses the retained agents).
+// explicit status entry and the agent vanishes from useDashboardData. Retaining
+// the last-known "done" snapshot in the store (not in component state) lets the
+// dashboard AND the sidebar hovercard render the exact same set of rows — the
+// two surfaces must be consistent so the user sees the same completion in both
+// places, and dismissal in one reflects in the other.
 
-type RetainedAgent = DashboardAgentRow & {
-  worktreeId: string
-}
-
-export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
-  enrichedGroups: DashboardRepoGroup[]
-  dismissWorktreeAgents: (worktreeId: string) => void
-  dismissAgent: (paneKey: string) => void
-} {
-  const [retained, setRetained] = useState<Map<string, RetainedAgent>>(new Map())
+export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
+  const retainAgent = useAppStore((s) => s.retainAgent)
+  const pruneRetainedAgents = useAppStore((s) => s.pruneRetainedAgents)
   const prevAgentsRef = useRef<Map<string, { row: DashboardAgentRow; worktreeId: string }>>(
     new Map()
   )
-  // Why: retainedRef avoids including `retained` in the effect's dependency
-  // array, which would cause an infinite loop (effect updates retained →
-  // retained changes → effect runs again).
-  const retainedRef = useRef(retained)
-  retainedRef.current = retained
 
   useEffect(() => {
-    // Build the current set of live agents from the fresh store data
     const current = new Map<string, { row: DashboardAgentRow; worktreeId: string }>()
     const existingWorktreeIds = new Set<string>()
     for (const group of liveGroups) {
@@ -43,171 +33,137 @@ export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
       }
     }
 
-    // Build a set of tab IDs that have live explicit (non-heuristic) agents.
-    // Why: heuristic paneKeys are "heuristic:{tabId}"; explicit ones are
-    // "{tabId}:{paneId}". When an agent starts reporting explicit status, the
-    // heuristic row vanishes — but that's a promotion, not a completion. We
-    // must not retain the heuristic entry as "done" when its tab still has a
-    // live explicit agent.
-    const tabsWithExplicitAgent = new Set<string>()
-    for (const paneKey of current.keys()) {
-      if (!paneKey.startsWith('heuristic:')) {
-        tabsWithExplicitAgent.add(paneKey.split(':')[0])
-      }
-    }
-
-    // Detect agents that were present last render but are gone now
-    const disappeared: RetainedAgent[] = []
+    const retainedNow = useAppStore.getState().retainedAgentsByPaneKey
     for (const [paneKey, prev] of prevAgentsRef.current) {
-      if (
-        !current.has(paneKey) &&
-        !retainedRef.current.has(paneKey) &&
-        // Why: don't retain heuristic "idle" agents — they weren't doing
-        // meaningful work, so showing them as "done" would be misleading.
-        prev.row.state !== 'idle'
-      ) {
-        // Why: if a heuristic agent vanished because an explicit agent for the
-        // same tab took over, that's not a completion — skip retention.
-        if (paneKey.startsWith('heuristic:')) {
-          const tabId = paneKey.slice('heuristic:'.length)
-          if (tabsWithExplicitAgent.has(tabId)) {
-            continue
-          }
-        }
-        disappeared.push({ ...prev.row, worktreeId: prev.worktreeId })
+      if (current.has(paneKey) || retainedNow[paneKey]) {
+        continue
       }
+      retainAgent({
+        entry: prev.row.entry,
+        worktreeId: prev.worktreeId,
+        tab: prev.row.tab,
+        agentType: prev.row.agentType,
+        startedAt: prev.row.startedAt
+      })
     }
 
     prevAgentsRef.current = current
+    pruneRetainedAgents(existingWorktreeIds)
+  }, [liveGroups, retainAgent, pruneRetainedAgents])
+}
 
-    // Batch: add newly disappeared agents + prune stale retained entries.
-    setRetained((prev) => {
-      const next = new Map(prev)
-      let changed = false
+export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
+  enrichedGroups: DashboardRepoGroup[]
+  dismissWorktreeAgents: (worktreeId: string) => void
+  dismissAgent: (paneKey: string) => void
+} {
+  // Why: the retention sync runs at App level (see useRetainedAgentsSync in
+  // App.tsx) so retained entries persist across dashboard mounts. This hook
+  // only reads + dismisses.
+  const retained = useAppStore((s) => s.retainedAgentsByPaneKey)
+  const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
+  const dismissRetainedAgentsByWorktree = useAppStore((s) => s.dismissRetainedAgentsByWorktree)
 
-      for (const ra of disappeared) {
-        next.set(ra.paneKey, ra)
-        changed = true
-      }
+  const enrichedGroups = useMemo(
+    () => enrichGroupsWithRetained(liveGroups, retained),
+    [liveGroups, retained]
+  )
 
-      for (const [key, ra] of next) {
-        // Prune retained agents whose worktree was deleted
-        if (!existingWorktreeIds.has(ra.worktreeId)) {
-          next.delete(key)
-          changed = true
-          continue
-        }
-        // Why: if a retained heuristic agent's tab now has an explicit agent,
-        // the heuristic was superseded — evict it. This handles the case where
-        // the heuristic was retained before the explicit status arrived.
-        if (key.startsWith('heuristic:')) {
-          const tabId = key.slice('heuristic:'.length)
-          if (tabsWithExplicitAgent.has(tabId)) {
-            next.delete(key)
-            changed = true
-          }
-        }
-      }
+  const dismissAgent = useCallback(
+    (paneKey: string) => {
+      dismissRetainedAgent(paneKey)
+    },
+    [dismissRetainedAgent]
+  )
 
-      return changed ? next : prev
-    })
-  }, [liveGroups])
-
-  // Merge retained agents back into the group hierarchy so both views
-  // (list and concentric) see them as regular "done" agent rows.
-  const enrichedGroups = useMemo((): DashboardRepoGroup[] => {
-    if (retained.size === 0) {
-      return liveGroups
-    }
-
-    // Index retained agents by worktree for fast lookup
-    const byWorktree = new Map<string, RetainedAgent[]>()
-    for (const ra of retained.values()) {
-      const list = byWorktree.get(ra.worktreeId) ?? []
-      list.push(ra)
-      byWorktree.set(ra.worktreeId, list)
-    }
-
-    // Avoid duplicates: if a paneKey is both live and retained (transient
-    // overlap during the effect → re-render cycle), the live version wins.
-    const livePaneKeys = new Set<string>()
-    for (const group of liveGroups) {
-      for (const wt of group.worktrees) {
-        for (const agent of wt.agents) {
-          livePaneKeys.add(agent.paneKey)
-        }
-      }
-    }
-
-    return liveGroups.map((group) => {
-      const worktrees = group.worktrees.map((wt) => {
-        const retainedForWt = byWorktree
-          .get(wt.worktree.id)
-          ?.filter((ra) => !livePaneKeys.has(ra.paneKey))
-        if (!retainedForWt?.length) {
-          return wt
-        }
-
-        const retainedRows: DashboardAgentRow[] = retainedForWt.map((ra) => ({
-          ...ra,
-          state: 'done'
-        }))
-
-        // Why: re-sort after merging retained rows so the newest-started agent
-        // (live or retained) stays at the top — matches useDashboardData's sort.
-        const mergedAgents = [...wt.agents, ...retainedRows].sort(
-          (a, b) => b.startedAt - a.startedAt
-        )
-        return {
-          ...wt,
-          agents: mergedAgents,
-          dominantState: computeDominant(mergedAgents),
-          latestStartedAt: Math.max(wt.latestStartedAt, ...retainedForWt.map((ra) => ra.startedAt))
-        } satisfies DashboardWorktreeCard
-      })
-
-      const attentionCount = worktrees.reduce(
-        (count, wt) =>
-          count + wt.agents.filter((a) => a.state === 'blocked' || a.state === 'waiting').length,
-        0
-      )
-
-      return { ...group, worktrees, attentionCount } satisfies DashboardRepoGroup
-    })
-  }, [liveGroups, retained])
-
-  // Why: when the user clicks the row's X, we also want to evict the matching
-  // retained entry (if any) so it doesn't re-appear on next render because the
-  // live store entry was removed a beat earlier by the caller.
-  const dismissAgent = useCallback((paneKey: string) => {
-    setRetained((prev) => {
-      if (!prev.has(paneKey)) {
-        return prev
-      }
-      const next = new Map(prev)
-      next.delete(paneKey)
-      return next
-    })
-    // Why: also forget this pane on the prev-render ref so the disappearance
-    // logic doesn't immediately re-retain it on the next render.
-    prevAgentsRef.current.delete(paneKey)
-  }, [])
-
-  const dismissWorktreeAgents = useCallback((worktreeId: string) => {
-    setRetained((prev) => {
-      const next = new Map(prev)
-      let changed = false
-      for (const [key, ra] of next) {
-        if (ra.worktreeId === worktreeId) {
-          next.delete(key)
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [])
+  const dismissWorktreeAgents = useCallback(
+    (worktreeId: string) => {
+      dismissRetainedAgentsByWorktree(worktreeId)
+    },
+    [dismissRetainedAgentsByWorktree]
+  )
 
   return { enrichedGroups, dismissWorktreeAgents, dismissAgent }
+}
+
+export function enrichGroupsWithRetained(
+  liveGroups: DashboardRepoGroup[],
+  retained: Record<string, RetainedAgentEntry>
+): DashboardRepoGroup[] {
+  const retainedList = Object.values(retained)
+  if (retainedList.length === 0) {
+    return liveGroups
+  }
+
+  const byWorktree = new Map<string, RetainedAgentEntry[]>()
+  for (const ra of retainedList) {
+    const list = byWorktree.get(ra.worktreeId) ?? []
+    list.push(ra)
+    byWorktree.set(ra.worktreeId, list)
+  }
+
+  // Why: if the same paneKey is both live and retained during a render seam,
+  // the live row wins so we never double-render an agent mid-transition.
+  const livePaneKeys = new Set<string>()
+  for (const group of liveGroups) {
+    for (const wt of group.worktrees) {
+      for (const agent of wt.agents) {
+        livePaneKeys.add(agent.paneKey)
+      }
+    }
+  }
+
+  return liveGroups.map((group) => {
+    const worktrees = group.worktrees.map((wt) => {
+      const retainedForWt = byWorktree
+        .get(wt.worktree.id)
+        ?.filter((ra) => !livePaneKeys.has(ra.entry.paneKey))
+      if (!retainedForWt?.length) {
+        return wt
+      }
+
+      const retainedRows: DashboardAgentRow[] = retainedForWt.map(retainedToRow)
+
+      // Why: re-sort after merging retained rows ascending by startedAt so
+      // the list order matches useDashboardData (oldest first, new rows
+      // append at the bottom) and doesn't reshuffle rows the user is
+      // currently reading.
+      const mergedAgents = [...wt.agents, ...retainedRows].sort((a, b) => a.startedAt - b.startedAt)
+      return {
+        ...wt,
+        agents: mergedAgents,
+        dominantState: computeDominant(mergedAgents),
+        // Why: earliestStartedAt should anchor to the oldest start across live
+        // and retained rows — retained entries can be *older* than current
+        // live agents (they're what's lingering from a prior run), so the
+        // min keeps the worktree's list position stable as retained rows
+        // merge in.
+        earliestStartedAt: Math.min(
+          wt.earliestStartedAt > 0 ? wt.earliestStartedAt : Number.POSITIVE_INFINITY,
+          ...retainedForWt.map((ra) => ra.startedAt)
+        )
+      } satisfies DashboardWorktreeCard
+    })
+
+    const attentionCount = worktrees.reduce(
+      (count, wt) =>
+        count + wt.agents.filter((a) => a.state === 'blocked' || a.state === 'waiting').length,
+      0
+    )
+
+    return { ...group, worktrees, attentionCount } satisfies DashboardRepoGroup
+  })
+}
+
+function retainedToRow(ra: RetainedAgentEntry): DashboardAgentRow {
+  return {
+    paneKey: ra.entry.paneKey,
+    entry: ra.entry,
+    tab: ra.tab,
+    agentType: ra.agentType,
+    state: 'done',
+    startedAt: ra.startedAt
+  }
 }
 
 function computeDominant(agents: DashboardAgentRow[]): DashboardWorktreeCard['dominantState'] {

@@ -51,3 +51,47 @@ describe('agent status freshness expiry', () => {
     expect(store.getState().agentStatusEpoch).toBe(2)
   })
 })
+
+describe('agent status tool + assistant fields', () => {
+  it('writes toolName, toolInput, and lastAssistantMessage straight onto the entry', () => {
+    const store = createTestStore()
+    store.getState().setAgentStatus(
+      'tab-1:1',
+      {
+        state: 'working',
+        prompt: 'Edit the config',
+        toolName: 'Edit',
+        toolInput: '/src/config.ts',
+        lastAssistantMessage: 'Edited config.ts'
+      },
+      'claude'
+    )
+    const entry = store.getState().agentStatusByPaneKey['tab-1:1']
+    expect(entry.toolName).toBe('Edit')
+    expect(entry.toolInput).toBe('/src/config.ts')
+    expect(entry.lastAssistantMessage).toBe('Edited config.ts')
+  })
+
+  it('clears fields to undefined when a later payload omits them', () => {
+    const store = createTestStore()
+    store.getState().setAgentStatus(
+      'tab-1:1',
+      {
+        state: 'working',
+        prompt: 'Edit the config',
+        toolName: 'Edit',
+        toolInput: '/src/config.ts',
+        lastAssistantMessage: 'Edited config.ts'
+      },
+      'claude'
+    )
+    // Why: the main-process cache is the source of truth for tool/assistant
+    // fields — a fresh-turn reset surfaces as undefined on the payload, and
+    // the store must not fall back to the prior entry's values.
+    store.getState().setAgentStatus('tab-1:1', { state: 'working', prompt: 'Next step' }, 'claude')
+    const entry = store.getState().agentStatusByPaneKey['tab-1:1']
+    expect(entry.toolName).toBeUndefined()
+    expect(entry.toolInput).toBeUndefined()
+    expect(entry.lastAssistantMessage).toBeUndefined()
+  })
+})

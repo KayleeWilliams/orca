@@ -60,7 +60,6 @@ function makeAgentStatusEntry(
     state: overrides.state ?? 'working',
     prompt: overrides.prompt ?? '',
     updatedAt: overrides.updatedAt ?? NOW - 30_000,
-    source: overrides.source ?? 'agent',
     agentType: overrides.agentType ?? 'codex',
     paneKey: overrides.paneKey,
     terminalTitle: overrides.terminalTitle,

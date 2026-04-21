@@ -1352,6 +1352,9 @@ const api = {
         state: string
         prompt?: string
         agentType?: string
+        toolName?: string
+        toolInput?: string
+        lastAssistantMessage?: string
       }) => void
     ): (() => void) => {
       const listener = (
@@ -1363,6 +1366,9 @@ const api = {
           state: string
           prompt?: string
           agentType?: string
+          toolName?: string
+          toolInput?: string
+          lastAssistantMessage?: string
         }
       ) => callback(data)
       ipcRenderer.on('agentStatus:set', listener)

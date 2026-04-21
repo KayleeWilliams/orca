@@ -1,14 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { X } from 'lucide-react'
+import { X, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { AgentStatusBadge, type AgentStatusBadgeState } from '@/components/AgentStatusBadge'
+import { AgentStateDot, agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
+import { AgentIcon } from '@/lib/agent-catalog'
+import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import type { DashboardAgentRow as DashboardAgentRowData } from './useDashboardData'
 
 // Why: the dashboard tracks its own rollup states (incl. 'idle'); narrow to the
-// shared badge states for rendering, falling back to 'idle' for any unknown
+// shared dot states for rendering, falling back to 'idle' for any unknown
 // value so an unexpected state never crashes a row.
-function asBadgeState(state: string): AgentStatusBadgeState {
+function asDotState(state: string): AgentDotState {
   switch (state) {
     case 'working':
     case 'blocked':
@@ -45,9 +47,6 @@ function formatTimeAgo(ts: number, now: number): string {
 // drifts by at most one re-report interval thereafter).
 function lastEnteredDoneAt(agent: DashboardAgentRowData): number | null {
   const entry = agent.entry
-  if (!entry) {
-    return null
-  }
   if (entry.state === 'done') {
     return entry.updatedAt
   }
@@ -83,6 +82,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   onActivate
 }: Props) {
   const now = useNow(30_000)
+  const [expanded, setExpanded] = useState(false)
   // Why: stop propagation so clicking the X doesn't also fire the worktree
   // card's click handler (which navigates away from the dashboard).
   const handleDismiss = useCallback(
@@ -92,6 +92,18 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     },
     [onDismiss, agent.paneKey]
   )
+  // Why: the chevron toggles expand-collapse and must not propagate — clicks
+  // on it would otherwise bubble to the row's activate handler and navigate
+  // away the instant the user tried to reveal the full text. Stop mousedown
+  // too so focus-based navigation on the parent role=button can't fire first.
+  const handleToggleExpand = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setExpanded((prev) => !prev)
+  }, [])
+  const stopMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+  }, [])
   // Why: agent rows navigate directly to the agent's own tab, while the
   // surrounding worktree card navigates to whatever tab the worktree last had
   // focused. Stop propagation so the card click handler does not run second
@@ -115,16 +127,18 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   )
   const startedAt = agent.startedAt > 0 ? agent.startedAt : null
   const doneAt = lastEnteredDoneAt(agent)
-  console.log('[agent-hooks:DashboardAgentRow] render', {
-    paneKey: agent.paneKey,
-    source: agent.source,
-    state: agent.state,
-    agentType: agent.agentType,
-    hasEntry: agent.entry !== null,
-    entryPromptLen: agent.entry?.prompt.length ?? 0,
-    entryPromptPreview: agent.entry?.prompt.slice(0, 80) ?? null
-  })
-  const prompt = agent.entry?.prompt.trim() ?? ''
+  const prompt = agent.entry.prompt.trim()
+  // Why: the tool row describes what the agent is *currently* doing; once it
+  // leaves working, that line goes stale and misleads (a done row showing
+  // "Bash: pnpm test" reads as if the command is still running). Gate tool
+  // fields on `state === 'working'`. The assistant message is the opposite
+  // — it's the reply, most useful on `done`, so we always show it.
+  const isWorking = agent.state === 'working'
+  const toolName = isWorking ? (agent.entry.toolName?.trim() ?? '') : ''
+  const toolInput = isWorking ? (agent.entry.toolInput?.trim() ?? '') : ''
+  const lastAssistantMessage = agent.entry.lastAssistantMessage?.trim() ?? ''
+
+  const canExpand = prompt.length > 0 || lastAssistantMessage.length > 0
 
   const tsParts: string[] = []
   if (startedAt !== null) {
@@ -141,36 +155,54 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       onClick={handleActivate}
       onKeyDown={handleActivateKeyDown}
       className={cn(
-        'group flex items-center gap-1.5 px-1.5 py-0.5',
+        'group flex flex-col px-1.5 py-0.5',
         'cursor-pointer rounded-sm hover:bg-accent/30',
-        'focus-visible:outline-none focus-visible:bg-accent/40',
-        agent.source === 'heuristic' && 'opacity-70'
+        'focus-visible:outline-none focus-visible:bg-accent/40'
       )}
       title={tsParts.length > 0 ? tsParts.join(' • ') : undefined}
     >
-      <AgentStatusBadge agentType={agent.agentType} state={asBadgeState(agent.state)} />
-      {prompt && (
-        <span
-          className="min-w-0 flex-1 truncate text-[10px] leading-tight text-foreground/80"
-          title={prompt}
-        >
-          {prompt}
-        </span>
-      )}
-      {/* Why: the timestamp and dismiss-X share a single slot so the row width
-          never changes on hover AND the X's hitbox never extends into the rest
-          of the row (which should stay clickable to navigate to the worktree).
-          The timestamp holds the slot in normal flow; the X overlays it on
-          hover with identical dimensions. */}
-      {(startedAt !== null || doneAt !== null || agent.state === 'done') && (
-        <span className="relative ml-auto flex shrink-0 items-center">
+      <div className="flex items-center gap-1.5">
+        {/* Why: chevron on the far left mirrors the disclosure-row pattern
+            (Mantine Collapse, Playwright's test tree, etc.) — users reach
+            for the left edge to expand/collapse. An invisible placeholder
+            fills the slot when nothing's expandable so the prompt text
+            stays vertically aligned across rows. */}
+        {canExpand ? (
+          <button
+            type="button"
+            onClick={handleToggleExpand}
+            onMouseDown={stopMouseDown}
+            className="inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground"
+            aria-label={expanded ? 'Collapse details' : 'Expand details'}
+            aria-expanded={expanded}
+          >
+            {expanded ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </button>
+        ) : (
+          <span className="inline-block size-3.5 shrink-0" aria-hidden />
+        )}
+        {prompt && (
+          <span
+            className={cn(
+              'min-w-0 flex-1 text-xs font-medium leading-snug text-foreground/90',
+              expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+            )}
+            title={expanded ? undefined : prompt}
+          >
+            {prompt}
+          </span>
+        )}
+        {/* Why: right cluster mirrors the screenshot reference — the status
+            indicator (state dot), identity (agent icon), a muted timestamp,
+            and the dismiss-X all live in one flex group on the right so
+            the eye can find "who/what/when/close" in a single sweep. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {(startedAt !== null || doneAt !== null) && (
-            <span
-              className={cn(
-                'text-[9px] leading-none text-muted-foreground/60',
-                agent.state === 'done' && 'group-hover:invisible'
-              )}
-            >
+            <span className="text-[10px] leading-none text-muted-foreground/60">
               {doneAt !== null
                 ? formatTimeAgo(doneAt, now)
                 : startedAt !== null
@@ -178,29 +210,74 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                   : null}
             </span>
           )}
-          {agent.state === 'done' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleDismiss}
-                  className={cn(
-                    'absolute inset-0 inline-flex items-center justify-center',
-                    'text-muted-foreground/70 opacity-0 transition-opacity',
-                    'hover:text-foreground',
-                    'group-hover:opacity-100'
-                  )}
-                  aria-label="Dismiss done agent"
-                >
-                  <X className="size-2.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={4}>
-                Dismiss
-              </TooltipContent>
-            </Tooltip>
-          )}
+          {/* Why: two separate glyphs — the state dot shows *what* (working /
+              blocked / done / idle) and the agent icon shows *who* (Claude /
+              Codex / etc.). Keeping them distinct keeps each scannable at a
+              glance, instead of fusing them into a single decorated icon. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <AgentStateDot state={asDotState(agent.state)} />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              {agentStateLabel(asDotState(agent.state))}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <AgentIcon agent={agentTypeToIconAgent(agent.agentType)} size={14} />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              {formatAgentTypeLabel(agent.agentType)}
+            </TooltipContent>
+          </Tooltip>
+          {/* Why: dismiss applies to any agent — for a live agent it clears
+              the status entry (the dashboard re-populates on the next hook
+              report); for a retained 'done' row it evicts it from the
+              retained map. Same control for every state keeps the UI
+              uniform. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleDismiss}
+                onMouseDown={stopMouseDown}
+                className="inline-flex shrink-0 items-center justify-center text-muted-foreground/70 hover:text-foreground"
+                aria-label="Dismiss agent"
+              >
+                <X className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              Dismiss
+            </TooltipContent>
+          </Tooltip>
         </span>
+      </div>
+      {toolName && (
+        <div className="mt-1 flex min-w-0 items-center gap-1 pl-5 text-[11px] leading-snug text-muted-foreground/70">
+          <Wrench className="size-2.5 shrink-0" />
+          <code className="font-mono text-[11px]">{toolName}</code>
+          {toolInput && (
+            <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
+              {toolInput}
+            </span>
+          )}
+        </div>
+      )}
+      {lastAssistantMessage && (
+        <div
+          className={cn(
+            'mt-1 pl-5 text-[11px] italic leading-snug text-muted-foreground/70',
+            expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+          )}
+          title={expanded ? undefined : lastAssistantMessage}
+        >
+          {lastAssistantMessage}
+        </div>
       )}
     </div>
   )

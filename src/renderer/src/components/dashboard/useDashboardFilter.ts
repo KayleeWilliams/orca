@@ -40,9 +40,10 @@ function matchesFilter(
   }
 }
 
-/** Sort worktrees by most recently started agent (descending). */
+/** Sort worktrees by earliest-started agent (ascending). Stable once populated
+ *  — new agents starting in a different worktree don't reshuffle this one. */
 function sortByStartTime(worktrees: DashboardWorktreeCard[]): DashboardWorktreeCard[] {
-  return [...worktrees].sort((a, b) => b.latestStartedAt - a.latestStartedAt)
+  return [...worktrees].sort((a, b) => a.earliestStartedAt - b.earliestStartedAt)
 }
 
 export function useDashboardFilter(
@@ -66,11 +67,15 @@ export function useDashboardFilter(
       }))
       .filter((group) => group.worktrees.length > 0)
 
-    // Sort repo groups by their most recently started agent
+    // Why: sort repo groups by their earliest-started worktree, ascending.
+    // The first worktree after sortByStartTime is the oldest, so using its
+    // earliestStartedAt as the group key keeps repos stable on screen once
+    // populated — new agent activity in another repo doesn't reshuffle the
+    // list while the user reads.
     return filtered.sort((a, b) => {
-      const aMax = a.worktrees[0]?.latestStartedAt ?? 0
-      const bMax = b.worktrees[0]?.latestStartedAt ?? 0
-      return bMax - aMax
+      const aKey = a.worktrees[0]?.earliestStartedAt ?? 0
+      const bKey = b.worktrees[0]?.earliestStartedAt ?? 0
+      return aKey - bKey
     })
   }, [groups, filter, checkedWorktreeIds])
 

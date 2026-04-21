@@ -409,13 +409,19 @@ export function useIpcEvents(): void {
           state: data.state,
           promptLen: data.prompt?.length ?? 0,
           promptPreview: data.prompt?.slice(0, 80) ?? null,
-          agentType: data.agentType
+          agentType: data.agentType,
+          toolName: data.toolName,
+          toolInputLen: data.toolInput?.length ?? 0,
+          lastAssistantMessageLen: data.lastAssistantMessage?.length ?? 0
         })
         const payload = parseAgentStatusPayload(
           JSON.stringify({
             state: data.state,
             prompt: data.prompt,
-            agentType: data.agentType
+            agentType: data.agentType,
+            toolName: data.toolName,
+            toolInput: data.toolInput,
+            lastAssistantMessage: data.lastAssistantMessage
           })
         )
         if (!payload) {
@@ -449,7 +455,10 @@ export function useIpcEvents(): void {
           paneKey: data.paneKey,
           state: payload.state,
           promptLen: payload.prompt.length,
-          promptPreview: payload.prompt.slice(0, 80)
+          promptPreview: payload.prompt.slice(0, 80),
+          toolName: payload.toolName,
+          toolInputLen: payload.toolInput?.length ?? 0,
+          lastAssistantMessageLen: payload.lastAssistantMessage?.length ?? 0
         })
         store.setAgentStatus(data.paneKey, payload, currentTitle)
       })

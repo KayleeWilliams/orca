@@ -15,7 +15,13 @@ import {
 // call, which maps back to `working`. Gemini has no permission-prompt hook
 // (approvals flow through inline UI), so Orca cannot surface a waiting state
 // for Gemini — that is an upstream limitation, not an Orca bug.
-const GEMINI_EVENTS = ['BeforeAgent', 'AfterAgent', 'AfterTool'] as const
+//
+// PreToolUse surfaces the current tool name + input preview (e.g.
+// `read_file: src/foo.ts`) so long-running tool calls aren't a silent gap
+// between BeforeAgent and AfterAgent. PostToolUse is intentionally omitted —
+// AfterTool already signals "back to working" and the tool name from
+// PreToolUse is what we show; PostToolUse would be a redundant fire.
+const GEMINI_EVENTS = ['BeforeAgent', 'AfterAgent', 'AfterTool', 'PreToolUse'] as const
 
 function getConfigPath(): string {
   return join(homedir(), '.gemini', 'settings.json')

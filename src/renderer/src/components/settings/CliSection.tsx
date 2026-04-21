@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Check, Copy, FolderOpen, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Copy, FolderOpen, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CliInstallStatus } from '../../../../shared/cli-install-types'
-import type { AgentHookInstallStatus } from '../../../../shared/agent-hook-types'
 import { Button } from '../ui/button'
 import {
   Dialog,
@@ -50,31 +49,6 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<'install' | 'remove' | null>(null)
-  const [hookStatuses, setHookStatuses] = useState<{
-    claude: AgentHookInstallStatus | null
-    codex: AgentHookInstallStatus | null
-    gemini: AgentHookInstallStatus | null
-    loading: boolean
-  }>({
-    claude: null,
-    codex: null,
-    gemini: null,
-    loading: true
-  })
-
-  const refreshHookStatus = useCallback(async (): Promise<void> => {
-    setHookStatuses((prev) => ({ ...prev, loading: true }))
-    try {
-      const [claude, codex, gemini] = await Promise.all([
-        window.api.agentHooks.claudeStatus(),
-        window.api.agentHooks.codexStatus(),
-        window.api.agentHooks.geminiStatus()
-      ])
-      setHookStatuses({ claude, codex, gemini, loading: false })
-    } catch {
-      setHookStatuses((prev) => ({ ...prev, loading: false }))
-    }
-  }, [])
 
   const refreshStatus = async (): Promise<void> => {
     setLoading(true)
@@ -89,8 +63,7 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
 
   useEffect(() => {
     void refreshStatus()
-    void refreshHookStatus()
-  }, [refreshHookStatus])
+  }, [])
 
   const isEnabled = status?.state === 'installed'
   const isSupported = status?.supported ?? false
@@ -264,67 +237,6 @@ export function CliSection({ currentPlatform }: CliSectionProps): React.JSX.Elem
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">Native hooks</p>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => void refreshHookStatus()}
-                  disabled={hookStatuses.loading}
-                  aria-label="Refresh hook status"
-                >
-                  <RefreshCw className="size-3.5" />
-                </Button>
-              </div>
-              <p className="text-[11px] text-muted-foreground/70">
-                {/* Why: hooks are auto-installed at app startup. Surfacing the
-                result as read-only status avoids a toggle whose "Remove" would
-                be silently reverted on next launch. */}
-                Orca installs Claude, Codex, and Gemini global hooks at startup so agent lifecycle
-                updates flow into the sidebar automatically.
-              </p>
-              <div className="mt-2 space-y-2">
-                {(
-                  [
-                    ['claude', hookStatuses.claude],
-                    ['codex', hookStatuses.codex],
-                    ['gemini', hookStatuses.gemini]
-                  ] as const
-                ).map(([agent, status]) => {
-                  const installed = status?.managedHooksPresent === true
-                  return (
-                    <div
-                      key={agent}
-                      className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2"
-                    >
-                      <div className="space-y-0.5">
-                        <p className="text-xs font-medium capitalize">{agent}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {hookStatuses.loading
-                            ? 'Checking hook status…'
-                            : (status?.detail ??
-                              (installed
-                                ? `Installed in ${status?.configPath}`
-                                : `Not installed in ${status?.configPath}`))}
-                        </p>
-                      </div>
-                      {installed ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-                          <Check className="size-3.5" />
-                          Installed
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          {hookStatuses.loading ? '…' : 'Pending next launch'}
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
               </div>
             </div>
           </div>

@@ -1,7 +1,7 @@
 // ─── Explicit agent status (reported via native agent hooks → IPC) ──────────
 // These types define the normalized status that Orca receives from Claude,
-// Codex, and other explicit integrations. They are distinct from the heuristic
-// `AgentStatus` inferred from terminal titles in agent-status.ts.
+// Codex, and other explicit integrations. Agent state is hook-reported only —
+// we do not infer status from terminal titles anywhere in the data flow.
 
 export type AgentStatusState = 'working' | 'blocked' | 'waiting' | 'done'
 // Why: agent types are not restricted to a fixed set — new agents appear
@@ -31,8 +31,6 @@ export type AgentStatusEntry = {
   prompt: string
   /** Timestamp (ms) of the last status update. */
   updatedAt: number
-  /** Whether this entry was reported explicitly by the agent or inferred from heuristics. */
-  source: 'agent' | 'heuristic'
   agentType?: AgentType
   /** Composite key: `${tabId}:${paneId}` — matches the cacheTimerByKey convention. */
   paneKey: string
@@ -40,36 +38,62 @@ export type AgentStatusEntry = {
   /** Rolling log of previous states. Each entry records a state the agent was in
    *  before transitioning to the current one. Capped at AGENT_STATE_HISTORY_MAX. */
   stateHistory: AgentStateHistoryEntry[]
+  /** Name of the tool the agent is currently using (e.g. "Edit", "Bash"). */
+  toolName?: string
+  /** Short preview of the tool input (e.g. file path, command). */
+  toolInput?: string
+  /** Most recent assistant message preview, when the hook carried one. */
+  lastAssistantMessage?: string
 }
 
 // ─── Agent status payload shape (what hook receivers send via IPC) ──────────
 // Hook integrations only need to provide normalized state fields. The
-// remaining AgentStatusEntry fields (updatedAt, source, paneKey, etc.) are
-// populated by the renderer when it receives the IPC event.
+// remaining AgentStatusEntry fields (updatedAt, paneKey, etc.) are populated
+// by the renderer when it receives the IPC event.
 
 export type AgentStatusPayload = {
   state: AgentStatusState
   prompt?: string
   agentType?: AgentType
+  toolName?: string
+  toolInput?: string
+  lastAssistantMessage?: string
 }
 
 /**
  * The result of `parseAgentStatusPayload`: prompt is always normalized to a
  * string (empty string when the raw payload omits it), so consumers do not
- * need nullish-coalescing on the field.
+ * need nullish-coalescing on the field. Tool/assistant fields stay optional so
+ * absence ("no new info") is distinguishable from an explicit empty string.
  */
 export type ParsedAgentStatusPayload = {
   state: AgentStatusState
   prompt: string
   agentType?: AgentType
+  toolName?: string
+  toolInput?: string
+  lastAssistantMessage?: string
 }
 
 /** Maximum character length for the prompt field. Truncated on parse. */
 export const AGENT_STATUS_MAX_FIELD_LENGTH = 200
+/** Maximum character length for the toolName field. */
+export const AGENT_STATUS_TOOL_NAME_MAX_LENGTH = 60
+/** Maximum character length for the toolInput preview. */
+export const AGENT_STATUS_TOOL_INPUT_MAX_LENGTH = 160
+/** Maximum character length for the lastAssistantMessage preview.
+ *  Why: assistant messages are the user-facing "what did the agent say" body,
+ *  expanded inline in the dashboard row. 8 KB comfortably fits a multi-
+ *  paragraph summary while still providing a hard upper bound — the hook
+ *  HTTP endpoint already caps bodies at 1 MB, but per-field truncation is a
+ *  second line of defense against a buggy/malicious agent spamming huge
+ *  strings into the cache (which lives per pane with bounded history). */
+export const AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH = 8000
 /**
- * Freshness threshold for explicit agent status. After this point the hover still
- * shows the last reported prompt, but heuristic state regains precedence for
- * ordering and coarse status so stale "done" reports do not mask live prompts.
+ * Freshness threshold for explicit agent status. Retained past this point so
+ * WorktreeCard's sidebar dot can decay "working" back to "active" when the
+ * hook stream goes silent. Smart-sort + WorktreeCard still read this; the
+ * dashboard + hover only display hook-reported data as-is.
  */
 export const AGENT_STATUS_STALE_AFTER_MS = 30 * 60 * 1000
 
@@ -78,14 +102,48 @@ const VALID_STATES = new Set<AgentStatusState>(['working', 'blocked', 'waiting',
 const AGENT_TYPE_MAX_LENGTH = 40
 
 /** Normalize a status field: trim, collapse to single line, truncate. */
-function normalizeField(value: unknown): string {
+function normalizeField(value: unknown, maxLength: number = AGENT_STATUS_MAX_FIELD_LENGTH): string {
   if (typeof value !== 'string') {
     return ''
   }
   const singleLine = value.trim().replace(/[\r\n]+/g, ' ')
-  return singleLine.length > AGENT_STATUS_MAX_FIELD_LENGTH
-    ? singleLine.slice(0, AGENT_STATUS_MAX_FIELD_LENGTH)
-    : singleLine
+  return singleLine.length > maxLength ? singleLine.slice(0, maxLength) : singleLine
+}
+
+// Why: assistant messages are a multi-paragraph "what did the agent say"
+// body that the dashboard renders with `whitespace-pre-wrap`. Collapsing
+// newlines here would erase structure the UI is designed to show. Still
+// normalize `\r\n` → `\n` and cap paragraph gaps at one blank line to keep
+// the bound meaningful, but otherwise preserve line breaks.
+function normalizeMultilineField(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  const normalized = value
+    .trim()
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized
+}
+
+// Why: tool/assistant fields are optional on the entry (absence = "no update
+// for this field"). We only surface them when the caller actually provided a
+// string value so a missing field doesn't overwrite the prior cached state.
+function normalizeOptionalField(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = normalizeField(value, maxLength)
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeOptionalMultilineField(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = normalizeMultilineField(value, maxLength)
+  return normalized.length > 0 ? normalized : undefined
 }
 
 /**
@@ -115,7 +173,13 @@ export function parseAgentStatusPayload(json: string): ParsedAgentStatusPayload 
       agentType:
         typeof parsed.agentType === 'string' && parsed.agentType.trim().length > 0
           ? parsed.agentType.trim().slice(0, AGENT_TYPE_MAX_LENGTH)
-          : undefined
+          : undefined,
+      toolName: normalizeOptionalField(parsed.toolName, AGENT_STATUS_TOOL_NAME_MAX_LENGTH),
+      toolInput: normalizeOptionalField(parsed.toolInput, AGENT_STATUS_TOOL_INPUT_MAX_LENGTH),
+      lastAssistantMessage: normalizeOptionalMultilineField(
+        parsed.lastAssistantMessage,
+        AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH
+      )
     }
   } catch {
     return null

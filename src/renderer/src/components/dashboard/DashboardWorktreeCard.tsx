@@ -53,12 +53,15 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
     onCheck()
   }, [card.worktree.id, setActiveWorktree, setActiveView, onCheck])
 
+  // Why: clicking an agent row only navigates to that agent's tab. It must not
+  // call onCheck() — that would mark the worktree as checked AND dismiss all
+  // retained done rows in it, which erases the signal the user was clicking
+  // through to investigate. Only the X button on a done row should dismiss it.
   const handleActivateAgent = useCallback(
     (tabId: string) => {
       onActivateAgentTab(card.worktree.id, tabId)
-      onCheck()
     },
-    [card.worktree.id, onActivateAgentTab, onCheck]
+    [card.worktree.id, onActivateAgentTab]
   )
 
   const handleKeyDown = useCallback(

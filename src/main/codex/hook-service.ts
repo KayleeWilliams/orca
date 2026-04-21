@@ -10,11 +10,20 @@ import {
   type HookDefinition
 } from '../agent-hooks/installer-utils'
 
-// Why: Codex permission prompts arrive through PreToolUse hook callbacks. Orca
-// maps that event to the waiting state, so the managed hook registration must
-// subscribe to PreToolUse or the sidebar can never show Codex as blocked on
-// approval.
-const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'] as const
+// Why: PreToolUse/PostToolUse give the dashboard a live readout of the
+// in-flight tool (name + input preview) between UserPromptSubmit and Stop.
+// Without them, a long-running Codex turn looks like a silent gap after the
+// prompt is submitted. We keep both events mapped to `working` (see
+// normalizeCodexEvent); they do NOT mean "approval needed" — Codex's real
+// approval signal flows through its separate `notify` callback (different
+// install surface, different payload shape) and is deferred as a follow-up.
+const CODEX_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'Stop'
+] as const
 
 function getConfigPath(): string {
   return join(homedir(), '.codex', 'hooks.json')
@@ -135,6 +144,26 @@ export class CodexHookService {
 
     const command = getManagedCommand(scriptPath)
     const nextHooks = { ...config.hooks }
+    const managedEvents = new Set<string>(CODEX_EVENTS)
+
+    // Why: sweep managed entries out of events we no longer subscribe to
+    // (e.g., PreToolUse from a prior install). Without this, users who
+    // already had PreToolUse registered would keep firing stale hooks on
+    // every auto-approved tool call after the app upgrade.
+    for (const [eventName, definitions] of Object.entries(nextHooks)) {
+      if (managedEvents.has(eventName)) {
+        continue
+      }
+      const cleaned = removeManagedCommands(
+        definitions,
+        (currentCommand) => currentCommand === command
+      )
+      if (cleaned.length === 0) {
+        delete nextHooks[eventName]
+      } else {
+        nextHooks[eventName] = cleaned
+      }
+    }
 
     for (const eventName of CODEX_EVENTS) {
       const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []

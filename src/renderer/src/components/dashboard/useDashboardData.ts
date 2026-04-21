@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import { useAppStore } from '@/store'
-import { detectAgentStatusFromTitle } from '@/lib/agent-status'
 import type { AgentStatusEntry, AgentType } from '../../../../shared/agent-status-types'
 import type { Repo, Worktree, TerminalTab } from '../../../../shared/types'
 
@@ -8,15 +7,13 @@ import type { Repo, Worktree, TerminalTab } from '../../../../shared/types'
 
 export type DashboardAgentRow = {
   paneKey: string
-  entry: AgentStatusEntry | null
+  entry: AgentStatusEntry
   tab: TerminalTab
   agentType: AgentType
   state: string
-  source: 'agent' | 'heuristic'
   /** When this agent first began reporting status. Derived from the oldest
    *  stateHistory entry, falling back to updatedAt when no history exists yet.
-   *  Used to sort agents by when they started. 0 for heuristic rows that have
-   *  no explicit status record. */
+   *  Used to sort agents by when they started. */
   startedAt: number
 }
 
@@ -27,9 +24,11 @@ export type DashboardWorktreeCard = {
    *  Priority: blocked > working > done > idle.
    *  `waiting` is folded into `blocked` — both are attention-needed states. */
   dominantState: 'working' | 'blocked' | 'done' | 'idle'
-  /** Most recent startedAt across all agents in this worktree. Used to bubble
-   *  worktrees with newly-started agents to the top of their repo group. */
-  latestStartedAt: number
+  /** Earliest startedAt across all agents in this worktree. Once the worktree
+   *  has at least one agent, this value is stable — new agents starting in
+   *  the same worktree do not change it. Sorting worktrees by this value
+   *  asc keeps list order stable while the user is reading. */
+  earliestStartedAt: number
 }
 
 export type DashboardRepoGroup = {
@@ -67,6 +66,11 @@ function computeDominantState(agents: DashboardAgentRow[]): DashboardWorktreeCar
   return 'idle'
 }
 
+// Why: the dashboard only surfaces agents that have reported state via a hook.
+// A tab hosting a shell, a REPL before its first turn, or an agent we have no
+// hook integration for will have no entry here — and that's correct. The
+// dashboard's job is to show *agent work in progress*, not to guess which
+// terminals might contain an agent.
 function buildAgentRowsForWorktree(
   worktreeId: string,
   tabsByWorktree: Record<string, TerminalTab[]>,
@@ -76,52 +80,21 @@ function buildAgentRowsForWorktree(
   const rows: DashboardAgentRow[] = []
 
   for (const tab of tabs) {
-    // Find explicit status entries for panes within this tab
     const explicitEntries = Object.values(agentStatusByPaneKey).filter((entry) =>
       entry.paneKey.startsWith(`${tab.id}:`)
     )
-
-    if (explicitEntries.length > 0) {
-      // Why: an explicit agent status report is proof that a terminal is active,
-      // even if ptyId hasn't been set yet (e.g. the PTY was spawned but the tab
-      // metadata hasn't received the ptyId back from the main process yet).
-      for (const entry of explicitEntries) {
-        rows.push({
-          paneKey: entry.paneKey,
-          entry,
-          tab,
-          agentType: entry.agentType ?? 'unknown',
-          state: entry.state,
-          source: 'agent',
-          // Why: the oldest stateHistory entry's startedAt is the agent's original
-          // "first seen" timestamp. When history is empty the entry is brand new,
-          // so updatedAt is the best start-time approximation available.
-          startedAt: entry.stateHistory[0]?.startedAt ?? entry.updatedAt
-        })
-      }
-    } else if (tab.ptyId) {
-      // Heuristic fallback from terminal title — only for tabs with a known PTY
-      const heuristicStatus = detectAgentStatusFromTitle(tab.title)
-      if (heuristicStatus) {
-        rows.push({
-          paneKey: `heuristic:${tab.id}`,
-          entry: null,
-          tab,
-          // Why: heuristic rows are the title-based fallback when the hook
-          // hasn't reported yet. We don't want to guess the agent family
-          // from the title — titles are noisy and mismatches (e.g. Codex
-          // spinner → Claude) show the wrong icon. The hook will provide
-          // the real agentType as soon as it fires.
-          agentType: 'unknown',
-          // Map heuristic 'permission' to 'blocked' for dashboard consistency
-          state: heuristicStatus === 'permission' ? 'blocked' : heuristicStatus,
-          source: 'heuristic',
-          // Why: heuristic rows have no explicit start timestamp. 0 sorts them
-          // after any agent with a real start time — acceptable because these
-          // rows exist only as a best-effort visibility backstop.
-          startedAt: 0
-        })
-      }
+    for (const entry of explicitEntries) {
+      rows.push({
+        paneKey: entry.paneKey,
+        entry,
+        tab,
+        agentType: entry.agentType ?? 'unknown',
+        state: entry.state,
+        // Why: the oldest stateHistory entry's startedAt is the agent's original
+        // "first seen" timestamp. When history is empty the entry is brand new,
+        // so updatedAt is the best start-time approximation available.
+        startedAt: entry.stateHistory[0]?.startedAt ?? entry.updatedAt
+      })
     }
   }
 
@@ -139,21 +112,23 @@ function buildDashboardData(
       .filter((w) => !w.isArchived)
       .map((worktree) => {
         const agents = buildAgentRowsForWorktree(worktree.id, tabsByWorktree, agentStatusByPaneKey)
-        // Why: sort agents within a worktree newest-first so the most recently
-        // started agent appears at the top. The dashboard answers "what did I
-        // start most recently?", not "what has been running longest".
-        agents.sort((a, b) => b.startedAt - a.startedAt)
-        let latestStartedAt = 0
-        for (const agent of agents) {
-          if (agent.startedAt > latestStartedAt) {
-            latestStartedAt = agent.startedAt
-          }
-        }
+        // Why: sort agents within a worktree oldest-first by startedAt. A new
+        // agent appears at the BOTTOM so it doesn't shove the row the user
+        // is currently reading down the list. Stable order also means
+        // retained/live transitions don't reshuffle siblings. Users care
+        // less about "which is newest" than "let this list stop moving
+        // while I read it".
+        agents.sort((a, b) => a.startedAt - b.startedAt)
+        // Why: earliestStartedAt (oldest agent in the worktree) is stable once
+        // the worktree has any agent at all. Using it for outer sorts means
+        // a brand-new agent in a different worktree no longer shoves this
+        // card around while the user is reading.
+        const earliestStartedAt = agents.length > 0 ? agents[0].startedAt : 0
         return {
           worktree,
           agents,
           dominantState: computeDominantState(agents),
-          latestStartedAt
+          earliestStartedAt
         } satisfies DashboardWorktreeCard
       })
 

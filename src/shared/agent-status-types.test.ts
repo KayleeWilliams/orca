@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { parseAgentStatusPayload, AGENT_STATUS_MAX_FIELD_LENGTH } from './agent-status-types'
+import {
+  parseAgentStatusPayload,
+  AGENT_STATUS_MAX_FIELD_LENGTH,
+  AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
+  AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH
+} from './agent-status-types'
 
 describe('parseAgentStatusPayload', () => {
   it('parses a valid working payload', () => {
@@ -88,5 +94,97 @@ describe('parseAgentStatusPayload', () => {
       prompt: '',
       agentType: 'cursor'
     })
+  })
+
+  it('parses toolName, toolInput, and lastAssistantMessage', () => {
+    const result = parseAgentStatusPayload(
+      JSON.stringify({
+        state: 'working',
+        toolName: 'Edit',
+        toolInput: '/path/to/file.ts',
+        lastAssistantMessage: 'Here is the edit I made.'
+      })
+    )
+    expect(result).toEqual({
+      state: 'working',
+      prompt: '',
+      agentType: undefined,
+      toolName: 'Edit',
+      toolInput: '/path/to/file.ts',
+      lastAssistantMessage: 'Here is the edit I made.'
+    })
+  })
+
+  it('truncates each optional field to its own cap', () => {
+    const longName = 'n'.repeat(AGENT_STATUS_TOOL_NAME_MAX_LENGTH + 50)
+    const longInput = 'i'.repeat(AGENT_STATUS_TOOL_INPUT_MAX_LENGTH + 50)
+    const longMessage = 'm'.repeat(AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH + 500)
+    const result = parseAgentStatusPayload(
+      JSON.stringify({
+        state: 'working',
+        toolName: longName,
+        toolInput: longInput,
+        lastAssistantMessage: longMessage
+      })
+    )
+    expect(result!.toolName).toHaveLength(AGENT_STATUS_TOOL_NAME_MAX_LENGTH)
+    expect(result!.toolInput).toHaveLength(AGENT_STATUS_TOOL_INPUT_MAX_LENGTH)
+    expect(result!.lastAssistantMessage).toHaveLength(AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH)
+  })
+
+  it('leaves omitted optional fields undefined (not empty string)', () => {
+    const result = parseAgentStatusPayload('{"state":"working"}')
+    expect(result!.toolName).toBeUndefined()
+    expect(result!.toolInput).toBeUndefined()
+    expect(result!.lastAssistantMessage).toBeUndefined()
+  })
+
+  it('treats non-string optional fields as undefined', () => {
+    const result = parseAgentStatusPayload(
+      '{"state":"working","toolName":42,"toolInput":null,"lastAssistantMessage":[]}'
+    )
+    expect(result!.toolName).toBeUndefined()
+    expect(result!.toolInput).toBeUndefined()
+    expect(result!.lastAssistantMessage).toBeUndefined()
+  })
+
+  it('treats empty-string optional fields as undefined', () => {
+    const result = parseAgentStatusPayload(
+      '{"state":"working","toolName":"   ","toolInput":"","lastAssistantMessage":"   "}'
+    )
+    expect(result!.toolName).toBeUndefined()
+    expect(result!.toolInput).toBeUndefined()
+    expect(result!.lastAssistantMessage).toBeUndefined()
+  })
+
+  it('collapses newlines in toolInput (single-line preview field)', () => {
+    const result = parseAgentStatusPayload('{"state":"working","toolInput":"line one\\nline two"}')
+    expect(result!.toolInput).toBe('line one line two')
+  })
+
+  it('preserves paragraph breaks in lastAssistantMessage', () => {
+    // Why: the assistant message is rendered with `whitespace-pre-wrap` in the
+    // dashboard row so the user sees the same paragraph structure the agent
+    // produced. Collapsing newlines would destroy that structure.
+    const result = parseAgentStatusPayload(
+      '{"state":"done","lastAssistantMessage":"Summary line.\\n\\nDetails paragraph."}'
+    )
+    expect(result!.lastAssistantMessage).toBe('Summary line.\n\nDetails paragraph.')
+  })
+
+  it('normalizes \\r\\n to \\n and caps blank-line runs at one in lastAssistantMessage', () => {
+    const result = parseAgentStatusPayload(
+      '{"state":"done","lastAssistantMessage":"a\\r\\nb\\n\\n\\n\\nc"}'
+    )
+    expect(result!.lastAssistantMessage).toBe('a\nb\n\nc')
+  })
+
+  it('still respects the base prompt cap independent of the new fields', () => {
+    const prompt = 'p'.repeat(300)
+    const result = parseAgentStatusPayload(
+      JSON.stringify({ state: 'working', prompt, toolInput: 'x'.repeat(5) })
+    )
+    expect(result!.prompt).toHaveLength(AGENT_STATUS_MAX_FIELD_LENGTH)
+    expect(result!.toolInput).toBe('xxxxx')
   })
 })
