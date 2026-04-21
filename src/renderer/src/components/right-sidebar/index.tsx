@@ -19,6 +19,7 @@ import FileExplorer from './FileExplorer'
 import SourceControl from './SourceControl'
 import SearchPanel from './Search'
 import ChecksPanel from './ChecksPanel'
+import DashboardBottomPanel from './DashboardBottomPanel'
 
 const MIN_WIDTH = 220
 // Why: long file names (e.g. construction drawing sheets, multi-part document
@@ -163,10 +164,17 @@ function RightSidebarInner(): React.JSX.Element {
           that froze the app for seconds on Windows.  Each panel now reacts
           to activeWorktreeId changes via store subscriptions and reset
           effects, keeping the component instance alive across switches. */}
-      {effectiveTab === 'explorer' && <FileExplorer />}
-      {effectiveTab === 'search' && <SearchPanel />}
-      {effectiveTab === 'source-control' && <SourceControl />}
-      {effectiveTab === 'checks' && <ChecksPanel />}
+      {/* Why: the active tab content takes the top of the sidebar. The agent
+          dashboard docks at the bottom regardless of which tab is selected,
+          so users keep a glanceable view of agent status while they browse
+          files, search, etc. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {effectiveTab === 'explorer' && <FileExplorer />}
+        {effectiveTab === 'search' && <SearchPanel />}
+        {effectiveTab === 'source-control' && <SourceControl />}
+        {effectiveTab === 'checks' && <ChecksPanel />}
+      </div>
+      <DashboardBottomPanel />
     </div>
   )
 

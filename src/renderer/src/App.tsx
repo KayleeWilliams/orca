@@ -11,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useAppStore } from './store'
 import { useShallow } from 'zustand/react/shallow'
 import { useIpcEvents } from './hooks/useIpcEvents'
+import { useDashboardData } from './components/dashboard/useDashboardData'
+import { useRetainedAgentsSync } from './components/dashboard/useRetainedAgents'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
@@ -131,6 +133,12 @@ function App(): React.JSX.Element {
 
   // Subscribe to IPC push events
   useIpcEvents()
+  // Why: retention must run at App level (not inside AgentDashboard) because
+  // the sidebar hovercard also reads retained entries. If retention only ran
+  // when the dashboard is mounted, "done" agents would vanish from the hover
+  // any time the user collapses the dashboard panel.
+  const dashboardLiveGroups = useDashboardData()
+  useRetainedAgentsSync(dashboardLiveGroups)
   // Why: git conflict-operation state also drives the worktree cards. Polling
   // cannot live under RightSidebar because App unmounts that subtree when the
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
@@ -553,6 +561,14 @@ function App(): React.JSX.Element {
         dispatchClearModifierHints()
         e.preventDefault()
         actions.setRightSidebarTab('source-control')
+        actions.setRightSidebarOpen(true)
+        return
+      }
+
+      // Cmd/Ctrl+Shift+D — open right sidebar (agent dashboard is now
+      // docked at the sidebar bottom, so only toggle visibility).
+      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
         actions.setRightSidebarOpen(true)
       }
     }
