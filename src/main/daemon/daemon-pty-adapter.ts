@@ -448,18 +448,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 }
 
-// Why: ENOENT means the socket file was deleted (daemon crashed and cleaned
-// up, or was killed). ECONNREFUSED means the file exists but nothing is
-// listening (rare race). "Connection lost" / "Not connected" mean the daemon
-// died while we had an active or stale connection — the client detected the
-// socket close but we still tried to use it. All indicate the daemon is
-// gone and a respawn should be attempted.
+// Why: ENOENT/ECONNREFUSED with syscall 'connect' mean the socket is
+// unreachable (daemon died). Checking syscall avoids false positives from
+// token-file ENOENT (readFileSync), which has no syscall or syscall='open'.
+// "Connection lost" / "Not connected" mean the daemon died while we had an
+// active or stale connection. All indicate the daemon is gone and a respawn
+// should be attempted.
 function isDaemonGoneError(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false
   }
-  const code = (err as NodeJS.ErrnoException).code
-  if (code === 'ENOENT' || code === 'ECONNREFUSED') {
+  const errno = err as NodeJS.ErrnoException
+  if ((errno.code === 'ENOENT' || errno.code === 'ECONNREFUSED') && errno.syscall === 'connect') {
     return true
   }
   const msg = err.message
