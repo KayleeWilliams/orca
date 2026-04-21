@@ -10,7 +10,12 @@ import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import { buildWorktreeComparator } from './smart-sort'
-import { type Row, buildRows, getGroupKeyForWorktree } from './worktree-list-groups'
+import {
+  type GroupHeaderRow,
+  type Row,
+  buildRows,
+  getGroupKeyForWorktree
+} from './worktree-list-groups'
 import { computeVisibleWorktreeIds, setVisibleWorktreeIds } from './visible-worktrees'
 import { useModifierHint } from '@/hooks/useModifierHint'
 
@@ -611,7 +616,18 @@ const WorktreeList = React.memo(function WorktreeList() {
     () => buildRows(groupBy, worktrees, repoMap, prCache, collapsedGroups),
     [groupBy, worktrees, repoMap, prCache, collapsedGroups]
   )
-  const viewportResetKey = `${groupBy}:${rows.length}`
+  // Why: rows.length alone can stay the same when items migrate between
+  // groups (e.g., PR cache loads on restart and a collapsed group absorbs
+  // an item while its header is added — net row count unchanged). Including
+  // the header keys ensures the virtualizer remounts when group structure
+  // changes, preventing stale height measurements from causing overlap.
+  const viewportResetKey = useMemo(() => {
+    const headers = rows
+      .filter((r): r is GroupHeaderRow => r.type === 'header')
+      .map((r) => r.key)
+      .join(',')
+    return `${groupBy}:${rows.length}:${headers}`
+  }, [groupBy, rows])
 
   // Why: derive the rendered item order from the post-buildRows() row list,
   // not the flat `worktrees` array, because grouping (groupBy: 'repo' or
