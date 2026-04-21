@@ -238,6 +238,40 @@ export function createMainWindow(
     webPreferences.partition = partition
   })
 
+  // Why: the renderer's <embed> PDF viewer is a Chromium plugin whose content
+  // is invisible to DOM-level search. The BrowserWindow's own findInPage() can
+  // search plugin text layers, so we expose it via IPC so the renderer can
+  // drive find-in-page for PDF previews.
+  ipcMain.on(
+    'ui:rendererFindInPage',
+    (event, args: { text: string; forward?: boolean; findNext?: boolean }) => {
+      if (event.sender !== mainWindow.webContents) {
+        return
+      }
+      mainWindow.webContents.findInPage(args.text, {
+        forward: args.forward,
+        findNext: args.findNext
+      })
+    }
+  )
+
+  ipcMain.on(
+    'ui:rendererStopFindInPage',
+    (event, args: { action: 'clearSelection' | 'keepSelection' | 'activateSelection' }) => {
+      if (event.sender !== mainWindow.webContents) {
+        return
+      }
+      mainWindow.webContents.stopFindInPage(args.action)
+    }
+  )
+
+  mainWindow.webContents.on('found-in-page', (_event, result) => {
+    mainWindow.webContents.send('ui:rendererFoundInPage', {
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches
+    })
+  })
+
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
     // Why: popup and navigation policy must attach as soon as Chromium creates
     // the guest webContents. Waiting until renderer-driven registration leaves

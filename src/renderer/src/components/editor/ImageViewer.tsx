@@ -1,6 +1,15 @@
-import { Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { type JSX, useEffect, useMemo, useState } from 'react'
+import {
+  ChevronDown,
+  ChevronUp,
+  Image as ImageIcon,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut
+} from 'lucide-react'
+import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -25,6 +34,13 @@ export default function ImageViewer({
     null
   )
 
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [activeMatch, setActiveMatch] = useState(0)
+  const [totalMatches, setTotalMatches] = useState(0)
+  const findInputRef = useRef<HTMLInputElement>(null)
+
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
   const isPdf = mimeType === 'application/pdf'
@@ -42,8 +58,6 @@ export default function ImageViewer({
   const zoomPercent = Math.round(zoom * 100)
 
   useEffect(() => {
-    // Reset error state so the component re-attempts rendering when inputs change
-    // (e.g. switching to a different file after a previous corrupt payload).
     setImageError(false)
 
     if (!cleanedContent) {
@@ -77,6 +91,93 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(objectUrl)
   }, [cleanedContent, mimeType])
 
+  // ── PDF find-in-page via main-window webContents IPC ──────────────
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(findQuery), 200)
+    return () => clearTimeout(id)
+  }, [findQuery])
+
+  useEffect(() => {
+    if (!findOpen) {
+      window.api.ui.rendererStopFindInPage('clearSelection')
+      setActiveMatch(0)
+      setTotalMatches(0)
+      return
+    }
+    findInputRef.current?.focus()
+    findInputRef.current?.select()
+  }, [findOpen])
+
+  useEffect(() => {
+    if (!debouncedQuery || !findOpen) {
+      if (findOpen) {
+        window.api.ui.rendererStopFindInPage('clearSelection')
+      }
+      setActiveMatch(0)
+      setTotalMatches(0)
+      return
+    }
+    window.api.ui.rendererFindInPage(debouncedQuery)
+  }, [debouncedQuery, findOpen])
+
+  useEffect(() => {
+    if (!findOpen) {
+      return
+    }
+    return window.api.ui.onRendererFoundInPage((result) => {
+      setActiveMatch(result.activeMatchOrdinal)
+      setTotalMatches(result.matches)
+    })
+  }, [findOpen])
+
+  const findNext = useCallback(() => {
+    if (findQuery) {
+      window.api.ui.rendererFindInPage(findQuery, { forward: true, findNext: true })
+    }
+  }, [findQuery])
+
+  const findPrevious = useCallback(() => {
+    if (findQuery) {
+      window.api.ui.rendererFindInPage(findQuery, { forward: false, findNext: true })
+    }
+  }, [findQuery])
+
+  const closeFindBar = useCallback(() => {
+    setFindOpen(false)
+  }, [])
+
+  // Cmd/Ctrl+F — open find bar for PDF viewer
+  useEffect(() => {
+    if (!isPdf) {
+      return
+    }
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      const isMod = navigator.userAgent.includes('Mac') ? e.metaKey : e.ctrlKey
+      if (isMod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        e.stopPropagation()
+        setFindOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [isPdf])
+
+  const handleFindKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      e.stopPropagation()
+      if (e.key === 'Escape') {
+        closeFindBar()
+      } else if (e.key === 'Enter' && e.shiftKey) {
+        findPrevious()
+      } else if (e.key === 'Enter') {
+        findNext()
+      }
+    },
+    [closeFindBar, findNext, findPrevious]
+  )
+
   if (imageError) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-muted/20 p-8 text-sm text-muted-foreground">
@@ -97,6 +198,59 @@ export default function ImageViewer({
 
   const previewPane = isPdf ? (
     <div className="relative flex flex-1 flex-col overflow-auto">
+      {findOpen ? (
+        <div
+          className="absolute top-2 right-2 z-50 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800/95 px-2 py-1 shadow-lg backdrop-blur-sm"
+          style={{ width: 300 }}
+          onKeyDown={handleFindKeyDown}
+        >
+          <input
+            ref={findInputRef}
+            type="text"
+            value={findQuery}
+            onChange={(e) => setFindQuery(e.target.value)}
+            placeholder="Find in page..."
+            className="min-w-0 flex-1 border-none bg-transparent text-sm text-white outline-none placeholder:text-zinc-500"
+          />
+          {findQuery ? (
+            <span className="shrink-0 text-xs text-zinc-400">
+              {totalMatches > 0 ? `${activeMatch} of ${totalMatches}` : 'No matches'}
+            </span>
+          ) : null}
+          <div className="mx-0.5 h-4 w-px bg-zinc-700" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={findPrevious}
+            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
+            title="Previous match"
+          >
+            <ChevronUp size={14} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={findNext}
+            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
+            title="Next match"
+          >
+            <ChevronDown size={14} />
+          </Button>
+          <div className="mx-0.5 h-4 w-px bg-zinc-700" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={closeFindBar}
+            className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
+            title="Close"
+          >
+            <X size={14} />
+          </Button>
+        </div>
+      ) : null}
       {/* Why: Electron's Chromium PDF viewer can fail to initialize inside a
           sandboxed iframe even when the Blob URL is valid. Using <embed> keeps
           the preview isolated to the browser's native PDF surface without
