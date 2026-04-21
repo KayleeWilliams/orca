@@ -32,7 +32,7 @@ export function buildSearchUrl(
   return `${SEARCH_ENGINE_URLS[engine]}${encodeURIComponent(query)}`
 }
 
-function looksLikeSearchQuery(input: string): boolean {
+export function looksLikeSearchQuery(input: string): boolean {
   if (input.includes(' ')) {
     return true
   }

@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Globe } from 'lucide-react'
+import { Globe, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
 import { useAppStore } from '@/store'
+import {
+  buildSearchUrl,
+  looksLikeSearchQuery,
+  SEARCH_ENGINE_LABELS,
+  DEFAULT_SEARCH_ENGINE,
+  type SearchEngine
+} from '../../../../shared/browser-url'
 
 const MAX_SUGGESTIONS = 8
+
+type SuggestionEntry = {
+  url: string
+  title: string
+  lastVisitedAt: number
+  visitCount: number
+  isSearch?: boolean
+}
 
 type BrowserAddressBarProps = {
   value: string
@@ -47,39 +62,57 @@ export default function BrowserAddressBar({
   const [open, setOpen] = useState(false)
   const [selectedValue, setSelectedValue] = useState('')
   const browserUrlHistory = useAppStore((s) => s.browserUrlHistory)
+  const browserDefaultSearchEngine = useAppStore((s) => s.browserDefaultSearchEngine)
   const closingRef = useRef(false)
   const openedAtRef = useRef(0)
 
-  const suggestions = useMemo(() => {
-    if (browserUrlHistory.length === 0) {
-      return []
-    }
+  const searchEngine: SearchEngine =
+    (browserDefaultSearchEngine as SearchEngine | null) ?? DEFAULT_SEARCH_ENGINE
+
+  const suggestions = useMemo((): SuggestionEntry[] => {
     const trimmed = value.trim()
     if (trimmed === '' || trimmed === 'about:blank' || trimmed.startsWith('data:')) {
+      if (browserUrlHistory.length === 0) {
+        return []
+      }
       return [...browserUrlHistory]
         .sort((a, b) => b.lastVisitedAt - a.lastVisitedAt)
         .slice(0, MAX_SUGGESTIONS)
     }
 
-    const scored = browserUrlHistory
-      .map((entry) => ({ entry, score: scoreSuggestion(entry, trimmed) }))
-      .filter((item) => item.score >= 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MAX_SUGGESTIONS)
+    const historySuggestions: SuggestionEntry[] =
+      browserUrlHistory.length > 0
+        ? browserUrlHistory
+            .map((entry) => ({ entry, score: scoreSuggestion(entry, trimmed) }))
+            .filter((item) => item.score >= 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, MAX_SUGGESTIONS - 1)
+            .map((item) => item.entry)
+        : []
 
-    return scored.map((item) => item.entry)
-  }, [browserUrlHistory, value])
+    const searchSuggestion: SuggestionEntry = {
+      url: buildSearchUrl(trimmed, searchEngine),
+      title: `${trimmed} — ${SEARCH_ENGINE_LABELS[searchEngine]} Search`,
+      lastVisitedAt: 0,
+      visitCount: 0,
+      isSearch: true
+    }
+
+    if (looksLikeSearchQuery(trimmed)) {
+      return [searchSuggestion, ...historySuggestions]
+    }
+
+    return [...historySuggestions.slice(0, MAX_SUGGESTIONS - 1), searchSuggestion]
+  }, [browserUrlHistory, value, searchEngine])
 
   const handleFocus = useCallback(() => {
     if (closingRef.current) {
       return
     }
     inputRef.current?.select()
-    if (browserUrlHistory.length > 0) {
-      openedAtRef.current = Date.now()
-      setOpen(true)
-    }
-  }, [browserUrlHistory.length, inputRef])
+    openedAtRef.current = Date.now()
+    setOpen(true)
+  }, [inputRef])
 
   const handleBlur = useCallback(() => {
     // Why: delay close so that clicking a suggestion item registers before
@@ -242,10 +275,22 @@ export default function BrowserAddressBar({
                     onSelect={() => handleSelect(entry.url)}
                     className="flex items-center gap-2 px-3 py-2"
                   >
-                    <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                    {entry.isSearch ? (
+                      <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                    )}
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-sm">{entry.title}</span>
-                      <span className="truncate text-xs text-muted-foreground">{entry.url}</span>
+                      {entry.isSearch ? (
+                        <span className="truncate text-sm">{entry.title}</span>
+                      ) : (
+                        <>
+                          <span className="truncate text-sm">{entry.title}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {entry.url}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </CommandItem>
                 ))}
