@@ -56,7 +56,9 @@ export default function BrowserAddressBar({
     }
     const trimmed = value.trim()
     if (trimmed === '' || trimmed === 'about:blank' || trimmed.startsWith('data:')) {
-      return []
+      return [...browserUrlHistory]
+        .sort((a, b) => b.lastVisitedAt - a.lastVisitedAt)
+        .slice(0, MAX_SUGGESTIONS)
     }
 
     const scored = browserUrlHistory
@@ -73,17 +75,11 @@ export default function BrowserAddressBar({
       return
     }
     inputRef.current?.select()
-    const trimmed = value.trim()
-    if (
-      browserUrlHistory.length > 0 &&
-      trimmed !== '' &&
-      trimmed !== 'about:blank' &&
-      !trimmed.startsWith('data:')
-    ) {
+    if (browserUrlHistory.length > 0) {
       openedAtRef.current = Date.now()
       setOpen(true)
     }
-  }, [browserUrlHistory.length, inputRef, value])
+  }, [browserUrlHistory.length, inputRef])
 
   const handleBlur = useCallback(() => {
     // Why: delay close so that clicking a suggestion item registers before
@@ -208,13 +204,7 @@ export default function BrowserAddressBar({
           <Input
             ref={inputRef}
             value={value}
-            onChange={(event) => {
-              onChange(event.target.value)
-              if (event.target.value.trim() !== '' && browserUrlHistory.length > 0 && !open) {
-                openedAtRef.current = Date.now()
-                setOpen(true)
-              }
-            }}
+            onChange={(event) => onChange(event.target.value)}
             onFocus={handleFocus}
             onBlur={handleBlur}
             onKeyDown={handleKeyDown}
