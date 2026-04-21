@@ -16,10 +16,15 @@ import {
 } from '../../../../shared/browser-url'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
-import { BROWSER_PANE_SEARCH_ENTRIES } from './browser-search'
+import { BROWSER_PANE_SEARCH_ENTRIES as BROWSER_CORE_SEARCH_ENTRIES } from './browser-search'
+import { BROWSER_USE_PANE_SEARCH_ENTRIES } from './browser-use-search'
 import { BrowserProfileRow } from './BrowserProfileRow'
+import { BrowserUseSetup } from './BrowserUsePane'
 
-export { BROWSER_PANE_SEARCH_ENTRIES }
+export const BROWSER_PANE_SEARCH_ENTRIES = [
+  ...BROWSER_USE_PANE_SEARCH_ENTRIES,
+  ...BROWSER_CORE_SEARCH_ENTRIES
+]
 
 type BrowserPaneProps = {
   settings: GlobalSettings
@@ -51,13 +56,36 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
     setHomePageDraft(browserDefaultUrl ?? '')
   }, [browserDefaultUrl])
 
-  const showHomePage = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[0]])
-  const showSearchEngine = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[1]])
-  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[2]])
-  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[3]])
+  const showHomePage = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[0]])
+  const showSearchEngine = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[1]])
+  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[2]])
+  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[3]])
+  const showBrowserUse = matchesSettingsSearch(searchQuery, BROWSER_USE_PANE_SEARCH_ENTRIES)
+
+  const scrollToSessionCookies = (): void => {
+    // Why: the "Session & Cookies" block is search-gated, so if the user has
+    // filtered to a query that excludes it the target element won't be in the
+    // DOM. Clear the search first, then scroll on the next frame so the block
+    // has mounted.
+    useAppStore.getState().setSettingsSearchQuery('')
+    // Why: double RAF to ensure React has committed the re-render triggered by
+    // the store update before we query the DOM — a single RAF can fire before
+    // commit and miss the newly-mounted element.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById('browser-session-cookies')
+        if (!el) {
+          return
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    })
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {showBrowserUse ? <BrowserUseSetup onConfigureMoreBrowsers={scrollToSessionCookies} /> : null}
+
       {showHomePage ? (
         <SearchableSetting
           title="Default Home Page"
@@ -171,6 +199,7 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
 
       {showCookies ? (
         <SearchableSetting
+          id="browser-session-cookies"
           title="Session & Cookies"
           description="Manage browser profiles and import cookies from Chrome, Edge, or other browsers."
           keywords={[
