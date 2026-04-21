@@ -2164,9 +2164,9 @@ Terminals:
 Browser Automation:
   tab create                Create a new browser tab (navigates to --url)
   tab list                  List open browser tabs
-  tab switch                Switch the active browser tab by --index
-  tab close                 Close the active browser tab
-  snapshot                  Accessibility snapshot with element refs (e.g. e1, e2)
+  tab switch                Switch the active browser tab by --index or --page
+  tab close                 Close a browser tab by --index/--page or the current tab
+  snapshot                  Accessibility snapshot with element refs (e.g. @e1, @e2)
   goto                      Navigate the active tab to --url
   click                     Click element by --element ref
   fill                      Clear and fill input by --element ref with --value
@@ -2174,7 +2174,7 @@ Browser Automation:
   select                    Select dropdown option by --element ref and --value
   hover                     Hover element by --element ref
   keypress                  Press a key (e.g. --key Enter, --key Tab)
-  scroll                    Scroll --direction (up/down/left/right) by --amount pixels
+  scroll                    Scroll --direction (up/down) by --amount pixels
   back                      Navigate back in browser history
   reload                    Reload the active browser tab
   screenshot                Capture viewport screenshot (--format png|jpeg)
@@ -2191,7 +2191,7 @@ Browser Automation:
   scrollintoview            Scroll --element into view
   get                       Get element property (--what: text, html, value, url, title)
   is                        Check element state (--what: visible, enabled, checked)
-  keyboard inserttext       Insert text without key events
+  inserttext                Insert text without key events
   mouse move                Move mouse to --x --y coordinates
   mouse down                Press mouse button
   mouse up                  Release mouse button
@@ -2201,7 +2201,7 @@ Browser Automation:
   set offline               Toggle offline mode (--state on|off)
   set headers               Set HTTP headers (--headers '{"key":"val"}')
   set credentials           Set HTTP auth (--user <u> --pass <p>)
-  set media                 Set color scheme (--scheme dark|light)
+  set media                 Set color scheme (--color-scheme dark|light)
   clipboard read            Read clipboard contents
   clipboard write           Write --text to clipboard
   dialog accept             Accept browser dialog (--text for prompt response)
@@ -2212,8 +2212,8 @@ Browser Automation:
   storage session get       Get sessionStorage value by --key
   storage session set       Set sessionStorage --key --value
   storage session clear     Clear sessionStorage
-  download                  Download file via --element to --path
-  highlight                 Highlight --element on page
+  download                  Download file via --selector to --path
+  highlight                 Highlight --selector on page
   exec                      Run any agent-browser command (--command "...")
 
 Common Commands:
@@ -2274,13 +2274,13 @@ Browser Workflow:
      (Element refs change after navigation — always re-snapshot before interacting)
 
 Browser Options:
-  --element <ref>           Element ref from snapshot (e.g. e3, not @e3)
+  --element <ref>           Element ref from snapshot (e.g. @e3)
   --url <url>               URL to navigate to
   --value <text>            Value to fill or select
   --input <text>            Text to type at current focus (no element needed)
   --expression <js>         JavaScript expression to evaluate
   --key <key>               Key to press (Enter, Tab, Escape, Control+a, etc.)
-  --direction <dir>         Scroll direction: up, down, left, right
+  --direction <dir>         Scroll direction: up or down
   --amount <pixels>         Scroll distance in pixels (default: viewport height)
   --index <n>               Tab index (from \`tab list\`)
   --page <id>               Stable browser page id (preferred for concurrent workflows)

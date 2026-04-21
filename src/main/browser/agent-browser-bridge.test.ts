@@ -264,6 +264,25 @@ describe('AgentBrowserBridge', () => {
       expect(result.tabs[0].browserPageId).toBe('tab-a')
       expect(result.tabs[0].url).toBe('https://a.com')
     })
+
+    it('does not mutate active-tab routing when tab-list infers the first live tab', () => {
+      const tabs = new Map([
+        ['tab-a', 1],
+        ['tab-b', 2]
+      ])
+      const wc1 = mockWebContents(1, 'https://a.com', 'A')
+      const wc2 = mockWebContents(2, 'https://b.com', 'B')
+      webContentsFromIdMock.mockImplementation((id: number) => (id === 1 ? wc1 : wc2))
+
+      const b = new AgentBrowserBridge(mockBrowserManager(tabs))
+
+      const result = b.tabList()
+      expect(result.tabs).toMatchObject([
+        { browserPageId: 'tab-a', active: true },
+        { browserPageId: 'tab-b', active: false }
+      ])
+      expect(b.getActiveWebContentsId()).toBeNull()
+    })
   })
 
   // ── Tab switch ──
@@ -670,6 +689,42 @@ describe('AgentBrowserBridge', () => {
 
     await bridge.onTabClosed(100)
     expect(bridge.getActiveWebContentsId()).toBeNull()
+  })
+
+  it('repairs per-worktree active routing when the active tab closes', async () => {
+    const tabs = new Map([
+      ['tab-a', 1],
+      ['tab-b', 2]
+    ])
+    const worktrees = new Map([
+      ['tab-a', 'wt-1'],
+      ['tab-b', 'wt-1']
+    ])
+    const wc2 = mockWebContents(2, 'https://b.com', 'B')
+    webContentsFromIdMock.mockImplementation((id: number) => (id === 2 ? wc2 : null))
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs, worktrees))
+    b.setActiveTab(1, 'wt-1')
+
+    await b.onTabClosed(1)
+
+    expect(b.getActiveWebContentsId()).toBe(2)
+    expect(b.tabList('wt-1').tabs).toMatchObject([{ browserPageId: 'tab-b', active: true }])
+  })
+
+  it('repairs per-worktree active routing when an active tab swaps processes', async () => {
+    const tabs = new Map([['tab-a', 200]])
+    const worktrees = new Map([['tab-a', 'wt-1']])
+    const wc = mockWebContents(200, 'https://a.com', 'A')
+    webContentsFromIdMock.mockImplementation((id: number) => (id === 200 ? wc : null))
+
+    const b = new AgentBrowserBridge(mockBrowserManager(tabs, worktrees))
+    b.setActiveTab(100, 'wt-1')
+
+    await b.onProcessSwap('tab-a', 200, 100)
+
+    expect(b.getActiveWebContentsId()).toBe(200)
+    expect(b.tabList('wt-1').tabs).toMatchObject([{ browserPageId: 'tab-a', active: true }])
   })
 
   // ── tabSwitch success ──

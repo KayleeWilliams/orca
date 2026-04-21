@@ -28,15 +28,25 @@ Last updated: 2026-04-20
   Resolution: the close request now carries `worktreeId`, and the renderer falls back to that
   worktree's active browser workspace instead of the global active browser tab.
 
-- `open` `src/main/runtime/orca-runtime.ts:2153`
-  Issue: `tab close --page <id>` trusts the page id directly and does not verify that it exists
-  or belongs to the supplied `--worktree`.
+- `fixed` `src/main/runtime/orca-runtime.ts:2153`, `src/main/runtime/orca-runtime.test.ts`, `src/renderer/src/hooks/useIpcEvents.ts`, `src/renderer/src/hooks/useIpcEvents.test.ts`
+  Issue: `tab close --page <id>` trusted the page id directly, did not verify that it existed in
+  the supplied `--worktree`, and the renderer close path collapsed page ids into workspace closes.
+  Resolution: main now validates explicit page ids against the scoped registered tab set before it
+  sends any close request, and the renderer now closes just the targeted page unless it is the last
+  page in that workspace. Unknown explicit page ids now fail instead of replying success.
 
 - `fixed` `src/main/browser/agent-browser-bridge.ts:247`, `src/renderer/src/store/slices/browser.ts:598`, `src/renderer/src/store/slices/browser.ts:810`, `src/main/ipc/browser.ts:148`, `src/main/ipc/browser.test.ts`
   Issue: per-worktree active-tab routing is not updated when the renderer changes the active
   browser page, so worktree-scoped automation can target a stale page.
   Resolution: `browser:activeTabChanged` now forwards the owning worktree id into the bridge so
   renderer tab switches update both the global active guest and the per-worktree active guest.
+
+- `fixed` `src/main/browser/agent-browser-bridge.ts`, `src/main/browser/agent-browser-bridge.test.ts`, `src/main/ipc/browser.ts`
+  Issue: per-worktree active-tab routing could also go stale after a tab closed or a guest process
+  swap, leaving the bridge pointed at dead webContents ids.
+  Resolution: the bridge now repairs the per-worktree active guest when a tab closes, updates the
+  owning worktree slot on process swaps, and keeps `tab list` read-only so discovery does not
+  mutate future routing state.
 
 ## Screenshot behavior
 
@@ -64,6 +74,13 @@ Last updated: 2026-04-20
   Issue: background screenshot prep steals Orca window focus and does not restore it afterward.
   Resolution: screenshot prep no longer forces the host BrowserWindow to the foreground. Guest
   background throttling remains disabled, so capture prep can avoid stealing app focus entirely.
+
+- `fixed` `src/main/browser/browser-manager.ts`, `src/main/browser/browser-manager.test.ts`
+  Issue: screenshot prep changed Orca's remembered browser workspace/page even when the visible
+  pane was terminal/editor, so the next browser activation landed on the screenshot target instead
+  of the user's prior hidden browser state.
+  Resolution: restore now reapplies the previous browser workspace/page selection independently of
+  the visible pane type, then restores the non-browser pane focus.
 
 - `fixed` `src/main/browser/cdp-screenshot.ts:68`, `src/main/browser/cdp-bridge.ts:636`, `src/main/browser/cdp-screenshot.test.ts`
   Issue: the screenshot timeout fallback ignores clip/full-page geometry, so a timed-out
@@ -129,6 +146,12 @@ Last updated: 2026-04-20
   to the foreground.
 
 ## Session lifecycle and process swaps
+
+- `fixed` `src/main/browser/agent-browser-bridge.ts`
+  Issue: packaged macOS builds could fail to resolve the bundled `agent-browser` binary because the
+  path logic assumed a lowercase `resources` directory next to the executable.
+  Resolution: bundled binary lookup now uses `process.resourcesPath` (with a platform-aware test
+  fallback), which matches Electron packaging on macOS and other platforms.
 
 - `fixed` `src/main/browser/agent-browser-bridge.ts:264`, `src/main/browser/agent-browser-bridge.ts:1148`, `src/main/browser/agent-browser-bridge.ts:1169`, `src/main/browser/agent-browser-bridge.ts:1559`, `src/main/browser/agent-browser-bridge.test.ts`
   Issue: intercept restore after a process swap replays old intercept patterns after the first

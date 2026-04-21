@@ -873,5 +873,49 @@ describe('OrcaRuntimeService', () => {
       ).rejects.toThrow('selector_not_found')
       expect(tabListMock).not.toHaveBeenCalled()
     })
+
+    it('rejects closing an unknown page id instead of treating it as success', async () => {
+      vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      const runtime = createRuntime()
+
+      runtime.setAgentBrowserBridge({
+        getRegisteredTabs: vi.fn(() => new Map([['page-1', 1]]))
+      } as never)
+
+      await expect(
+        runtime.browserTabClose({
+          page: 'missing-page'
+        })
+      ).rejects.toThrow('Browser page missing-page was not found')
+    })
+
+    it('rejects closing a page outside the explicitly scoped worktree', async () => {
+      vi.mocked(listWorktrees).mockResolvedValue([
+        ...MOCK_GIT_WORKTREES,
+        {
+          path: '/tmp/worktree-b',
+          head: 'def',
+          branch: 'feature/bar',
+          isBare: false,
+          isMainWorktree: false
+        }
+      ])
+      const runtime = createRuntime()
+      const getRegisteredTabsMock = vi.fn((worktreeId?: string) =>
+        worktreeId === `${TEST_REPO_ID}::/tmp/worktree-b` ? new Map() : new Map([['page-1', 1]])
+      )
+
+      runtime.setAgentBrowserBridge({
+        getRegisteredTabs: getRegisteredTabsMock
+      } as never)
+
+      await expect(
+        runtime.browserTabClose({
+          page: 'page-1',
+          worktree: 'path:/tmp/worktree-b'
+        })
+      ).rejects.toThrow('Browser page page-1 was not found in this worktree')
+      expect(getRegisteredTabsMock).toHaveBeenCalledWith(`${TEST_REPO_ID}::/tmp/worktree-b`)
+    })
   })
 })

@@ -92,8 +92,15 @@ function agentBrowserNativeName(): string {
 
 function resolveAgentBrowserBinary(): string {
   // Why: production builds copy the platform-specific binary into resources/
-  // via electron-builder extraResources. Check there first.
-  const bundled = join(app.getPath('exe'), '..', 'resources', agentBrowserNativeName())
+  // via electron-builder extraResources. Use Electron's resolved resourcesPath
+  // instead of hand-rolling ../resources so packaged macOS builds keep working
+  // on case-sensitive filesystems where Contents/Resources casing matters.
+  const bundledResourcesPath =
+    process.resourcesPath ??
+    (process.platform === 'darwin'
+      ? join(app.getPath('exe'), '..', '..', 'Resources')
+      : join(app.getPath('exe'), '..', 'resources'))
+  const bundled = join(bundledResourcesPath, agentBrowserNativeName())
   if (existsSync(bundled)) {
     return bundled
   }
@@ -230,6 +237,23 @@ export class AgentBrowserBridge {
     }
   }
 
+  private selectFallbackActiveWebContents(
+    worktreeId: string,
+    excludedWebContentsId?: number
+  ): number | null {
+    for (const [, wcId] of this.getRegisteredTabs(worktreeId)) {
+      if (wcId === excludedWebContentsId) {
+        continue
+      }
+      if (this.getWebContents(wcId)) {
+        this.activeWebContentsPerWorktree.set(worktreeId, wcId)
+        return wcId
+      }
+    }
+    this.activeWebContentsPerWorktree.delete(worktreeId)
+    return null
+  }
+
   getActiveWebContentsId(): number | null {
     return this.activeWebContentsId
   }
@@ -262,27 +286,55 @@ export class AgentBrowserBridge {
   }
 
   async onTabClosed(webContentsId: number): Promise<void> {
-    if (this.activeWebContentsId === webContentsId) {
-      this.activeWebContentsId = null
-    }
     const browserPageId = this.resolveTabIdSafe(webContentsId)
+    const owningWorktreeId = browserPageId
+      ? this.browserManager.getWorktreeIdForTab(browserPageId)
+      : undefined
+    let nextWorktreeActiveWebContentsId: number | null = null
+    if (
+      owningWorktreeId &&
+      this.activeWebContentsPerWorktree.get(owningWorktreeId) === webContentsId
+    ) {
+      nextWorktreeActiveWebContentsId = this.selectFallbackActiveWebContents(
+        owningWorktreeId,
+        webContentsId
+      )
+    }
+    if (this.activeWebContentsId === webContentsId) {
+      this.activeWebContentsId = nextWorktreeActiveWebContentsId
+    }
     if (browserPageId) {
       await this.destroySession(`orca-tab-${browserPageId}`)
     }
   }
 
-  async onProcessSwap(browserPageId: string, newWebContentsId: number): Promise<void> {
+  async onProcessSwap(
+    browserPageId: string,
+    newWebContentsId: number,
+    previousWebContentsId?: number
+  ): Promise<void> {
     // Why: Electron process swaps give same browserPageId but new webContentsId.
     // Old proxy's webContents is destroyed, so destroy session and let next command recreate.
     const sessionName = `orca-tab-${browserPageId}`
     const session = this.sessions.get(sessionName)
+    const oldWebContentsId = previousWebContentsId ?? session?.webContentsId
+    const owningWorktreeId = this.browserManager.getWorktreeIdForTab(browserPageId)
     // Why: save active intercept patterns before destroying so they can be restored
     // on the new session after the next successful init command.
     if (session && session.activeInterceptPatterns.length > 0) {
       this.pendingInterceptRestore.set(sessionName, [...session.activeInterceptPatterns])
     }
     await this.destroySession(sessionName)
-    this.activeWebContentsId = newWebContentsId
+    if (oldWebContentsId != null && this.activeWebContentsId === oldWebContentsId) {
+      this.activeWebContentsId = newWebContentsId
+    }
+    if (
+      owningWorktreeId &&
+      oldWebContentsId != null &&
+      this.activeWebContentsPerWorktree.get(owningWorktreeId) === oldWebContentsId
+    ) {
+      this.activeWebContentsPerWorktree.set(owningWorktreeId, newWebContentsId)
+    }
   }
 
   // ── Worktree-scoped tab queries ──
@@ -308,6 +360,8 @@ export class AgentBrowserBridge {
     const tabs = this.getRegisteredTabs(worktreeId)
     // Why: use per-worktree active tab for the "active" flag so tab-list is
     // consistent with what resolveActiveTab would pick for command routing.
+    // Keep this read-only though: discovery commands must not mutate the
+    // active-tab state that later bare commands rely on.
     let activeWcId =
       (worktreeId && this.activeWebContentsPerWorktree.get(worktreeId)) ?? this.activeWebContentsId
     const result: BrowserTabInfo[] = []
@@ -329,14 +383,12 @@ export class AgentBrowserBridge {
         active: wcId === activeWcId
       })
     }
-    // Why: if no tab has been explicitly activated (e.g. first use after app
-    // start), auto-activate the first live tab so the active flag is never
-    // all-false when tabs exist.
+    // Why: if no tab has been explicitly activated yet, surface the first live
+    // tab as active in the listing without mutating bridge state. That keeps
+    // `tab list` side-effect free while still showing users which tab a bare
+    // command would select next.
     if (activeWcId == null && firstLiveWcId !== null) {
-      this.activeWebContentsId = firstLiveWcId
-      if (worktreeId) {
-        this.activeWebContentsPerWorktree.set(worktreeId, firstLiveWcId)
-      }
+      activeWcId = firstLiveWcId
       if (result.length > 0) {
         result[0].active = true
       }

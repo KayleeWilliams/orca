@@ -241,8 +241,9 @@ export function useIpcEvents(): void {
       window.api.ui.onRequestTabClose((data) => {
         try {
           const store = useAppStore.getState()
+          const explicitTargetId = data.tabId ?? null
           let tabToClose =
-            data.tabId ??
+            explicitTargetId ??
             (data.worktreeId
               ? (store.activeBrowserTabIdByWorktree?.[data.worktreeId] ?? null)
               : store.activeBrowserTabId)
@@ -255,7 +256,9 @@ export function useIpcEvents(): void {
           }
           // Why: the bridge stores tabs keyed by browserPageId (which is the page
           // ID from registerGuest), but closeBrowserTab expects a workspace ID. If
-          // tabToClose is a page ID, resolve it to its owning workspace ID.
+          // tabToClose is a page ID, close only that page unless it is the
+          // last page in its workspace. The CLI's `tab close --page` contract
+          // targets one browser page, not the entire workspace tab.
           const isWorkspaceId = Object.values(store.browserTabsByWorktree)
             .flat()
             .some((ws) => ws.id === tabToClose)
@@ -264,8 +267,22 @@ export function useIpcEvents(): void {
               ([, pages]) => pages.some((p) => p.id === tabToClose)
             )
             if (owningWorkspace) {
-              tabToClose = owningWorkspace[0]
+              const [workspaceId, pages] = owningWorkspace
+              if (pages.length <= 1) {
+                store.closeBrowserTab(workspaceId)
+              } else {
+                store.closeBrowserPage(tabToClose)
+              }
+              window.api.ui.replyTabClose({ requestId: data.requestId })
+              return
             }
+          }
+          if (explicitTargetId) {
+            window.api.ui.replyTabClose({
+              requestId: data.requestId,
+              error: `Browser tab ${explicitTargetId} not found`
+            })
+            return
           }
           store.closeBrowserTab(tabToClose)
           window.api.ui.replyTabClose({ requestId: data.requestId })

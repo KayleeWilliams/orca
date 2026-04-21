@@ -117,7 +117,7 @@ export function registerBrowserHandlers(): void {
         rendererWebContentsId: event.sender.id
       })
       if (agentBrowserBridgeRef && previousWcId !== null && previousWcId !== args.webContentsId) {
-        agentBrowserBridgeRef.onProcessSwap(args.browserPageId, args.webContentsId)
+        agentBrowserBridgeRef.onProcessSwap(args.browserPageId, args.webContentsId, previousWcId)
       }
       const pendingResolve = pendingTabRegistrations.get(args.browserPageId)
       if (pendingResolve) {

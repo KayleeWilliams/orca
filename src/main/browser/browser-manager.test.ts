@@ -332,6 +332,67 @@ describe('browserManager', () => {
     expect(restoreScript).toContain('"page-prev"')
   })
 
+  it('restores remembered browser workspace/page even when the visible pane was terminal', async () => {
+    const rendererExecuteJavaScriptMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        prevTabType: 'terminal',
+        prevActiveWorktreeId: 'wt-target',
+        prevActiveBrowserWorkspaceId: 'workspace-prev',
+        prevActiveBrowserPageId: 'page-prev',
+        prevFocusedGroupTabId: 'tab-prev',
+        targetWorktreeId: 'wt-target',
+        targetBrowserWorkspaceId: 'workspace-target',
+        targetBrowserPageId: 'page-target'
+      })
+      .mockResolvedValueOnce(undefined)
+    const guest = {
+      id: 7091,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock
+    }
+    const renderer = {
+      id: rendererWebContentsId,
+      isDestroyed: vi.fn(() => false),
+      executeJavaScript: rendererExecuteJavaScriptMock
+    }
+    browserWindowFromWebContentsMock.mockReturnValue({ isFocused: vi.fn(() => true) })
+    webContentsFromIdMock.mockImplementation((id: number) => {
+      if (id === guest.id) {
+        return guest
+      }
+      if (id === rendererWebContentsId) {
+        return renderer
+      }
+      return null
+    })
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'page-target',
+      workspaceId: 'workspace-target',
+      worktreeId: 'wt-target',
+      webContentsId: guest.id,
+      rendererWebContentsId
+    })
+
+    const restore = await browserManager.ensureWebviewVisible(guest.id)
+    restore()
+
+    const restoreScript = rendererExecuteJavaScriptMock.mock.calls[1]?.[0]
+    expect(restoreScript).toContain('state.setActiveBrowserTab("workspace-prev");')
+    expect(restoreScript).toContain('state.setActiveBrowserPage(')
+    expect(restoreScript).toContain('"workspace-prev"')
+    expect(restoreScript).toContain('"page-prev"')
+    expect(restoreScript).toContain('state.activateTab("tab-prev");')
+    expect(restoreScript).toContain('state.setActiveTabType("terminal");')
+  })
+
   it('does not focus the Orca window while preparing a screenshot', async () => {
     const rendererExecuteJavaScriptMock = vi.fn().mockResolvedValueOnce({
       prevTabType: 'terminal',

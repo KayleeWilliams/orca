@@ -2148,12 +2148,18 @@ export class OrcaRuntimeService {
     page?: string
     worktree?: string
   }): Promise<{ closed: boolean }> {
-    const win = this.getAuthoritativeWindow()
     const bridge = this.requireAgentBrowserBridge()
     const worktreeId = await this.resolveBrowserWorktreeId(params.worktree)
 
     let tabId: string | null = null
     if (typeof params.page === 'string' && params.page.length > 0) {
+      if (!bridge.getRegisteredTabs(worktreeId).has(params.page)) {
+        const scope = worktreeId ? ' in this worktree' : ''
+        throw new BrowserError(
+          'browser_tab_not_found',
+          `Browser page ${params.page} was not found${scope}`
+        )
+      }
       tabId = params.page
     } else if (params.index !== undefined) {
       const tabs = bridge.getRegisteredTabs(worktreeId)
@@ -2174,6 +2180,7 @@ export class OrcaRuntimeService {
       }
     }
 
+    const win = this.getAuthoritativeWindow()
     const requestId = randomUUID()
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
