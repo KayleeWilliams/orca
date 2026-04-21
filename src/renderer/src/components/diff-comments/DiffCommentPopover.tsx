@@ -125,11 +125,16 @@ export function DiffCommentPopover({
             return
           }
           // Why: plain Enter submits so the note popover behaves like a
-          // single-field form. Shift+Enter (and Cmd/Ctrl+Enter) insert a
-          // newline so multi-line notes are still possible. We guard against
-          // a second Enter while an earlier submit is still awaiting IPC —
-          // otherwise it would enqueue a duplicate addDiffComment call.
-          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+          // single-field form. Shift+Enter inserts a newline (browser default)
+          // so multi-line notes are still possible. We also accept
+          // Cmd/Ctrl+Enter as a submit alias so users who learned the old
+          // shortcut aren't silently broken. IME composition (isComposing) is
+          // excluded because Enter during composition only confirms the
+          // conversion candidate — submitting then would send a half-typed
+          // note for CJK/IME users. We guard against a second Enter while an
+          // earlier submit is still awaiting IPC — otherwise it would enqueue
+          // a duplicate addDiffComment call.
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
             e.preventDefault()
             if (submitting) {
               return
