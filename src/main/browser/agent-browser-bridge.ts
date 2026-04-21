@@ -169,6 +169,20 @@ function classifyErrorCode(message: string): string {
   return 'browser_error'
 }
 
+function isTabClosedTransportError(message: string): boolean {
+  return /session destroyed while command|session destroyed while commands|connection refused|cdp discovery methods failed|websocket connect failed/i.test(
+    message
+  )
+}
+
+function pageUnavailableMessageForSession(sessionName: string): string {
+  const prefix = 'orca-tab-'
+  const browserPageId = sessionName.startsWith(prefix) ? sessionName.slice(prefix.length) : null
+  return browserPageId
+    ? `Browser page ${browserPageId} is no longer available`
+    : 'Browser tab is no longer available'
+}
+
 function translateResult(
   stdout: string
 ): { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } } {
@@ -1555,7 +1569,7 @@ export class AgentBrowserBridge {
 
   private async ensureSession(
     sessionName: string,
-    _browserPageId: string,
+    browserPageId: string,
     webContentsId: number
   ): Promise<void> {
     const pendingDestruction = this.pendingSessionDestruction.get(sessionName)
@@ -1579,7 +1593,13 @@ export class AgentBrowserBridge {
     const createSession = async (): Promise<void> => {
       const wc = this.getWebContents(webContentsId)
       if (!wc) {
-        throw new BrowserError('browser_no_tab', 'Tab is no longer available')
+        // Why: the renderer can unregister/destroy a webview between target
+        // resolution and session creation. Preserve the explicit page identity
+        // so callers get the same error shape as a settled closed tab.
+        throw new BrowserError(
+          'browser_tab_not_found',
+          `Browser page ${browserPageId} is no longer available`
+        )
       }
 
       // Why: agent-browser's daemon persists session state (including the CDP port)
@@ -1637,7 +1657,10 @@ export class AgentBrowserBridge {
     this.commandQueues.delete(sessionName)
     this.processingQueues.delete(sessionName)
     if (queue) {
-      const err = new BrowserError('browser_error', 'Session destroyed while commands were queued')
+      const err = new BrowserError(
+        'browser_tab_closed',
+        'Tab was closed while commands were queued'
+      )
       for (const cmd of queue) {
         cmd.reject(err)
       }
@@ -1681,14 +1704,17 @@ export class AgentBrowserBridge {
   ): Promise<unknown> {
     const session = this.sessions.get(sessionName)
     if (!session) {
-      throw new BrowserError('browser_error', 'Session not found')
+      // Why: queued commands can reach execution after a concurrent tab close
+      // deletes the session. Surface this as a tab lifecycle error, not an
+      // opaque internal bridge failure.
+      throw this.createPageUnavailableError(sessionName)
     }
 
     // Why: between enqueue time and execution time (queue delay), the webContents
     // could be destroyed. Check here to give a clear error instead of letting the
     // proxy fail with cryptic Electron debugger errors.
     if (!this.getWebContents(session.webContentsId)) {
-      throw new BrowserError('browser_tab_closed', 'Tab was closed while command was queued')
+      throw this.createPageUnavailableError(sessionName)
     }
 
     const args = ['--session', sessionName]
@@ -1711,7 +1737,12 @@ export class AgentBrowserBridge {
     const translated = translateResult(stdout)
 
     if (!translated.ok) {
-      throw new BrowserError(translated.error.code, translated.error.message)
+      throw this.createCommandError(
+        sessionName,
+        translated.error.message,
+        translated.error.code,
+        session.webContentsId
+      )
     }
 
     // Why: only mark initialized after a successful command — if the first --cdp
@@ -1748,6 +1779,37 @@ export class AgentBrowserBridge {
     return translated.result
   }
 
+  private createPageUnavailableError(sessionName: string): BrowserError {
+    return new BrowserError('browser_tab_not_found', pageUnavailableMessageForSession(sessionName))
+  }
+
+  private createCommandError(
+    sessionName: string,
+    message: string,
+    fallbackCode: string,
+    webContentsId?: number
+  ): BrowserError {
+    // Why: CDP "connection refused" can also mean a real proxy failure. Only
+    // convert it to a closed-page error when bridge state confirms the target is gone.
+    if (
+      fallbackCode === 'browser_error' &&
+      isTabClosedTransportError(message) &&
+      this.isSessionTargetClosed(sessionName, webContentsId)
+    ) {
+      return this.createPageUnavailableError(sessionName)
+    }
+    return new BrowserError(fallbackCode, message)
+  }
+
+  private isSessionTargetClosed(sessionName: string, webContentsId?: number): boolean {
+    const session = this.sessions.get(sessionName)
+    if (!session) {
+      return true
+    }
+    const targetWebContentsId = webContentsId ?? session.webContentsId
+    return !this.getWebContents(targetWebContentsId)
+  }
+
   private runAgentBrowserRaw(
     sessionName: string,
     args: string[],
@@ -1774,7 +1836,9 @@ export class AgentBrowserBridge {
           }
           if (child && this.cancelledProcesses.has(child)) {
             this.cancelledProcesses.delete(child)
-            reject(new BrowserError('browser_error', 'Session destroyed while command was running'))
+            reject(
+              new BrowserError('browser_tab_closed', 'Tab was closed while command was running')
+            )
             return
           }
 
@@ -1808,14 +1872,19 @@ export class AgentBrowserBridge {
               try {
                 const parsed = JSON.parse(stdout)
                 if (parsed.error) {
-                  reject(new BrowserError(classifyErrorCode(parsed.error), parsed.error))
+                  const code = classifyErrorCode(parsed.error)
+                  reject(
+                    this.createCommandError(sessionName, parsed.error, code, session?.webContentsId)
+                  )
                   return
                 }
               } catch {
                 // stdout not valid JSON — fall through to stderr/error.message
               }
             }
-            reject(new BrowserError('browser_error', stderr || error.message))
+            const message = stderr || error.message
+            const code = classifyErrorCode(message)
+            reject(this.createCommandError(sessionName, message, code, session?.webContentsId))
             return
           }
 

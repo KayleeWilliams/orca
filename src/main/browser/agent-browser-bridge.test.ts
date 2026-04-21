@@ -104,6 +104,9 @@ function failWith(error: string): void {
   })
 }
 
+const CDP_DISCOVERY_FAILURE =
+  'Auto-launch failed: All CDP discovery methods failed: connect ECONNREFUSED 127.0.0.1:9222; WebSocket connect failed'
+
 describe('AgentBrowserBridge', () => {
   let bridge: AgentBrowserBridge
 
@@ -202,6 +205,57 @@ describe('AgentBrowserBridge', () => {
   it('translates error response to BrowserError', async () => {
     failWith('Element not found')
     await expect(bridge.click('@e1')).rejects.toThrow('Element not found')
+  })
+
+  it('keeps CDP discovery failures generic while the tab session is still live', async () => {
+    failWith(CDP_DISCOVERY_FAILURE)
+    await expect(bridge.snapshot()).rejects.toMatchObject({
+      code: 'browser_error',
+      message: CDP_DISCOVERY_FAILURE
+    })
+  })
+
+  it('maps in-flight CDP discovery failures to tab not found after the session disappears', async () => {
+    let releaseSnapshot: (() => void) | null = null
+    const activeChild = { kill: vi.fn() }
+    execFileMock.mockImplementation(
+      (_bin: string, args: string[], _opts: unknown, cb: Function) => {
+        if (args.includes('snapshot')) {
+          releaseSnapshot = () => {
+            cb(null, JSON.stringify({ success: false, error: CDP_DISCOVERY_FAILURE }), '')
+          }
+          return activeChild
+        }
+        cb(null, JSON.stringify({ success: true, data: null }), '')
+        return { kill: vi.fn() }
+      }
+    )
+
+    const snapshotPromise = bridge.snapshot()
+
+    await vi.waitFor(() => {
+      expect(releaseSnapshot).not.toBeNull()
+    })
+    // Why: this reproduces the teardown race where the tab close path has
+    // already removed the bridge session before agent-browser reports that
+    // its CDP proxy disappeared.
+    ;(bridge as unknown as { sessions: Map<string, unknown> }).sessions.delete('orca-tab-tab-1')
+    releaseSnapshot!()
+
+    await expect(snapshotPromise).rejects.toMatchObject({
+      code: 'browser_tab_not_found',
+      message: 'Browser page tab-1 is no longer available'
+    })
+  })
+
+  it('maps target disappearance during session creation to tab not found', async () => {
+    const wc = mockWebContents(100)
+    webContentsFromIdMock.mockImplementationOnce(() => wc).mockImplementationOnce(() => null)
+
+    await expect(bridge.snapshot(undefined, 'tab-1')).rejects.toMatchObject({
+      code: 'browser_tab_not_found',
+      message: 'Browser page tab-1 is no longer available'
+    })
   })
 
   it('handles malformed JSON from agent-browser', async () => {
@@ -571,7 +625,10 @@ describe('AgentBrowserBridge', () => {
     ).destroySession('orca-tab-tab-1')
 
     expect(activeChild.kill).toHaveBeenCalledTimes(1)
-    await expect(runningSnapshot).rejects.toThrow('Session destroyed while command was running')
+    await expect(runningSnapshot).rejects.toMatchObject({
+      code: 'browser_tab_closed',
+      message: 'Tab was closed while command was running'
+    })
     await destroyPromise
   })
 
