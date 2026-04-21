@@ -522,7 +522,17 @@ export function setupAutoUpdater(
 }
 
 export function downloadUpdate(): void {
-  if (currentStatus.state !== 'available' || downloadInFlight) {
+  if (downloadInFlight) {
+    return
+  }
+  // Why: permit retry from 'error' when we still have a cached availableVersion —
+  // a failed download leaves the status at 'error' but availableVersion intact,
+  // and the error card's "Retry Download" button must be able to restart the
+  // download. Without this, the button would appear to do nothing.
+  const canStart =
+    currentStatus.state === 'available' ||
+    (currentStatus.state === 'error' && hasNewerDownloadedVersion())
+  if (!canStart) {
     return
   }
   downloadInFlight = true
