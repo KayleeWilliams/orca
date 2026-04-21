@@ -5,6 +5,7 @@ import { join } from 'path'
 import { platform, arch } from 'os'
 import { app } from 'electron'
 import { CdpWsProxy } from './cdp-ws-proxy'
+import { captureFullPageScreenshot } from './cdp-screenshot'
 import type { BrowserManager } from './browser-manager'
 import { BrowserError } from './cdp-bridge'
 import type {
@@ -830,11 +831,13 @@ export class AgentBrowserBridge {
     worktreeId?: string,
     browserPageId?: string
   ): Promise<BrowserScreenshotResult> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
-      // Why: agent-browser's screenshot CLI uses `--full` for full-page capture.
-      // Passing `--full-page` is parsed as an unexpected selector-like token and
-      // can surface unrelated "Element not found" errors instead of capturing.
-      return this.captureScreenshotCommand(sessionName, ['screenshot', '--full'], 500, format)
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName, target) => {
+      return this.captureFullPageScreenshotCommand(
+        sessionName,
+        target.webContentsId,
+        500,
+        format === 'jpeg' ? 'jpeg' : 'png'
+      )
     })
   }
 
@@ -869,6 +872,35 @@ export class AgentBrowserBridge {
         await new Promise((r) => setTimeout(r, settleMs))
         const raw = await this.execAgentBrowser(sessionName, commandArgs)
         return this.readScreenshotFromResult(raw, format)
+      } finally {
+        restore()
+      }
+    })
+  }
+
+  private async captureFullPageScreenshotCommand(
+    sessionName: string,
+    webContentsId: number,
+    settleMs: number,
+    format: 'png' | 'jpeg'
+  ): Promise<BrowserScreenshotResult> {
+    return this.withSerializedScreenshotAccess(async () => {
+      const session = this.sessions.get(sessionName)
+      const restore = session
+        ? await this.browserManager.ensureWebviewVisible(session.webContentsId)
+        : () => {}
+      try {
+        // Why: full-page capture still depends on the guest compositor producing
+        // a fresh frame. Wait after activating the target webview so the direct
+        // CDP capture sees the live page instead of a stale surface.
+        await new Promise((r) => setTimeout(r, settleMs))
+        const wc = this.getWebContents(webContentsId)
+        if (!wc) {
+          throw new BrowserError('browser_tab_not_found', 'Tab is no longer available')
+        }
+        return await captureFullPageScreenshot(wc, format)
+      } catch (error) {
+        throw new BrowserError('browser_error', (error as Error).message)
       } finally {
         restore()
       }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { captureScreenshot } from './cdp-screenshot'
+import { captureFullPageScreenshot, captureScreenshot } from './cdp-screenshot'
 
 function createMockWebContents() {
   return {
@@ -188,5 +188,59 @@ describe('captureScreenshot', () => {
     expect(onError).toHaveBeenCalledWith(
       'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
     )
+  })
+})
+
+describe('captureFullPageScreenshot', () => {
+  it('uses cssContentSize so HiDPI pages are captured at the real page size', async () => {
+    const webContents = createMockWebContents()
+    webContents.debugger.sendCommand.mockImplementation((method: string) => {
+      if (method === 'Page.getLayoutMetrics') {
+        return Promise.resolve({
+          cssContentSize: { width: 640.25, height: 1280.75 },
+          contentSize: { width: 1280.5, height: 2561.5 }
+        })
+      }
+      if (method === 'Page.captureScreenshot') {
+        return Promise.resolve({ data: 'full-page-data' })
+      }
+      return Promise.resolve({})
+    })
+
+    await expect(captureFullPageScreenshot(webContents as never, 'png')).resolves.toEqual({
+      data: 'full-page-data',
+      format: 'png'
+    })
+    expect(webContents.debugger.sendCommand).toHaveBeenNthCalledWith(1, 'Page.getLayoutMetrics', {})
+    expect(webContents.debugger.sendCommand).toHaveBeenNthCalledWith(2, 'Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width: 641, height: 1281, scale: 1 }
+    })
+  })
+
+  it('falls back to legacy contentSize when cssContentSize is unavailable', async () => {
+    const webContents = createMockWebContents()
+    webContents.debugger.sendCommand.mockImplementation((method: string) => {
+      if (method === 'Page.getLayoutMetrics') {
+        return Promise.resolve({
+          contentSize: { width: 800, height: 1600 }
+        })
+      }
+      if (method === 'Page.captureScreenshot') {
+        return Promise.resolve({ data: 'legacy-full-page-data' })
+      }
+      return Promise.resolve({})
+    })
+
+    await expect(captureFullPageScreenshot(webContents as never, 'jpeg')).resolves.toEqual({
+      data: 'legacy-full-page-data',
+      format: 'jpeg'
+    })
+    expect(webContents.debugger.sendCommand).toHaveBeenNthCalledWith(2, 'Page.captureScreenshot', {
+      format: 'jpeg',
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width: 800, height: 1600, scale: 1 }
+    })
   })
 })

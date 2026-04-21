@@ -80,7 +80,9 @@ function mockWebContents(id: number, url = 'https://example.com', title = 'Examp
     getURL: () => url,
     getTitle: () => title,
     isDestroyed: () => false,
+    invalidate: vi.fn(),
     debugger: {
+      isAttached: vi.fn(() => true),
       attach: vi.fn(),
       detach: vi.fn(),
       sendCommand: vi.fn(),
@@ -393,34 +395,51 @@ describe('AgentBrowserBridge', () => {
     }
   })
 
-  it('uses the documented agent-browser full-page screenshot flag', async () => {
-    existsSyncMock.mockReturnValue(true)
-    readFileSyncMock.mockReturnValue(Buffer.from('full-page-shot'))
-    execFileMock.mockImplementation(
-      (_bin: string, args: string[], _opts: unknown, cb: Function) => {
-        if (args.includes('close')) {
+  it('captures full-page screenshots directly through CDP using CSS layout bounds', async () => {
+    vi.useFakeTimers()
+    try {
+      const wc = mockWebContents(100)
+      wc.debugger.sendCommand.mockImplementation((method: string) => {
+        if (method === 'Page.getLayoutMetrics') {
+          return Promise.resolve({
+            cssContentSize: { width: 600.2, height: 900.4 },
+            contentSize: { width: 1200.4, height: 1800.8 }
+          })
+        }
+        if (method === 'Page.captureScreenshot') {
+          return Promise.resolve({ data: 'full-cdp-shot' })
+        }
+        return Promise.resolve({})
+      })
+      webContentsFromIdMock.mockReturnValue(wc)
+
+      execFileMock.mockImplementation(
+        (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
           cb(null, JSON.stringify({ success: true, data: null }), '')
-          return
         }
-        if (args.includes('screenshot')) {
-          cb(null, JSON.stringify({ success: true, data: { path: '/tmp/full.png' } }), '')
-          return
-        }
-        cb(null, JSON.stringify({ success: true, data: { ok: true } }), '')
-      }
-    )
+      )
 
-    await expect(bridge.fullPageScreenshot('png')).resolves.toEqual({
-      data: Buffer.from('full-page-shot').toString('base64'),
-      format: 'png'
-    })
+      const screenshotPromise = bridge.fullPageScreenshot('png')
+      await vi.advanceTimersByTimeAsync(500)
 
-    const screenshotCall = execFileMock.mock.calls.find((call: unknown[]) =>
-      (call[1] as string[]).includes('screenshot')
-    )
-    expect(screenshotCall).toBeDefined()
-    expect(screenshotCall![1]).toContain('--full')
-    expect(screenshotCall![1]).not.toContain('--full-page')
+      await expect(screenshotPromise).resolves.toEqual({
+        data: 'full-cdp-shot',
+        format: 'png'
+      })
+
+      expect(wc.debugger.sendCommand).toHaveBeenNthCalledWith(1, 'Page.getLayoutMetrics', {})
+      expect(wc.debugger.sendCommand).toHaveBeenNthCalledWith(2, 'Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: 601, height: 901, scale: 1 }
+      })
+      const screenshotCall = execFileMock.mock.calls.find((call: unknown[]) =>
+        (call[1] as string[]).includes('screenshot')
+      )
+      expect(screenshotCall).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // ── Timeout escalation ──

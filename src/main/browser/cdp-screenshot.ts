@@ -1,5 +1,9 @@
 import type { WebContents } from 'electron'
 
+const SCREENSHOT_TIMEOUT_MS = 8000
+const SCREENSHOT_TIMEOUT_MESSAGE =
+  'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
+
 function applyFallbackClip(
   image: Electron.NativeImage,
   params: Record<string, unknown> | undefined
@@ -73,6 +77,99 @@ function encodeNativeImageScreenshot(
   return { data: buffer.toString('base64') }
 }
 
+function getLayoutClip(metrics: {
+  cssContentSize?: { width?: number; height?: number }
+  contentSize?: { width?: number; height?: number }
+}): { x: number; y: number; width: number; height: number; scale: number } | null {
+  // Why: Page.captureScreenshot clip coordinates are in CSS pixels. On HiDPI
+  // Electron guests, `contentSize` can reflect device pixels, which makes
+  // Chromium tile the page into a duplicated 2x2 grid. Prefer cssContentSize
+  // and only fall back to contentSize when older Chromium builds omit it.
+  const size = metrics.cssContentSize ?? metrics.contentSize
+  const width = size?.width
+  const height = size?.height
+  if (
+    typeof width !== 'number' ||
+    !Number.isFinite(width) ||
+    width <= 0 ||
+    typeof height !== 'number' ||
+    !Number.isFinite(height) ||
+    height <= 0
+  ) {
+    return null
+  }
+
+  return {
+    x: 0,
+    y: 0,
+    width: Math.ceil(width),
+    height: Math.ceil(height),
+    scale: 1
+  }
+}
+
+async function sendCommandWithTimeout<T>(
+  webContents: WebContents,
+  method: string,
+  params: Record<string, unknown> | undefined,
+  timeoutMessage: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null
+  try {
+    return await Promise.race([
+      webContents.debugger.sendCommand(method, params ?? {}) as Promise<T>,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), SCREENSHOT_TIMEOUT_MS)
+      })
+    ])
+  } finally {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  }
+}
+
+export async function captureFullPageScreenshot(
+  webContents: WebContents,
+  format: 'png' | 'jpeg' = 'png'
+): Promise<{ data: string; format: 'png' | 'jpeg' }> {
+  if (webContents.isDestroyed()) {
+    throw new Error('WebContents destroyed')
+  }
+  const dbg = webContents.debugger
+  if (!dbg.isAttached()) {
+    throw new Error('Debugger not attached')
+  }
+
+  try {
+    webContents.invalidate()
+  } catch {
+    // Some guest teardown paths reject repaint requests. Fall through to CDP.
+  }
+
+  const metrics = await sendCommandWithTimeout<{
+    cssContentSize?: { width?: number; height?: number }
+    contentSize?: { width?: number; height?: number }
+  }>(webContents, 'Page.getLayoutMetrics', undefined, SCREENSHOT_TIMEOUT_MESSAGE)
+  const clip = getLayoutClip(metrics)
+  if (!clip) {
+    throw new Error('Unable to determine full-page screenshot bounds')
+  }
+
+  const { data } = await sendCommandWithTimeout<{ data: string }>(
+    webContents,
+    'Page.captureScreenshot',
+    {
+      format,
+      captureBeyondViewport: true,
+      clip
+    },
+    SCREENSHOT_TIMEOUT_MESSAGE
+  )
+
+  return { data, format }
+}
+
 // Why: Electron's capturePage() is unreliable on webview guests — the compositor
 // may not produce frames when the webview panel is inactive, unfocused, or in a
 // split-pane layout. Instead, use the debugger's Page.captureScreenshot which
@@ -143,12 +240,10 @@ export function captureScreenshot(
 
       if (!settled) {
         settled = true
-        onError(
-          'Screenshot timed out — the browser tab may not be visible or the window may not have focus.'
-        )
+        onError(SCREENSHOT_TIMEOUT_MESSAGE)
       }
     }
-  }, 8000)
+  }, SCREENSHOT_TIMEOUT_MS)
 
   dbg
     .sendCommand('Page.captureScreenshot', screenshotParams)

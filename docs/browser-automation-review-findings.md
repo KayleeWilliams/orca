@@ -6,6 +6,7 @@ Last updated: 2026-04-20
 
 - `open`: confirmed issue, not fixed yet
 - `fixed`: addressed on this branch
+- `not-a-bug`: investigated and verified as expected behavior
 
 ## Targeting semantics
 
@@ -45,6 +46,14 @@ Last updated: 2026-04-20
   Resolution: the bridge now uses the documented `--full` flag and has a regression test to keep
   the CLI contract aligned with `agent-browser`.
 
+- `fixed` `src/main/browser/agent-browser-bridge.ts`, `src/main/browser/cdp-screenshot.ts`, `src/main/browser/cdp-screenshot.test.ts`
+  Issue: `full-screenshot` could render duplicated quadrants on HiDPI displays because the
+  full-page path depended on stitched agent-browser capture behavior and device-pixel layout
+  bounds instead of CSS-pixel page geometry.
+  Resolution: full-page screenshots now bypass agent-browser's stitched capture path and use
+  direct CDP capture with `cssContentSize`-based clip bounds, so the page is captured once at
+  its real CSS layout size.
+
 - `fixed` `src/main/browser/browser-manager.ts:126`, `src/renderer/src/components/browser-pane/BrowserPane.tsx:312`, `src/main/browser/browser-manager.test.ts`
   Issue: screenshot visibility prep activates the owning browser workspace, but not the target
   page inside a multi-page workspace.
@@ -73,6 +82,15 @@ Last updated: 2026-04-20
   can deliver late responses to the wrong client.
   Resolution: command responses are now sent back to the websocket that originated the request,
   so late results from a closed client are dropped instead of leaking into a newer connection.
+
+## Console behavior
+
+- `not-a-bug` `src/main/browser/agent-browser-bridge.ts:1252`, `src/main/browser/cdp-ws-proxy.ts`
+  Issue: `console --page` can show Electron/CSP warnings that look like host-app logs.
+  Resolution: live verification with per-page `console.log(...)` markers showed that each page id
+  only returns its own page-scoped marker plus the same Electron security warning. The warning is
+  emitted inside each guest renderer context, so the command is page-scoped even though the output
+  includes Chromium/Electron-flavored warnings.
 
 ## Session lifecycle and process swaps
 

@@ -629,14 +629,29 @@ export class CdpBridge {
       const sender = this.makeCdpSender(guest)
       await this.ensureDebuggerAttached(guest)
 
-      const { contentSize } = (await sender('Page.getLayoutMetrics')) as {
-        contentSize: { width: number; height: number }
+      const metrics = (await sender('Page.getLayoutMetrics')) as {
+        cssContentSize?: { width: number; height: number }
+        contentSize?: { width: number; height: number }
+      }
+      // Why: Page.captureScreenshot clip coordinates are CSS pixels. On HiDPI
+      // displays, Electron can report device-pixel `contentSize`, which causes
+      // Chromium to tile the page into duplicated quadrants. Prefer
+      // `cssContentSize` so the clip matches the page's CSS layout size.
+      const contentSize = metrics.cssContentSize ?? metrics.contentSize
+      if (!contentSize) {
+        throw new BrowserError('browser_error', 'Unable to determine full-page screenshot bounds')
       }
 
       const { data } = (await sender('Page.captureScreenshot', {
         format,
         captureBeyondViewport: true,
-        clip: { x: 0, y: 0, width: contentSize.width, height: contentSize.height, scale: 1 }
+        clip: {
+          x: 0,
+          y: 0,
+          width: Math.ceil(contentSize.width),
+          height: Math.ceil(contentSize.height),
+          scale: 1
+        }
       })) as { data: string }
 
       return { data, format }
