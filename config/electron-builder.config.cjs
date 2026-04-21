@@ -1,3 +1,6 @@
+const { chmodSync, existsSync, readdirSync } = require('node:fs')
+const { join } = require('node:path')
+
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
 
 /** @type {import('electron-builder').Configuration} */
@@ -23,6 +26,24 @@ module.exports = {
   // Why: daemon-entry.js is forked as a separate Node.js process and must be
   // accessible on disk (not inside the asar archive) for child_process.fork().
   asarUnpack: ['out/cli/**', 'out/shared/**', 'out/main/daemon-entry.js', 'out/main/chunks/**', 'resources/**'],
+  afterPack: async (context) => {
+    const resourcesDir =
+      context.electronPlatformName === 'darwin'
+        ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+        : join(context.appOutDir, 'resources')
+    if (!existsSync(resourcesDir)) {
+      return
+    }
+    for (const filename of readdirSync(resourcesDir)) {
+      if (!filename.startsWith('agent-browser-')) {
+        continue
+      }
+      // Why: the upstream package has inconsistent executable bits across
+      // platform binaries (notably darwin-x64). child_process.execFile needs
+      // the copied binary to be executable in packaged apps.
+      chmodSync(join(resourcesDir, filename), 0o755)
+    }
+  },
   win: {
     executableName: 'Orca',
     extraResources: [
