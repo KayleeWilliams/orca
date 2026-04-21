@@ -52,6 +52,7 @@ type TabBarProps = {
   onCloseFile?: (fileId: string) => void
   onActivateBrowserTab?: (tabId: string) => void
   onCloseBrowserTab?: (tabId: string) => void
+  onDuplicateBrowserTab?: (tabId: string) => void
   onCloseAllFiles?: () => void
   onPinFile?: (fileId: string, tabId?: string) => void
   tabBarOrder?: string[]
@@ -101,6 +102,7 @@ function TabBarInner({
   onCloseFile,
   onActivateBrowserTab,
   onCloseBrowserTab,
+  onDuplicateBrowserTab,
   onCloseAllFiles,
   onPinFile,
   tabBarOrder,
@@ -346,6 +348,7 @@ function TabBarInner({
                   onSplitGroup={(direction, sourceVisibleTabId) =>
                     onCreateSplitGroup?.(direction, sourceVisibleTabId)
                   }
+                  onDuplicate={() => onDuplicateBrowserTab?.(item.id)}
                   dragData={dragData}
                 />
               )

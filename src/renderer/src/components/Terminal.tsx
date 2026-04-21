@@ -394,6 +394,25 @@ function Terminal(): React.JSX.Element | null {
     createBrowserTab(activeWorktreeId, defaultUrl, { title: 'New Browser Tab' })
   }, [activeWorktreeId, createBrowserTab])
 
+  const handleDuplicateBrowserTab = useCallback(
+    (browserTabId: string) => {
+      if (!activeWorktreeId) {
+        return
+      }
+      const state = useAppStore.getState()
+      const tabs = state.browserTabsByWorktree[activeWorktreeId] ?? []
+      const source = tabs.find((t) => t.id === browserTabId)
+      if (!source) {
+        return
+      }
+      createBrowserTab(activeWorktreeId, source.url, {
+        title: source.title,
+        sessionProfileId: source.sessionProfileId
+      })
+    },
+    [activeWorktreeId, createBrowserTab]
+  )
+
   const handleNewFile = useCallback(async () => {
     if (!activeWorktreeId) {
       return
@@ -963,6 +982,7 @@ function Terminal(): React.JSX.Element | null {
             onCloseFile={handleCloseFile}
             onActivateBrowserTab={handleActivateBrowserTab}
             onCloseBrowserTab={handleCloseBrowserTab}
+            onDuplicateBrowserTab={handleDuplicateBrowserTab}
             onCloseAllFiles={closeAllFiles}
             onPinFile={pinFile}
             tabBarOrder={tabBarOrder}

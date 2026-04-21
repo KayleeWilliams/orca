@@ -156,11 +156,19 @@ export default function BrowserAddressBar({
     [open, suggestions, selectedValue, handleSelect]
   )
 
+  // Why: close the dropdown only when the input has lost focus AND there are
+  // no suggestions. Previously this closed unconditionally on empty suggestions,
+  // which caused the dropdown to vanish mid-typing when backspacing produced a
+  // query that didn't match any history entries. Keeping the popover open while
+  // focused lets the user continue editing and see results reappear.
   useEffect(() => {
     if (open && suggestions.length === 0) {
+      if (inputRef.current && document.activeElement === inputRef.current) {
+        return
+      }
       setOpen(false)
     }
-  }, [open, suggestions.length])
+  }, [open, suggestions.length, inputRef])
 
   // Why: auto-select the top suggestion so Enter navigates to the best match
   // without an extra ArrowDown. Fall back to clearing selection when nothing

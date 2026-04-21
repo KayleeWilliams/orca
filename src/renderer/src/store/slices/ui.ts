@@ -155,6 +155,8 @@ export type UISlice = {
   /** URL opened when a new browser tab is created. Null = blank tab (default). */
   browserDefaultUrl: string | null
   setBrowserDefaultUrl: (url: string | null) => void
+  browserDefaultSearchEngine: 'google' | 'duckduckgo' | 'bing' | null
+  setBrowserDefaultSearchEngine: (engine: 'google' | 'duckduckgo' | 'bing' | null) => void
 }
 
 export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get) => ({
@@ -338,6 +340,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         dismissedUpdateVersion: ui.dismissedUpdateVersion ?? null,
         updateReassuranceSeen: ui.updateReassuranceSeen ?? false,
         browserDefaultUrl: ui.browserDefaultUrl ?? null,
+        browserDefaultSearchEngine: ui.browserDefaultSearchEngine ?? null,
         persistedUIReady: true
       }
     }),
@@ -402,5 +405,10 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   setBrowserDefaultUrl: (url) => {
     void window.api.ui.set({ browserDefaultUrl: url }).catch(console.error)
     set({ browserDefaultUrl: url })
+  },
+  browserDefaultSearchEngine: null,
+  setBrowserDefaultSearchEngine: (engine) => {
+    void window.api.ui.set({ browserDefaultSearchEngine: engine }).catch(console.error)
+    set({ browserDefaultSearchEngine: engine })
   }
 })

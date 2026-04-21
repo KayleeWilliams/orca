@@ -128,6 +128,7 @@ export default function TabGroupPanel({
           commands.closeItem(item.id)
         }
       }}
+      onDuplicateBrowserTab={commands.duplicateBrowserTab}
       onCloseAllFiles={commands.closeAllEditorTabsInGroup}
       onPinFile={(_fileId, tabId) => {
         if (!tabId) {

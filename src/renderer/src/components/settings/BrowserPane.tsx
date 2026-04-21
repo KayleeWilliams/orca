@@ -8,7 +8,11 @@ import { Label } from '../ui/label'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useAppStore } from '../../store'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
-import { normalizeBrowserNavigationUrl } from '../../../../shared/browser-url'
+import {
+  normalizeBrowserNavigationUrl,
+  SEARCH_ENGINE_LABELS,
+  type SearchEngine
+} from '../../../../shared/browser-url'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { BROWSER_PANE_SEARCH_ENTRIES } from './browser-search'
@@ -25,6 +29,8 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
   const browserDefaultUrl = useAppStore((s) => s.browserDefaultUrl)
   const setBrowserDefaultUrl = useAppStore((s) => s.setBrowserDefaultUrl)
+  const browserDefaultSearchEngine = useAppStore((s) => s.browserDefaultSearchEngine)
+  const setBrowserDefaultSearchEngine = useAppStore((s) => s.setBrowserDefaultSearchEngine)
   const browserSessionProfiles = useAppStore((s) => s.browserSessionProfiles)
   const detectedBrowsers = useAppStore((s) => s.detectedBrowsers)
   const browserSessionImportState = useAppStore((s) => s.browserSessionImportState)
@@ -45,8 +51,9 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
   }, [browserDefaultUrl])
 
   const showHomePage = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[0]])
-  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[1]])
-  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[2]])
+  const showSearchEngine = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[1]])
+  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[2]])
+  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[3]])
 
   return (
     <div className="space-y-4">
@@ -93,6 +100,36 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
               Save
             </Button>
           </form>
+        </SearchableSetting>
+      ) : null}
+
+      {showSearchEngine ? (
+        <SearchableSetting
+          title="Default Search Engine"
+          description="Search engine used when typing non-URL text in the address bar."
+          keywords={['browser', 'search', 'engine', 'google', 'duckduckgo', 'bing', 'omnibox']}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Default Search Engine</Label>
+            <p className="text-xs text-muted-foreground">
+              Used when typing non-URL text in the address bar.
+            </p>
+          </div>
+          <select
+            value={browserDefaultSearchEngine ?? 'google'}
+            onChange={(e) => {
+              const value = e.target.value as SearchEngine
+              setBrowserDefaultSearchEngine(value === 'google' ? null : value)
+            }}
+            className="h-7 rounded-md border border-border bg-background px-2 text-xs"
+          >
+            {(Object.keys(SEARCH_ENGINE_LABELS) as SearchEngine[]).map((engine) => (
+              <option key={engine} value={engine}>
+                {SEARCH_ENGINE_LABELS[engine]}
+              </option>
+            ))}
+          </select>
         </SearchableSetting>
       ) : null}
 
