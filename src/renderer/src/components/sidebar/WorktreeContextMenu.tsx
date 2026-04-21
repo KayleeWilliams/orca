@@ -213,7 +213,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
                 Sleep
               </DropdownMenuItem>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
+            <TooltipContent side="right" sideOffset={8} className="max-w-[240px] text-pretty">
               Close all active panels in this workspace to free up memory and CPU. They&apos;ll be
               restored when you reopen it.
             </TooltipContent>
