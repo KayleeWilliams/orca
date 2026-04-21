@@ -1,4 +1,4 @@
-import React, { lazy, useMemo, type MutableRefObject } from 'react'
+import React, { lazy, useEffect, useMemo, useState, type MutableRefObject } from 'react'
 import { LazySection } from './LazySection'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react'
@@ -7,7 +7,10 @@ import { joinPath } from '@/lib/path'
 import { detectLanguage } from '@/lib/language-detect'
 import { useAppStore } from '@/store'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
-import type { GitDiffResult } from '../../../../shared/types'
+import { findWorktreeById } from '@/store/slices/worktree-helpers'
+import { useDiffCommentDecorator } from '../diff-comments/useDiffCommentDecorator'
+import { DiffCommentPopover } from '../diff-comments/DiffCommentPopover'
+import type { DiffComment, GitDiffResult } from '../../../../shared/types'
 
 const ImageDiffViewer = lazy(() => import('./ImageDiffViewer'))
 
@@ -107,12 +110,80 @@ export function DiffSectionItem({
 }): React.JSX.Element {
   const openFile = useAppStore((s) => s.openFile)
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
+  const addDiffComment = useAppStore((s) => s.addDiffComment)
+  const deleteDiffComment = useAppStore((s) => s.deleteDiffComment)
+  // Why: subscribe to the raw comments array on the worktree (reference-
+  // stable across unrelated store updates) and filter by filePath inside a
+  // memo. Selecting a fresh `.filter(...)` result would invalidate on every
+  // store change and cause needless re-renders of this section.
+  const allDiffComments = useAppStore(
+    (s): DiffComment[] | undefined => findWorktreeById(s.worktreesByRepo, worktreeId)?.diffComments
+  )
+  const diffComments = useMemo(
+    () => (allDiffComments ?? []).filter((c) => c.filePath === section.path),
+    [allDiffComments, section.path]
+  )
   const language = detectLanguage(section.path)
   const isEditable = section.area === 'unstaged'
   const editorFontSize = computeEditorFontSize(
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
   )
+
+  const [modifiedEditor, setModifiedEditor] = useState<monacoEditor.ICodeEditor | null>(null)
+  const [popover, setPopover] = useState<{ lineNumber: number; top: number } | null>(null)
+
+  useDiffCommentDecorator({
+    editor: modifiedEditor,
+    filePath: section.path,
+    worktreeId,
+    comments: diffComments,
+    onAddCommentClick: ({ lineNumber, top }) => setPopover({ lineNumber, top }),
+    onDeleteComment: (id) => void deleteDiffComment(worktreeId, id)
+  })
+
+  useEffect(() => {
+    if (!modifiedEditor || !popover) {
+      return
+    }
+    const update = (): void => {
+      const top =
+        modifiedEditor.getTopForLineNumber(popover.lineNumber) - modifiedEditor.getScrollTop()
+      setPopover((prev) => (prev ? { ...prev, top } : prev))
+    }
+    const scrollSub = modifiedEditor.onDidScrollChange(update)
+    const contentSub = modifiedEditor.onDidContentSizeChange(update)
+    return () => {
+      scrollSub.dispose()
+      contentSub.dispose()
+    }
+    // Why: depend on popover.lineNumber (not the whole popover object) so the
+    // effect doesn't re-subscribe on every top update it dispatches. The guard
+    // on `popover` above handles the popover-closed case.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modifiedEditor, popover?.lineNumber])
+
+  const handleSubmitComment = async (body: string): Promise<void> => {
+    if (!popover) {
+      return
+    }
+    // Why: await persistence before closing the popover. If addDiffComment
+    // resolves to null, the store rolled back the optimistic insert; keeping
+    // the popover open preserves the user's draft so they can retry instead
+    // of silently losing their text.
+    const result = await addDiffComment({
+      worktreeId,
+      filePath: section.path,
+      lineNumber: popover.lineNumber,
+      body,
+      side: 'modified'
+    })
+    if (result) {
+      setPopover(null)
+    } else {
+      console.error('Failed to add diff comment — draft preserved')
+    }
+  }
 
   const lineStats = useMemo(
     () =>
@@ -135,7 +206,7 @@ export function DiffSectionItem({
   }
 
   const handleMount: DiffOnMount = (editor, monaco) => {
-    const modifiedEditor = editor.getModifiedEditor()
+    const modified = editor.getModifiedEditor()
 
     const updateHeight = (): void => {
       const contentHeight = editor.getModifiedEditor().getContentHeight()
@@ -146,19 +217,30 @@ export function DiffSectionItem({
         return { ...prev, [index]: contentHeight }
       })
     }
-    modifiedEditor.onDidContentSizeChange(updateHeight)
+    modified.onDidContentSizeChange(updateHeight)
     updateHeight()
+
+    setModifiedEditor(modified)
+    // Why: Monaco disposes inner editors when the DiffEditor container is
+    // unmounted (e.g. section collapse, tab change). Clearing the state
+    // prevents decorator effects and scroll subscriptions from invoking
+    // methods on a disposed editor instance, and avoids `popover` pointing
+    // at a line in an editor that no longer exists.
+    modified.onDidDispose(() => {
+      setModifiedEditor(null)
+      setPopover(null)
+    })
 
     if (!isEditable) {
       return
     }
 
-    modifiedEditorsRef.current.set(index, modifiedEditor)
-    modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
+    modifiedEditorsRef.current.set(index, modified)
+    modified.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
       handleSectionSaveRef.current(index)
     )
-    modifiedEditor.onDidChangeModelContent(() => {
-      const current = modifiedEditor.getValue()
+    modified.onDidChangeModelContent(() => {
+      const current = modified.getValue()
       setSections((prev) =>
         prev.map((s, i) => (i === index ? { ...s, dirty: current !== s.modifiedContent } : s))
       )
@@ -233,6 +315,7 @@ export function DiffSectionItem({
 
       {!section.collapsed && (
         <div
+          className="relative"
           style={{
             height: sectionHeight
               ? sectionHeight + 19
@@ -247,6 +330,18 @@ export function DiffSectionItem({
                 )
           }}
         >
+          {popover && (
+            // Why: key by lineNumber so the popover remounts when the anchor
+            // line changes, resetting the internal draft body and textarea
+            // focus per anchor line instead of leaking state across lines.
+            <DiffCommentPopover
+              key={popover.lineNumber}
+              lineNumber={popover.lineNumber}
+              top={popover.top}
+              onCancel={() => setPopover(null)}
+              onSubmit={handleSubmitComment}
+            />
+          )}
           {section.loading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
               Loading...

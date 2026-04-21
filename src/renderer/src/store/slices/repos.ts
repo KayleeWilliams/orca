@@ -114,6 +114,18 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       } else {
         toast.success('Folder added', { description: repo.displayName })
       }
+      // Why: without focusing the new folder, the UI looks unchanged after
+      // the dialog closes and users think nothing happened. Fetch the
+      // synthetic folder worktree and route through the standard activation
+      // sequence so the sidebar reveals and opens the folder the same way
+      // clicking a worktree card does. Lazy-imported to avoid a circular
+      // module load (worktree-activation imports the store root).
+      await get().fetchWorktrees(repo.id)
+      const folderWorktree = get().worktreesByRepo[repo.id]?.[0]
+      if (folderWorktree) {
+        const { activateAndRevealWorktree } = await import('../../lib/worktree-activation')
+        activateAndRevealWorktree(folderWorktree.id)
+      }
       return repo
     } catch (err) {
       console.error('Failed to add folder:', err)

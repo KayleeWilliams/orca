@@ -2,7 +2,7 @@ import { BrowserWindow, Menu, app } from 'electron'
 
 type RegisterAppMenuOptions = {
   onOpenSettings: () => void
-  onCheckForUpdates: () => void
+  onCheckForUpdates: (options: { includePrerelease: boolean }) => void
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomReset: () => void
@@ -38,7 +38,19 @@ export function registerAppMenu({
         { role: 'about' },
         {
           label: 'Check for Updates...',
-          click: () => onCheckForUpdates()
+          // Why: holding Cmd+Shift (or Ctrl+Shift on win/linux) while clicking
+          // opts this check into the release-candidate channel. The event
+          // carries the modifier keys down from the native menu — we only act
+          // on the mouse chord, not accelerator-triggered invocations (there
+          // is no accelerator on this item, so triggeredByAccelerator should
+          // always be false here, but guarding makes the intent explicit).
+          click: (_menuItem, _window, event) => {
+            const includePrerelease =
+              !event.triggeredByAccelerator &&
+              (event.metaKey === true || event.ctrlKey === true) &&
+              event.shiftKey === true
+            onCheckForUpdates({ includePrerelease })
+          }
         },
         {
           label: 'Settings',
@@ -53,6 +65,26 @@ export function registerAppMenu({
         { role: 'unhide' },
         { type: 'separator' },
         { role: 'quit' }
+      ]
+    },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Export as PDF...',
+          accelerator: 'CmdOrCtrl+Shift+E',
+          click: () => {
+            // Why: fire a one-way event into the focused renderer. The renderer
+            // owns the knowledge of whether a markdown surface is active and
+            // what DOM to extract — when no markdown surface is active this is
+            // a silent no-op on that side (see design doc §4 "Renderer UI
+            // trigger"). Keeping this as a send (not an invoke) avoids main
+            // needing to reason about surface state. Using
+            // BrowserWindow.getFocusedWindow() rather than the menu's
+            // focusedWindow param avoids the BaseWindow typing gap.
+            BrowserWindow.getFocusedWindow()?.webContents.send('export:requestPdf')
+          }
+        }
       ]
     },
     {

@@ -13,6 +13,7 @@ import type { BrowserSlice } from './slices/browser'
 import type { RateLimitSlice } from './slices/rate-limits'
 import type { SshSlice } from './slices/ssh'
 import type { AgentStatusSlice } from './slices/agent-status'
+import type { DiffCommentsSlice } from './slices/diffComments'
 
 export type AppState = RepoSlice &
   WorktreeSlice &
@@ -28,4 +29,5 @@ export type AppState = RepoSlice &
   BrowserSlice &
   RateLimitSlice &
   SshSlice &
-  AgentStatusSlice
+  AgentStatusSlice &
+  DiffCommentsSlice

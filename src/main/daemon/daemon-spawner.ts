@@ -42,6 +42,13 @@ export class DaemonSpawner {
     return { socketPath: this.socketPath, tokenPath: this.tokenPath }
   }
 
+  // Why: after the daemon process dies unexpectedly, the cached handle is
+  // stale. Clearing it lets the next ensureRunning() fork a fresh daemon
+  // instead of returning the dead socket path.
+  resetHandle(): void {
+    this.handle = null
+  }
+
   async shutdown(): Promise<void> {
     if (!this.handle) {
       return

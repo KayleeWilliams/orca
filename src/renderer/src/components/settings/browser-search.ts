@@ -7,6 +7,11 @@ export const BROWSER_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['browser', 'home', 'homepage', 'default', 'url', 'new tab', 'blank', 'landing']
   },
   {
+    title: 'Default Search Engine',
+    description: 'Search engine used when typing non-URL text in the address bar.',
+    keywords: ['browser', 'search', 'engine', 'google', 'duckduckgo', 'bing', 'omnibox', 'query']
+  },
+  {
     title: 'Terminal Link Routing',
     description:
       'Cmd/Ctrl+click opens terminal http(s) links in Orca. Shift+Cmd/Ctrl+click uses the system browser.',

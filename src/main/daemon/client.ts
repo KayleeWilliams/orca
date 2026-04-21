@@ -28,6 +28,11 @@ export class DaemonClient {
   private streamSocket: Socket | null = null
   private connected = false
   private disconnectArmed = false
+  // Why: after a disconnect + reconnect (daemon respawn), a stale 'close'
+  // event from the old sockets can fire. Without a generation check, that
+  // event would tear down the fresh connection. Each doConnect() increments
+  // the generation; handleDisconnect ignores events from old generations.
+  private connectionGeneration = 0
   // Why: multiple concurrent spawn() calls from simultaneous pane mounts
   // all call ensureConnected(). Without a lock, each starts a separate
   // connection attempt, overwriting sockets and triggering "Connection lost".
@@ -78,9 +83,10 @@ export class DaemonClient {
 
       this.connected = true
       this.disconnectArmed = true
+      this.connectionGeneration++
 
-      // Handle socket close
-      const handleClose = () => this.handleDisconnect()
+      const gen = this.connectionGeneration
+      const handleClose = () => this.handleDisconnect(gen)
       this.controlSocket.on('close', handleClose)
       this.controlSocket.on('error', handleClose)
       this.streamSocket.on('close', handleClose)
@@ -270,8 +276,8 @@ export class DaemonClient {
     this.streamSocket.on('data', (chunk) => parser.feed(chunk.toString()))
   }
 
-  private handleDisconnect(): void {
-    if (!this.disconnectArmed) {
+  private handleDisconnect(generation: number): void {
+    if (!this.disconnectArmed || generation !== this.connectionGeneration) {
       return
     }
     this.disconnectArmed = false

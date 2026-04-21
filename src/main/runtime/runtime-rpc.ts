@@ -701,6 +701,1176 @@ export class OrcaRuntimeRpcServer {
       }
     }
 
+    // ── Browser automation routes ──
+    // Why: all browser routes extract optional worktree param for worktree-scoped tab routing
+
+    if (request.method === 'browser.snapshot') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserSnapshot(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.click') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserClick({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.goto') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : null
+        if (!url) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --url')
+        }
+        const result = await this.runtime.browserGoto({ url, ...this.extractBrowserTarget(params) })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.fill') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        if (value === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
+        }
+        const result = await this.runtime.browserFill({
+          element,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.type') {
+      try {
+        const params = this.extractParams(request)
+        const input = typeof params?.input === 'string' ? params.input : null
+        if (!input) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --input')
+        }
+        const result = await this.runtime.browserType({
+          input,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.select') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        if (value === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --value')
+        }
+        const result = await this.runtime.browserSelect({
+          element,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.scroll') {
+      try {
+        const params = this.extractParams(request)
+        const direction = typeof params?.direction === 'string' ? params.direction : null
+        if (direction !== 'up' && direction !== 'down') {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --direction (up or down)'
+          )
+        }
+        const amount =
+          typeof params?.amount === 'number' && params.amount > 0 ? params.amount : undefined
+        const result = await this.runtime.browserScroll({
+          direction,
+          amount,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.back') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserBack(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.reload') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserReload(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.screenshot') {
+      try {
+        const params = this.extractParams(request)
+        const format =
+          typeof params?.format === 'string' &&
+          (params.format === 'png' || params.format === 'jpeg')
+            ? params.format
+            : undefined
+        const result = await this.runtime.browserScreenshot({
+          format,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.eval') {
+      try {
+        const params = this.extractParams(request)
+        const expression = typeof params?.expression === 'string' ? params.expression : null
+        if (!expression) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --expression')
+        }
+        const result = await this.runtime.browserEval({
+          expression,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabList') {
+      try {
+        const params = this.extractParams(request)
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabList({ worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabSwitch') {
+      try {
+        const params = this.extractParams(request)
+        const index = typeof params?.index === 'number' ? params.index : undefined
+        const page =
+          typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+        if (page === undefined && (index === undefined || !Number.isInteger(index) || index < 0)) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --index (non-negative integer) or --page'
+          )
+        }
+        const result = await this.runtime.browserTabSwitch({
+          index,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.hover') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserHover({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.drag') {
+      try {
+        const params = this.extractParams(request)
+        const from = typeof params?.from === 'string' ? params.from : null
+        const to = typeof params?.to === 'string' ? params.to : null
+        if (!from || !to) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --from and --to element refs'
+          )
+        }
+        const result = await this.runtime.browserDrag({
+          from,
+          to,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.upload') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const files = Array.isArray(params?.files) ? (params.files as string[]) : null
+        if (!element || !files || files.length === 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --element and --files'
+          )
+        }
+        const result = await this.runtime.browserUpload({
+          element,
+          files,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.wait') {
+      try {
+        const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : undefined
+        const raw = typeof params?.timeout === 'number' ? params.timeout : undefined
+        const timeout = raw !== undefined && raw > 0 ? raw : undefined
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const load = typeof params?.load === 'string' ? params.load : undefined
+        const fn = typeof params?.fn === 'string' ? params.fn : undefined
+        const state = typeof params?.state === 'string' ? params.state : undefined
+        const result = await this.runtime.browserWait({
+          selector,
+          timeout,
+          text,
+          url,
+          load,
+          fn,
+          state,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.check') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        const checked = params?.checked !== false
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserCheck({
+          element,
+          checked,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.focus') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserFocus({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.clear') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserClear({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.selectAll') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserSelectAll({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.keypress') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const result = await this.runtime.browserKeypress({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.pdf') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserPdf(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.fullScreenshot') {
+      try {
+        const params = this.extractParams(request)
+        const format = params?.format === 'jpeg' ? ('jpeg' as const) : ('png' as const)
+        const result = await this.runtime.browserFullScreenshot({
+          format,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Cookie management ──
+
+    if (request.method === 'browser.cookie.get') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const result = await this.runtime.browserCookieGet({
+          url,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.cookie.set') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!name || value === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing name or value')
+        }
+        const result = await this.runtime.browserCookieSet({
+          name,
+          value,
+          domain: typeof params?.domain === 'string' ? params.domain : undefined,
+          path: typeof params?.path === 'string' ? params.path : undefined,
+          secure: typeof params?.secure === 'boolean' ? params.secure : undefined,
+          httpOnly: typeof params?.httpOnly === 'boolean' ? params.httpOnly : undefined,
+          sameSite: typeof params?.sameSite === 'string' ? params.sameSite : undefined,
+          expires: typeof params?.expires === 'number' ? params.expires : undefined,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.cookie.delete') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        if (!name) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing cookie name')
+        }
+        const result = await this.runtime.browserCookieDelete({
+          name,
+          domain: typeof params?.domain === 'string' ? params.domain : undefined,
+          url: typeof params?.url === 'string' ? params.url : undefined,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Viewport emulation ──
+
+    if (request.method === 'browser.viewport') {
+      try {
+        const params = this.extractParams(request)
+        const width = typeof params?.width === 'number' ? params.width : null
+        const height = typeof params?.height === 'number' ? params.height : null
+        if (width === null || height === null || width <= 0 || height <= 0) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Width and height must be positive numbers'
+          )
+        }
+        const result = await this.runtime.browserSetViewport({
+          width,
+          height,
+          deviceScaleFactor:
+            typeof params?.deviceScaleFactor === 'number' ? params.deviceScaleFactor : undefined,
+          mobile: typeof params?.mobile === 'boolean' ? params.mobile : undefined,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Geolocation ──
+
+    if (request.method === 'browser.geolocation') {
+      try {
+        const params = this.extractParams(request)
+        const latitude = typeof params?.latitude === 'number' ? params.latitude : null
+        const longitude = typeof params?.longitude === 'number' ? params.longitude : null
+        if (latitude === null || longitude === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing latitude or longitude')
+        }
+        const result = await this.runtime.browserSetGeolocation({
+          latitude,
+          longitude,
+          accuracy: typeof params?.accuracy === 'number' ? params.accuracy : undefined,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Request interception ──
+
+    if (request.method === 'browser.intercept.enable') {
+      try {
+        const params = this.extractParams(request)
+        const patterns = Array.isArray(params?.patterns) ? (params.patterns as string[]) : undefined
+        const result = await this.runtime.browserInterceptEnable({
+          patterns,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.disable') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserInterceptDisable(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.intercept.list') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserInterceptList(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Console/network capture ──
+
+    if (request.method === 'browser.capture.start') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserCaptureStart(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.capture.stop') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserCaptureStop(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.console') {
+      try {
+        const params = this.extractParams(request)
+        const limit = typeof params?.limit === 'number' ? params.limit : undefined
+        const result = await this.runtime.browserConsoleLog({
+          limit,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.network') {
+      try {
+        const params = this.extractParams(request)
+        const limit = typeof params?.limit === 'number' ? params.limit : undefined
+        const result = await this.runtime.browserNetworkLog({
+          limit,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Additional core commands ──
+
+    if (request.method === 'browser.dblclick') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserDblclick({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.forward') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserForward(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.scrollIntoView') {
+      try {
+        const params = this.extractParams(request)
+        const element = typeof params?.element === 'string' ? params.element : null
+        if (!element) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --element')
+        }
+        const result = await this.runtime.browserScrollIntoView({
+          element,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.get') {
+      try {
+        const params = this.extractParams(request)
+        const what = typeof params?.what === 'string' ? params.what : null
+        if (!what) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --what')
+        }
+        const selector = typeof params?.selector === 'string' ? params.selector : undefined
+        const result = await this.runtime.browserGet({
+          what,
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.is') {
+      try {
+        const params = this.extractParams(request)
+        const what = typeof params?.what === 'string' ? params.what : null
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        if (!what || !selector) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --what and --element'
+          )
+        }
+        const result = await this.runtime.browserIs({
+          what,
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Keyboard insert text ──
+
+    if (request.method === 'browser.keyboardInsertText') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : null
+        if (!text) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
+        }
+        const result = await this.runtime.browserKeyboardInsertText({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Mouse commands ──
+
+    if (request.method === 'browser.mouseMove') {
+      try {
+        const params = this.extractParams(request)
+        const x = typeof params?.x === 'number' ? params.x : null
+        const y = typeof params?.y === 'number' ? params.y : null
+        if (x === null || y === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required x and y coordinates'
+          )
+        }
+        const result = await this.runtime.browserMouseMove({
+          x,
+          y,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseDown') {
+      try {
+        const params = this.extractParams(request)
+        const button = typeof params?.button === 'string' ? params.button : undefined
+        const result = await this.runtime.browserMouseDown({
+          button,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseUp') {
+      try {
+        const params = this.extractParams(request)
+        const button = typeof params?.button === 'string' ? params.button : undefined
+        const result = await this.runtime.browserMouseUp({
+          button,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.mouseWheel') {
+      try {
+        const params = this.extractParams(request)
+        const dy = typeof params?.dy === 'number' ? params.dy : null
+        if (dy === null) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --dy')
+        }
+        const dx = typeof params?.dx === 'number' ? params.dx : undefined
+        const result = await this.runtime.browserMouseWheel({
+          dy,
+          dx,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Find (semantic locators) ──
+
+    if (request.method === 'browser.find') {
+      try {
+        const params = this.extractParams(request)
+        const locator = typeof params?.locator === 'string' ? params.locator : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        const action = typeof params?.action === 'string' ? params.action : null
+        if (!locator || !value || !action) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --locator, --value, and --action'
+          )
+        }
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const result = await this.runtime.browserFind({
+          locator,
+          value,
+          action,
+          text,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Set commands ──
+
+    if (request.method === 'browser.setDevice') {
+      try {
+        const params = this.extractParams(request)
+        const name = typeof params?.name === 'string' ? params.name : null
+        if (!name) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --name')
+        }
+        const result = await this.runtime.browserSetDevice({
+          name,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setOffline') {
+      try {
+        const params = this.extractParams(request)
+        const state = typeof params?.state === 'string' ? params.state : undefined
+        const result = await this.runtime.browserSetOffline({
+          state,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setHeaders') {
+      try {
+        const params = this.extractParams(request)
+        const headers = typeof params?.headers === 'string' ? params.headers : null
+        if (!headers) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --headers (JSON string)'
+          )
+        }
+        const result = await this.runtime.browserSetHeaders({
+          headers,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setCredentials') {
+      try {
+        const params = this.extractParams(request)
+        const user = typeof params?.user === 'string' ? params.user : null
+        const pass = typeof params?.pass === 'string' ? params.pass : null
+        if (!user || pass === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --user and --pass'
+          )
+        }
+        const result = await this.runtime.browserSetCredentials({
+          user,
+          pass,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.setMedia') {
+      try {
+        const params = this.extractParams(request)
+        const colorScheme = typeof params?.colorScheme === 'string' ? params.colorScheme : undefined
+        const reducedMotion =
+          typeof params?.reducedMotion === 'string' ? params.reducedMotion : undefined
+        const result = await this.runtime.browserSetMedia({
+          colorScheme,
+          reducedMotion,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Clipboard commands ──
+
+    if (request.method === 'browser.clipboardRead') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserClipboardRead(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.clipboardWrite') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : null
+        if (!text) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --text')
+        }
+        const result = await this.runtime.browserClipboardWrite({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Dialog commands ──
+
+    if (request.method === 'browser.dialogAccept') {
+      try {
+        const params = this.extractParams(request)
+        const text = typeof params?.text === 'string' ? params.text : undefined
+        const result = await this.runtime.browserDialogAccept({
+          text,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.dialogDismiss') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserDialogDismiss(this.extractBrowserTarget(params))
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Storage commands ──
+
+    if (request.method === 'browser.storage.local.get') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const result = await this.runtime.browserStorageLocalGet({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.local.set') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!key || value === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --key and --value'
+          )
+        }
+        const result = await this.runtime.browserStorageLocalSet({
+          key,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.local.clear') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserStorageLocalClear(
+          this.extractBrowserTarget(params)
+        )
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.get') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        if (!key) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --key')
+        }
+        const result = await this.runtime.browserStorageSessionGet({
+          key,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.set') {
+      try {
+        const params = this.extractParams(request)
+        const key = typeof params?.key === 'string' ? params.key : null
+        const value = typeof params?.value === 'string' ? params.value : null
+        if (!key || value === null) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --key and --value'
+          )
+        }
+        const result = await this.runtime.browserStorageSessionSet({
+          key,
+          value,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.storage.session.clear') {
+      try {
+        const params = this.extractParams(request)
+        const result = await this.runtime.browserStorageSessionClear(
+          this.extractBrowserTarget(params)
+        )
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Download command ──
+
+    if (request.method === 'browser.download') {
+      try {
+        const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        const path = typeof params?.path === 'string' ? params.path : null
+        if (!selector || !path) {
+          return this.errorResponse(
+            request.id,
+            'invalid_argument',
+            'Missing required --selector and --path'
+          )
+        }
+        const result = await this.runtime.browserDownload({
+          selector,
+          path,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── Highlight command ──
+
+    if (request.method === 'browser.highlight') {
+      try {
+        const params = this.extractParams(request)
+        const selector = typeof params?.selector === 'string' ? params.selector : null
+        if (!selector) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --selector')
+        }
+        const result = await this.runtime.browserHighlight({
+          selector,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    // ── New: exec passthrough + tab lifecycle ──
+
+    if (request.method === 'browser.exec') {
+      try {
+        const params = this.extractParams(request)
+        const command = typeof params?.command === 'string' ? params.command : null
+        if (!command) {
+          return this.errorResponse(request.id, 'invalid_argument', 'Missing required --command')
+        }
+        const result = await this.runtime.browserExec({
+          command,
+          ...this.extractBrowserTarget(params)
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabCreate') {
+      try {
+        const params = this.extractParams(request)
+        const url = typeof params?.url === 'string' ? params.url : undefined
+        const worktree = typeof params?.worktree === 'string' ? params.worktree : undefined
+        const result = await this.runtime.browserTabCreate({ url, worktree })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
+    if (request.method === 'browser.tabClose') {
+      try {
+        const params = this.extractParams(request)
+        const index = typeof params?.index === 'number' ? params.index : undefined
+        const page =
+          typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+        const result = await this.runtime.browserTabClose({
+          index,
+          page,
+          worktree: typeof params?.worktree === 'string' ? params.worktree : undefined
+        })
+        return this.successResponse(request.id, result)
+      } catch (error) {
+        return this.browserErrorResponse(request.id, error)
+      }
+    }
+
     return this.errorResponse(request.id, 'method_not_found', `Unknown method: ${request.method}`)
   }
 
@@ -716,6 +1886,48 @@ export class OrcaRuntimeRpcServer {
         runtimeId: this.runtime.getRuntimeId()
       }
     }
+  }
+
+  private successResponse(id: string, result: unknown): RuntimeRpcResponse {
+    return {
+      id,
+      ok: true,
+      result,
+      _meta: {
+        runtimeId: this.runtime.getRuntimeId()
+      }
+    }
+  }
+
+  private extractParams(request: { params?: unknown }): Record<string, unknown> | null {
+    return request.params && typeof request.params === 'object' && request.params !== null
+      ? (request.params as Record<string, unknown>)
+      : null
+  }
+
+  private extractBrowserTarget(params: Record<string, unknown> | null): {
+    worktree?: string
+    page?: string
+  } {
+    return {
+      worktree: typeof params?.worktree === 'string' ? params.worktree : undefined,
+      page: typeof params?.page === 'string' && params.page.length > 0 ? params.page : undefined
+    }
+  }
+
+  // Why: browser errors carry a structured .code property (BrowserError from
+  // cdp-bridge.ts) that maps directly to agent-facing error codes. We forward
+  // that code rather than relying on the message-matching pattern used by
+  // runtimeErrorResponse, which would require adding 10+ entries to the allowlist.
+  private browserErrorResponse(id: string, error: unknown): RuntimeRpcResponse {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      typeof (error as { code: unknown }).code === 'string'
+    ) {
+      return this.errorResponse(id, (error as { code: string }).code, error.message)
+    }
+    return this.runtimeErrorResponse(id, error)
   }
 
   private runtimeErrorResponse(id: string, error: unknown): RuntimeRpcResponse {

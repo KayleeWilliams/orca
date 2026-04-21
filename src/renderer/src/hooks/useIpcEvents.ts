@@ -17,6 +17,7 @@ import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
 import { parseAgentStatusPayload } from '../../../shared/agent-status-types'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -77,6 +78,20 @@ export function useIpcEvents(): void {
         if (store.activeView === 'terminal' && store.activeWorktreeId !== null) {
           store.openModal('quick-open')
         }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onOpenNewWorkspace(() => {
+        // Why: mirror the renderer's App.tsx Cmd+N guard — only open the
+        // composer when there is at least one real git repo configured, so
+        // users on a fresh install don't get a modal with nothing to target.
+        const store = useAppStore.getState()
+        if (!store.repos.some((repo) => isGitRepoKind(repo))) {
+          return
+        }
+        dispatchClearModifierHints()
+        store.openModal('new-workspace-composer')
       })
     )
 
@@ -157,6 +172,28 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: agent-browser drives navigation via CDP, bypassing Electron's webview
+    // event system. The renderer's did-navigate listener never fires for those
+    // navigations, so the Zustand store (address bar, tab title) stays stale.
+    // This IPC pushes the live URL/title from main after goto/click/back/reload.
+    unsubs.push(
+      window.api.browser.onNavigationUpdate(({ browserPageId, url, title }) => {
+        const store = useAppStore.getState()
+        store.setBrowserPageUrl(browserPageId, url)
+        store.updateBrowserPageState(browserPageId, { title, loading: false })
+      })
+    )
+
+    // Why: browser webviews only start their guest process when the container
+    // has display != none. After app restart, activeTabType defaults to 'terminal'
+    // so persisted browser tabs never mount. The main process sends this IPC
+    // before browser commands so the webview can start and registerGuest fires.
+    unsubs.push(
+      window.api.browser.onActivateView(() => {
+        useAppStore.getState().setActiveTabType('browser')
+      })
+    )
+
     unsubs.push(
       window.api.browser.onOpenLinkInOrcaTab(({ browserPageId, url }) => {
         const store = useAppStore.getState()
@@ -183,6 +220,92 @@ export function useIpcEvents(): void {
         if (worktreeId) {
           store.createBrowserTab(worktreeId, store.browserDefaultUrl ?? 'about:blank', {
             title: 'New Browser Tab'
+          })
+        }
+      })
+    )
+
+    // Why: CLI-driven tab creation sends a request with a specific worktreeId and
+    // url. The renderer creates the tab and replies with the workspace ID so the
+    // main process can wait for registerGuest before returning to the CLI.
+    unsubs.push(
+      window.api.ui.onRequestTabCreate((data) => {
+        try {
+          const store = useAppStore.getState()
+          const worktreeId = data.worktreeId ?? store.activeWorktreeId
+          if (!worktreeId) {
+            window.api.ui.replyTabCreate({ requestId: data.requestId, error: 'No active worktree' })
+            return
+          }
+          const workspace = store.createBrowserTab(worktreeId, data.url, { title: data.url })
+          // Why: registerGuest fires with the page ID (not workspace ID) as
+          // browserPageId. Return the page ID so waitForTabRegistration can
+          // correlate correctly.
+          const pages = useAppStore.getState().browserPagesByWorkspace[workspace.id] ?? []
+          const browserPageId = pages[0]?.id ?? workspace.id
+          window.api.ui.replyTabCreate({ requestId: data.requestId, browserPageId })
+        } catch (err) {
+          window.api.ui.replyTabCreate({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Tab creation failed'
+          })
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onRequestTabClose((data) => {
+        try {
+          const store = useAppStore.getState()
+          const explicitTargetId = data.tabId ?? null
+          let tabToClose =
+            explicitTargetId ??
+            (data.worktreeId
+              ? (store.activeBrowserTabIdByWorktree?.[data.worktreeId] ?? null)
+              : store.activeBrowserTabId)
+          if (!tabToClose) {
+            window.api.ui.replyTabClose({
+              requestId: data.requestId,
+              error: 'No active browser tab to close'
+            })
+            return
+          }
+          // Why: the bridge stores tabs keyed by browserPageId (which is the page
+          // ID from registerGuest), but closeBrowserTab expects a workspace ID. If
+          // tabToClose is a page ID, close only that page unless it is the
+          // last page in its workspace. The CLI's `tab close --page` contract
+          // targets one browser page, not the entire workspace tab.
+          const isWorkspaceId = Object.values(store.browserTabsByWorktree)
+            .flat()
+            .some((ws) => ws.id === tabToClose)
+          if (!isWorkspaceId) {
+            const owningWorkspace = Object.entries(store.browserPagesByWorkspace).find(
+              ([, pages]) => pages.some((p) => p.id === tabToClose)
+            )
+            if (owningWorkspace) {
+              const [workspaceId, pages] = owningWorkspace
+              if (pages.length <= 1) {
+                store.closeBrowserTab(workspaceId)
+              } else {
+                store.closeBrowserPage(tabToClose)
+              }
+              window.api.ui.replyTabClose({ requestId: data.requestId })
+              return
+            }
+          }
+          if (explicitTargetId) {
+            window.api.ui.replyTabClose({
+              requestId: data.requestId,
+              error: `Browser tab ${explicitTargetId} not found`
+            })
+            return
+          }
+          store.closeBrowserTab(tabToClose)
+          window.api.ui.replyTabClose({ requestId: data.requestId })
+        } catch (err) {
+          window.api.ui.replyTabClose({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Tab close failed'
           })
         }
       })

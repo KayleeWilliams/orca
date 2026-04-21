@@ -355,6 +355,7 @@ export function EditorContent({
       relativePath={activeFile.relativePath}
       sideBySide={sideBySide}
       editable={isEditable}
+      worktreeId={activeFile.worktreeId}
       onContentChange={isEditable ? handleContentChange : undefined}
       onSave={isEditable ? handleSave : undefined}
     />

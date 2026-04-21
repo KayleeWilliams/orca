@@ -171,6 +171,28 @@ export function TerminalPane({
             }
           />
         </SearchableSetting>
+
+        <SearchableSetting
+          title="Line Height"
+          description="Controls the terminal line height multiplier."
+          keywords={['terminal', 'typography', 'line height', 'spacing']}
+        >
+          <NumberField
+            label="Line Height"
+            description="Controls the terminal line height multiplier."
+            value={settings.terminalLineHeight}
+            defaultValue={1}
+            min={1}
+            max={3}
+            step={0.1}
+            suffix="1 to 3"
+            onChange={(value) =>
+              updateSettings({
+                terminalLineHeight: clampNumber(value, 1, 3)
+              })
+            }
+          />
+        </SearchableSetting>
       </section>
     ) : null,
     matchesSettingsSearch(searchQuery, TERMINAL_CURSOR_SEARCH_ENTRIES) ? (

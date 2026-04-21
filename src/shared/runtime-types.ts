@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: shared type definitions for all runtime RPC methods live in one file for discoverability and import simplicity. */
 import type { TerminalPaneLayoutNode } from './types'
 import type { GitWorktreeInfo, Repo } from './types'
 
@@ -152,3 +153,245 @@ export type RuntimeWorktreeListResult = {
   totalCount: number
   truncated: boolean
 }
+
+// ── Browser automation types ──
+
+export type BrowserSnapshotRef = {
+  ref: string
+  role: string
+  name: string
+}
+
+export type BrowserSnapshotResult = {
+  browserPageId: string
+  snapshot: string
+  refs: BrowserSnapshotRef[]
+  url: string
+  title: string
+}
+
+export type BrowserClickResult = {
+  clicked: string
+}
+
+export type BrowserGotoResult = {
+  url: string
+  title: string
+}
+
+export type BrowserFillResult = {
+  filled: string
+}
+
+export type BrowserTypeResult = {
+  typed: boolean
+}
+
+export type BrowserSelectResult = {
+  selected: string
+}
+
+export type BrowserScrollResult = {
+  scrolled: 'up' | 'down'
+}
+
+export type BrowserBackResult = {
+  url: string
+  title: string
+}
+
+export type BrowserReloadResult = {
+  url: string
+  title: string
+}
+
+export type BrowserScreenshotResult = {
+  data: string
+  format: 'png' | 'jpeg'
+}
+
+export type BrowserEvalResult = {
+  result: string
+  origin: string
+}
+
+export type BrowserTabInfo = {
+  browserPageId: string
+  index: number
+  url: string
+  title: string
+  active: boolean
+}
+
+export type BrowserTabListResult = {
+  tabs: BrowserTabInfo[]
+}
+
+export type BrowserTabSwitchResult = {
+  switched: number
+  browserPageId: string
+}
+
+export type BrowserHoverResult = {
+  hovered: string
+}
+
+export type BrowserDragResult = {
+  dragged: { from: string; to: string }
+}
+
+export type BrowserUploadResult = {
+  uploaded: number
+}
+
+export type BrowserWaitResult = {
+  waited: boolean
+}
+
+export type BrowserCheckResult = {
+  checked: boolean
+}
+
+export type BrowserFocusResult = {
+  focused: string
+}
+
+export type BrowserClearResult = {
+  cleared: string
+}
+
+export type BrowserSelectAllResult = {
+  selected: string
+}
+
+export type BrowserKeypressResult = {
+  pressed: string
+}
+
+export type BrowserPdfResult = {
+  data: string
+}
+
+// ── Cookie management types ──
+
+export type BrowserCookie = {
+  name: string
+  value: string
+  domain: string
+  path: string
+  expires: number
+  httpOnly: boolean
+  secure: boolean
+  sameSite: string
+}
+
+export type BrowserCookieGetResult = {
+  cookies: BrowserCookie[]
+}
+
+export type BrowserCookieSetResult = {
+  success: boolean
+}
+
+export type BrowserCookieDeleteResult = {
+  deleted: boolean
+}
+
+// ── Viewport emulation types ──
+
+export type BrowserViewportResult = {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  mobile: boolean
+}
+
+// ── Geolocation types ──
+
+export type BrowserGeolocationResult = {
+  latitude: number
+  longitude: number
+  accuracy: number
+}
+
+// ── Request interception types ──
+
+export type BrowserInterceptedRequest = {
+  id: string
+  url: string
+  method: string
+  headers: Record<string, string>
+  resourceType: string
+}
+
+export type BrowserInterceptEnableResult = {
+  enabled: boolean
+  patterns: string[]
+}
+
+export type BrowserInterceptDisableResult = {
+  disabled: boolean
+}
+
+// ── Console/network capture types ──
+
+export type BrowserConsoleEntry = {
+  level: string
+  text: string
+  timestamp: number
+  url?: string
+  line?: number
+}
+
+export type BrowserConsoleResult = {
+  entries: BrowserConsoleEntry[]
+  truncated: boolean
+}
+
+export type BrowserNetworkEntry = {
+  url: string
+  method: string
+  status: number
+  mimeType: string
+  size: number
+  timestamp: number
+}
+
+export type BrowserNetworkLogResult = {
+  entries: BrowserNetworkEntry[]
+  truncated: boolean
+}
+
+export type BrowserCaptureStartResult = {
+  capturing: boolean
+}
+
+export type BrowserCaptureStopResult = {
+  stopped: boolean
+}
+
+export type BrowserExecResult = {
+  output: unknown
+}
+
+export type BrowserTabCreateResult = {
+  browserPageId: string
+}
+
+export type BrowserTabCloseResult = {
+  closed: boolean
+}
+
+export type BrowserErrorCode =
+  | 'browser_no_tab'
+  | 'browser_tab_not_found'
+  | 'browser_tab_closed'
+  | 'browser_stale_ref'
+  | 'browser_ref_not_found'
+  | 'browser_navigation_failed'
+  | 'browser_element_not_interactable'
+  | 'browser_eval_error'
+  | 'browser_cdp_error'
+  | 'browser_debugger_detached'
+  | 'browser_timeout'
+  | 'browser_error'

@@ -90,6 +90,7 @@ export type BrowserApi = {
   registerGuest: (args: {
     browserPageId: string
     workspaceId: string
+    worktreeId: string
     webContentsId: number
   }) => Promise<void>
   unregisterGuest: (args: { browserPageId: string }) => Promise<void>
@@ -108,6 +109,10 @@ export type BrowserApi = {
   onContextMenuDismissed: (
     callback: (event: BrowserContextMenuDismissedEvent) => void
   ) => () => void
+  onNavigationUpdate: (
+    callback: (event: { browserPageId: string; url: string; title: string }) => void
+  ) => () => void
+  onActivateView: (callback: (data: { worktreeId: string }) => void) => () => void
   onOpenLinkInOrcaTab: (
     callback: (event: { browserPageId: string; url: string }) => void
   ) => () => void
@@ -141,6 +146,7 @@ export type BrowserApi = {
     browserProfile?: string
   }) => Promise<BrowserCookieImportResult>
   sessionClearDefaultCookies: () => Promise<boolean>
+  notifyActiveTabChanged: (args: { browserPageId: string }) => Promise<boolean>
 }
 
 export type DetectedBrowserProfileInfo = {
@@ -170,6 +176,15 @@ export type PreflightApi = {
   check: (args?: { force?: boolean }) => Promise<PreflightStatus>
   detectAgents: () => Promise<string[]>
   refreshAgents: () => Promise<RefreshAgentsResult>
+}
+
+export type ExportApi = {
+  htmlToPdf: (args: {
+    html: string
+    title: string
+  }) => Promise<
+    { success: true; filePath: string } | { success: false; cancelled?: boolean; error?: string }
+  >
 }
 
 export type StatsApi = {
@@ -255,7 +270,11 @@ export type PreloadApi = {
   }
   repos: {
     list: () => Promise<Repo[]>
-    add: (args: { path: string; kind?: 'git' | 'folder' }) => Promise<Repo>
+    // Why: error union matches the IPC handler's return shape; renderer callers branch on `'error' in result`.
+    add: (args: {
+      path: string
+      kind?: 'git' | 'folder'
+    }) => Promise<{ repo: Repo } | { error: string }>
     remove: (args: { repoId: string }) => Promise<void>
     update: (args: {
       repoId: string
@@ -267,12 +286,13 @@ export type PreloadApi = {
     pickDirectory: () => Promise<string | null>
     clone: (args: { url: string; destination: string }) => Promise<Repo>
     cloneAbort: () => Promise<void>
+    // Why: error union matches the IPC handler's return shape; renderer callers branch on `'error' in result`.
     addRemote: (args: {
       connectionId: string
       remotePath: string
       displayName?: string
       kind?: 'git' | 'folder'
-    }) => Promise<Repo>
+    }) => Promise<{ repo: Repo } | { error: string }>
     onCloneProgress: (callback: (data: { phase: string; percent: number }) => void) => () => void
     getGitUsername: (args: { repoId: string }) => Promise<string>
     getBaseRefDefault: (args: { repoId: string }) => Promise<string>
@@ -331,6 +351,7 @@ export type PreloadApi = {
       githubEmail: string | null
     }) => Promise<{ ok: true } | { ok: false; status: number | null; error: string }>
   }
+  export: ExportApi
   gh: {
     viewer: () => Promise<GitHubViewer | null>
     repoSlug: (args: { repoPath: string }) => Promise<{ owner: string; repo: string } | null>
@@ -468,7 +489,7 @@ export type PreloadApi = {
   updater: {
     getVersion: () => Promise<string>
     getStatus: () => Promise<UpdateStatus>
-    check: () => Promise<void>
+    check: (options?: { includePrerelease?: boolean }) => Promise<void>
     download: () => Promise<void>
     quitAndInstall: () => Promise<void>
     dismissNudge: () => Promise<void>
@@ -597,8 +618,17 @@ export type PreloadApi = {
     onToggleRightSidebar: (callback: () => void) => () => void
     onToggleWorktreePalette: (callback: () => void) => () => void
     onOpenQuickOpen: (callback: () => void) => () => void
+    onOpenNewWorkspace: (callback: () => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
+    onRequestTabCreate: (
+      callback: (data: { requestId: string; url: string; worktreeId?: string }) => void
+    ) => () => void
+    replyTabCreate: (reply: { requestId: string; browserPageId?: string; error?: string }) => void
+    onRequestTabClose: (
+      callback: (data: { requestId: string; tabId: string | null; worktreeId?: string }) => void
+    ) => () => void
+    replyTabClose: (reply: { requestId: string; error?: string }) => void
     onNewTerminalTab: (callback: () => void) => () => void
     onFocusBrowserAddressBar: (callback: () => void) => () => void
     onFindInBrowserPage: (callback: () => void) => () => void
@@ -607,6 +637,7 @@ export type PreloadApi = {
     onCloseActiveTab: (callback: () => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
     onToggleStatusBar: (callback: () => void) => () => void
+    onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
       callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
     ) => () => void

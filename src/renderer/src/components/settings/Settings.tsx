@@ -137,6 +137,11 @@ function Settings(): React.JSX.Element {
     getFallbackTerminalFonts()
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
+  // Why: the hidden-experimental group is an unlock — Cmd+Shift-clicking the
+  // Experimental sidebar entry reveals it for the remainder of the session.
+  // Not persisted on purpose: it's a power-user affordance we don't want to
+  // leak through into a normal reopen of Settings.
+  const [hiddenExperimentalUnlocked, setHiddenExperimentalUnlocked] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const terminalFontsLoadedRef = useRef(false)
   const pendingNavSectionRef = useRef<string | null>(null)
@@ -343,7 +348,7 @@ function Settings(): React.JSX.Element {
       {
         id: 'experimental',
         title: 'Experimental',
-        description: 'Features that are still being stabilized. Enable at your own risk.',
+        description: 'New features that are still taking shape. Give them a try.',
         icon: FlaskConical,
         searchEntries: EXPERIMENTAL_PANE_SEARCH_ENTRIES
       },
@@ -464,11 +469,30 @@ function Settings(): React.JSX.Element {
     }
   }, [visibleNavSections])
 
-  const scrollToSection = useCallback((sectionId: string) => {
-    scrollSectionIntoView(sectionId, contentScrollRef.current)
-    flashSectionHighlight(sectionId)
-    setActiveSectionId(sectionId)
-  }, [])
+  const scrollToSection = useCallback(
+    (
+      sectionId: string,
+      modifiers?: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
+    ) => {
+      // Why: Cmd+Shift-clicking (Ctrl+Shift on win/linux) the Experimental
+      // sidebar entry unlocks a hidden power-user group. Keep this scoped to
+      // the Experimental row so normal shortcut combos on other rows don't
+      // accidentally flip state. The unlock persists for the life of the
+      // Settings view (resets when Settings is reopened).
+      if (
+        sectionId === 'experimental' &&
+        modifiers &&
+        (modifiers.metaKey || modifiers.ctrlKey) &&
+        modifiers.shiftKey
+      ) {
+        setHiddenExperimentalUnlocked((previous) => !previous)
+      }
+      scrollSectionIntoView(sectionId, contentScrollRef.current)
+      flashSectionHighlight(sectionId)
+      setActiveSectionId(sectionId)
+    },
+    []
+  )
 
   if (!settings) {
     return (
@@ -617,10 +641,14 @@ function Settings(): React.JSX.Element {
                 <SettingsSection
                   id="experimental"
                   title="Experimental"
-                  description="Features that are still being stabilized. Enable at your own risk."
+                  description="New features that are still taking shape. Give them a try."
                   searchEntries={EXPERIMENTAL_PANE_SEARCH_ENTRIES}
                 >
-                  <ExperimentalPane settings={settings} updateSettings={updateSettings} />
+                  <ExperimentalPane
+                    settings={settings}
+                    updateSettings={updateSettings}
+                    hiddenExperimentalUnlocked={hiddenExperimentalUnlocked}
+                  />
                 </SettingsSection>
 
                 {repos.map((repo) => {

@@ -104,6 +104,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalFontSize: 14,
     terminalFontFamily: defaultTerminalFontFamily(),
     terminalFontWeight: DEFAULT_TERMINAL_FONT_WEIGHT,
+    terminalLineHeight: 1,
     terminalCursorStyle: 'bar',
     terminalCursorBlink: true,
     terminalThemeDark: 'Ghostty Default Style Dark',

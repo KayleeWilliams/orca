@@ -15,6 +15,11 @@ export const TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Font Weight',
     description: 'Controls the terminal text font weight.',
     keywords: ['terminal', 'typography', 'weight']
+  },
+  {
+    title: 'Line Height',
+    description: 'Controls the terminal line height multiplier.',
+    keywords: ['terminal', 'typography', 'line height', 'spacing']
   }
 ]
 

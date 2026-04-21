@@ -999,6 +999,7 @@ function BrowserPagePane({
         void window.api.browser.registerGuest({
           browserPageId: browserTab.id,
           workspaceId,
+          worktreeId,
           webContentsId
         })
       }
@@ -1547,7 +1548,8 @@ function BrowserPagePane({
 
   const submitAddressBar = (): void => {
     keepAddressBarFocusRef.current = false
-    const nextUrl = normalizeBrowserNavigationUrl(addressBarValue)
+    const searchEngine = useAppStore.getState().browserDefaultSearchEngine
+    const nextUrl = normalizeBrowserNavigationUrl(addressBarValue, searchEngine)
     if (!nextUrl) {
       onUpdatePageStateRef.current(browserTab.id, {
         loadError: {

@@ -17,6 +17,9 @@ export type DaemonPtyAdapterOptions = {
   /** Directory for disk-based terminal history. When set, the adapter writes
    *  raw PTY output to disk for cold restore on daemon crash. */
   historyPath?: string
+  /** Called when the daemon socket is unreachable (process died). Expected to
+   *  fork a fresh daemon so the next connection attempt can succeed. */
+  respawn?: () => Promise<void>
 }
 
 const MAX_TOMBSTONES = 1000
@@ -32,6 +35,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private client: DaemonClient
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
+  private respawnFn: (() => Promise<void>) | null
+  // Why: multiple pane mounts can call spawn() concurrently. If the daemon is
+  // dead, all calls enter withDaemonRetry's catch block at once. Without a
+  // lock, each would fork its own daemon process. This promise coalesces
+  // concurrent respawns so only the first caller forks; the rest await it.
+  private respawnPromise: Promise<void> | null = null
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
   private removeEventListener: (() => void) | null = null
@@ -54,6 +63,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     })
     this.historyManager = opts.historyPath ? new HistoryManager(opts.historyPath) : null
     this.historyReader = opts.historyPath ? new HistoryReader(opts.historyPath) : null
+    this.respawnFn = opts.respawn ?? null
   }
 
   getHistoryManager(): HistoryManager | null {
@@ -61,6 +71,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
+    return this.withDaemonRetry(() => this.doSpawn(opts))
+  }
+
+  private async doSpawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     await this.ensureConnected()
 
     const sessionId =
@@ -366,6 +380,37 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.setupEventRouting()
   }
 
+  // Why: when the daemon process dies, operations fail with ENOENT (socket
+  // gone), ECONNREFUSED, or "Connection lost" (socket closed mid-request).
+  // Rather than leaving all terminals permanently broken until app restart,
+  // this wrapper detects daemon-death errors, tears down the stale client
+  // state, forks a fresh daemon via respawnFn, reconnects, and retries the
+  // operation once. If respawn itself fails, the error propagates normally.
+  private async withDaemonRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!this.respawnFn || !isDaemonGoneError(err)) {
+        throw err
+      }
+      if (!this.respawnPromise) {
+        this.respawnPromise = this.doRespawn().finally(() => {
+          this.respawnPromise = null
+        })
+      }
+      await this.respawnPromise
+      return await fn()
+    }
+  }
+
+  private async doRespawn(): Promise<void> {
+    console.warn('[daemon] Daemon died — respawning')
+    this.removeEventListener?.()
+    this.removeEventListener = null
+    this.client.disconnect()
+    await this.respawnFn!()
+  }
+
   private setupEventRouting(): void {
     if (this.removeEventListener) {
       return
@@ -401,4 +446,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
     })
   }
+}
+
+// Why: ENOENT/ECONNREFUSED with syscall 'connect' mean the socket is
+// unreachable (daemon died). Checking syscall avoids false positives from
+// token-file ENOENT (readFileSync), which has no syscall or syscall='open'.
+// "Connection lost" / "Not connected" mean the daemon died while we had an
+// active or stale connection. All indicate the daemon is gone and a respawn
+// should be attempted.
+function isDaemonGoneError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false
+  }
+  const errno = err as NodeJS.ErrnoException
+  if ((errno.code === 'ENOENT' || errno.code === 'ECONNREFUSED') && errno.syscall === 'connect') {
+    return true
+  }
+  const msg = err.message
+  return msg === 'Connection lost' || msg === 'Not connected'
 }

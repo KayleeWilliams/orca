@@ -36,6 +36,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalFontSize: 14,
     terminalFontFamily: 'JetBrains Mono',
     terminalFontWeight: 500,
+    terminalLineHeight: 1,
     terminalCursorStyle: 'block',
     terminalCursorBlink: false,
     terminalThemeDark: 'orca-dark',

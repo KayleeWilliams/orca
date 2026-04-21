@@ -21,9 +21,11 @@ const {
   registerUpdaterHandlersMock,
   registerRateLimitHandlersMock,
   registerBrowserHandlersMock,
+  setAgentBrowserBridgeRefMock,
   setTrustedBrowserRendererWebContentsIdMock,
   registerFilesystemWatcherHandlersMock,
-  registerAppHandlersMock
+  registerAppHandlersMock,
+  registerExportHandlersMock
 } = vi.hoisted(() => ({
   registerCliHandlersMock: vi.fn(),
   registerPreflightHandlersMock: vi.fn(),
@@ -45,9 +47,11 @@ const {
   registerUpdaterHandlersMock: vi.fn(),
   registerRateLimitHandlersMock: vi.fn(),
   registerBrowserHandlersMock: vi.fn(),
+  setAgentBrowserBridgeRefMock: vi.fn(),
   setTrustedBrowserRendererWebContentsIdMock: vi.fn(),
   registerFilesystemWatcherHandlersMock: vi.fn(),
-  registerAppHandlersMock: vi.fn()
+  registerAppHandlersMock: vi.fn(),
+  registerExportHandlersMock: vi.fn()
 }))
 
 vi.mock('./cli', () => ({
@@ -72,6 +76,10 @@ vi.mock('./github', () => ({
 
 vi.mock('./feedback', () => ({
   registerFeedbackHandlers: registerFeedbackHandlersMock
+}))
+
+vi.mock('./export', () => ({
+  registerExportHandlers: registerExportHandlersMock
 }))
 
 vi.mock('./stats', () => ({
@@ -129,7 +137,8 @@ vi.mock('../window/attach-main-window-services', () => ({
 
 vi.mock('./browser', () => ({
   registerBrowserHandlers: registerBrowserHandlersMock,
-  setTrustedBrowserRendererWebContentsId: setTrustedBrowserRendererWebContentsIdMock
+  setTrustedBrowserRendererWebContentsId: setTrustedBrowserRendererWebContentsIdMock,
+  setAgentBrowserBridgeRef: setAgentBrowserBridgeRefMock
 }))
 
 vi.mock('./app', () => ({
@@ -160,14 +169,16 @@ describe('registerCoreHandlers', () => {
     registerUpdaterHandlersMock.mockReset()
     registerRateLimitHandlersMock.mockReset()
     registerBrowserHandlersMock.mockReset()
+    setAgentBrowserBridgeRefMock.mockReset()
     setTrustedBrowserRendererWebContentsIdMock.mockReset()
     registerFilesystemWatcherHandlersMock.mockReset()
     registerAppHandlersMock.mockReset()
+    registerExportHandlersMock.mockReset()
   })
 
   it('passes the store through to handler registrars that need it', () => {
     const store = { marker: 'store' }
-    const runtime = { marker: 'runtime' }
+    const runtime = { marker: 'runtime', getAgentBrowserBridge: () => null }
     const stats = { marker: 'stats' }
     const claudeUsage = { marker: 'claudeUsage' }
     const codexUsage = { marker: 'codexUsage' }
@@ -212,7 +223,7 @@ describe('registerCoreHandlers', () => {
     // The first test already called registerCoreHandlers, so the module-level
     // guard is now set. beforeEach reset all mocks, so call counts are 0.
     const store2 = { marker: 'store2' }
-    const runtime2 = { marker: 'runtime2' }
+    const runtime2 = { marker: 'runtime2', getAgentBrowserBridge: () => null }
     const stats2 = { marker: 'stats2' }
     const claudeUsage2 = { marker: 'claudeUsage2' }
     const codexUsage2 = { marker: 'codexUsage2' }

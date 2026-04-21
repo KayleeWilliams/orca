@@ -39,6 +39,8 @@ import { agentHookServer } from './agent-hooks/server'
 import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
+import { AgentBrowserBridge } from './browser/agent-browser-bridge'
+import { browserManager } from './browser/browser-manager'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -182,6 +184,7 @@ app.whenReady().then(async () => {
   starNag = new StarNagService(store, stats)
   starNag.start()
   starNag.registerIpcHandlers()
+  runtime.setAgentBrowserBridge(new AgentBrowserBridge(browserManager))
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   // Why: managed hook installation mutates user-global agent config.
   // Startup must fail open so a malformed local config never bricks Orca.
@@ -198,7 +201,7 @@ app.whenReady().then(async () => {
   }
 
   registerAppMenu({
-    onCheckForUpdates: () => checkForUpdatesFromMenu(),
+    onCheckForUpdates: (options) => checkForUpdatesFromMenu(options),
     onOpenSettings: () => {
       mainWindow?.webContents.send('ui:openSettings')
     },
@@ -309,6 +312,9 @@ app.on('will-quit', () => {
   starNag?.stop()
   agentHookServer.stop()
   stats?.flush()
+  // Why: agent-browser daemon processes would otherwise linger after Orca quits,
+  // holding ports and leaving stale session state on disk.
+  runtime?.getAgentBrowserBridge()?.destroyAllSessions()
   killAllPty()
   // Why: in daemon mode, killAllPty is a no-op (daemon sessions survive app
   // quit) but the client connection must be closed so sockets are released.

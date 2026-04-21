@@ -408,6 +408,18 @@ export function useTabGroupWorkspaceModel({
         const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
         createBrowserTab(worktreeId, defaultUrl, { title: 'New Browser Tab' })
       },
+      duplicateBrowserTab: (browserTabId: string) => {
+        const state = useAppStore.getState()
+        const tabs = state.browserTabsByWorktree[worktreeId] ?? []
+        const source = tabs.find((t) => t.id === browserTabId)
+        if (!source) {
+          return
+        }
+        createBrowserTab(worktreeId, source.url, {
+          title: source.title,
+          sessionProfileId: source.sessionProfileId
+        })
+      },
       // Why: split-group actions must target their owning group explicitly.
       // Relying on the ambient activeGroupIdByWorktree breaks keyboard and
       // assistive-tech activation because the "+" menu can be triggered from

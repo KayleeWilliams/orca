@@ -16,7 +16,7 @@ const GEMINI_SILENT_WORKING = '\u23F2' // ⏲
 const GEMINI_IDLE = '\u25C7' // ◇
 const GEMINI_PERMISSION = '\u270B' // ✋
 
-export const AGENT_NAMES = ['claude', 'codex', 'gemini', 'opencode', 'aider']
+export const AGENT_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'opencode', 'aider']
 const PI_IDLE_PREFIX = '\u03c0 - ' // π - (Pi titlebar extension idle format)
 
 // eslint-disable-next-line no-control-regex -- intentional terminal escape sequence matching
@@ -254,6 +254,9 @@ export function getAgentLabel(title: string): string | null {
   // heuristic so mixed-agent hovercards stay truthful.
   if (lower.includes('codex')) {
     return 'Codex'
+  }
+  if (lower.includes('copilot')) {
+    return 'GitHub Copilot'
   }
   if (lower.includes('opencode')) {
     return 'OpenCode'

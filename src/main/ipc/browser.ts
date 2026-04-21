@@ -2,6 +2,7 @@
    trust boundary (isTrustedBrowserRenderer) and handler teardown stay consistent. */
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { browserManager } from '../browser/browser-manager'
+import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import { browserSessionRegistry } from '../browser/browser-session-registry'
 import {
   pickCookieFile,
@@ -28,9 +29,35 @@ import type {
 } from '../../shared/types'
 
 let trustedBrowserRendererWebContentsId: number | null = null
+let agentBrowserBridgeRef: AgentBrowserBridge | null = null
+
+// Why: CLI-driven tab creation must wait until the renderer mounts the webview
+// and calls registerGuest, so the tab has a webContentsId and is operable by
+// subsequent commands. This map holds one-shot resolvers keyed by browserPageId.
+const pendingTabRegistrations = new Map<string, () => void>()
+
+export function waitForTabRegistration(browserPageId: string, timeoutMs = 8_000): Promise<void> {
+  if (browserManager.getGuestWebContentsId(browserPageId) !== null) {
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingTabRegistrations.delete(browserPageId)
+      reject(new Error('Tab registration timed out'))
+    }, timeoutMs)
+    pendingTabRegistrations.set(browserPageId, () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
 
 export function setTrustedBrowserRendererWebContentsId(webContentsId: number | null): void {
   trustedBrowserRendererWebContentsId = webContentsId
+}
+
+export function setAgentBrowserBridgeRef(bridge: AgentBrowserBridge | null): void {
+  agentBrowserBridgeRef = bridge
 }
 
 function isTrustedBrowserRenderer(sender: Electron.WebContents): boolean {
@@ -64,17 +91,39 @@ export function registerBrowserHandlers(): void {
   ipcMain.removeHandler('browser:cancelGrab')
   ipcMain.removeHandler('browser:captureSelectionScreenshot')
   ipcMain.removeHandler('browser:extractHoverPayload')
+  ipcMain.removeHandler('browser:activeTabChanged')
 
   ipcMain.handle(
     'browser:registerGuest',
-    (event, args: { browserPageId: string; workspaceId: string; webContentsId: number }) => {
+    (
+      event,
+      args: {
+        browserPageId: string
+        workspaceId: string
+        worktreeId: string
+        webContentsId: number
+      }
+    ) => {
       if (!isTrustedBrowserRenderer(event.sender)) {
         return false
       }
+      // Why: when Chromium swaps a guest's renderer process (navigation,
+      // crash recovery), the renderer re-registers the same browserPageId
+      // with a new webContentsId. The bridge must destroy the old session's
+      // proxy (its webContents is gone) and let the next command recreate it.
+      const previousWcId = browserManager.getGuestWebContentsId(args.browserPageId)
       browserManager.registerGuest({
         ...args,
         rendererWebContentsId: event.sender.id
       })
+      if (agentBrowserBridgeRef && previousWcId !== null && previousWcId !== args.webContentsId) {
+        agentBrowserBridgeRef.onProcessSwap(args.browserPageId, args.webContentsId, previousWcId)
+      }
+      const pendingResolve = pendingTabRegistrations.get(args.browserPageId)
+      if (pendingResolve) {
+        pendingTabRegistrations.delete(args.browserPageId)
+        pendingResolve()
+      }
       return true
     }
   )
@@ -83,7 +132,36 @@ export function registerBrowserHandlers(): void {
     if (!isTrustedBrowserRenderer(event.sender)) {
       return false
     }
+    // Why: notify bridge before unregistering so it can destroy the session
+    // process and proxy. Must happen before unregisterGuest clears the mapping.
+    const wcId = browserManager.getGuestWebContentsId(args.browserPageId)
+    if (wcId !== null && agentBrowserBridgeRef) {
+      agentBrowserBridgeRef.onTabClosed(wcId)
+    }
     browserManager.unregisterGuest(args.browserPageId)
+    return true
+  })
+
+  // Why: keeps the bridge's active tab in sync with the renderer's UI state.
+  // Without this, a user switching tabs in the UI would leave the agent operating
+  // on the previous tab, which is confusing.
+  ipcMain.handle('browser:activeTabChanged', (event, args: { browserPageId: string }) => {
+    if (!isTrustedBrowserRenderer(event.sender)) {
+      return false
+    }
+    if (!agentBrowserBridgeRef) {
+      return false
+    }
+    const wcId = browserManager.getGuestWebContentsId(args.browserPageId)
+    if (wcId !== null) {
+      // Why: renderer tab changes are scoped to a worktree. If we only update
+      // the global active guest, later worktree-scoped commands can still
+      // resolve to the previously active page inside that worktree.
+      agentBrowserBridgeRef.onTabChanged(
+        wcId,
+        browserManager.getWorktreeIdForTab(args.browserPageId)
+      )
+    }
     return true
   })
 

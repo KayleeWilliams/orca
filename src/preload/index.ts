@@ -337,6 +337,15 @@ const api = {
       ipcRenderer.invoke('feedback:submit', args)
   },
 
+  export: {
+    htmlToPdf: (args: {
+      html: string
+      title: string
+    }): Promise<
+      { success: true; filePath: string } | { success: false; cancelled?: boolean; error?: string }
+    > => ipcRenderer.invoke('export:html-to-pdf', args)
+  },
+
   gh: {
     viewer: (): Promise<unknown> => ipcRenderer.invoke('gh:viewer'),
 
@@ -510,6 +519,7 @@ const api = {
     registerGuest: (args: {
       browserPageId: string
       workspaceId: string
+      worktreeId: string
       webContentsId: number
     }): Promise<void> => ipcRenderer.invoke('browser:registerGuest', args),
 
@@ -667,6 +677,24 @@ const api = {
       return () => ipcRenderer.removeListener('browser:context-menu-dismissed', listener)
     },
 
+    onNavigationUpdate: (
+      callback: (event: { browserPageId: string; url: string; title: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { browserPageId: string; url: string; title: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:navigation-update', listener)
+      return () => ipcRenderer.removeListener('browser:navigation-update', listener)
+    },
+
+    onActivateView: (callback: (data: { worktreeId: string }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { worktreeId: string }) =>
+        callback(data)
+      ipcRenderer.on('browser:activateView', listener)
+      return () => ipcRenderer.removeListener('browser:activateView', listener)
+    },
+
     onOpenLinkInOrcaTab: (
       callback: (event: { browserPageId: string; url: string }) => void
     ): (() => void) => {
@@ -758,7 +786,10 @@ const api = {
     > => ipcRenderer.invoke('browser:session:importFromBrowser', args),
 
     sessionClearDefaultCookies: (): Promise<boolean> =>
-      ipcRenderer.invoke('browser:session:clearDefaultCookies')
+      ipcRenderer.invoke('browser:session:clearDefaultCookies'),
+
+    notifyActiveTabChanged: (args: { browserPageId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('browser:activeTabChanged', args)
   },
 
   hooks: {
@@ -805,7 +836,8 @@ const api = {
   updater: {
     getStatus: (): Promise<unknown> => ipcRenderer.invoke('updater:getStatus'),
     getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
-    check: (): Promise<void> => ipcRenderer.invoke('updater:check'),
+    check: (options?: { includePrerelease?: boolean }): Promise<void> =>
+      ipcRenderer.invoke('updater:check', options),
     download: (): Promise<void> => ipcRenderer.invoke('updater:download'),
     dismissNudge: (): Promise<void> => ipcRenderer.invoke('updater:dismissNudge'),
     quitAndInstall: async (): Promise<void> => {
@@ -1050,6 +1082,11 @@ const api = {
       ipcRenderer.on('ui:openQuickOpen', listener)
       return () => ipcRenderer.removeListener('ui:openQuickOpen', listener)
     },
+    onOpenNewWorkspace: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('ui:openNewWorkspace', listener)
+      return () => ipcRenderer.removeListener('ui:openNewWorkspace', listener)
+    },
     onJumpToWorktreeIndex: (callback: (index: number) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, index: number) => callback(index)
       ipcRenderer.on('ui:jumpToWorktreeIndex', listener)
@@ -1059,6 +1096,36 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:newBrowserTab', listener)
       return () => ipcRenderer.removeListener('ui:newBrowserTab', listener)
+    },
+    onRequestTabCreate: (
+      callback: (data: { requestId: string; url: string; worktreeId?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { requestId: string; url: string; worktreeId?: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:requestTabCreate', listener)
+      return () => ipcRenderer.removeListener('browser:requestTabCreate', listener)
+    },
+    replyTabCreate: (reply: {
+      requestId: string
+      browserPageId?: string
+      error?: string
+    }): void => {
+      ipcRenderer.send('browser:tabCreateReply', reply)
+    },
+    onRequestTabClose: (
+      callback: (data: { requestId: string; tabId: string | null; worktreeId?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { requestId: string; tabId: string | null; worktreeId?: string }
+      ) => callback(data)
+      ipcRenderer.on('browser:requestTabClose', listener)
+      return () => ipcRenderer.removeListener('browser:requestTabClose', listener)
+    },
+    replyTabClose: (reply: { requestId: string; error?: string }): void => {
+      ipcRenderer.send('browser:tabCloseReply', reply)
     },
     onNewTerminalTab: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
@@ -1099,6 +1166,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:toggleStatusBar', listener)
       return () => ipcRenderer.removeListener('ui:toggleStatusBar', listener)
+    },
+    onExportPdfRequested: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('export:requestPdf', listener)
+      return () => ipcRenderer.removeListener('export:requestPdf', listener)
     },
     onActivateWorktree: (
       callback: (data: {

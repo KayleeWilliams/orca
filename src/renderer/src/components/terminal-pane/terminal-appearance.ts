@@ -36,6 +36,7 @@ export function applyTerminalAppearance(
     pane.terminal.options.fontWeight = terminalFontWeights.fontWeight
     pane.terminal.options.fontWeightBold = terminalFontWeights.fontWeightBold
     pane.terminal.options.macOptionIsMeta = settings.terminalMacOptionAsAlt === 'true'
+    pane.terminal.options.lineHeight = settings.terminalLineHeight
     try {
       const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()

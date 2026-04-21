@@ -23,6 +23,7 @@ import { createBrowserSlice } from './browser'
 import { createRateLimitSlice } from './rate-limits'
 import { createSshSlice } from './ssh'
 import { createAgentStatusSlice } from './agent-status'
+import { createDiffCommentsSlice } from './diffComments'
 
 export const TEST_REPO = {
   id: 'repo1',
@@ -48,7 +49,8 @@ export function createTestStore() {
     ...createBrowserSlice(...a),
     ...createRateLimitSlice(...a),
     ...createSshSlice(...a),
-    ...createAgentStatusSlice(...a)
+    ...createAgentStatusSlice(...a),
+    ...createDiffCommentsSlice(...a)
   }))
 }
 
