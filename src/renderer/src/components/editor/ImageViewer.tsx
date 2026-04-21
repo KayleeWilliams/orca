@@ -10,6 +10,7 @@ import {
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { ORCA_PDF_VIEWER_PARTITION } from '../../../../shared/constants'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -40,6 +41,7 @@ export default function ImageViewer({
   const [activeMatch, setActiveMatch] = useState(0)
   const [totalMatches, setTotalMatches] = useState(0)
   const findInputRef = useRef<HTMLInputElement>(null)
+  const webviewRef = useRef<Electron.WebviewTag | null>(null)
 
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
@@ -91,7 +93,32 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(objectUrl)
   }, [cleanedContent, mimeType])
 
-  // ── PDF find-in-page via main-window webContents IPC ──────────────
+  // ── PDF find-in-page via webview.findInPage() ──────────────
+
+  const safeFindInPage = useCallback((text: string, opts?: Electron.FindInPageOptions): void => {
+    const webview = webviewRef.current
+    if (!webview || !text) {
+      return
+    }
+    try {
+      webview.findInPage(text, opts)
+    } catch {
+      // Why: the webview can be mid-teardown during tab close or navigation
+      // races. Best-effort is better than crashing.
+    }
+  }, [])
+
+  const safeStopFindInPage = useCallback((): void => {
+    const webview = webviewRef.current
+    if (!webview) {
+      return
+    }
+    try {
+      webview.stopFindInPage('clearSelection')
+    } catch {
+      // Why: same teardown race as safeFindInPage.
+    }
+  }, [])
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQuery(findQuery), 200)
@@ -100,48 +127,58 @@ export default function ImageViewer({
 
   useEffect(() => {
     if (!findOpen) {
-      window.api.ui.rendererStopFindInPage('clearSelection')
+      safeStopFindInPage()
       setActiveMatch(0)
       setTotalMatches(0)
       return
     }
     findInputRef.current?.focus()
     findInputRef.current?.select()
-  }, [findOpen])
+  }, [findOpen, safeStopFindInPage])
 
   useEffect(() => {
     if (!debouncedQuery || !findOpen) {
       if (findOpen) {
-        window.api.ui.rendererStopFindInPage('clearSelection')
+        safeStopFindInPage()
       }
       setActiveMatch(0)
       setTotalMatches(0)
       return
     }
-    window.api.ui.rendererFindInPage(debouncedQuery)
-  }, [debouncedQuery, findOpen])
+    safeFindInPage(debouncedQuery)
+  }, [debouncedQuery, findOpen, safeFindInPage, safeStopFindInPage])
 
   useEffect(() => {
-    if (!findOpen) {
+    const webview = webviewRef.current
+    if (!webview || !findOpen) {
       return
     }
-    return window.api.ui.onRendererFoundInPage((result) => {
-      setActiveMatch(result.activeMatchOrdinal)
-      setTotalMatches(result.matches)
-    })
+    const handleFoundInPage = (event: Electron.FoundInPageEvent): void => {
+      const { activeMatchOrdinal, matches } = event.result
+      setActiveMatch(activeMatchOrdinal)
+      setTotalMatches(matches)
+    }
+    webview.addEventListener('found-in-page', handleFoundInPage)
+    return () => {
+      try {
+        webview.removeEventListener('found-in-page', handleFoundInPage)
+      } catch {
+        // Why: webview may be destroyed during cleanup.
+      }
+    }
   }, [findOpen])
 
   const findNext = useCallback(() => {
     if (findQuery) {
-      window.api.ui.rendererFindInPage(findQuery, { forward: true, findNext: true })
+      safeFindInPage(findQuery, { forward: true, findNext: true })
     }
-  }, [findQuery])
+  }, [findQuery, safeFindInPage])
 
   const findPrevious = useCallback(() => {
     if (findQuery) {
-      window.api.ui.rendererFindInPage(findQuery, { forward: false, findNext: true })
+      safeFindInPage(findQuery, { forward: false, findNext: true })
     }
-  }, [findQuery])
+  }, [findQuery, safeFindInPage])
 
   const closeFindBar = useCallback(() => {
     setFindOpen(false)
@@ -251,14 +288,17 @@ export default function ImageViewer({
           </Button>
         </div>
       ) : null}
-      {/* Why: Electron's Chromium PDF viewer can fail to initialize inside a
-          sandboxed iframe even when the Blob URL is valid. Using <embed> keeps
-          the preview isolated to the browser's native PDF surface without
-          depending on iframe document execution. */}
-      <embed
+      {/* Why: <embed> renders PDFs via Chromium's plugin but its content is in a
+          separate process invisible to findInPage(). A <webview> owns its own
+          webContents, so webview.findInPage() can search the PDF text layer.
+          The will-attach-webview security handler allows blob: URLs only for
+          this dedicated partition. */}
+      <webview
+        ref={webviewRef}
         src={`${previewUrl}#navpanes=0`}
-        type={mimeType}
+        partition={ORCA_PDF_VIEWER_PARTITION}
         className="flex-1 min-h-[24rem] w-full bg-background"
+        style={{ display: 'inline-flex' }}
       />
     </div>
   ) : (
