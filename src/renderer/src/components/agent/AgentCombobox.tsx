@@ -35,6 +35,10 @@ type AgentComboboxProps = {
    *  each list item (including Blank Terminal) gets a context menu. */
   onSetDefault?: (agent: DefaultAgentPreference) => void
   triggerClassName?: string
+  /** When set, pressing Enter on the closed combobox trigger invokes this
+   *  instead of opening the popover — lets the parent form treat the Agent
+   *  field as the last keyboard-submit step. */
+  onTriggerEnter?: () => void
 }
 
 const BLANK_VALUE = '__none__'
@@ -121,7 +125,8 @@ export default function AgentCombobox({
   onOpenManageAgents,
   defaultAgent,
   onSetDefault,
-  triggerClassName
+  triggerClassName,
+  onTriggerEnter
 }: AgentComboboxProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -193,6 +198,18 @@ export default function AgentCombobox({
       if (open) {
         return
       }
+      if (
+        event.key === 'Enter' &&
+        onTriggerEnter &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault()
+        onTriggerEnter()
+        return
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         setOpen(true)
@@ -207,7 +224,7 @@ export default function AgentCombobox({
         setOpen(true)
       }
     },
-    [open]
+    [open, onTriggerEnter]
   )
 
   return (

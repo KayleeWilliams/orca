@@ -255,10 +255,10 @@ export default function NewWorkspaceComposerCard({
         containerClassName
       )}
     >
-      <div className="space-y-4">
+      <div className="space-y-4 pt-3">
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <label className="text-[11px] font-medium text-muted-foreground">Repository</label>
+            <label className="text-xs font-medium text-muted-foreground">Repository</label>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -292,27 +292,41 @@ export default function NewWorkspaceComposerCard({
             // ring-ring/50, 3px) onto :focus so the autofocused repo trigger
             // paints the familiar field ring instead of leaving no visible
             // focus state.
-            triggerClassName="h-8 w-full border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
             showStandaloneAddButton={false}
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">
+          <label className="text-xs font-medium text-muted-foreground">
             Workspace Name <span className="text-muted-foreground/70">[Optional]</span>
           </label>
           <Input
             ref={nameInputRef}
             value={name}
             onChange={onNameChange}
+            onKeyDown={(event) => {
+              // Why: Enter on the workspace name advances focus to the next
+              // field (Agent combobox) rather than submitting, letting the user
+              // progress through the form with just the keyboard.
+              if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey) {
+                return
+              }
+              event.preventDefault()
+              const root = composerRef?.current
+              const agentTrigger = root?.querySelector<HTMLElement>(
+                '[data-agent-combobox-root="true"][role="combobox"]'
+              )
+              agentTrigger?.focus()
+            }}
             placeholder="Workspace name"
-            className="h-8 text-xs"
+            className="h-9 text-sm"
           />
         </div>
 
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <label className="text-[11px] font-medium text-muted-foreground">Agent</label>
+            <label className="text-xs font-medium text-muted-foreground">Agent</label>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -338,7 +352,8 @@ export default function NewWorkspaceComposerCard({
             onOpenManageAgents={onOpenAgentSettings}
             defaultAgent={defaultTuiAgent}
             onSetDefault={handleSetDefaultAgent}
-            triggerClassName="h-8 w-full border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            onTriggerEnter={createDisabled ? undefined : onCreate}
           />
         </div>
 
@@ -356,7 +371,7 @@ export default function NewWorkspaceComposerCard({
                 gets clipped on the right edge when the field is focused. */}
             <div className="space-y-4 px-1 pt-1">
               <div className="space-y-1">
-                <label className="text-[11px] font-medium text-muted-foreground">Note</label>
+                <label className="text-xs font-medium text-muted-foreground">Note</label>
                 <textarea
                   value={note}
                   onChange={(event) => onNoteChange(event.target.value)}
@@ -370,14 +385,14 @@ export default function NewWorkspaceComposerCard({
                   }}
                   placeholder="Write a note"
                   rows={1}
-                  className="w-full min-w-0 resize-none overflow-hidden rounded-md border border-input bg-transparent px-3 py-1.5 text-xs shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 max-h-40"
+                  className="w-full min-w-0 resize-none overflow-hidden rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 max-h-40"
                 />
               </div>
 
               {setupConfig ? (
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="text-[11px] font-medium text-muted-foreground">
+                    <label className="text-xs font-medium text-muted-foreground">
                       Setup script
                     </label>
                     <span className="rounded-full border border-border/70 bg-muted/45 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-foreground/70">
