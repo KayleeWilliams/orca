@@ -211,7 +211,7 @@ export default function AgentCombobox({
   )
 
   return (
-    <div className="flex items-center">
+    <div className="flex w-full items-center">
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
@@ -243,7 +243,7 @@ export default function AgentCombobox({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-72 p-0"
+          className="w-[var(--radix-popover-trigger-width)] min-w-[18rem] p-0"
           data-agent-combobox-root="true"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >

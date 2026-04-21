@@ -156,7 +156,7 @@ export default function RepoCombobox({
   }, [addRepo, fetchWorktrees, isAdding, onValueChange])
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex w-full items-center gap-1.5">
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
@@ -194,7 +194,7 @@ export default function RepoCombobox({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-80 p-0"
+          className="w-[var(--radix-popover-trigger-width)] min-w-[18rem] p-0"
           data-repo-combobox-root="true"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >

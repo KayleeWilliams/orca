@@ -256,10 +256,7 @@ export default function NewWorkspaceComposerCard({
       )}
     >
       <div className="space-y-4">
-        {/* Why: w-fit keeps the label+icon row the same width as the combobox
-            trigger beneath it so the action icon visually anchors to the
-            trigger's right edge rather than stretching to the dialog edge. */}
-        <div className="w-fit space-y-1">
+        <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
             <label className="text-[11px] font-medium text-muted-foreground">Repository</label>
             <Tooltip>
@@ -295,7 +292,7 @@ export default function NewWorkspaceComposerCard({
             // ring-ring/50, 3px) onto :focus so the autofocused repo trigger
             // paints the familiar field ring instead of leaving no visible
             // focus state.
-            triggerClassName="h-8 border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            triggerClassName="h-8 w-full border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
             showStandaloneAddButton={false}
           />
         </div>
@@ -313,7 +310,7 @@ export default function NewWorkspaceComposerCard({
           />
         </div>
 
-        <div className="w-fit space-y-1">
+        <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
             <label className="text-[11px] font-medium text-muted-foreground">Agent</label>
             <Tooltip>
@@ -341,7 +338,7 @@ export default function NewWorkspaceComposerCard({
             onOpenManageAgents={onOpenAgentSettings}
             defaultAgent={defaultTuiAgent}
             onSetDefault={handleSetDefaultAgent}
-            triggerClassName="h-8 border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            triggerClassName="h-8 w-full border-input text-xs focus:border-ring focus:ring-[3px] focus:ring-ring/50"
           />
         </div>
 
