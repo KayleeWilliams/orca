@@ -43,6 +43,16 @@ type WorktreeActivationStore = {
  * internally via `findWorktreeById`. Returns early without side effects
  * if the worktree is not found (e.g. deleted between palette open and select).
  */
+export type ActivateAndRevealResult = {
+  /** Id of the primary terminal tab seeded with `opts.startup`, when one was
+   *  created during this activation call. Callers that want to target the
+   *  exact pane the startup command ran in (e.g. to await agent readiness
+   *  and paste follow-up text) should use this rather than peeking at
+   *  `activeTabIdByWorktree`, which may point at another tab if setup or
+   *  issue-command scripts opened their own. */
+  primaryTabId: string | null
+}
+
 export function activateAndRevealWorktree(
   worktreeId: string,
   opts?: {
@@ -50,7 +60,7 @@ export function activateAndRevealWorktree(
     setup?: WorktreeSetupLaunch
     issueCommand?: IssueCommandLaunch
   }
-): boolean {
+): ActivateAndRevealResult | false {
   const state = useAppStore.getState()
   const wt = findWorktreeById(state.worktreesByRepo, worktreeId)
   if (!wt) {
@@ -72,7 +82,7 @@ export function activateAndRevealWorktree(
   state.setActiveWorktree(worktreeId)
 
   // 4. Ensure a focusable surface exists for externally-created worktrees
-  ensureWorktreeHasInitialTerminal(
+  const primaryTabId = ensureWorktreeHasInitialTerminal(
     useAppStore.getState(),
     worktreeId,
     opts?.startup,
@@ -94,7 +104,7 @@ export function activateAndRevealWorktree(
   // 6. Reveal in sidebar
   state.revealWorktreeInSidebar(worktreeId)
 
-  return true
+  return { primaryTabId }
 }
 
 export function ensureWorktreeHasInitialTerminal(
@@ -103,13 +113,13 @@ export function ensureWorktreeHasInitialTerminal(
   startup?: { command: string; env?: Record<string, string> },
   setup?: WorktreeSetupLaunch,
   issueCommand?: IssueCommandLaunch
-): void {
+): string | null {
   const { renderableTabCount } = store.reconcileWorktreeTabModel(worktreeId)
   // Why: activation can now restore editor- or browser-only worktrees from the
   // reconciled tab-group model. Creating a terminal just because the legacy
   // terminal slice is empty would reopen worktrees with an unexpected extra tab.
   if (!shouldAutoCreateInitialTerminal(renderableTabCount)) {
-    return
+    return null
   }
 
   const terminalTab = store.createTab(worktreeId)
@@ -171,4 +181,6 @@ export function ensureWorktreeHasInitialTerminal(
         : { command: issueCommand.command, env: issueCommand.env }
     store.queueTabIssueCommandSplit(terminalTab.id, queuedIssueCommand)
   }
+
+  return terminalTab.id
 }

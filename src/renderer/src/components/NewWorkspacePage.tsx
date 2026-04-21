@@ -40,6 +40,7 @@ import GitHubItemDrawer from '@/components/GitHubItemDrawer'
 import { cn } from '@/lib/utils'
 import { getLinkedWorkItemSuggestedName, getTaskPresetQuery } from '@/lib/new-workspace'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
+import { launchWorkItemDirect } from '@/lib/launch-work-item-direct'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import type { GitHubWorkItem, TaskViewPresetId } from '../../../shared/types'
 import { shouldSuppressEnterSubmit } from '@/lib/new-workspace-enter-guard'
@@ -213,8 +214,8 @@ export default function NewWorkspacePage(): React.JSX.Element {
     return getCachedWorkItems(selectedRepo.path, WORK_ITEM_LIMIT, initialTaskQuery.trim()) ?? []
   })
   // Why: clicking a GitHub row opens this drawer for a read-only preview.
-  // The composer modal is only opened by the drawer's "Use" button, which
-  // calls the same handleSelectWorkItem as the old direct row-click flow.
+  // Drawer's "Use" button routes through the same direct-launch flow as the
+  // row-level "Use" CTA so behavior is consistent regardless of entry point.
   const [drawerWorkItem, setDrawerWorkItem] = useState<GitHubWorkItem | null>(null)
   const [newIssueOpen, setNewIssueOpen] = useState(false)
   const [newIssueTitle, setNewIssueTitle] = useState('')
@@ -362,11 +363,8 @@ export default function NewWorkspacePage(): React.JSX.Element {
     [handleApplyTaskSearch]
   )
 
-  const handleSelectWorkItem = useCallback(
+  const openComposerForItem = useCallback(
     (item: GitHubWorkItem): void => {
-      // Why: selecting a task from the list opens the same lightweight composer
-      // modal used by Cmd+J, so the prompt path is identical whether the user
-      // arrives via palette URL, picked issue/PR, or chose one from this list.
       const linkedWorkItem: LinkedWorkItemSummary = {
         type: item.type,
         number: item.number,
@@ -380,6 +378,23 @@ export default function NewWorkspacePage(): React.JSX.Element {
       })
     },
     [openModal, repoId]
+  )
+
+  const handleUseWorkItem = useCallback(
+    (item: GitHubWorkItem): void => {
+      // Why: the "Use" CTA is the primary way to start work from this page, so
+      // skip the composer for the common case and create+activate the workspace
+      // immediately, launch the user's default agent, and paste the work item
+      // URL into the agent's input as a reviewable draft. Fall back to the
+      // composer modal only when explicit per-workspace decisions are required
+      // (setupRunPolicy === 'ask') or the repo/agent resolution fails.
+      void launchWorkItemDirect({
+        item,
+        repoId,
+        openModalFallback: () => openComposerForItem(item)
+      })
+    },
+    [openComposerForItem, repoId]
   )
 
   const handleCreateNewIssue = useCallback(async (): Promise<void> => {
@@ -814,7 +829,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              handleSelectWorkItem(item)
+                              handleUseWorkItem(item)
                             }}
                             className="inline-flex items-center gap-1 rounded-xl border border-border/50 bg-background/50 backdrop-blur-md px-3 py-1.5 text-sm text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
                           >
@@ -933,7 +948,7 @@ export default function NewWorkspacePage(): React.JSX.Element {
         repoPath={selectedRepo?.path ?? null}
         onUse={(item) => {
           setDrawerWorkItem(null)
-          handleSelectWorkItem(item)
+          handleUseWorkItem(item)
         }}
         onClose={() => setDrawerWorkItem(null)}
       />

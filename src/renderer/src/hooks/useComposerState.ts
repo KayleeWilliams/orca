@@ -11,6 +11,7 @@ import { parseGitHubIssueOrPRNumber, normalizeGitHubLinkQuery } from '@/lib/gith
 import type { RepoSlug } from '@/lib/github-links'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { buildAgentStartupPlan } from '@/lib/tui-agent-startup'
+import { detectAgentsCached } from '@/lib/detect-agents-cached'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import type {
   GitHubWorkItem,
@@ -121,28 +122,6 @@ export type UseComposerStateResult = {
 // modal wins when both are present, and the page takes over once the modal
 // closes.
 const composerDropStack: symbol[] = []
-
-// Why: agent detection runs `which` for every agent binary on PATH — an IPC
-// round-trip that takes 50–200ms. The set of installed agents doesn't change
-// within a session, so cache the promise at module scope to collapse all
-// mounts (page + modal, reopen, etc.) onto a single resolve.
-let detectAgentsPromise: Promise<TuiAgent[]> | null = null
-function detectAgentsCached(): Promise<TuiAgent[]> {
-  if (detectAgentsPromise) {
-    return detectAgentsPromise
-  }
-  const pending = window.api.preflight
-    .detectAgents()
-    .then((ids) => ids as TuiAgent[])
-    .catch(() => {
-      // Allow a retry on the next mount if detection blew up (e.g. IPC
-      // timeout during cold start).
-      detectAgentsPromise = null
-      return [] as TuiAgent[]
-    })
-  detectAgentsPromise = pending
-  return pending
-}
 
 export function useComposerState(options: UseComposerStateOptions): UseComposerStateResult {
   const {
