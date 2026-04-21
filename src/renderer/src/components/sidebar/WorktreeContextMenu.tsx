@@ -214,8 +214,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
               </DropdownMenuItem>
             </TooltipTrigger>
             <TooltipContent side="right" sideOffset={8} className="max-w-[240px]">
-              Close all terminals and browser tabs in this workspace to free up memory and CPU.
-              They&apos;ll be re-created when you reopen it.
+              Close all active panels in this workspace to free up memory and CPU. They&apos;ll be
+              re-created when you reopen it.
             </TooltipContent>
           </Tooltip>
           {/* Why: `git worktree remove` always rejects the main worktree, so we
