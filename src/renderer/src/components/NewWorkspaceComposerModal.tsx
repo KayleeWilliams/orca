@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/store'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import NewWorkspaceComposerCard from '@/components/NewWorkspaceComposerCard'
 import { useComposerState } from '@/hooks/useComposerState'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
@@ -89,7 +95,7 @@ function ComposerModalBody({
     await submitQuick(quickAgent)
   }, [quickAgent, submitQuick])
 
-  // Enter submits, Esc first blurs the focused input (like the full page).
+  // Cmd/Ctrl+Enter submits, Esc first blurs the focused input (like the full page).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Enter' && event.key !== 'Escape') {
@@ -116,6 +122,14 @@ function ComposerModalBody({
         return
       }
 
+      // Why: require the platform modifier (Cmd on macOS, Ctrl elsewhere) so
+      // plain Enter inside fields (notes, repo search) doesn't accidentally
+      // submit — users can type or confirm selections without triggering
+      // workspace creation.
+      const hasModifier = event.metaKey || event.ctrlKey
+      if (!hasModifier) {
+        return
+      }
       if (!composerRef.current?.contains(target)) {
         return
       }
@@ -135,8 +149,7 @@ function ComposerModalBody({
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-[480px]"
-        showCloseButton={false}
+        className="sm:max-w-md"
         onOpenAutoFocus={(event) => {
           // Why: Radix's FocusScope fires this once the dialog has mounted and
           // the DOM is ready. preventDefault stops it from focusing the first
@@ -154,12 +167,13 @@ function ComposerModalBody({
           trigger?.focus({ preventScroll: true })
         }}
       >
-        <DialogTitle className="sr-only">Create New Workspace</DialogTitle>
-        <DialogDescription className="sr-only">
-          Configure a name and prompt for the new workspace.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle className="text-sm">Create Workspace</DialogTitle>
+          <DialogDescription className="text-xs">
+            Pick a repository and agent to spin up a new workspace.
+          </DialogDescription>
+        </DialogHeader>
         <NewWorkspaceComposerCard
-          containerClassName="bg-card/98 shadow-2xl supports-[backdrop-filter]:bg-card/95"
           composerRef={composerRef}
           nameInputRef={nameInputRef}
           quickAgent={quickAgent}
