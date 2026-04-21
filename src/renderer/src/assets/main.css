@@ -941,16 +941,17 @@
 /* Why: the saved note used to blend into the editor background because it
    reused the same muted/background mix the editor itself uses. Stay
    grayscale to match the rest of the UI, but lift the card off the editor:
-   a heavier foreground-tinted fill, a solid left accent bar in the
-   foreground color, a soft shadow, and a bolded uppercase meta label.
-   All built from --foreground / --border / --muted so the treatment
-   tracks whichever theme is active. */
+   a foreground-tinted fill over the editor surface, a solid left accent
+   bar, a soft shadow, and a bolded uppercase meta label. The fill mixes
+   against --editor-surface (not --background) because in dark mode those
+   differ (#1e1e1e vs #0a0a0a) — mixing against --background would make
+   the card darker than the editor and render it invisible. */
 .orca-diff-comment-card {
   position: relative;
   border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
   border-left: 3px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  background: color-mix(in srgb, var(--foreground) 10%, var(--editor-surface));
   padding: 6px 8px 6px 10px;
   font-family: var(--font-sans, system-ui, sans-serif);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 15%, transparent);
