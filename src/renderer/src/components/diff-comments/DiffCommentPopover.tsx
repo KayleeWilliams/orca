@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { CornerDownLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // Why: rendered as a DOM sibling overlay inside the editor container rather
@@ -150,6 +151,7 @@ export function DiffCommentPopover({
         </Button>
         <Button size="sm" onClick={handleSubmit} disabled={submitting || body.trim().length === 0}>
           {submitting ? 'Saving…' : 'Add note'}
+          {!submitting && <CornerDownLeft className="ml-1 size-3 opacity-70" />}
         </Button>
       </div>
     </div>

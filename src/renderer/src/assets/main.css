@@ -940,21 +940,25 @@
 
 /* Why: the saved note used to blend into the editor background because it
    reused the same muted/background mix the editor itself uses. Stay
-   grayscale to match the rest of the UI, but lift the card off the editor:
-   a foreground-tinted fill over the editor surface, a solid left accent
-   bar, a soft shadow, and a bolded uppercase meta label. The fill mixes
-   against --editor-surface (not --background) because in dark mode those
-   differ (#1e1e1e vs #0a0a0a) — mixing against --background would make
-   the card darker than the editor and render it invisible. */
+   grayscale to match the rest of the UI, but lift the card off the editor
+   with a foreground-tinted fill, a solid left accent bar, a soft shadow,
+   and a bolded uppercase meta label. Dark mode uses 6% (vs light's 5%)
+   to produce roughly the same absolute luminance delta above its editor
+   surface — the foreground color is different (white vs black) so equal
+   percentages would not give equal contrast. Override lives in `.dark`. */
 .orca-diff-comment-card {
   position: relative;
   border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
   border-left: 3px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--foreground) 10%, var(--editor-surface));
+  background: color-mix(in srgb, var(--foreground) 5%, var(--editor-surface));
   padding: 6px 8px 6px 10px;
   font-family: var(--font-sans, system-ui, sans-serif);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.dark .orca-diff-comment-card {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--editor-surface));
 }
 
 .orca-diff-comment-header {
@@ -1008,25 +1012,31 @@
   word-break: break-word;
 }
 
-/* Popover for entering a new comment. Positioned absolutely within the
-   section container so it tracks the clicked line via `top` style. Anchored
-   near the content (past the gutter) rather than the far right, so it reads
-   as attached to the line it comments on instead of floating in empty space. */
+/* Why: mirror the saved-note card treatment so the "entering" and "saved"
+   states read as the same object at two stages of the same flow. Same
+   foreground-tinted fill over --editor-surface, same border + left accent
+   bar, same shadow. Kept one level stronger on the shadow because the
+   popover floats above the editor instead of being laid into a view zone. */
 .orca-diff-comment-popover {
   position: absolute;
   left: 56px;
   right: 24px;
   max-width: 420px;
   z-index: 1000;
-  padding: 8px;
-  border: 1px solid var(--border);
+  padding: 8px 8px 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 6px;
-  background: var(--popover, var(--background));
-  color: var(--popover-foreground, var(--foreground));
+  background: color-mix(in srgb, var(--foreground) 5%, var(--editor-surface));
+  color: var(--foreground);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.dark .orca-diff-comment-popover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--editor-surface));
 }
 
 .orca-diff-comment-popover-label {
@@ -1043,9 +1053,11 @@
   max-height: 240px;
   resize: none;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
   border-radius: 4px;
-  background: var(--background);
+  /* Why: match the editor surface so the input reads as embedded in the card
+     rather than a pure-white/pure-black cutout pasted on top. */
+  background: var(--editor-surface);
   color: var(--foreground);
   font-family: inherit;
   font-size: 12px;
