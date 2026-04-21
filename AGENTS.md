@@ -1,8 +1,10 @@
 # AGENTS.md
 
-## Code Comments: Document the "Why"
+## Code Comments: Document the "Why", Briefly
 
-When writing or modifying code driven by a design doc or non-obvious constraint, you **must** add a comment explaining **why** the code behaves the way it does.
+When writing or modifying code driven by a design doc or non-obvious constraint, add a comment explaining **why** the code behaves the way it does.
+
+Keep comments short — one or two lines. Capture only the non-obvious reason (safety constraint, compatibility shim, design-doc rule). Don't restate what the code does, narrate the mechanism, cite design-doc sections verbatim, or explain adjacent API choices unless they're the point.
 
 ## File and Module Naming
 
