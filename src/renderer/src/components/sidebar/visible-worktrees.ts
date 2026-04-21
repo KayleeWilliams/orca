@@ -120,9 +120,13 @@ export function getVisibleWorktreeIds(): string[] {
   let sortedIds: string[]
 
   if (state.sortBy === 'smart') {
-    sortedIds = sortWorktreesSmart(allWorktrees, state.tabsByWorktree, repoMap, state.prCache).map(
-      (w) => w.id
-    )
+    sortedIds = sortWorktreesSmart(
+      allWorktrees,
+      state.tabsByWorktree,
+      repoMap,
+      state.prCache,
+      state.agentStatusByPaneKey
+    ).map((w) => w.id)
   } else {
     const sorted = [...allWorktrees].sort(
       buildWorktreeComparator(
@@ -130,7 +134,9 @@ export function getVisibleWorktreeIds(): string[] {
         state.tabsByWorktree,
         repoMap,
         state.prCache,
-        Date.now()
+        Date.now(),
+        null,
+        state.agentStatusByPaneKey
       )
     )
     sortedIds = sorted.map((w) => w.id)

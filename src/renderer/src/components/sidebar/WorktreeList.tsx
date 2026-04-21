@@ -430,6 +430,7 @@ const WorktreeList = React.memo(function WorktreeList() {
   const issueCache = useAppStore((s) => (searchQuery ? s.issueCache : null))
 
   const sortEpoch = useAppStore((s) => s.sortEpoch)
+  const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   // Count of non-archived worktrees — used to detect structural changes
   // (add/remove) vs. pure reorders (score shifts) so the debounce below
@@ -472,7 +473,7 @@ const WorktreeList = React.memo(function WorktreeList() {
 
     const timer = setTimeout(() => setDebouncedSortEpoch(sortEpoch), SORT_SETTLE_MS)
     return () => clearTimeout(timer)
-  }, [sortEpoch, debouncedSortEpoch, worktreeCount])
+  }, [sortEpoch, debouncedSortEpoch, worktreeCount, agentStatusEpoch])
 
   // Why a latching ref: we need to distinguish "app just started, no PTYs
   // have spawned yet" from "user closed all terminals mid-session." The
@@ -522,14 +523,22 @@ const WorktreeList = React.memo(function WorktreeList() {
 
     const currentTabs = state.tabsByWorktree
     nonArchivedWorktrees.sort(
-      buildWorktreeComparator(sortBy, currentTabs, repoMap, state.prCache, Date.now())
+      buildWorktreeComparator(
+        sortBy,
+        currentTabs,
+        repoMap,
+        state.prCache,
+        Date.now(),
+        null,
+        state.agentStatusByPaneKey
+      )
     )
     return nonArchivedWorktrees.map((w) => w.id)
     // debouncedSortEpoch is an intentional trigger: it's not read inside the
     // memo, but its change signals that the sort order should be recomputed.
     // The debounce prevents jarring mid-interaction position shifts.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSortEpoch, repoMap, sortBy])
+  }, [debouncedSortEpoch, repoMap, sortBy, agentStatusEpoch])
 
   // Persist the computed sort order so the sidebar can be restored after
   // restart. Only persist during live sessions (sessionHasHadPty latched) —
