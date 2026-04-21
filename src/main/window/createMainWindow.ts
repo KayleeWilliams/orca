@@ -207,11 +207,13 @@ export function createMainWindow(
     const normalizedSrc = normalizeBrowserNavigationUrl(src)
     const partition = typeof webPreferences.partition === 'string' ? webPreferences.partition : ''
 
-    // Why: the PDF viewer renders base64-decoded content via a blob: object URL
-    // in a dedicated partition. This is the only surface allowed to load blob:
-    // URLs — browser guests must still go through normalizeBrowserNavigationUrl
-    // which rejects non-http/https protocols.
-    const isPdfViewerGuest = partition === ORCA_PDF_VIEWER_PARTITION && src.startsWith('blob:')
+    // Why: the PDF viewer loads base64 content as a self-contained data URL in
+    // a dedicated partition. Only data:application/pdf is allowed — this is
+    // narrow enough that a compromised renderer cannot inject arbitrary HTML.
+    // Browser guests still go through normalizeBrowserNavigationUrl which
+    // rejects non-http/https protocols.
+    const isPdfViewerGuest =
+      partition === ORCA_PDF_VIEWER_PARTITION && src.startsWith('data:application/pdf;base64,')
 
     // Why: arbitrary sites must stay inside an unprivileged guest surface. We
     // fail closed here so a renderer bug cannot smuggle preload, Node, or a

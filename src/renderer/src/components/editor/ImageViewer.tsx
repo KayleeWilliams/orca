@@ -291,11 +291,11 @@ export default function ImageViewer({
       {/* Why: <embed> renders PDFs via Chromium's plugin but its content is in a
           separate process invisible to findInPage(). A <webview> owns its own
           webContents, so webview.findInPage() can search the PDF text layer.
-          The will-attach-webview security handler allows blob: URLs only for
-          this dedicated partition. */}
+          We use a data URL instead of a blob URL because blob URLs are
+          origin-scoped and inaccessible from the webview's separate process. */}
       <webview
         ref={webviewRef}
-        src={`${previewUrl}#navpanes=0`}
+        src={`data:${mimeType};base64,${cleanedContent}`}
         partition={ORCA_PDF_VIEWER_PARTITION}
         className="flex-1 min-h-[24rem] w-full bg-background"
         style={{ display: 'inline-flex' }}
