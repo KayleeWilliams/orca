@@ -12,7 +12,6 @@ import {
   normalizeExternalBrowserUrl
 } from '../../shared/browser-url'
 import { resolveWindowShortcutAction } from '../../shared/window-shortcut-policy'
-import { ORCA_PDF_VIEWER_PARTITION } from '../../shared/constants'
 import { getMainE2EConfig } from '../e2e-config'
 
 function forceRepaint(window: BrowserWindow): void {
@@ -207,14 +206,6 @@ export function createMainWindow(
     const normalizedSrc = normalizeBrowserNavigationUrl(src)
     const partition = typeof webPreferences.partition === 'string' ? webPreferences.partition : ''
 
-    // Why: the PDF viewer loads base64 content as a self-contained data URL in
-    // a dedicated partition. Only data:application/pdf is allowed — this is
-    // narrow enough that a compromised renderer cannot inject arbitrary HTML.
-    // Browser guests still go through normalizeBrowserNavigationUrl which
-    // rejects non-http/https protocols.
-    const isPdfViewerGuest =
-      partition === ORCA_PDF_VIEWER_PARTITION && src.startsWith('data:application/pdf;base64,')
-
     // Why: arbitrary sites must stay inside an unprivileged guest surface. We
     // fail closed here so a renderer bug cannot smuggle preload, Node, or a
     // non-browser partition into the guest and widen the app privilege boundary.
@@ -224,10 +215,7 @@ export function createMainWindow(
     // persist:orca-browser-session-<uuid>). The registry is the sole authority
     // for which partitions are valid — renderer-provided strings that are not
     // in the allowlist are rejected.
-    if (
-      !isPdfViewerGuest &&
-      (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition))
-    ) {
+    if (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition)) {
       event.preventDefault()
       return
     }
@@ -248,6 +236,40 @@ export function createMainWindow(
     // legacy constant. This lets imported/isolated session profiles use their
     // own cookie/storage partition while keeping all other hardening intact.
     webPreferences.partition = partition
+  })
+
+  // Why: the <embed> PDF viewer is a Chromium plugin whose content is in a
+  // separate process. The BrowserWindow's own findInPage() can search the
+  // PDF viewer's text layer at the compositor level, so we expose it via IPC
+  // so the renderer's PDF find bar can drive find-in-page.
+  ipcMain.on(
+    'ui:rendererFindInPage',
+    (event, args: { text: string; forward?: boolean; findNext?: boolean }) => {
+      if (event.sender !== mainWindow.webContents) {
+        return
+      }
+      mainWindow.webContents.findInPage(args.text, {
+        forward: args.forward,
+        findNext: args.findNext
+      })
+    }
+  )
+
+  ipcMain.on(
+    'ui:rendererStopFindInPage',
+    (event, args: { action: 'clearSelection' | 'keepSelection' | 'activateSelection' }) => {
+      if (event.sender !== mainWindow.webContents) {
+        return
+      }
+      mainWindow.webContents.stopFindInPage(args.action)
+    }
+  )
+
+  mainWindow.webContents.on('found-in-page', (_event, result) => {
+    mainWindow.webContents.send('ui:rendererFoundInPage', {
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches
+    })
   })
 
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {

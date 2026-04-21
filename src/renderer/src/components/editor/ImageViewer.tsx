@@ -3,6 +3,7 @@ import {
   ChevronUp,
   Image as ImageIcon,
   RotateCcw,
+  Search,
   X,
   ZoomIn,
   ZoomOut
@@ -10,7 +11,6 @@ import {
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { ORCA_PDF_VIEWER_PARTITION } from '../../../../shared/constants'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -41,7 +41,6 @@ export default function ImageViewer({
   const [activeMatch, setActiveMatch] = useState(0)
   const [totalMatches, setTotalMatches] = useState(0)
   const findInputRef = useRef<HTMLInputElement>(null)
-  const webviewRef = useRef<Electron.WebviewTag | null>(null)
 
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
@@ -93,32 +92,11 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(objectUrl)
   }, [cleanedContent, mimeType])
 
-  // ── PDF find-in-page via webview.findInPage() ──────────────
-
-  const safeFindInPage = useCallback((text: string, opts?: Electron.FindInPageOptions): void => {
-    const webview = webviewRef.current
-    if (!webview || !text) {
-      return
-    }
-    try {
-      webview.findInPage(text, opts)
-    } catch {
-      // Why: the webview can be mid-teardown during tab close or navigation
-      // races. Best-effort is better than crashing.
-    }
-  }, [])
-
-  const safeStopFindInPage = useCallback((): void => {
-    const webview = webviewRef.current
-    if (!webview) {
-      return
-    }
-    try {
-      webview.stopFindInPage('clearSelection')
-    } catch {
-      // Why: same teardown race as safeFindInPage.
-    }
-  }, [])
+  // ── PDF find-in-page via main-window webContents IPC ──────────────
+  // Why: the <embed> PDF viewer is a Chromium plugin whose DOM is in a
+  // separate process. The BrowserWindow's webContents.findInPage() can
+  // search the Chromium PDF viewer's text layer at the compositor level,
+  // so we route find requests through IPC to the main process.
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQuery(findQuery), 200)
@@ -127,64 +105,57 @@ export default function ImageViewer({
 
   useEffect(() => {
     if (!findOpen) {
-      safeStopFindInPage()
+      window.api.ui.rendererStopFindInPage('clearSelection')
       setActiveMatch(0)
       setTotalMatches(0)
       return
     }
     findInputRef.current?.focus()
     findInputRef.current?.select()
-  }, [findOpen, safeStopFindInPage])
+  }, [findOpen])
 
   useEffect(() => {
     if (!debouncedQuery || !findOpen) {
       if (findOpen) {
-        safeStopFindInPage()
+        window.api.ui.rendererStopFindInPage('clearSelection')
       }
       setActiveMatch(0)
       setTotalMatches(0)
       return
     }
-    safeFindInPage(debouncedQuery)
-  }, [debouncedQuery, findOpen, safeFindInPage, safeStopFindInPage])
+    window.api.ui.rendererFindInPage(debouncedQuery)
+  }, [debouncedQuery, findOpen])
 
   useEffect(() => {
-    const webview = webviewRef.current
-    if (!webview || !findOpen) {
+    if (!findOpen) {
       return
     }
-    const handleFoundInPage = (event: Electron.FoundInPageEvent): void => {
-      const { activeMatchOrdinal, matches } = event.result
-      setActiveMatch(activeMatchOrdinal)
-      setTotalMatches(matches)
-    }
-    webview.addEventListener('found-in-page', handleFoundInPage)
-    return () => {
-      try {
-        webview.removeEventListener('found-in-page', handleFoundInPage)
-      } catch {
-        // Why: webview may be destroyed during cleanup.
-      }
-    }
+    return window.api.ui.onRendererFoundInPage((result) => {
+      setActiveMatch(result.activeMatchOrdinal)
+      setTotalMatches(result.matches)
+    })
   }, [findOpen])
 
   const findNext = useCallback(() => {
     if (findQuery) {
-      safeFindInPage(findQuery, { forward: true, findNext: true })
+      window.api.ui.rendererFindInPage(findQuery, { forward: true, findNext: true })
     }
-  }, [findQuery, safeFindInPage])
+  }, [findQuery])
 
   const findPrevious = useCallback(() => {
     if (findQuery) {
-      safeFindInPage(findQuery, { forward: false, findNext: true })
+      window.api.ui.rendererFindInPage(findQuery, { forward: false, findNext: true })
     }
-  }, [findQuery, safeFindInPage])
+  }, [findQuery])
 
   const closeFindBar = useCallback(() => {
     setFindOpen(false)
   }, [])
 
-  // Cmd/Ctrl+F — open find bar for PDF viewer
+  // Why: when the <embed> PDF plugin has focus, keyboard events go to the
+  // plugin process and don't propagate to the renderer's DOM. This handler
+  // only fires when focus is outside the embed (e.g. right after tab switch).
+  // The Search button in the toolbar is the reliable entry point.
   useEffect(() => {
     if (!isPdf) {
       return
@@ -288,17 +259,14 @@ export default function ImageViewer({
           </Button>
         </div>
       ) : null}
-      {/* Why: <embed> renders PDFs via Chromium's plugin but its content is in a
-          separate process invisible to findInPage(). A <webview> owns its own
-          webContents, so webview.findInPage() can search the PDF text layer.
-          We use a data URL instead of a blob URL because blob URLs are
-          origin-scoped and inaccessible from the webview's separate process. */}
-      <webview
-        ref={webviewRef}
-        src={`data:${mimeType};base64,${cleanedContent}`}
-        partition={ORCA_PDF_VIEWER_PARTITION}
+      {/* Why: Electron's Chromium PDF viewer can fail to initialize inside a
+          sandboxed iframe even when the Blob URL is valid. Using <embed> keeps
+          the preview isolated to the browser's native PDF surface without
+          depending on iframe document execution. */}
+      <embed
+        src={`${previewUrl}#navpanes=0`}
+        type={mimeType}
         className="flex-1 min-h-[24rem] w-full bg-background"
-        style={{ display: 'inline-flex' }}
       />
     </div>
   ) : (
@@ -361,6 +329,16 @@ export default function ImageViewer({
               </button>
               <span className="ml-1 tabular-nums">{zoomPercent}%</span>
             </div>
+          )}
+          {isPdf && (
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-accent hover:text-foreground"
+              onClick={() => setFindOpen(true)}
+              title="Find in PDF (Cmd+F)"
+            >
+              <Search size={14} />
+            </button>
           )}
           <span className="min-w-0 truncate" title={filename}>
             {filename}
