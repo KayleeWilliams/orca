@@ -81,8 +81,11 @@ export function BrowserUseSetup({
   }, [browserUseEnabled, fetchBrowserSessionProfiles, fetchDetectedBrowsers])
 
   const defaultProfile = browserSessionProfiles.find((p) => p.id === 'default')
-  const anyProfileHasCookies = browserSessionProfiles.some((p) => p.source != null)
-  const cookiesImported = !!defaultProfile?.source || anyProfileHasCookies
+  // Why: this step explicitly imports into the default profile, so completion
+  // must track that profile only. Marking done when a non-default profile has
+  // cookies would mislead users into thinking agents can reach their logins
+  // when the default profile — the one agents use — is still empty.
+  const cookiesImported = !!defaultProfile?.source
 
   const cliEnabled = cliStatus?.state === 'installed'
   const cliSupported = cliStatus?.supported ?? false
@@ -158,7 +161,6 @@ export function BrowserUseSetup({
   const showStep3 = matchesSettingsSearch(searchQuery, [BROWSER_USE_PANE_SEARCH_ENTRIES[2]])
 
   const completedCount = [cliEnabled, skillInstalled, cookiesImported].filter(Boolean).length
-  const allDone = completedCount === 3
 
   const sourceLabel = defaultProfile?.source
     ? `${BROWSER_FAMILY_LABELS[defaultProfile.source.browserFamily] ?? defaultProfile.source.browserFamily}${defaultProfile.source.profileName ? ` (${defaultProfile.source.profileName})` : ''}`
@@ -208,7 +210,7 @@ export function BrowserUseSetup({
         <div className="flex shrink-0 items-center gap-2">
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-              allDone
+              completedCount === 3
                 ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
                 : 'bg-muted text-muted-foreground'
             }`}
@@ -281,6 +283,7 @@ export function BrowserUseSetup({
           <BrowserUseSkillStep
             command={ORCA_SKILL_INSTALL_COMMAND}
             skillInstalled={skillInstalled}
+            disabled={!cliEnabled}
             onCopy={() => void handleCopySkillCommand()}
             onToggleInstalled={() => markSkillInstalled(!skillInstalled)}
           />

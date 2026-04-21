@@ -6,6 +6,7 @@ import { StepBadge } from './BrowserUseStepBadge'
 type Props = {
   command: string
   skillInstalled: boolean
+  disabled?: boolean
   onCopy: () => void
   onToggleInstalled: () => void
 }
@@ -13,6 +14,7 @@ type Props = {
 export function BrowserUseSkillStep({
   command,
   skillInstalled,
+  disabled = false,
   onCopy,
   onToggleInstalled
 }: Props): React.JSX.Element {
@@ -57,8 +59,9 @@ export function BrowserUseSkillStep({
           </span>
           <button
             type="button"
-            className="underline-offset-2 hover:text-foreground hover:underline"
+            className="underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-muted-foreground"
             onClick={onToggleInstalled}
+            disabled={disabled}
           >
             {skillInstalled ? 'Undo' : 'I ran it'}
           </button>
