@@ -505,7 +505,7 @@ export default function RichMarkdownEditor({
         query={searchQuery}
         searchInputRef={searchInputRef}
       />
-      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto scrollbar-editor">
         <EditorContent editor={editor} />
       </div>
       {linkBubble ? (
