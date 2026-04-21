@@ -5,6 +5,7 @@ import type { GlobalSettings } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useAppStore } from '../../store'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
@@ -116,20 +117,24 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
               Used when typing non-URL text in the address bar.
             </p>
           </div>
-          <select
+          <Select
             value={browserDefaultSearchEngine ?? 'google'}
-            onChange={(e) => {
-              const value = e.target.value as SearchEngine
-              setBrowserDefaultSearchEngine(value === 'google' ? null : value)
+            onValueChange={(value) => {
+              const engine = value as SearchEngine
+              setBrowserDefaultSearchEngine(engine === 'google' ? null : engine)
             }}
-            className="h-7 rounded-md border border-border bg-background px-2 text-xs"
           >
-            {(Object.keys(SEARCH_ENGINE_LABELS) as SearchEngine[]).map((engine) => (
-              <option key={engine} value={engine}>
-                {SEARCH_ENGINE_LABELS[engine]}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SEARCH_ENGINE_LABELS) as SearchEngine[]).map((engine) => (
+                <SelectItem key={engine} value={engine} className="text-xs">
+                  {SEARCH_ENGINE_LABELS[engine]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SearchableSetting>
       ) : null}
 
