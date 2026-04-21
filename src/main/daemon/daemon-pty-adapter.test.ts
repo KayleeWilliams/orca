@@ -686,5 +686,53 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       noRespawnAdapter.dispose()
     })
+
+    it('coalesces concurrent respawns so only one daemon is forked', async () => {
+      let respawnServer: DaemonServer | undefined
+      const respawnFn = vi.fn(async () => {
+        respawnServer = new DaemonServer({
+          socketPath,
+          tokenPath,
+          spawnSubprocess: () => createMockSubprocess()
+        })
+        await respawnServer.start()
+      })
+
+      const respawnAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn: respawnFn })
+
+      // First spawn connects
+      await respawnAdapter.spawn({ cols: 80, rows: 24 })
+
+      // Kill daemon
+      await server.shutdown()
+
+      // Fire two spawns concurrently — both should succeed but only one respawn
+      const [r1, r2] = await Promise.all([
+        respawnAdapter.spawn({ cols: 80, rows: 24 }),
+        respawnAdapter.spawn({ cols: 80, rows: 24 })
+      ])
+      expect(r1.id).toBeDefined()
+      expect(r2.id).toBeDefined()
+      expect(respawnFn).toHaveBeenCalledOnce()
+
+      respawnAdapter.dispose()
+      await respawnServer?.shutdown()
+    })
+
+    it('propagates respawn failure to the caller', async () => {
+      const respawnFn = vi.fn(async () => {
+        throw new Error('Daemon entry file missing')
+      })
+
+      const respawnAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn: respawnFn })
+      await respawnAdapter.spawn({ cols: 80, rows: 24 })
+      await server.shutdown()
+
+      await expect(respawnAdapter.spawn({ cols: 80, rows: 24 })).rejects.toThrow(
+        'Daemon entry file missing'
+      )
+
+      respawnAdapter.dispose()
+    })
   })
 })

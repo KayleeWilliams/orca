@@ -36,6 +36,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
   private respawnFn: (() => Promise<void>) | null
+  // Why: multiple pane mounts can call spawn() concurrently. If the daemon is
+  // dead, all calls enter withDaemonRetry's catch block at once. Without a
+  // lock, each would fork its own daemon process. This promise coalesces
+  // concurrent respawns so only the first caller forks; the rest await it.
+  private respawnPromise: Promise<void> | null = null
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
   private removeEventListener: (() => void) | null = null
@@ -388,13 +393,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!this.respawnFn || !isDaemonGoneError(err)) {
         throw err
       }
-      console.warn('[daemon] Operation failed, respawning:', (err as Error).message)
-      this.removeEventListener?.()
-      this.removeEventListener = null
-      this.client.disconnect()
-      await this.respawnFn()
+      if (!this.respawnPromise) {
+        this.respawnPromise = this.doRespawn().finally(() => {
+          this.respawnPromise = null
+        })
+      }
+      await this.respawnPromise
       return await fn()
     }
+  }
+
+  private async doRespawn(): Promise<void> {
+    console.warn('[daemon] Daemon died — respawning')
+    this.removeEventListener?.()
+    this.removeEventListener = null
+    this.client.disconnect()
+    await this.respawnFn!()
   }
 
   private setupEventRouting(): void {
