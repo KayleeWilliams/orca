@@ -236,7 +236,20 @@ export function useIpcEvents(): void {
             window.api.ui.replyTabCreate({ requestId: data.requestId, error: 'No active worktree' })
             return
           }
-          const workspace = store.createBrowserTab(worktreeId, data.url, { title: data.url })
+          // Why: CLI-created tabs should land in the same group as the active
+          // browser tab, not the terminal's group (which is typically the
+          // UI-active group when an agent is running commands).
+          const activeBrowserTabId = store.activeBrowserTabIdByWorktree[worktreeId]
+          const activeBrowserUnifiedTab = activeBrowserTabId
+            ? (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
+                (t) => t.contentType === 'browser' && t.entityId === activeBrowserTabId
+              )
+            : undefined
+
+          const workspace = store.createBrowserTab(worktreeId, data.url, {
+            title: data.url,
+            targetGroupId: activeBrowserUnifiedTab?.groupId
+          })
           // Why: registerGuest fires with the page ID (not workspace ID) as
           // browserPageId. Return the page ID so waitForTabRegistration can
           // correlate correctly.

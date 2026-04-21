@@ -18,6 +18,7 @@ type CreateBrowserTabOptions = {
   activate?: boolean
   title?: string
   sessionProfileId?: string | null
+  targetGroupId?: string
 }
 
 type CreateBrowserPageOptions = {
@@ -395,7 +396,8 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     if (!alreadyHasUnifiedTab) {
       state.createUnifiedTab(worktreeId, 'browser', {
         entityId: workspaceId,
-        label: browserTab.title
+        label: browserTab.title,
+        targetGroupId: options?.targetGroupId
       })
     }
     return browserTab
