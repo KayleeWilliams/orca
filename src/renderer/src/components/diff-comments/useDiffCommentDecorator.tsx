@@ -227,11 +227,15 @@ export function useDiffCommentDecorator({
 
         // Why: estimate height from line count so the zone is close to the
         // right size on first paint. Monaco sets heightInPx authoritatively at
-        // insertion and does not re-measure the DOM node, so a fixed 72 clipped
-        // multi-line bodies. The per-line estimate handles typical review
-        // notes without needing a post-attach measurement pass.
+        // insertion and does not re-measure the DOM node, so an underestimate
+        // lets the card bleed into the following editor line. The constant
+        // covers fixed chrome (inline wrapper padding ~10, card border 2, card
+        // padding 12, header+meta ~22, trailing breathing room) and the
+        // per-line factor matches the 12px/1.4 body line-height. If you tweak
+        // the card's padding/header sizing, re-tune these numbers in lockstep
+        // or the zone will clip again.
         const lineCount = c.body.split('\n').length
-        const heightInPx = Math.max(56, 28 + lineCount * 18)
+        const heightInPx = Math.max(72, 52 + lineCount * 18)
 
         // Why: suppressMouseDown: false so clicks inside the zone (Delete
         // button) reach our DOM listeners. With true, Monaco intercepts the
