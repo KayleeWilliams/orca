@@ -25,6 +25,14 @@ let currentStatus: UpdateStatus = { state: 'idle' }
 let userInitiatedCheck = false
 let onBeforeQuitCleanup: (() => void) | null = null
 let autoUpdaterInitialized = false
+// Why: Cmd+Shift-clicking "Check for Updates" opts the user into the RC
+// release channel for the rest of this process. We switch to the GitHub
+// provider with allowPrerelease=true so both the check AND any follow-up
+// download resolve against the same (possibly prerelease) release manifest.
+// Resetting only after the check would leave a downloaded RC pointing at a
+// feed URL that no longer advertises it. See design comment in
+// enableIncludePrerelease.
+let includePrereleaseActive = false
 let availableVersion: string | null = null
 let availableReleaseUrl: string | null = null
 let pendingCheckFailureKey: string | null = null
@@ -267,11 +275,34 @@ export function checkForUpdates(): void {
   runBackgroundUpdateCheck()
 }
 
+function enableIncludePrerelease(): void {
+  if (includePrereleaseActive) {
+    return
+  }
+  // Why: the default feed points at GitHub's /releases/latest/download/
+  // manifest, which is scoped to the most recent non-prerelease release.
+  // Switch to the native github provider with allowPrerelease so latest.yml
+  // is sourced from the newest release on the repo regardless of the
+  // prerelease flag. Staying on this feed for the rest of the process
+  // keeps the download manifest consistent with the check result.
+  autoUpdater.allowPrerelease = true
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'stablyai',
+    repo: 'orca'
+  })
+  includePrereleaseActive = true
+}
+
 /** Menu-triggered check — delegates feedback to renderer toasts via userInitiated flag */
-export function checkForUpdatesFromMenu(): void {
+export function checkForUpdatesFromMenu(options?: { includePrerelease?: boolean }): void {
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available', userInitiated: true })
     return
+  }
+
+  if (options?.includePrerelease) {
+    enableIncludePrerelease()
   }
 
   userInitiatedCheck = true

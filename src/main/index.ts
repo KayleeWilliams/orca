@@ -163,7 +163,7 @@ app.whenReady().then(async () => {
   runtime.setAgentBrowserBridge(new AgentBrowserBridge(browserManager))
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   registerAppMenu({
-    onCheckForUpdates: () => checkForUpdatesFromMenu(),
+    onCheckForUpdates: (options) => checkForUpdatesFromMenu(options),
     onOpenSettings: () => {
       mainWindow?.webContents.send('ui:openSettings')
     },

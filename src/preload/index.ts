@@ -826,7 +826,8 @@ const api = {
   updater: {
     getStatus: (): Promise<unknown> => ipcRenderer.invoke('updater:getStatus'),
     getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
-    check: (): Promise<void> => ipcRenderer.invoke('updater:check'),
+    check: (options?: { includePrerelease?: boolean }): Promise<void> =>
+      ipcRenderer.invoke('updater:check', options),
     download: (): Promise<void> => ipcRenderer.invoke('updater:download'),
     dismissNudge: (): Promise<void> => ipcRenderer.invoke('updater:dismissNudge'),
     quitAndInstall: async (): Promise<void> => {

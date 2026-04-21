@@ -231,7 +231,9 @@ export function registerUpdaterHandlers(_store: Store): void {
 
   ipcMain.handle('updater:getStatus', () => getUpdateStatus())
   ipcMain.handle('updater:getVersion', () => app.getVersion())
-  ipcMain.handle('updater:check', () => checkForUpdatesFromMenu())
+  ipcMain.handle('updater:check', (_event, options?: { includePrerelease?: boolean }) =>
+    checkForUpdatesFromMenu(options)
+  )
   ipcMain.handle('updater:download', () => downloadUpdate())
   ipcMain.handle('updater:quitAndInstall', () => quitAndInstall())
   ipcMain.handle('updater:dismissNudge', () => dismissNudge())
