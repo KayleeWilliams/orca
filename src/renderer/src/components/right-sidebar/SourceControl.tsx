@@ -707,7 +707,7 @@ function SourceControlInner(): React.JSX.Element {
                 className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
                 onClick={() => setDiffCommentsExpanded((prev) => !prev)}
                 aria-expanded={diffCommentsExpanded}
-                title={diffCommentsExpanded ? 'Collapse comments' : 'Expand comments'}
+                title={diffCommentsExpanded ? 'Collapse notes' : 'Expand notes'}
               >
                 <ChevronDown
                   className={cn(
@@ -716,7 +716,7 @@ function SourceControlInner(): React.JSX.Element {
                   )}
                 />
                 <MessageSquare className="size-3.5 shrink-0" />
-                <span>Comments</span>
+                <span>Notes</span>
                 {diffCommentCount > 0 && (
                   <span className="text-[11px] leading-none text-muted-foreground tabular-nums">
                     {diffCommentCount}
@@ -731,7 +731,7 @@ function SourceControlInner(): React.JSX.Element {
                         type="button"
                         className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         onClick={() => void handleCopyDiffComments()}
-                        aria-label="Copy all comments to clipboard"
+                        aria-label="Copy all notes to clipboard"
                       >
                         {diffCommentsCopied ? (
                           <Check className="size-3.5" />
@@ -741,7 +741,7 @@ function SourceControlInner(): React.JSX.Element {
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" sideOffset={6}>
-                      Copy all comments
+                      Copy all notes
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -1173,7 +1173,7 @@ function DiffCommentsInlineList({
   onDelete: (commentId: string) => void
 }): React.JSX.Element {
   // Why: group by filePath so the inline list mirrors the structure in the
-  // Comments tab — a compact section per file with line-number prefixes.
+  // Notes tab — a compact section per file with line-number prefixes.
   const groups = useMemo(() => {
     const map = new Map<string, DiffComment[]>()
     for (const c of comments) {
@@ -1212,7 +1212,7 @@ function DiffCommentsInlineList({
   if (comments.length === 0) {
     return (
       <div className="px-6 py-2 text-[11px] text-muted-foreground">
-        Hover over a line in the diff view and click the + to add a comment.
+        Hover over a line in the diff view and click the + to add a note.
       </div>
     )
   }
@@ -1241,8 +1241,8 @@ function DiffCommentsInlineList({
                     ev.stopPropagation()
                     void handleCopyOne(c)
                   }}
-                  title="Copy comment"
-                  aria-label={`Copy comment on line ${c.lineNumber}`}
+                  title="Copy note"
+                  aria-label={`Copy note on line ${c.lineNumber}`}
                 >
                   {copiedId === c.id ? <Check className="size-3" /> : <Copy className="size-3" />}
                 </button>
@@ -1253,8 +1253,8 @@ function DiffCommentsInlineList({
                     ev.stopPropagation()
                     onDelete(c.id)
                   }}
-                  title="Delete comment"
-                  aria-label={`Delete comment on line ${c.lineNumber}`}
+                  title="Delete note"
+                  aria-label={`Delete note on line ${c.lineNumber}`}
                 >
                   <Trash className="size-3" />
                 </button>
@@ -1447,12 +1447,12 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
           )}
         </div>
         {commentCount > 0 && (
-          // Why: show a small comment marker on any row that has diff comments
+          // Why: show a small note marker on any row that has diff notes
           // so the user can tell at a glance which files have review notes
-          // attached, without opening the Comments tab.
+          // attached, without opening the Notes tab.
           <span
             className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground"
-            title={`${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+            title={`${commentCount} note${commentCount === 1 ? '' : 's'}`}
           >
             <MessageSquare className="size-3" />
             <span className="tabular-nums">{commentCount}</span>
@@ -1585,7 +1585,7 @@ function BranchEntryRow({
         {commentCount > 0 && (
           <span
             className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground"
-            title={`${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+            title={`${commentCount} note${commentCount === 1 ? '' : 's'}`}
           >
             <MessageSquare className="size-3" />
             <span className="tabular-nums">{commentCount}</span>

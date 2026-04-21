@@ -938,12 +938,21 @@
   max-width: 420px;
 }
 
+/* Why: the saved note used to blend into the editor background because it
+   reused the same muted/background mix the editor itself uses. The card now
+   wears a warm amber sticky-note tint with a solid left accent bar so it
+   stands out clearly against both light and dark editor themes and cannot be
+   confused with Monaco's own line highlights. The accent uses --warning
+   (with a hardcoded #f59e0b fallback for themes that don't define it). */
 .orca-diff-comment-card {
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 55%, transparent);
+  border-left: 3px solid var(--warning, #f59e0b);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--muted) 40%, var(--background));
-  padding: 6px 8px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 14%, var(--background));
+  padding: 6px 8px 6px 10px;
   font-family: var(--font-sans, system-ui, sans-serif);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent);
 }
 
 .orca-diff-comment-header {
@@ -956,10 +965,18 @@
 
 .orca-diff-comment-meta {
   font-size: 11px;
-  color: var(--muted-foreground);
-  font-weight: 500;
+  color: color-mix(in srgb, var(--foreground) 75%, var(--warning, #f59e0b));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
+/* Why: the trash button is always visible (not hover-only) because the saved
+   note is a persistent, action-bearing card — users should be able to see and
+   target the delete affordance without guessing that hovering reveals it.
+   Pointer-events are explicit since the card lives inside a Monaco view zone
+   where stray handlers higher in the tree have swallowed pointer events in
+   the past. z-index keeps it above the note body for click reliability. */
 .orca-diff-comment-delete {
   display: inline-flex;
   align-items: center;
@@ -970,6 +987,9 @@
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .orca-diff-comment-delete:hover {

@@ -66,8 +66,8 @@ export function useDiffCommentDecorator({
     const plus = document.createElement('button')
     plus.type = 'button'
     plus.className = 'orca-diff-comment-add-btn'
-    plus.title = 'Add comment for the AI'
-    plus.setAttribute('aria-label', 'Add comment for the AI')
+    plus.title = 'Add note for the AI'
+    plus.setAttribute('aria-label', 'Add note for the AI')
     plus.innerHTML =
       '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>'
     plus.style.display = 'none'

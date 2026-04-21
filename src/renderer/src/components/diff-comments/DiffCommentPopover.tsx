@@ -21,8 +21,8 @@ export function DiffCommentPopover({
   onSubmit
 }: Props): React.JSX.Element {
   const [body, setBody] = useState('')
-  // Why: `submitting` prevents duplicate comment rows when the user
-  // double-clicks the Comment button or hits Cmd/Ctrl+Enter twice before the
+  // Why: `submitting` prevents duplicate note rows when the user
+  // double-clicks the Add note button or hits Enter twice before the
   // IPC round-trip resolves. Iteration 1 made submission async and keeps the
   // popover open on failure (to preserve the draft); that widened the window
   // between the first click and `setPopover(null)` during which a second
@@ -112,7 +112,7 @@ export function DiffCommentPopover({
       <textarea
         ref={textareaRef}
         className="orca-diff-comment-popover-textarea"
-        placeholder="Add comment for the AI"
+        placeholder="Add note for the AI"
         value={body}
         onChange={(e) => {
           setBody(e.target.value)
@@ -124,11 +124,13 @@ export function DiffCommentPopover({
             onCancel()
             return
           }
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          // Why: plain Enter submits so the note popover behaves like a
+          // single-field form. Shift+Enter (and Cmd/Ctrl+Enter) insert a
+          // newline so multi-line notes are still possible. We guard against
+          // a second Enter while an earlier submit is still awaiting IPC —
+          // otherwise it would enqueue a duplicate addDiffComment call.
+          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            // Why: guard against a second Cmd/Ctrl+Enter while an earlier
-            // submit is still awaiting IPC — otherwise it would enqueue a
-            // duplicate addDiffComment call.
             if (submitting) {
               return
             }
@@ -142,7 +144,7 @@ export function DiffCommentPopover({
           Cancel
         </Button>
         <Button size="sm" onClick={handleSubmit} disabled={submitting || body.trim().length === 0}>
-          {submitting ? 'Saving…' : 'Comment'}
+          {submitting ? 'Saving…' : 'Add note'}
         </Button>
       </div>
     </div>
