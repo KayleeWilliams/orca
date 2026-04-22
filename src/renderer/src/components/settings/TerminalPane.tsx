@@ -444,6 +444,51 @@ export function TerminalPane({
             />
           </button>
         </SearchableSetting>
+
+        <SearchableSetting
+          title="Allow TUI Clipboard Writes (OSC 52)"
+          description="Let terminal programs like tmux, Neovim, and fzf copy to the system clipboard over the PTY (including over SSH). Off by default because untrusted output piped into the terminal could silently overwrite your clipboard."
+          keywords={[
+            'osc 52',
+            'osc52',
+            'clipboard',
+            'tmux',
+            'neovim',
+            'nvim',
+            'fzf',
+            'ssh',
+            'remote',
+            'copy',
+            'paste'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Allow TUI Clipboard Writes (OSC 52)</Label>
+            <p className="text-xs text-muted-foreground">
+              Let programs running inside the terminal (tmux, Neovim, fzf, ssh sessions) copy to
+              your system clipboard. Disabled by default for safety.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.terminalAllowOsc52Clipboard}
+            onClick={() =>
+              updateSettings({
+                terminalAllowOsc52Clipboard: !settings.terminalAllowOsc52Clipboard
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.terminalAllowOsc52Clipboard ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.terminalAllowOsc52Clipboard ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
       </section>
     ) : null,
     matchesSettingsSearch(searchQuery, TERMINAL_DARK_THEME_SEARCH_ENTRIES) ? (

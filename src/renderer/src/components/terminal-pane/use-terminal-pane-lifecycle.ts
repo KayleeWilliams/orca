@@ -24,6 +24,7 @@ import {
 } from './layout-serialization'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
 import { applyTerminalAppearance, mode2031SequenceFor } from './terminal-appearance'
+import { parseOsc52 } from './osc52-clipboard'
 import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-option-as-alt'
 import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
@@ -177,6 +178,7 @@ export function useTerminalPaneLifecycle({
   // effect without recreating panes.
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
   const mode2031DisposablesRef = useRef(new Map<number, IDisposable[]>())
+  const osc52DisposablesRef = useRef(new Map<number, IDisposable>())
 
   const applyAppearance = (manager: PaneManager): void => {
     const currentSettings = settingsRef.current
@@ -335,6 +337,31 @@ export function useTerminalPaneLifecycle({
         ]
         mode2031DisposablesRef.current.set(pane.id, mode2031Disposables)
 
+        // OSC 52 — TUI-initiated clipboard writes (tmux/nvim/fzf/ssh).
+        // Why read settingsRef at fire time (not capture): the user may
+        // toggle the gate mid-session and we want that to take effect
+        // immediately without recreating panes. Return true ("handled") in
+        // both the enabled and disabled paths so xterm doesn't fall
+        // through to any other OSC 52 handler and so our intentional drop
+        // in the disabled path is explicit.
+        const osc52Disposable = pane.terminal.parser.registerOscHandler(52, (data) => {
+          if (!settingsRef.current?.terminalAllowOsc52Clipboard) {
+            return true
+          }
+          const parsed = parseOsc52(data)
+          if (parsed.kind !== 'write') {
+            // Queries and malformed payloads are intentionally dropped —
+            // answering a query would leak the user's clipboard to any
+            // process writing to the PTY.
+            return true
+          }
+          void window.api.ui.writeClipboardText(parsed.text).catch(() => {
+            /* ignore clipboard write failures */
+          })
+          return true
+        })
+        osc52DisposablesRef.current.set(pane.id, osc52Disposable)
+
         const linkProviderDisposable = pane.terminal.registerLinkProvider(
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
@@ -411,6 +438,11 @@ export function useTerminalPaneLifecycle({
         }
         paneMode2031Ref.current.delete(paneId)
         paneLastThemeModeRef.current.delete(paneId)
+        const osc52Disposable = osc52DisposablesRef.current.get(paneId)
+        if (osc52Disposable) {
+          osc52Disposable.dispose()
+          osc52DisposablesRef.current.delete(paneId)
+        }
         const transport = paneTransportsRef.current.get(paneId)
         const panePtyBinding = panePtyBindings.get(paneId)
         if (panePtyBinding) {

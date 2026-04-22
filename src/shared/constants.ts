@@ -126,6 +126,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // focus-follows-mouse never happens unexpectedly.
     terminalFocusFollowsMouse: false,
     terminalClipboardOnSelect: false,
+    terminalAllowOsc52Clipboard: false,
     setupScriptLaunchMode: 'new-tab',
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: true,
