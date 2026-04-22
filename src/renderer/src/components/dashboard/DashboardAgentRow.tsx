@@ -287,37 +287,49 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           </Tooltip>
         </span>
       </div>
-      {/* Why: show exactly one activity line per row to keep vertical rhythm
-          stable — either the tool the agent is currently running OR its most
-          recent text reply, never both. Having both made the row flap as the
-          agent moved between "thinking" (message updates) and "running a
-          tool" (tool updates) within a single turn. The tool takes priority
-          while working (it's the live signal); the message shows otherwise.
-          A reserved-height placeholder keeps the row's height constant when
-          neither field has content yet, so rows don't jump on first report. */}
-      {isWorking && toolName ? (
+      {/* Why: tool row and message row both carry different info — tool shows
+          the mechanical step (Bash: ...), message shows the agent's narration
+          ("let me verify the test ordering"). Rendering both together would
+          cause the row to jump whenever one appeared/disappeared mid-turn,
+          so instead we always render both slots and fall back to a single-line
+          placeholder when empty. Tool slot only reserves height while working,
+          since done/blocked rows shouldn't show a dangling wrench. */}
+      {isWorking && (
         <div className="mt-0.5 min-w-0 pl-5 text-[10px] leading-snug text-muted-foreground/70">
-          {/* Why: header (wrench + tool name) stays on one line. When
-              collapsed, the input truncates inline next to the name. When
-              expanded, the input moves to its own block below so long
-              commands wrap to a consistent left margin instead of the
-              jagged shape that flex-wrapping produces. */}
-          <div className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}>
-            <Wrench className="size-2.5 shrink-0" />
-            <code className="shrink-0 font-mono text-[10px]">{toolName}</code>
-            {!expanded && toolInput && (
-              <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
-                {toolInput}
-              </span>
-            )}
-          </div>
-          {expanded && toolInput && (
-            <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
-              {toolInput}
-            </pre>
+          {toolName ? (
+            <>
+              {/* Why: header (wrench + tool name) stays on one line. When
+                  collapsed, the input truncates inline next to the name. When
+                  expanded, the input moves to its own block below so long
+                  commands wrap to a consistent left margin instead of the
+                  jagged shape that flex-wrapping produces. */}
+              <div
+                className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}
+              >
+                <Wrench className="size-2.5 shrink-0" />
+                <code className="shrink-0 font-mono text-[10px]">{toolName}</code>
+                {!expanded && toolInput && (
+                  <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
+                    {toolInput}
+                  </span>
+                )}
+              </div>
+              {expanded && toolInput && (
+                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
+                  {toolInput}
+                </pre>
+              )}
+            </>
+          ) : (
+            ' '
           )}
         </div>
-      ) : lastAssistantMessage ? (
+      )}
+      {/* Why: message slot is always reserved in collapsed view so the row
+          height stays fixed as lastAssistantMessage arrives/clears. When
+          expanded an empty reserved slot reads as a visible gap, so only
+          render the placeholder when collapsed. */}
+      {lastAssistantMessage ? (
         <CommentMarkdown
           content={lastAssistantMessage}
           // Why: render markdown in both states, but in the collapsed view
@@ -342,11 +354,6 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           title={!expanded ? lastAssistantMessage : undefined}
         />
       ) : (
-        // Why: empty placeholder so a live row that has neither a tool call
-        // nor a message yet still occupies the same vertical space it will
-        // once content arrives — preventing the whole card from shifting on
-        // the first hook report. Only shown when collapsed; an expanded card
-        // without content doesn't need the reserved gap.
         !expanded && (
           <div className="mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/70"> </div>
         )
