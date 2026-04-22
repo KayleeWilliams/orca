@@ -25,6 +25,12 @@ import {
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
 import { applyTerminalAppearance, mode2031SequenceFor } from './terminal-appearance'
 import { parseOsc52 } from './osc52-clipboard'
+import {
+  parseOsc133Payload,
+  parseOsc7Path,
+  pushSemanticMark,
+  type RecordedSemanticMark
+} from './shell-integration'
 import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-option-as-alt'
 import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
@@ -68,6 +74,8 @@ type UseTerminalPaneLifecycleDeps = {
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   paneMode2031Ref: React.RefObject<Map<number, boolean>>
   paneLastThemeModeRef: React.RefObject<Map<number, 'dark' | 'light'>>
+  paneCwdRef: React.RefObject<Map<number, string>>
+  paneSemanticMarksRef: React.RefObject<Map<number, RecordedSemanticMark[]>>
   panePtyBindingsRef: React.RefObject<Map<number, IDisposable>>
   pendingWritesRef: React.RefObject<Map<number, string>>
   isActiveRef: React.RefObject<boolean>
@@ -146,6 +154,8 @@ export function useTerminalPaneLifecycle({
   paneTransportsRef,
   paneMode2031Ref,
   paneLastThemeModeRef,
+  paneCwdRef,
+  paneSemanticMarksRef,
   panePtyBindingsRef,
   pendingWritesRef,
   isActiveRef,
@@ -179,6 +189,7 @@ export function useTerminalPaneLifecycle({
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
   const mode2031DisposablesRef = useRef(new Map<number, IDisposable[]>())
   const osc52DisposablesRef = useRef(new Map<number, IDisposable>())
+  const shellIntegrationDisposablesRef = useRef(new Map<number, IDisposable[]>())
 
   const applyAppearance = (manager: PaneManager): void => {
     const currentSettings = settingsRef.current
@@ -362,6 +373,33 @@ export function useTerminalPaneLifecycle({
         })
         osc52DisposablesRef.current.set(pane.id, osc52Disposable)
 
+        // Shell integration: OSC 7 (cwd) and OSC 133 (semantic prompt marks).
+        // Both update per-pane refs — consumers (context menu "Reveal in
+        // Finder", future block-navigation) read at fire time. Return true
+        // because we fully own these sequences; no other handler needs them.
+        const shellIntegrationDisposables: IDisposable[] = [
+          pane.terminal.parser.registerOscHandler(7, (data) => {
+            const path = parseOsc7Path(data)
+            if (path) {
+              paneCwdRef.current.set(pane.id, path)
+            }
+            return true
+          }),
+          pane.terminal.parser.registerOscHandler(133, (data) => {
+            const mark = parseOsc133Payload(data)
+            if (!mark) {
+              return true
+            }
+            const buffer = pane.terminal.buffer.active
+            const row = buffer.baseY + buffer.cursorY
+            const marks = paneSemanticMarksRef.current.get(pane.id) ?? []
+            pushSemanticMark(marks, { ...mark, row })
+            paneSemanticMarksRef.current.set(pane.id, marks)
+            return true
+          })
+        ]
+        shellIntegrationDisposablesRef.current.set(pane.id, shellIntegrationDisposables)
+
         const linkProviderDisposable = pane.terminal.registerLinkProvider(
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
@@ -443,6 +481,15 @@ export function useTerminalPaneLifecycle({
           osc52Disposable.dispose()
           osc52DisposablesRef.current.delete(paneId)
         }
+        const shellIntegrationDisposables = shellIntegrationDisposablesRef.current.get(paneId)
+        if (shellIntegrationDisposables) {
+          for (const d of shellIntegrationDisposables) {
+            d.dispose()
+          }
+          shellIntegrationDisposablesRef.current.delete(paneId)
+        }
+        paneCwdRef.current.delete(paneId)
+        paneSemanticMarksRef.current.delete(paneId)
         const transport = paneTransportsRef.current.get(paneId)
         const panePtyBinding = panePtyBindings.get(paneId)
         if (panePtyBinding) {

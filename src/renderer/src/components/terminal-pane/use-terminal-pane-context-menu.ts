@@ -9,6 +9,10 @@ type UseTerminalPaneContextMenuDeps = {
   onRequestClosePane: (paneId: number) => void
   onSetTitle: (paneId: number) => void
   rightClickToPaste: boolean
+  /** Populated by the OSC 7 handler in use-terminal-pane-lifecycle. `null` /
+   *  missing when the shell has not emitted a cwd update, which controls
+   *  whether the "Reveal in Finder" context-menu item is shown. */
+  paneCwdRef: React.RefObject<Map<number, string>>
 }
 
 type TerminalMenuState = {
@@ -18,6 +22,10 @@ type TerminalMenuState = {
   menuOpenedAtRef: React.RefObject<number>
   paneCount: number
   menuPaneId: number | null
+  /** Last OSC 7 cwd observed for the menu-target pane, or null if the shell
+   *  has not emitted one. Read at menu-open time so the item reflects the
+   *  pane's current directory without re-rendering on every `cd`. */
+  menuPaneCwd: string | null
   onContextMenuCapture: (event: React.MouseEvent<HTMLDivElement>) => void
   onCopy: () => Promise<void>
   onPaste: () => Promise<void>
@@ -27,6 +35,7 @@ type TerminalMenuState = {
   onClearScreen: () => void
   onToggleExpand: () => void
   onSetTitle: () => void
+  onRevealCwd: () => void
 }
 
 export function useTerminalPaneContextMenu({
@@ -34,7 +43,8 @@ export function useTerminalPaneContextMenu({
   toggleExpandPane,
   onRequestClosePane,
   onSetTitle,
-  rightClickToPaste
+  rightClickToPaste,
+  paneCwdRef
 }: UseTerminalPaneContextMenuDeps): TerminalMenuState {
   const contextPaneIdRef = useRef<number | null>(null)
   const menuOpenedAtRef = useRef(0)
@@ -150,6 +160,22 @@ export function useTerminalPaneContextMenu({
     }
   }
 
+  const onRevealCwd = (): void => {
+    const pane = resolveMenuPane()
+    if (!pane) {
+      return
+    }
+    const cwd = paneCwdRef.current?.get(pane.id)
+    if (!cwd) {
+      return
+    }
+    // Why: shell.showItemInFolder() selects the *item* in its parent — passing
+    // a directory path opens the parent with the dir selected, which is what
+    // users want from "Reveal in Finder/Explorer" and matches native app
+    // behavior on all three platforms.
+    void window.api.shell.openPath(cwd)
+  }
+
   const onContextMenuCapture = (event: React.MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
     window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
@@ -190,6 +216,7 @@ export function useTerminalPaneContextMenu({
 
   const paneCount = managerRef.current?.getPanes().length ?? 1
   const menuPaneId = resolveMenuPane()?.id ?? null
+  const menuPaneCwd = menuPaneId !== null ? (paneCwdRef.current?.get(menuPaneId) ?? null) : null
 
   return {
     open,
@@ -198,6 +225,7 @@ export function useTerminalPaneContextMenu({
     menuOpenedAtRef,
     paneCount,
     menuPaneId,
+    menuPaneCwd,
     onContextMenuCapture,
     onCopy,
     onPaste,
@@ -206,6 +234,7 @@ export function useTerminalPaneContextMenu({
     onClosePane,
     onClearScreen,
     onToggleExpand,
-    onSetTitle: handleSetTitle
+    onSetTitle: handleSetTitle,
+    onRevealCwd
   }
 }

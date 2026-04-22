@@ -12,6 +12,7 @@ import {
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import TerminalSearch from '@/components/TerminalSearch'
 import type { PtyTransport } from './pty-transport'
+import type { RecordedSemanticMark } from './shell-integration'
 import { fitPanes, isWindowsUserAgent, shellEscapePath } from './pane-helpers'
 import { EMPTY_LAYOUT, paneLeafId, serializeTerminalLayout } from './layout-serialization'
 import { createExpandCollapseActions } from './expand-collapse'
@@ -65,6 +66,12 @@ export default function TerminalPane({
   const paneTransportsRef = useRef<Map<number, PtyTransport>>(new Map())
   const paneMode2031Ref = useRef<Map<number, boolean>>(new Map())
   const paneLastThemeModeRef = useRef<Map<number, 'dark' | 'light'>>(new Map())
+  // Why: populated by OSC 7 / OSC 133 handlers registered per-pane in
+  // use-terminal-pane-lifecycle. Consumers (context menu "Reveal in Finder",
+  // future block-navigation) read these refs at fire time — no React
+  // subscription so a chatty `cd` loop doesn't trigger re-renders.
+  const paneCwdRef = useRef<Map<number, string>>(new Map())
+  const paneSemanticMarksRef = useRef<Map<number, RecordedSemanticMark[]>>(new Map())
   const panePtyBindingsRef = useRef<Map<number, IDisposable>>(new Map())
   const pendingWritesRef = useRef<Map<number, string>>(new Map())
   const isActiveRef = useRef(isActive)
@@ -345,6 +352,8 @@ export default function TerminalPane({
     paneTransportsRef,
     paneMode2031Ref,
     paneLastThemeModeRef,
+    paneCwdRef,
+    paneSemanticMarksRef,
     panePtyBindingsRef,
     pendingWritesRef,
     isActiveRef,
@@ -791,7 +800,8 @@ export default function TerminalPane({
     toggleExpandPane,
     onRequestClosePane: handleRequestClosePane,
     onSetTitle: handleStartRename,
-    rightClickToPaste
+    rightClickToPaste,
+    paneCwdRef
   })
 
   const effectiveAppearance = settings
@@ -880,6 +890,8 @@ export default function TerminalPane({
         onClearScreen={contextMenu.onClearScreen}
         onToggleExpand={contextMenu.onToggleExpand}
         onSetTitle={contextMenu.onSetTitle}
+        menuPaneCwd={contextMenu.menuPaneCwd}
+        onRevealCwd={contextMenu.onRevealCwd}
       />
       {/* Title bar overlays — portaled into each pane container that has a title
           or is currently being renamed (so the inline input appears even for

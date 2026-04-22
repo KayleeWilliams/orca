@@ -2,6 +2,7 @@ import {
   Clipboard,
   Copy,
   Eraser,
+  FolderOpen,
   Maximize2,
   Minimize2,
   PanelBottomClose,
@@ -35,6 +36,11 @@ type TerminalContextMenuProps = {
   onClearScreen: () => void
   onToggleExpand: () => void
   onSetTitle: () => void
+  /** Last OSC 7 cwd reported by the shell for the menu-target pane. `null`
+   *  hides the "Reveal" item — same behavior as other shell-integration-
+   *  dependent terminal features (tmux/iTerm). */
+  menuPaneCwd: string | null
+  onRevealCwd: () => void
 }
 
 export default function TerminalContextMenu({
@@ -52,11 +58,18 @@ export default function TerminalContextMenu({
   onClosePane,
   onClearScreen,
   onToggleExpand,
-  onSetTitle
+  onSetTitle,
+  menuPaneCwd,
+  onRevealCwd
 }: TerminalContextMenuProps): React.JSX.Element {
   const isMac = navigator.userAgent.includes('Mac')
+  const isWindows = navigator.userAgent.includes('Windows')
   const mod = isMac ? '⌘' : 'Ctrl+'
   const shift = isMac ? '⇧' : 'Shift+'
+  // Why platform-specific label: users recognize their OS's file manager by
+  // name. On Linux the verb is "Open" because there's no single canonical
+  // name (Nautilus / Files / Dolphin / Thunar).
+  const revealLabel = isMac ? 'Reveal in Finder' : isWindows ? 'Show in Explorer' : 'Open Folder'
 
   return (
     <DropdownMenu
@@ -139,6 +152,12 @@ export default function TerminalContextMenu({
           <Pencil />
           Set Title…
         </DropdownMenuItem>
+        {menuPaneCwd && (
+          <DropdownMenuItem onSelect={onRevealCwd}>
+            <FolderOpen />
+            {revealLabel}
+          </DropdownMenuItem>
+        )}
         {canClosePane && (
           <>
             <DropdownMenuSeparator />
