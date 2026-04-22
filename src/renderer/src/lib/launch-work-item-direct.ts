@@ -3,7 +3,7 @@ import { useAppStore } from '@/store'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
 import { detectAgentsCached } from '@/lib/detect-agents-cached'
 import { waitForAgentReady } from '@/lib/agent-ready-wait'
-import { buildAgentStartupPlan } from '@/lib/tui-agent-startup'
+import { buildAgentDraftLaunchPlan, buildAgentStartupPlan } from '@/lib/tui-agent-startup'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import {
   CLIENT_PLATFORM,
@@ -122,11 +122,24 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     linkedPR: item.type === 'pr' ? item.number : null
   })
 
-  // Why: launch the agent with no prompt so the first frame it draws is the
-  // empty input box. The URL paste below populates that input buffer, which
-  // gives the user a reviewable draft instead of a submitted request.
-  const startupPlan =
+  // Why: prefer a native "prefill" flag when the agent's CLI exposes one
+  // (e.g. `claude --prefill '<url>'`) — the TUI starts with the URL already
+  // in its input box, no submit, and we skip the readiness-wait + paste
+  // dance below. Fall back to launching with no prompt + bracketed-paste for
+  // every other agent so the URL lands as a draft instead of being
+  // auto-submitted as the first turn.
+  const draftLaunchPlan =
     effectiveAgent === null
+      ? null
+      : buildAgentDraftLaunchPlan({
+          agent: effectiveAgent,
+          draft: item.url,
+          cmdOverrides: settings?.agentCmdOverrides ?? {},
+          platform: CLIENT_PLATFORM
+        })
+  const startupPlan =
+    draftLaunchPlan ??
+    (effectiveAgent === null
       ? null
       : buildAgentStartupPlan({
           agent: effectiveAgent,
@@ -134,7 +147,7 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
           cmdOverrides: settings?.agentCmdOverrides ?? {},
           platform: CLIENT_PLATFORM,
           allowEmptyPromptLaunch: true
-        })
+        }))
 
   let worktreeId: string
   let primaryTabId: string | null
@@ -184,8 +197,11 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
 
   // Why: at this point the workspace is live and the agent (if any) has been
   // queued on `primaryTabId`. The paste step below is the only remaining
-  // draft-specific work; bail out cleanly when either prerequisite is missing.
-  if (!primaryTabId || !startupPlan) {
+  // draft-specific work; bail out cleanly when either prerequisite is missing
+  // or when the agent was launched via a native prefill flag (draftLaunchPlan)
+  // — in that case the URL is already in its input box and pasting again
+  // would duplicate it.
+  if (!primaryTabId || !startupPlan || draftLaunchPlan) {
     return
   }
 

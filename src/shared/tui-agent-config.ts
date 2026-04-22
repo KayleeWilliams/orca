@@ -12,6 +12,14 @@ export type TuiAgentConfig = {
   launchCmd: string
   expectedProcess: string
   promptInjectionMode: AgentPromptInjectionMode
+  // Why: flag that launches the TUI with the given text pre-filled in the
+  // input box but NOT submitted, so the user still gets a reviewable draft.
+  // Only set when the CLI has documented native support — e.g. Claude's
+  // `--prefill`. The "Use" direct-launch flow prefers this over the
+  // post-launch bracketed-paste path because it avoids the agent-readiness
+  // race and the 120ms settle. Agents without native support keep using the
+  // paste-after-start path.
+  draftPromptFlag?: string
 }
 
 // Why: the new-workspace handoff depends on three pieces of per-agent
@@ -25,7 +33,8 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
     detectCmd: 'claude',
     launchCmd: 'claude',
     expectedProcess: 'claude',
-    promptInjectionMode: 'argv'
+    promptInjectionMode: 'argv',
+    draftPromptFlag: '--prefill'
   },
   codex: {
     detectCmd: 'codex',

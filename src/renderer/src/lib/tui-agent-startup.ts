@@ -83,6 +83,40 @@ export function buildAgentStartupPlan(args: {
   }
 }
 
+export type AgentDraftLaunchPlan = {
+  launchCommand: string
+  expectedProcess: string
+}
+
+// Why: the "Use" direct-launch flow wants to open the agent TUI with the work
+// item URL already in the input box, but NOT submitted. Some CLIs expose a
+// native flag for exactly that (e.g. `claude --prefill '<text>'`), which is
+// strictly better than the post-launch bracketed-paste fallback because it
+// avoids the agent-readiness race and a 120ms settle. Returns null when the
+// agent has no such flag — callers fall back to paste-after-start.
+export function buildAgentDraftLaunchPlan(args: {
+  agent: TuiAgent
+  draft: string
+  cmdOverrides: Partial<Record<TuiAgent, string>>
+  platform: NodeJS.Platform
+}): AgentDraftLaunchPlan | null {
+  const { agent, draft, cmdOverrides, platform } = args
+  const config = TUI_AGENT_CONFIG[agent]
+  if (!config.draftPromptFlag) {
+    return null
+  }
+  const trimmed = draft.trim()
+  if (!trimmed) {
+    return null
+  }
+  const baseCommand = cmdOverrides[agent] ?? config.launchCmd
+  const quoted = quoteStartupArg(trimmed, platform)
+  return {
+    launchCommand: `${baseCommand} ${config.draftPromptFlag} ${quoted}`,
+    expectedProcess: config.expectedProcess
+  }
+}
+
 export function isShellProcess(processName: string): boolean {
   const normalized = processName.trim().toLowerCase()
   return (
