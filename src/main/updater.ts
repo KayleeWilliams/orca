@@ -42,6 +42,7 @@ let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
 let _getLastUpdateCheckAt: (() => number | null) | null = null
+let backgroundCheckLaunchPending = false
 let activeUpdateNudgeId: string | null = null
 let awaitingNudgeCheckOutcome = false
 let nudgeCheckInFlight = false
@@ -125,6 +126,10 @@ function sendStatus(status: UpdateStatus): void {
   }
   currentStatus = decoratedStatus
   mainWindowRef?.webContents.send('updater:status', decoratedStatus)
+}
+
+function clearBackgroundCheckLaunchPending(): void {
+  backgroundCheckLaunchPending = false
 }
 
 function sendErrorStatus(message: string, userInitiated?: boolean): void {
@@ -255,6 +260,9 @@ function recordCompletedUpdateCheck(): void {
 function runBackgroundUpdateCheck(
   nudgeId: string | null = getPersistedPendingUpdateNudgeId()
 ): void {
+  if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
+    return
+  }
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available' })
     return
@@ -265,9 +273,15 @@ function runBackgroundUpdateCheck(
   // the persisted pending id for ordinary background checks so a nudge-driven
   // card can still be dismissed correctly after relaunch or a later 24h check.
   activeUpdateNudgeId = nudgeId
+  // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
+  // arrives on a later tick, so a second focus/resume event can slip in before
+  // currentStatus flips to 'checking'. Track the launch in memory to dedupe
+  // that gap without persisting a successful-check timestamp before the result.
+  backgroundCheckLaunchPending = true
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
   autoUpdater.checkForUpdates().catch((err) => {
+    backgroundCheckLaunchPending = false
     void sendCheckFailureStatus(String(err?.message ?? err))
   })
 }
@@ -490,6 +504,7 @@ export function setupAutoUpdater(
     recordCompletedUpdateCheck,
     sendStatus,
     scheduleAutomaticUpdateCheck,
+    clearBackgroundCheckLaunchPending,
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl
     },
@@ -506,18 +521,16 @@ export function setupAutoUpdater(
 
   const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-    if (currentStatus.state === 'checking' || currentStatus.state === 'downloading') {
+    if (
+      backgroundCheckLaunchPending ||
+      currentStatus.state === 'checking' ||
+      currentStatus.state === 'downloading'
+    ) {
       return
     }
     const lastCheck = _getLastUpdateCheckAt?.() ?? null
     const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
     if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
-      // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
-      // fires on a later tick, so the state guard above can't block two rapid
-      // focus events (common on macOS window cycling) from both firing a
-      // check. Persist the timestamp synchronously to close the 24h gate
-      // before the second event arrives; a later completion just refreshes it.
-      recordCompletedUpdateCheck()
       runBackgroundUpdateCheck()
       scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
     }
