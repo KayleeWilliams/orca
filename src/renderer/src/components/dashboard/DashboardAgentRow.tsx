@@ -156,7 +156,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       onClick={handleActivate}
       onKeyDown={handleActivateKeyDown}
       className={cn(
-        'group flex flex-col px-1.5 py-0.5',
+        'group flex flex-col pl-1 pr-1.5 py-0.5',
         'cursor-pointer rounded-sm hover:bg-accent/30',
         'focus-visible:outline-none focus-visible:bg-accent/40'
       )}
@@ -189,7 +189,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
         {prompt && (
           <span
             className={cn(
-              'min-w-0 flex-1 text-xs font-medium leading-snug text-foreground/90',
+              'min-w-0 flex-1 text-[11px] font-medium leading-snug text-foreground/90',
               expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
             )}
             title={expanded ? undefined : prompt}
@@ -274,7 +274,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           and populated mid-turn. Gate on isWorking so done/blocked rows
           don't show a dangling empty wrench. */}
       {(isWorking || toolName) && (
-        <div className="mt-1 min-w-0 pl-5 text-[11px] leading-snug text-muted-foreground/70">
+        <div className="mt-1 min-w-0 pl-5 text-[10px] leading-snug text-muted-foreground/70">
           {toolName ? (
             <>
               {/* Why: header (wrench + tool name) stays on one line. When
@@ -286,7 +286,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                 className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}
               >
                 <Wrench className="size-2.5 shrink-0" />
-                <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
+                <code className="shrink-0 font-mono text-[10px]">{toolName}</code>
                 {!expanded && toolInput && (
                   <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
                     {toolInput}
@@ -294,7 +294,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                 )}
               </div>
               {expanded && toolInput && (
-                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground/60">
+                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
                   {toolInput}
                 </pre>
               )}
@@ -321,7 +321,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             // are suppressed by [&_*]:!m-0 / [&_ul]:list-none so the preview
             // reads as a single clean line.
             className={cn(
-              'mt-0.5 pl-5 text-[11px] leading-snug text-muted-foreground/80',
+              'mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/80',
               // Why: in collapsed mode we need a single truncated line. Markdown
               // blocks (pre, lists, headings) are flattened inline and forced
               // to inherit `white-space: nowrap` so <pre>/<code>'s preserved
@@ -335,7 +335,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             title={!expanded ? lastAssistantMessage : undefined}
           />
         ) : (
-          <div className="mt-0.5 pl-5 text-[11px] leading-snug text-muted-foreground/70"> </div>
+          <div className="mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/70"> </div>
         ))}
     </div>
   )
