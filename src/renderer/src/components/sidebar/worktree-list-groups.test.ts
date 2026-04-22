@@ -160,9 +160,9 @@ describe('buildRows with pinned worktrees', () => {
     expect(rows[1]).toMatchObject({ type: 'item', worktree: { id: 'wt-pinned' } })
   })
 
-  it('emits a separator between pinned and unpinned in groupBy none', () => {
+  it('emits an All header between pinned and unpinned in groupBy none', () => {
     const rows = buildRows('none', [unpinned1, pinned, unpinned2], repoMap, null, new Set())
-    expect(rows[2]).toMatchObject({ type: 'separator', key: 'sep:pinned' })
+    expect(rows[2]).toMatchObject({ type: 'header', key: 'all', label: 'All', count: 2 })
     expect(rows[3]).toMatchObject({ type: 'item', worktree: { id: 'wt-1' } })
     expect(rows[4]).toMatchObject({ type: 'item', worktree: { id: 'wt-2' } })
   })
@@ -187,13 +187,13 @@ describe('buildRows with pinned worktrees', () => {
   it('collapses pinned group when in collapsedGroups', () => {
     const rows = buildRows('none', [pinned, unpinned1], repoMap, null, new Set(['pinned']))
     expect(rows[0]).toMatchObject({ type: 'header', key: 'pinned' })
-    expect(rows[1]).toMatchObject({ type: 'separator' })
+    expect(rows[1]).toMatchObject({ type: 'header', key: 'all' })
     expect(rows[2]).toMatchObject({ type: 'item', worktree: { id: 'wt-1' } })
   })
 
-  it('does not emit separator when all worktrees are pinned', () => {
+  it('does not emit All header when all worktrees are pinned', () => {
     const allPinned = { ...unpinned1, isPinned: true }
     const rows = buildRows('none', [pinned, allPinned], repoMap, null, new Set())
-    expect(rows.some((r) => r.type === 'separator')).toBe(false)
+    expect(rows.some((r) => r.type === 'header' && r.key === 'all')).toBe(false)
   })
 })

@@ -1,4 +1,12 @@
-import { CircleCheckBig, CircleDot, CircleX, FolderGit2, GitPullRequest } from 'lucide-react'
+import {
+  CircleCheckBig,
+  CircleDot,
+  CircleX,
+  FolderGit2,
+  GitPullRequest,
+  LayoutList,
+  Pin
+} from 'lucide-react'
 import type React from 'react'
 import type { Repo, Worktree } from '../../../../shared/types'
 import { branchName } from '@/lib/git-utils'
@@ -15,9 +23,8 @@ export type GroupHeaderRow = {
   repo?: Repo
 }
 
-export type SeparatorRow = { type: 'separator'; key: string }
 export type WorktreeRow = { type: 'item'; worktree: Worktree; repo: Repo | undefined }
-export type Row = GroupHeaderRow | SeparatorRow | WorktreeRow
+export type Row = GroupHeaderRow | WorktreeRow
 
 export type PRGroupKey = 'done' | 'in-review' | 'in-progress' | 'closed'
 
@@ -62,7 +69,16 @@ export const PINNED_GROUP_KEY = 'pinned'
 
 export const PINNED_GROUP_META = {
   label: 'Pinned',
-  tone: 'text-muted-foreground'
+  tone: 'text-foreground',
+  icon: Pin
+} as const
+
+export const ALL_GROUP_KEY = 'all'
+
+export const ALL_GROUP_META = {
+  label: 'All',
+  tone: 'text-foreground',
+  icon: LayoutList
 } as const
 
 export function getPRGroupKey(
@@ -114,7 +130,8 @@ function emitPinnedGroup(
     key: PINNED_GROUP_KEY,
     label: PINNED_GROUP_META.label,
     count: pinned.length,
-    tone: PINNED_GROUP_META.tone
+    tone: PINNED_GROUP_META.tone,
+    icon: PINNED_GROUP_META.icon
   })
   if (!collapsedGroups.has(PINNED_GROUP_KEY)) {
     for (const w of pinned) {
@@ -141,8 +158,21 @@ export function buildRows(
   const unpinned = pinnedIds.size > 0 ? worktrees.filter((w) => !pinnedIds.has(w.id)) : worktrees
 
   if (groupBy === 'none') {
+    // Without an "All" header, the unpinned block is visually indistinguishable
+    // from a continuation of the Pinned section — so when pinned items exist,
+    // mark the boundary with a sibling header that mirrors the Pinned one.
     if (pinnedIds.size > 0 && unpinned.length > 0) {
-      result.push({ type: 'separator', key: 'sep:pinned' })
+      result.push({
+        type: 'header',
+        key: ALL_GROUP_KEY,
+        label: ALL_GROUP_META.label,
+        count: unpinned.length,
+        tone: ALL_GROUP_META.tone,
+        icon: ALL_GROUP_META.icon
+      })
+      if (collapsedGroups.has(ALL_GROUP_KEY)) {
+        return result
+      }
     }
     for (const w of unpinned) {
       result.push({ type: 'item', worktree: w, repo: repoMap.get(w.repoId) })

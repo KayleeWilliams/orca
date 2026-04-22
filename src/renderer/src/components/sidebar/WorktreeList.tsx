@@ -99,11 +99,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       if (!row) {
         return `__stale_${index}`
       }
-      return row.type === 'header'
-        ? `hdr:${row.key}`
-        : row.type === 'separator'
-          ? `sep:${row.key}`
-          : `wt:${row.worktree.id}`
+      return row.type === 'header' ? `hdr:${row.key}` : `wt:${row.worktree.id}`
     }
   })
 
@@ -268,21 +264,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       >
         {virtualItems.map((vItem) => {
           const row = rows[vItem.index]
-
-          if (row.type === 'separator') {
-            return (
-              <div
-                key={vItem.key}
-                role="separator"
-                data-index={vItem.index}
-                ref={virtualizer.measureElement}
-                className="absolute left-0 right-0"
-                style={{ transform: `translateY(${vItem.start}px)` }}
-              >
-                <div className="mx-2 my-1.5 border-t border-foreground/15" />
-              </div>
-            )
-          }
 
           if (row.type === 'header') {
             return (
