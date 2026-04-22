@@ -149,6 +149,13 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     tsParts.push(`done ${formatTimeAgo(doneAt, now)}`)
   }
 
+  // Why: blocked/waiting agents are what the user actually needs to act on,
+  // and the inline state-dot is easy to miss in a long list. A full-height
+  // left accent bar is the list-view convention (Linear, Jira, GitHub review
+  // requests) for "this row needs attention" — it reads at a glance without
+  // stealing horizontal space or fighting the hover/focus backgrounds.
+  const needsAttention = agent.state === 'blocked' || agent.state === 'waiting'
+
   return (
     <div
       role="button"
@@ -156,12 +163,15 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       onClick={handleActivate}
       onKeyDown={handleActivateKeyDown}
       className={cn(
-        'group flex flex-col pl-1 pr-1.5 py-0.5',
+        'group relative flex flex-col pl-1 pr-1.5 py-0.5',
         'cursor-pointer rounded-sm hover:bg-accent/30',
         'focus-visible:outline-none focus-visible:bg-accent/40'
       )}
       title={tsParts.length > 0 ? tsParts.join(' • ') : undefined}
     >
+      {needsAttention && (
+        <span className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-amber-500" aria-hidden />
+      )}
       <div className="flex items-center gap-1.5">
         {/* Why: chevron on the far left mirrors the disclosure-row pattern
             (Mantine Collapse, Playwright's test tree, etc.) — users reach
