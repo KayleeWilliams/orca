@@ -273,26 +273,29 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           and populated mid-turn. Gate on isWorking so done/blocked rows
           don't show a dangling empty wrench. */}
       {(isWorking || toolName) && (
-        <div
-          className={cn(
-            'mt-1 flex min-w-0 gap-1 pl-5 text-[11px] leading-snug text-muted-foreground/70',
-            expanded ? 'items-start' : 'items-center'
-          )}
-        >
+        <div className="mt-1 min-w-0 pl-5 text-[11px] leading-snug text-muted-foreground/70">
           {toolName ? (
             <>
-              <Wrench className="mt-[2px] size-2.5 shrink-0" />
-              <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
-              {toolInput && (
-                <span
-                  className={cn(
-                    'min-w-0 text-muted-foreground/60',
-                    expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
-                  )}
-                  title={expanded ? undefined : toolInput}
-                >
+              {/* Why: header (wrench + tool name) stays on one line. When
+                  collapsed, the input truncates inline next to the name. When
+                  expanded, the input moves to its own block below so long
+                  commands wrap to a consistent left margin instead of the
+                  jagged shape that flex-wrapping produces. */}
+              <div
+                className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}
+              >
+                <Wrench className="size-2.5 shrink-0" />
+                <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
+                {!expanded && toolInput && (
+                  <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
+                    {toolInput}
+                  </span>
+                )}
+              </div>
+              {expanded && toolInput && (
+                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground/60">
                   {toolInput}
-                </span>
+                </pre>
               )}
             </>
           ) : (
