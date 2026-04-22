@@ -287,75 +287,70 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           </Tooltip>
         </span>
       </div>
-      {/* Why: reserve the tool row's height while the agent is working, even
-          before the first tool call arrives or between calls. Without this,
-          the row jumps vertically every time toolName flips between empty
-          and populated mid-turn. Gate on isWorking so done/blocked rows
-          don't show a dangling empty wrench. */}
-      {(isWorking || toolName) && (
-        <div className="mt-1 min-w-0 pl-5 text-[10px] leading-snug text-muted-foreground/70">
-          {toolName ? (
-            <>
-              {/* Why: header (wrench + tool name) stays on one line. When
-                  collapsed, the input truncates inline next to the name. When
-                  expanded, the input moves to its own block below so long
-                  commands wrap to a consistent left margin instead of the
-                  jagged shape that flex-wrapping produces. */}
-              <div
-                className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}
-              >
-                <Wrench className="size-2.5 shrink-0" />
-                <code className="shrink-0 font-mono text-[10px]">{toolName}</code>
-                {!expanded && toolInput && (
-                  <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
-                    {toolInput}
-                  </span>
-                )}
-              </div>
-              {expanded && toolInput && (
-                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
-                  {toolInput}
-                </pre>
-              )}
-            </>
-          ) : (
-            ' '
+      {/* Why: show exactly one activity line per row to keep vertical rhythm
+          stable — either the tool the agent is currently running OR its most
+          recent text reply, never both. Having both made the row flap as the
+          agent moved between "thinking" (message updates) and "running a
+          tool" (tool updates) within a single turn. The tool takes priority
+          while working (it's the live signal); the message shows otherwise.
+          A reserved-height placeholder keeps the row's height constant when
+          neither field has content yet, so rows don't jump on first report. */}
+      {isWorking && toolName ? (
+        <div className="mt-0.5 min-w-0 pl-5 text-[10px] leading-snug text-muted-foreground/70">
+          {/* Why: header (wrench + tool name) stays on one line. When
+              collapsed, the input truncates inline next to the name. When
+              expanded, the input moves to its own block below so long
+              commands wrap to a consistent left margin instead of the
+              jagged shape that flex-wrapping produces. */}
+          <div className={cn('flex min-w-0 items-center gap-1', !expanded && 'overflow-hidden')}>
+            <Wrench className="size-2.5 shrink-0" />
+            <code className="shrink-0 font-mono text-[10px]">{toolName}</code>
+            {!expanded && toolInput && (
+              <span className="min-w-0 truncate text-muted-foreground/60" title={toolInput}>
+                {toolInput}
+              </span>
+            )}
+          </div>
+          {expanded && toolInput && (
+            <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
+              {toolInput}
+            </pre>
           )}
         </div>
-      )}
-      {/* Why: reserve the message row's height in collapsed view even when
-          empty, so the card doesn't shift vertically as lastAssistantMessage
-          arrives or clears mid-turn. When expanded we only render if there's
-          content — a blank reserved slot inside an already-expanded card
-          would read as a visible gap. */}
-      {(lastAssistantMessage || !expanded) &&
-        (lastAssistantMessage ? (
-          <CommentMarkdown
-            content={lastAssistantMessage}
-            // Why: render markdown in both states, but in the collapsed view
-            // force every nested element inline so `truncate` can ellipsize
-            // the whole thing on one line. The [&_*]:inline descendant
-            // selector flattens the markdown tree (lists, pre, headings,
-            // blockquotes) into inline flow; block margins and list markers
-            // are suppressed by [&_*]:!m-0 / [&_ul]:list-none so the preview
-            // reads as a single clean line.
-            className={cn(
-              'mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/80',
-              // Why: in collapsed mode we need a single truncated line. Markdown
-              // blocks (pre, lists, headings) are flattened inline and forced
-              // to inherit `white-space: nowrap` so <pre>/<code>'s preserved
-              // newlines don't break out of the truncation container. The
-              // `!` prefixes override CommentMarkdown's own layout styles so
-              // nothing (margins, list markers, block line-breaks) can push
-              // the preview onto a second line.
-              !expanded &&
-                'truncate whitespace-nowrap [&_*]:inline [&_*]:!whitespace-nowrap [&_*]:!m-0 [&_*]:!p-0 [&_ul]:list-none [&_ol]:list-none [&_br]:hidden'
-            )}
-            title={!expanded ? lastAssistantMessage : undefined}
-          />
-        ) : (
+      ) : lastAssistantMessage ? (
+        <CommentMarkdown
+          content={lastAssistantMessage}
+          // Why: render markdown in both states, but in the collapsed view
+          // force every nested element inline so `truncate` can ellipsize
+          // the whole thing on one line. The [&_*]:inline descendant
+          // selector flattens the markdown tree (lists, pre, headings,
+          // blockquotes) into inline flow; block margins and list markers
+          // are suppressed by [&_*]:!m-0 / [&_ul]:list-none so the preview
+          // reads as a single clean line.
+          className={cn(
+            'mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/80',
+            // Why: in collapsed mode we need a single truncated line. Markdown
+            // blocks (pre, lists, headings) are flattened inline and forced
+            // to inherit `white-space: nowrap` so <pre>/<code>'s preserved
+            // newlines don't break out of the truncation container. The
+            // `!` prefixes override CommentMarkdown's own layout styles so
+            // nothing (margins, list markers, block line-breaks) can push
+            // the preview onto a second line.
+            !expanded &&
+              'truncate whitespace-nowrap [&_*]:inline [&_*]:!whitespace-nowrap [&_*]:!m-0 [&_*]:!p-0 [&_ul]:list-none [&_ol]:list-none [&_br]:hidden'
+          )}
+          title={!expanded ? lastAssistantMessage : undefined}
+        />
+      ) : (
+        // Why: empty placeholder so a live row that has neither a tool call
+        // nor a message yet still occupies the same vertical space it will
+        // once content arrives — preventing the whole card from shifting on
+        // the first hook report. Only shown when collapsed; an expanded card
+        // without content doesn't need the reserved gap.
+        !expanded && (
           <div className="mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/70"> </div>
-        ))}
+        )
+      )}
     </div>
   )
 })
