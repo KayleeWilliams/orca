@@ -70,7 +70,17 @@ const AgentStatusHover = React.memo(function AgentStatusHover({
   return (
     <HoverCard openDelay={300}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent side="right" align="start" className="w-72 p-3 text-xs">
+      {/* Why: the shared HoverCard uses `border-border/50`, but `--border`
+          already carries very different alpha per theme (#e5e5e5 opaque in
+          light, rgb(255 255 255 / 0.07) in dark). At /50 the dark-mode edge
+          collapses to ~3% alpha and the card looks borderless. Override to
+          explicit light/dark tokens so the card outline reads the same in
+          both modes. */}
+      <HoverCardContent
+        side="right"
+        align="start"
+        className="w-72 border-neutral-200 bg-popover p-3 text-xs dark:border-white/10"
+      >
         {agents.length === 0 ? (
           <div className="py-1 text-center text-muted-foreground">No running agents</div>
         ) : (
@@ -78,7 +88,11 @@ const AgentStatusHover = React.memo(function AgentStatusHover({
             <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Running agents ({agents.length})
             </div>
-            <div className="flex flex-col divide-y divide-border/60">
+            {/* Why: same reason as the card border above — `divide-border/60`
+                on dark `--border` (0.07 alpha) evaluates to ~4% alpha and
+                the row separators disappear. Pin explicit light/dark tokens
+                so the dividers stay legible in either mode. */}
+            <div className="flex flex-col divide-y divide-neutral-200 dark:divide-white/10">
               {agents.map((agent) => (
                 <div key={agent.paneKey} className="py-1">
                   <DashboardAgentRow

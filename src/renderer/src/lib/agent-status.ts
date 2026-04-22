@@ -139,7 +139,7 @@ export function isExplicitAgentStatusFresh(
  * | working        | working       | agent actively executing       |
  * | blocked        | permission    | agent needs user attention     |
  * | waiting        | permission    | agent needs user attention     |
- * | done           | active        | task complete but pane live    |
+ * | done           | done          | task complete but pane live    |
  */
 export function mapAgentStatusStateToVisualStatus(state: AgentStatusState): Status {
   switch (state) {
@@ -149,7 +149,7 @@ export function mapAgentStatusStateToVisualStatus(state: AgentStatusState): Stat
     case 'waiting':
       return 'permission'
     case 'done':
-      return 'active'
+      return 'done'
   }
 }
 

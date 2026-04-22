@@ -18,15 +18,16 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   // this, a completed agent vanishes entirely — and the user loses the signal
   // that the agent finished. Retained rows are dismissed when the user clicks
   // through to the worktree.
-  const {
-    enrichedGroups: groups,
-    dismissWorktreeAgents,
-    dismissAgent
-  } = useRetainedAgents(liveGroups)
+  const { enrichedGroups: groups, dismissAgent } = useRetainedAgents(liveGroups)
   const removeAgentStatus = useAppStore((s) => s.removeAgentStatus)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const setActiveView = useAppStore((s) => s.setActiveView)
+  // Why: the persistent "selected" tint on a worktree card tracks the active
+  // worktree, not the last-clicked focus state. Keeping this in sync with the
+  // app-level activeWorktreeId makes the dashboard highlight what the user is
+  // currently viewing rather than where the keyboard/mouse last landed.
+  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
 
   // Why: the store's explicit status entry persists after an agent reports
   // `done` until the pane actually exits — which may be much later, since the
@@ -72,15 +73,6 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   // so dashboard shortcuts (1-5, arrows, Enter, Escape) don't hijack the
   // terminal or other focused inputs when the dashboard pane is merely open.
   const containerRef = useRef<HTMLDivElement>(null)
-
-  const handleCheckWorktree = useCallback(
-    (worktreeId: string) => {
-      // Why: when the user clicks a done worktree, they've acknowledged it.
-      // Dismiss retained rows so they stop lingering in the list.
-      dismissWorktreeAgents(worktreeId)
-    },
-    [dismissWorktreeAgents]
-  )
 
   // Why: clicking an agent row takes the user to the specific tab the agent
   // ran in, not just the worktree's last-active tab. Retained rows can outlive
@@ -196,7 +188,12 @@ const AgentDashboard = React.memo(function AgentDashboard() {
                   // rows tint more strongly on top. No card chrome, just an
                   // ambient hover.
                   className={cn(
-                    'transition-colors duration-100 hover:bg-accent/10',
+                    // Why: light-mode needs to darken the surface (not add
+                    // a pale accent to near-white) for the container tint
+                    // to register. Use a subtle black alpha in light, keep
+                    // the original alpha-on-accent in dark (which already
+                    // reads as a faint lift on the dark surface).
+                    'transition-colors duration-100 hover:bg-black/[0.02] dark:hover:bg-accent/10',
                     groupIdx !== filteredGroups.length - 1 && 'border-b border-border'
                   )}
                 >
@@ -252,9 +249,8 @@ const AgentDashboard = React.memo(function AgentDashboard() {
                       <DashboardWorktreeCard
                         key={card.worktree.id}
                         card={card}
-                        isFocused={focusedWorktreeId === card.worktree.id}
+                        isActive={activeWorktreeId === card.worktree.id}
                         onFocus={() => setFocusedWorktreeId(card.worktree.id)}
-                        onCheck={() => handleCheckWorktree(card.worktree.id)}
                         onDismissAgent={handleDismissAgent}
                         onActivateAgentTab={handleActivateAgentTab}
                         isLast={i === group.worktrees.length - 1}
