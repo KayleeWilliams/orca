@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { X, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Wrench, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { AgentStateDot, agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
@@ -196,11 +196,12 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             aria-label={expanded ? 'Collapse details' : 'Expand details'}
             aria-expanded={expanded}
           >
-            {expanded ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
+            {/* Why: rotating a single chevron animates smoothly; swapping
+                between two separate glyphs (ChevronRight/ChevronDown) would
+                snap instantly because the old node unmounts. */}
+            <ChevronRight
+              className={cn('size-3.5 transition-transform duration-150', expanded && 'rotate-90')}
+            />
           </button>
         ) : (
           <span className="inline-block size-3.5 shrink-0" aria-hidden />
@@ -314,10 +315,22 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                   </span>
                 )}
               </div>
-              {expanded && toolInput && (
-                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
-                  {toolInput}
-                </pre>
+              {/* Why: grid-rows [0fr]→[1fr] is the CSS-only height animation
+                  pattern — outer grid track interpolates smoothly while the
+                  inner min-h-0 + overflow-hidden clips content during the
+                  transition. This avoids measuring heights in JS and still
+                  animates unknown content sizes. */}
+              {toolInput && (
+                <div
+                  className={cn(
+                    'grid transition-[grid-template-rows,margin-top] duration-200 ease-out',
+                    expanded ? 'mt-0.5 grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  )}
+                >
+                  <pre className="min-h-0 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground/60">
+                    {toolInput}
+                  </pre>
+                </div>
               )}
             </>
           ) : (
