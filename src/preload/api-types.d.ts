@@ -631,8 +631,6 @@ export type PreloadApi = {
     onNewTerminalTab: (callback: () => void) => () => void
     onFocusBrowserAddressBar: (callback: () => void) => () => void
     onFindInBrowserPage: (callback: () => void) => () => void
-    storePdfForViewer: (base64: string) => Promise<string>
-    releasePdfFromViewer: (id: string) => void
     onReloadBrowserPage: (callback: () => void) => () => void
     onHardReloadBrowserPage: (callback: () => void) => () => void
     onCloseActiveTab: (callback: () => void) => () => void

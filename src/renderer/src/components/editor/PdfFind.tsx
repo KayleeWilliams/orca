@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import type { EventBus } from 'pdfjs-dist/web/pdf_viewer.mjs'
 
 type PdfFindProps = {
   isOpen: boolean
   onClose: () => void
-  webviewRef: React.RefObject<Electron.WebviewTag | null>
+  eventBusRef: React.RefObject<InstanceType<typeof EventBus> | null>
 }
 
 export default function PdfFind({
   isOpen,
   onClose,
-  webviewRef
+  eventBusRef
 }: PdfFindProps): React.JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
@@ -20,92 +21,86 @@ export default function PdfFind({
   const [totalMatches, setTotalMatches] = useState(0)
 
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 200)
+    const id = setTimeout(() => setDebouncedQuery(query), 80)
     return () => clearTimeout(id)
   }, [query])
 
-  const safeFindInPage = useCallback(
-    (text: string, opts?: Electron.FindInPageOptions): void => {
-      const webview = webviewRef.current
-      if (!webview || !text) {
+  const dispatchFind = useCallback(
+    (type: string, findPrevious = false): void => {
+      const eventBus = eventBusRef.current
+      if (!eventBus) {
         return
       }
-      try {
-        webview.findInPage(text, opts)
-      } catch {
-        // Why: the webview can be mid-teardown during tab close or navigation
-        // races. Best-effort is better than crashing.
-      }
+      eventBus.dispatch('find', {
+        source: null,
+        type,
+        query: debouncedQuery,
+        highlightAll: true,
+        caseSensitive: false,
+        entireWord: false,
+        findPrevious
+      })
     },
-    [webviewRef]
+    [eventBusRef, debouncedQuery]
   )
 
-  const safeStopFindInPage = useCallback((): void => {
-    const webview = webviewRef.current
-    if (!webview) {
-      return
-    }
-    try {
-      webview.stopFindInPage('clearSelection')
-    } catch {
-      // Why: same teardown race as safeFindInPage.
-    }
-  }, [webviewRef])
-
   const findNext = useCallback(() => {
-    if (query) {
-      safeFindInPage(query, { forward: true, findNext: true })
+    if (debouncedQuery) {
+      dispatchFind('again', false)
     }
-  }, [query, safeFindInPage])
+  }, [debouncedQuery, dispatchFind])
 
   const findPrevious = useCallback(() => {
-    if (query) {
-      safeFindInPage(query, { forward: false, findNext: true })
+    if (debouncedQuery) {
+      dispatchFind('again', true)
     }
-  }, [query, safeFindInPage])
+  }, [debouncedQuery, dispatchFind])
 
   useEffect(() => {
     if (isOpen) {
       inputRef.current?.focus()
       inputRef.current?.select()
     } else {
-      safeStopFindInPage()
+      const eventBus = eventBusRef.current
+      if (eventBus) {
+        eventBus.dispatch('findbarclose', { source: null })
+      }
       setActiveMatch(0)
       setTotalMatches(0)
     }
-  }, [isOpen, safeStopFindInPage])
+  }, [isOpen, eventBusRef])
 
   useEffect(() => {
     if (!debouncedQuery) {
-      safeStopFindInPage()
+      const eventBus = eventBusRef.current
+      if (eventBus) {
+        eventBus.dispatch('findbarclose', { source: null })
+      }
       setActiveMatch(0)
       setTotalMatches(0)
       return
     }
     if (isOpen) {
-      safeFindInPage(debouncedQuery)
+      dispatchFind('')
     }
-  }, [debouncedQuery, isOpen, safeFindInPage, safeStopFindInPage])
+  }, [debouncedQuery, isOpen, dispatchFind, eventBusRef])
 
   useEffect(() => {
-    const webview = webviewRef.current
-    if (!webview || !isOpen) {
+    const eventBus = eventBusRef.current
+    if (!eventBus || !isOpen) {
       return
     }
-    const handleFoundInPage = (event: Electron.FoundInPageEvent): void => {
-      const { activeMatchOrdinal, matches } = event.result
-      setActiveMatch(activeMatchOrdinal)
-      setTotalMatches(matches)
+    const handleMatchesCount = (evt: {
+      matchesCount: { current: number; total: number }
+    }): void => {
+      setActiveMatch(evt.matchesCount.current)
+      setTotalMatches(evt.matchesCount.total)
     }
-    webview.addEventListener('found-in-page', handleFoundInPage)
+    eventBus.on('updatefindmatchescount', handleMatchesCount)
     return () => {
-      try {
-        webview.removeEventListener('found-in-page', handleFoundInPage)
-      } catch {
-        // Why: webview may be destroyed during cleanup.
-      }
+      eventBus.off('updatefindmatchescount', handleMatchesCount)
     }
-  }, [webviewRef, isOpen])
+  }, [eventBusRef, isOpen])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

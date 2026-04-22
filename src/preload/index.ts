@@ -1140,10 +1140,6 @@ const api = {
       ipcRenderer.on('ui:findInBrowserPage', listener)
       return () => ipcRenderer.removeListener('ui:findInBrowserPage', listener)
     },
-    storePdfForViewer: (base64: string): Promise<string> => ipcRenderer.invoke('pdf:store', base64),
-    releasePdfFromViewer: (id: string): void => {
-      ipcRenderer.send('pdf:release', id)
-    },
     onReloadBrowserPage: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:reloadBrowserPage', listener)

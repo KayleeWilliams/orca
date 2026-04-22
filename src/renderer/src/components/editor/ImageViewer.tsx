@@ -1,8 +1,7 @@
-import { Image as ImageIcon, RotateCcw, Search, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { type JSX, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { ORCA_PDF_VIEWER_PARTITION } from '../../../../shared/constants'
-import PdfFind from './PdfFind'
+import PdfViewer from './PdfViewer'
 
 const FALLBACK_IMAGE_MIME_TYPE = 'image/png'
 const MIN_ZOOM = 0.25
@@ -26,15 +25,11 @@ export default function ImageViewer({
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(
     null
   )
-  const [findOpen, setFindOpen] = useState(false)
-  const webviewRef = useRef<Electron.WebviewTag | null>(null)
-  const pdfContainerRef = useRef<HTMLDivElement | null>(null)
 
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
   const isPdf = mimeType === 'application/pdf'
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [pdfReady, setPdfReady] = useState(false)
   const estimatedSize = useMemo(() => {
     const bytes = Math.floor((cleanedContent.length * 3) / 4)
     if (bytes < 1024) {
@@ -69,76 +64,9 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(objectUrl)
   }, [cleanedContent, mimeType, isPdf])
 
-  // Why: the webview is created imperatively (not via JSX) because Electron's
-  // webview custom element requires attribute-level control that React's JSX
-  // does not reliably provide. The BrowserPane uses the same pattern.
-  useEffect(() => {
-    const container = pdfContainerRef.current
-    if (!isPdf || !cleanedContent || !container) {
-      return
-    }
-
-    let storeId: string | null = null
-    let webview: Electron.WebviewTag | null = null
-    let cancelled = false
-
-    window.api.ui.storePdfForViewer(cleanedContent).then((id) => {
-      if (cancelled) {
-        window.api.ui.releasePdfFromViewer(id)
-        return
-      }
-      storeId = id
-      const url = `orca-pdf://${id}`
-
-      webview = document.createElement('webview') as Electron.WebviewTag
-      webview.setAttribute('partition', ORCA_PDF_VIEWER_PARTITION)
-      webview.setAttribute('src', url)
-      webview.style.display = 'flex'
-      webview.style.flex = '1'
-      webview.style.width = '100%'
-      webview.style.height = '100%'
-      webview.style.minHeight = '24rem'
-      webview.style.border = 'none'
-
-      webviewRef.current = webview
-      container.appendChild(webview)
-      setPdfReady(true)
-    })
-
-    return () => {
-      cancelled = true
-      if (webview) {
-        webview.remove()
-        webviewRef.current = null
-      }
-      if (storeId) {
-        window.api.ui.releasePdfFromViewer(storeId)
-      }
-      setPdfReady(false)
-    }
-  }, [isPdf, cleanedContent])
-
-  const closeFindBar = useCallback(() => setFindOpen(false), [])
-
-  // Why: when the webview has focus, keyboard events go to the guest process
-  // and don't propagate to the renderer's DOM. This handler only fires when
-  // focus is outside the webview. The Search button in the toolbar is the
-  // reliable entry point when the PDF has focus.
-  useEffect(() => {
-    if (!isPdf) {
-      return
-    }
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      const isMod = navigator.userAgent.includes('Mac') ? e.metaKey : e.ctrlKey
-      if (isMod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault()
-        e.stopPropagation()
-        setFindOpen(true)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [isPdf])
+  if (isPdf) {
+    return <PdfViewer content={cleanedContent} filePath={filePath} />
+  }
 
   if (imageError) {
     return (
@@ -150,7 +78,7 @@ export default function ImageViewer({
     )
   }
 
-  if (!isPdf && !previewUrl) {
+  if (!previewUrl) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         Loading preview...
@@ -158,135 +86,108 @@ export default function ImageViewer({
     )
   }
 
-  const previewPane = isPdf ? (
-    <div className="relative flex flex-1 flex-col overflow-auto">
-      {pdfReady && <PdfFind isOpen={findOpen} onClose={closeFindBar} webviewRef={webviewRef} />}
-      {/* Why: container for the imperatively created webview. See the useEffect
-          above that creates the webview via document.createElement('webview')
-          following the same pattern as BrowserPane. */}
-      <div ref={pdfContainerRef} className="flex flex-1 flex-col bg-background" />
-    </div>
-  ) : (
-    <div
-      className="flex flex-1 items-center justify-center overflow-auto bg-muted/20 p-4 cursor-pointer"
-      onClick={() => setIsPopupOpen(true)}
-      title="Open image in popup"
-    >
-      <div
-        className="flex items-center justify-center"
-        style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
-      >
-        <img
-          src={previewUrl!}
-          alt={filename}
-          className="max-h-full max-w-full object-contain"
-          onLoad={(event) => {
-            const img = event.currentTarget
-            setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
-          }}
-          onError={() => setImageError(true)}
-        />
-      </div>
-    </div>
-  )
-
   return (
     <>
       <div className="flex h-full min-h-0 flex-col">
-        {previewPane}
+        <div
+          className="flex flex-1 items-center justify-center overflow-auto bg-muted/20 p-4 cursor-pointer"
+          onClick={() => setIsPopupOpen(true)}
+          title="Open image in popup"
+        >
+          <div
+            className="flex items-center justify-center"
+            style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+          >
+            <img
+              src={previewUrl}
+              alt={filename}
+              className="max-h-full max-w-full object-contain"
+              onLoad={(event) => {
+                const img = event.currentTarget
+                setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+              }}
+              onError={() => setImageError(true)}
+            />
+          </div>
+        </div>
         <div className="flex items-center gap-4 border-t px-4 py-2 text-xs text-muted-foreground">
-          {!isPdf && (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
-                onClick={() => setZoom((prev) => Math.max(MIN_ZOOM, prev / ZOOM_STEP))}
-                disabled={zoom <= MIN_ZOOM}
-                title="Zoom out"
-              >
-                <ZoomOut size={14} />
-              </button>
-              <button
-                type="button"
-                className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
-                onClick={() => setZoom(1)}
-                disabled={zoom === 1}
-                title="Reset zoom"
-              >
-                <RotateCcw size={14} />
-              </button>
-              <button
-                type="button"
-                className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
-                onClick={() => setZoom((prev) => Math.min(MAX_ZOOM, prev * ZOOM_STEP))}
-                disabled={zoom >= MAX_ZOOM}
-                title="Zoom in"
-              >
-                <ZoomIn size={14} />
-              </button>
-              <span className="ml-1 tabular-nums">{zoomPercent}%</span>
-            </div>
-          )}
-          {isPdf && (
+          <div className="flex items-center gap-1">
             <button
               type="button"
-              className="rounded p-1 hover:bg-accent hover:text-foreground"
-              onClick={() => setFindOpen(true)}
-              title="Find in PDF (Cmd+F)"
+              className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
+              onClick={() => setZoom((prev) => Math.max(MIN_ZOOM, prev / ZOOM_STEP))}
+              disabled={zoom <= MIN_ZOOM}
+              title="Zoom out"
             >
-              <Search size={14} />
+              <ZoomOut size={14} />
             </button>
-          )}
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
+              onClick={() => setZoom(1)}
+              disabled={zoom === 1}
+              title="Reset zoom"
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
+              onClick={() => setZoom((prev) => Math.min(MAX_ZOOM, prev * ZOOM_STEP))}
+              disabled={zoom >= MAX_ZOOM}
+              title="Zoom in"
+            >
+              <ZoomIn size={14} />
+            </button>
+            <span className="ml-1 tabular-nums">{zoomPercent}%</span>
+          </div>
           <span className="min-w-0 truncate" title={filename}>
             {filename}
           </span>
-          {!isPdf && imageDimensions && (
+          {imageDimensions && (
             <span>
               {imageDimensions.width} x {imageDimensions.height}
             </span>
           )}
-          {isPdf && <span>PDF preview</span>}
           <span>{estimatedSize}</span>
         </div>
       </div>
-      {!isPdf && (
-        <Dialog open={isPopupOpen} onOpenChange={setIsPopupOpen}>
-          <DialogContent
-            showCloseButton={false}
-            className="top-1/2 left-1/2 h-[80vh] w-[70vw] max-w-[70vw] -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden border border-border/60 bg-background p-0 shadow-2xl sm:max-w-[70vw]"
-          >
-            <DialogTitle className="sr-only">{filename}</DialogTitle>
-            <DialogDescription className="sr-only">Full-size image preview</DialogDescription>
-            <div className="flex items-center justify-between border-b border-border/60 bg-background/95 px-3 py-2">
-              <div className="min-w-0 truncate text-sm font-medium text-foreground">{filename}</div>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => setIsPopupOpen(false)}
-              >
-                <X size={14} />
-                <span>Close</span>
-              </button>
+      <Dialog open={isPopupOpen} onOpenChange={setIsPopupOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="top-1/2 left-1/2 h-[80vh] w-[70vw] max-w-[70vw] -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden border border-border/60 bg-background p-0 shadow-2xl sm:max-w-[70vw]"
+        >
+          <DialogTitle className="sr-only">{filename}</DialogTitle>
+          <DialogDescription className="sr-only">Full-size image preview</DialogDescription>
+          <div className="flex items-center justify-between border-b border-border/60 bg-background/95 px-3 py-2">
+            <div className="min-w-0 truncate text-sm font-medium text-foreground">{filename}</div>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setIsPopupOpen(false)}
+            >
+              <X size={14} />
+              <span>Close</span>
+            </button>
+          </div>
+          <div className="flex h-[calc(100%-4.5rem)] w-full min-h-0 items-center justify-center overflow-auto bg-muted/20 p-4">
+            <div
+              className="flex items-center justify-center"
+              style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+            >
+              <img
+                src={previewUrl}
+                alt={filename}
+                className="block max-h-full max-w-full object-contain"
+              />
             </div>
-            <div className="flex h-[calc(100%-4.5rem)] w-full min-h-0 items-center justify-center overflow-auto bg-muted/20 p-4">
-              <div
-                className="flex items-center justify-center"
-                style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
-              >
-                <img
-                  src={previewUrl!}
-                  alt={filename}
-                  className="block max-h-full max-w-full object-contain"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between border-t border-border/60 bg-background/95 px-3 py-2 text-xs text-muted-foreground">
-              <div>Press Esc to close</div>
-              <div className="tabular-nums">{zoomPercent}%</div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
+          </div>
+          <div className="flex items-center justify-between border-t border-border/60 bg-background/95 px-3 py-2 text-xs text-muted-foreground">
+            <div>Press Esc to close</div>
+            <div className="tabular-nums">{zoomPercent}%</div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
