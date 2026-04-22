@@ -8,6 +8,7 @@ import {
 } from '@/lib/terminal-links'
 import { useAppStore } from '@/store'
 import { getConnectionId } from '@/lib/connection-context'
+import { absolutePathToFileUri } from '@/components/editor/markdown-internal-links'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 
 export type LinkHandlerDeps = {
@@ -30,10 +31,32 @@ export function getTerminalFileOpenHint(): string {
   return isMacPlatform() ? '⌘+click to open' : 'Ctrl+click to open'
 }
 
+// Why: .html/.htm files are routed straight into Orca's embedded browser rather
+// than the Monaco editor (which would just show the source), matching the
+// standalone "Open Preview to the Side" entry point. Advertise the different
+// behavior in the hover tooltip so users know a click will render the page.
+export function getTerminalHtmlFileOpenHint(): string {
+  return isMacPlatform() ? '⌘+click to open in browser' : 'Ctrl+click to open in browser'
+}
+
 export function getTerminalUrlOpenHint(): string {
   return isMacPlatform()
     ? '⌘+click to open or ⇧⌘+click for system browser'
     : 'Ctrl+click to open or Shift+Ctrl+click for system browser'
+}
+
+function isHtmlFilePath(filePath: string): boolean {
+  return /\.html?$/i.test(filePath)
+}
+
+function openHtmlFileInBrowser(filePath: string, worktreeId: string): void {
+  const store = useAppStore.getState()
+  if (worktreeId) {
+    store.setActiveWorktree(worktreeId)
+  }
+  const fileUrl = absolutePathToFileUri(filePath)
+  const title = filePath.split(/[/\\]/).pop() ?? filePath
+  store.createBrowserTab(worktreeId, fileUrl, { title, activate: true })
 }
 
 export function openDetectedFilePath(
@@ -59,6 +82,15 @@ export function openDetectedFilePath(
 
     if (statResult.isDirectory) {
       await window.api.shell.openFilePath(filePath)
+      return
+    }
+
+    // Why: .html/.htm files render in Orca's embedded browser instead of opening
+    // as source in Monaco — ⌘/Ctrl+click on an HTML path in the terminal should
+    // feel like clicking an http link and render the page, not dump HTML source.
+    // Mirrors the editor's "Open Preview to the Side" action.
+    if (isHtmlFilePath(filePath)) {
+      openHtmlFileInBrowser(filePath, worktreeId)
       return
     }
 
@@ -155,7 +187,14 @@ export function createFilePathLinkProvider(
               })
             },
             hover: () => {
-              linkTooltip.textContent = `${resolved.absolutePath} (${openLinkHint})`
+              // Why: HTML files get a distinct hint because ⌘/Ctrl+click opens
+              // them rendered in the embedded browser, not as source in the
+              // editor — parallels the "open in system browser" affordance
+              // shown for http URLs.
+              const hint = isHtmlFilePath(resolved.absolutePath)
+                ? getTerminalHtmlFileOpenHint()
+                : openLinkHint
+              linkTooltip.textContent = `${resolved.absolutePath} (${hint})`
               linkTooltip.style.display = ''
             },
             leave: () => {

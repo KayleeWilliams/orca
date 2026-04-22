@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { handleOscLink, isTerminalLinkActivation } from './terminal-link-handlers'
+import {
+  getTerminalHtmlFileOpenHint,
+  handleOscLink,
+  isTerminalLinkActivation,
+  openDetectedFilePath
+} from './terminal-link-handlers'
 
 const openUrlMock = vi.fn()
 const openFileUriMock = vi.fn()
@@ -128,6 +133,45 @@ describe('handleOscLink', () => {
 
     expect(openUrlMock).toHaveBeenCalledWith('https://example.com/')
     expect(createBrowserTabMock).not.toHaveBeenCalled()
+  })
+
+  it('routes .html file paths straight into the embedded browser', async () => {
+    setPlatform('Macintosh')
+
+    openDetectedFilePath('/tmp/report.html', null, null, deps)
+
+    // openDetectedFilePath is async (fire-and-forget), so flush the microtask queue
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Why: .html should not open Monaco — it should render in the browser tab.
+    expect(openFileMock).not.toHaveBeenCalled()
+    expect(createBrowserTabMock).toHaveBeenCalledWith(
+      'wt-1',
+      'file:///tmp/report.html',
+      expect.objectContaining({ title: 'report.html', activate: true })
+    )
+  })
+
+  it('also routes .htm paths to the embedded browser', async () => {
+    setPlatform('Macintosh')
+
+    openDetectedFilePath('/tmp/legacy.HTM', null, null, deps)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(openFileMock).not.toHaveBeenCalled()
+    expect(createBrowserTabMock).toHaveBeenCalledWith(
+      'wt-1',
+      'file:///tmp/legacy.HTM',
+      expect.objectContaining({ title: 'legacy.HTM' })
+    )
+  })
+
+  it('advertises the browser-open behavior in the html hover hint', () => {
+    setPlatform('Macintosh')
+    expect(getTerminalHtmlFileOpenHint()).toBe('⌘+click to open in browser')
+
+    setPlatform('Windows')
+    expect(getTerminalHtmlFileOpenHint()).toBe('Ctrl+click to open in browser')
   })
 
   it('opens file links in Orca instead of via shell when the platform modifier is pressed', async () => {
