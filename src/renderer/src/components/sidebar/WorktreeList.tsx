@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import { buildWorktreeComparator } from './smart-sort'
+import { buildWorktreeComparator, computeSmartScore } from './smart-sort'
 import {
   type GroupHeaderRow,
   type Row,
@@ -430,7 +430,6 @@ const WorktreeList = React.memo(function WorktreeList() {
   const issueCache = useAppStore((s) => (searchQuery ? s.issueCache : null))
 
   const sortEpoch = useAppStore((s) => s.sortEpoch)
-  const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   // Count of non-archived worktrees — used to detect structural changes
   // (add/remove) vs. pure reorders (score shifts) so the debounce below
@@ -473,7 +472,7 @@ const WorktreeList = React.memo(function WorktreeList() {
 
     const timer = setTimeout(() => setDebouncedSortEpoch(sortEpoch), SORT_SETTLE_MS)
     return () => clearTimeout(timer)
-  }, [sortEpoch, debouncedSortEpoch, worktreeCount, agentStatusEpoch])
+  }, [sortEpoch, debouncedSortEpoch, worktreeCount])
 
   // Why a latching ref: we need to distinguish "app just started, no PTYs
   // have spawned yet" from "user closed all terminals mid-session." The
@@ -522,15 +521,39 @@ const WorktreeList = React.memo(function WorktreeList() {
     }
 
     const currentTabs = state.tabsByWorktree
+    const now = Date.now()
+    // Why precompute: this is the hot sidebar sort. Array.sort invokes the
+    // comparator O(N log N) times, and the smart-score computation scans
+    // `agentStatusByPaneKey` (O(E)) on every call. Precomputing scores once
+    // per worktree (decorate-sort-undecorate) collapses that to O(N×E + N log N)
+    // so hot worktrees with many running agents don't spike CPU on every
+    // sortEpoch bump. Only smart mode uses the score map; other modes ignore it.
+    const precomputedScores =
+      sortBy === 'smart'
+        ? new Map<string, number>(
+            nonArchivedWorktrees.map((w) => [
+              w.id,
+              computeSmartScore(
+                w,
+                currentTabs,
+                repoMap,
+                state.prCache,
+                now,
+                state.agentStatusByPaneKey
+              )
+            ])
+          )
+        : undefined
     nonArchivedWorktrees.sort(
       buildWorktreeComparator(
         sortBy,
         currentTabs,
         repoMap,
         state.prCache,
-        Date.now(),
+        now,
         null,
-        state.agentStatusByPaneKey
+        state.agentStatusByPaneKey,
+        precomputedScores
       )
     )
     return nonArchivedWorktrees.map((w) => w.id)

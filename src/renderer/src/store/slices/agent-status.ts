@@ -209,15 +209,17 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           // it when a new turn starts (working → Stop reprices it).
           interrupted: payload.interrupted
         }
+        // Why: `agentStatusEpoch` bumps on every update because visual +
+        // freshness selectors (WorktreeCard status, hover content) care about
+        // tool-name/prompt/assistant-message churn within a turn. `sortEpoch`,
+        // on the other hand, only bumps on actual `state` transitions — sort
+        // order is a function of state, so churning it on every tool/prompt
+        // event would stress the sidebar's smart-sort debounce for no reason.
+        const stateChanged = !existing || existing.state !== payload.state
         return {
           agentStatusByPaneKey: { ...s.agentStatusByPaneKey, [paneKey]: entry },
-          // Why: bump both epochs so WorktreeCard re-derives its visual status
-          // and WorktreeList re-sorts immediately when an agent reports status.
-          // The freshness-expiry timer and the remove* paths bump both epochs
-          // for the same reason — agent transitions (new, stale, removed) can
-          // all legitimately change worktree sort order.
           agentStatusEpoch: s.agentStatusEpoch + 1,
-          sortEpoch: s.sortEpoch + 1
+          sortEpoch: stateChanged ? s.sortEpoch + 1 : s.sortEpoch
         }
       })
       // Why: schedule after set completes so the timer reads the updated map.

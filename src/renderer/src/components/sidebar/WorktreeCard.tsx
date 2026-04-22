@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: the worktree card centralizes sidebar card state (selection, drag, agent status, git info, context menu) in one cohesive component so sidebar rendering doesn't fan out across files. */
 import React, { useEffect, useMemo, useCallback, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -13,7 +14,10 @@ import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { type WorktreeStatus } from '@/lib/worktree-status'
 import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
-import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
+import {
+  AGENT_STATUS_STALE_AFTER_MS,
+  type AgentStatusEntry
+} from '../../../../shared/agent-status-types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
 import {
@@ -22,6 +26,7 @@ import {
   CONFLICT_OPERATION_LABELS,
   EMPTY_TABS,
   EMPTY_BROWSER_TABS,
+  EMPTY_AGENT_ENTRIES,
   FilledBellIcon
 } from './WorktreeCardHelpers'
 import { IssueSection, PrSection, CommentSection } from './WorktreeCardMeta'
@@ -106,7 +111,41 @@ const WorktreeCard = React.memo(function WorktreeCard({
   // ── GRANULAR selectors: only subscribe to THIS worktree's data ──
   const tabs = useAppStore((s) => s.tabsByWorktree[worktree.id] ?? EMPTY_TABS)
   const browserTabs = useAppStore((s) => s.browserTabsByWorktree[worktree.id] ?? EMPTY_BROWSER_TABS)
-  const agentStatusByPaneKey = useAppStore((s) => s.agentStatusByPaneKey)
+  // Why: subscribe only to the entries whose paneKey belongs to one of this
+  // worktree's tabs. Subscribing to the full `agentStatusByPaneKey` map would
+  // re-render every card on every status event across all worktrees, which is
+  // the render-amplification problem the PR's review focus flags. The selector
+  // reads `tabsByWorktree[worktree.id]` from zustand state (not external
+  // closure) so it stays reactive to tab-spawn/close events. `useShallow`
+  // keeps the array reference stable when no relevant entry actually changed,
+  // so the downstream `status` memo doesn't invalidate on unrelated updates.
+  const worktreeAgentEntries = useAppStore(
+    useShallow((s) => {
+      const wtTabs = s.tabsByWorktree[worktree.id]
+      if (!wtTabs || wtTabs.length === 0) {
+        return EMPTY_AGENT_ENTRIES
+      }
+      const liveTabIds: string[] = []
+      for (const t of wtTabs) {
+        if (t.ptyId) {
+          liveTabIds.push(t.id)
+        }
+      }
+      if (liveTabIds.length === 0) {
+        return EMPTY_AGENT_ENTRIES
+      }
+      const out: AgentStatusEntry[] = []
+      for (const entry of Object.values(s.agentStatusByPaneKey)) {
+        for (const id of liveTabIds) {
+          if (entry.paneKey.startsWith(`${id}:`)) {
+            out.push(entry)
+            break
+          }
+        }
+      }
+      return out.length > 0 ? out : EMPTY_AGENT_ENTRIES
+    })
+  )
   const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   const branch = branchDisplayName(worktree.branch)
@@ -140,40 +179,71 @@ const WorktreeCard = React.memo(function WorktreeCard({
       return 'inactive'
     }
 
-    // Why: explicit status only wins while it is fresh. Once it gets stale, the
-    // design doc says the coarse icon should fall back to live title heuristics
-    // so an old "done" report does not mask a new permission prompt.
-    const explicitEntries = Object.values(agentStatusByPaneKey).filter((e) =>
-      liveTabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
-    )
-    const freshEntries = explicitEntries.filter((entry) =>
-      isExplicitAgentStatusFresh(entry, Date.now(), AGENT_STATUS_STALE_AFTER_MS)
-    )
-    if (freshEntries.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
+    // Why: precedence is per-tab — explicit status (when fresh) wins over
+    // heuristics *for that tab only*. Aggregating explicit across all tabs
+    // before heuristics is wrong: if tab A has a fresh explicit `done` and
+    // tab B's title heuristically says `working`, the worktree still has a
+    // live working agent in B. Collect per-tab state, then reduce globally
+    // with priority permission > working > done.
+    const now = Date.now()
+    const freshByTabId = new Map<string, AgentStatusEntry[]>()
+    for (const entry of worktreeAgentEntries) {
+      if (!isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)) {
+        continue
+      }
+      const colonIdx = entry.paneKey.indexOf(':')
+      const tabId = colonIdx === -1 ? entry.paneKey : entry.paneKey.slice(0, colonIdx)
+      const bucket = freshByTabId.get(tabId)
+      if (bucket) {
+        bucket.push(entry)
+      } else {
+        freshByTabId.set(tabId, [entry])
+      }
+    }
+
+    let hasPermission = false
+    let hasWorking = false
+    let hasDone = false
+    for (const tab of liveTabs) {
+      const fresh = freshByTabId.get(tab.id)
+      if (fresh && fresh.length > 0) {
+        if (fresh.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
+          hasPermission = true
+        } else if (fresh.some((e) => e.state === 'working')) {
+          hasWorking = true
+        } else if (fresh.some((e) => e.state === 'done')) {
+          hasDone = true
+        }
+      } else {
+        const heuristic = detectAgentStatusFromTitle(tab.title)
+        if (heuristic === 'permission') {
+          hasPermission = true
+        } else if (heuristic === 'working') {
+          hasWorking = true
+        }
+      }
+    }
+
+    if (hasPermission) {
       return 'permission'
     }
-    if (freshEntries.some((e) => e.state === 'working')) {
+    if (hasWorking) {
       return 'working'
     }
     // Why done maps to 'active': a completed agent still has a live terminal —
     // 'inactive' (gray dot) would incorrectly suggest nothing is there.
-    if (freshEntries.some((e) => e.state === 'done')) {
+    if (hasDone) {
       return 'active'
     }
-
-    // Fall through to heuristic title-based detection
-    if (liveTabs.some((tab) => detectAgentStatusFromTitle(tab.title) === 'permission')) {
-      return 'permission'
-    }
-    if (liveTabs.some((tab) => detectAgentStatusFromTitle(tab.title) === 'working')) {
-      return 'working'
-    }
-    return liveTabs.length > 0 ? 'active' : 'inactive'
+    // Why: execution reaches this point only when hasTerminals is true (top guard
+    // returned inactive otherwise), so any worktree here has at least one live
+    // PTY or browser tab — both are "active from the user's point of view".
+    return 'active'
     // Why: agentStatusEpoch is a cache-busting counter, not data consumed by
     // the memo body. It forces re-derivation when an agent status entry crosses
     // the freshness threshold so the visual status updates without polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabs, browserTabs, agentStatusByPaneKey, agentStatusEpoch])
+  }, [tabs, browserTabs, worktreeAgentEntries, agentStatusEpoch])
 
   const showPR = cardProps.includes('pr')
   const showCI = cardProps.includes('ci')

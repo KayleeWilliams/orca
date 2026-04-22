@@ -73,20 +73,17 @@ function computeSmartScoreFromSignals(
 
   for (const tab of liveTabs) {
     const tabExplicitEntries = explicitByTabId.get(tab.id) ?? []
-    const hasFreshExplicit = tabExplicitEntries.some((entry) =>
+    // Why: compute freshness once per entry instead of recomputing inside each
+    // of the three `.some(...)` passes below. Freshness is a pure function of
+    // (entry, now) so filtering up front is equivalent and cheaper.
+    const freshEntries = tabExplicitEntries.filter((entry) =>
       isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)
     )
 
-    if (hasFreshExplicit) {
-      hasExplicitWorking ||= tabExplicitEntries.some(
-        (entry) =>
-          isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
-          entry.state === 'working'
-      )
-      hasExplicitBlocked ||= tabExplicitEntries.some(
-        (entry) =>
-          isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
-          (entry.state === 'blocked' || entry.state === 'waiting')
+    if (freshEntries.length > 0) {
+      hasExplicitWorking ||= freshEntries.some((entry) => entry.state === 'working')
+      hasExplicitBlocked ||= freshEntries.some(
+        (entry) => entry.state === 'blocked' || entry.state === 'waiting'
       )
       continue
     }
@@ -157,6 +154,14 @@ function getSmartSortCandidate(
 
 /**
  * Build a comparator for sorting worktrees based on the current sort mode.
+ *
+ * `precomputedScores` is the decorate-sort-undecorate optimization for the
+ * `smart` mode: callers should compute each worktree's smart score once and
+ * pass the map in, since `Array.prototype.sort` invokes the comparator
+ * O(N log N) times and recomputing the score each call scans the
+ * `agentStatusByPaneKey` map O(N log N × E) times. When omitted, the
+ * comparator falls back to computing scores per-comparison so existing call
+ * sites that haven't adopted the optimization keep working.
  */
 export function buildWorktreeComparator(
   sortBy: SortBy,
@@ -165,7 +170,8 @@ export function buildWorktreeComparator(
   prCache: Record<string, PRCacheEntry> | null,
   now: number = Date.now(),
   smartSortOverrides: Record<string, SmartSortOverride> | null = null,
-  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>,
+  precomputedScores?: Map<string, number>
 ): (a: Worktree, b: Worktree) => number {
   return (a, b) => {
     switch (sortBy) {
@@ -186,21 +192,36 @@ export function buildWorktreeComparator(
           prCache,
           smartSortOverrides
         )
+        // Why precomputedScores: the smart-score computation iterates
+        // `agentStatusByPaneKey` (O(E) per call). The comparator is invoked
+        // O(N log N) times by Array.sort, so without memoization we pay
+        // O(N log N × E). When the caller supplies a precomputed score map
+        // we get O(1) lookups; when it doesn't we preserve the old behavior
+        // to stay backward-compatible. Overrides bypass the precomputed map
+        // because the override intentionally freezes the candidate's inputs
+        // (tabs, hasRecentPRSignal) which may differ from the live score.
+        const scoreA =
+          precomputedScores && !smartSortOverrides?.[a.id]
+            ? (precomputedScores.get(a.id) ?? 0)
+            : computeSmartScoreFromSignals(
+                smartA.worktree,
+                smartA.tabs,
+                smartA.hasRecentPRSignal,
+                now,
+                agentStatusByPaneKey
+              )
+        const scoreB =
+          precomputedScores && !smartSortOverrides?.[b.id]
+            ? (precomputedScores.get(b.id) ?? 0)
+            : computeSmartScoreFromSignals(
+                smartB.worktree,
+                smartB.tabs,
+                smartB.hasRecentPRSignal,
+                now,
+                agentStatusByPaneKey
+              )
         return (
-          computeSmartScoreFromSignals(
-            smartB.worktree,
-            smartB.tabs,
-            smartB.hasRecentPRSignal,
-            now,
-            agentStatusByPaneKey
-          ) -
-            computeSmartScoreFromSignals(
-              smartA.worktree,
-              smartA.tabs,
-              smartA.hasRecentPRSignal,
-              now,
-              agentStatusByPaneKey
-            ) ||
+          scoreB - scoreA ||
           smartB.worktree.lastActivityAt - smartA.worktree.lastActivityAt ||
           a.displayName.localeCompare(b.displayName)
         )
@@ -254,6 +275,18 @@ export function sortWorktreesSmart(
     )
   }
 
+  // Why precompute: Array.sort calls the comparator O(N log N) times and the
+  // smart-score computation iterates `agentStatusByPaneKey` each time. Compute
+  // each worktree's score once up front (decorate-sort-undecorate) so the
+  // comparator does O(1) map lookups instead of O(E) scans per comparison.
+  const now = Date.now()
+  const precomputedScores = new Map<string, number>(
+    worktrees.map((w) => [
+      w.id,
+      computeSmartScore(w, tabsByWorktree, repoMap, prCache, now, agentStatusByPaneKey)
+    ])
+  )
+
   // Why: agentStatusByPaneKey is forwarded so the smart-score comparator can
   // use explicit agent status (OSC 9999) when ranking worktrees by recency.
   return [...worktrees].sort(
@@ -262,9 +295,10 @@ export function sortWorktreesSmart(
       tabsByWorktree,
       repoMap,
       prCache,
-      Date.now(),
+      now,
       null,
-      agentStatusByPaneKey
+      agentStatusByPaneKey,
+      precomputedScores
     )
   )
 }
