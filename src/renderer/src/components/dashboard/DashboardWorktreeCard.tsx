@@ -68,25 +68,26 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
       onKeyDown={handleKeyDown}
       onFocus={onFocus}
       className={cn(
-        'cursor-pointer px-2.5 py-2 transition-colors duration-100',
+        'cursor-pointer px-2.5 py-1 transition-colors duration-100',
         'hover:bg-accent/20',
         'focus-visible:outline-none focus-visible:bg-accent/30',
         isFocused && 'bg-accent/25',
         !isLast && 'border-b border-border/80'
       )}
     >
-      {/* Worktree header row. Why: the repo is shown by the surrounding
-          group header, so the row itself only needs the worktree name. */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className="text-[11px] font-semibold text-foreground truncate leading-tight min-w-0">
+      {/* Worktree header row. Why: workspace name + branch share one line
+          to save vertical space — the branch is a secondary qualifier that
+          reads fine as a muted suffix rather than its own line. */}
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <span className="text-[11px] font-semibold text-foreground truncate leading-tight shrink-0 max-w-[60%]">
           {card.worktree.displayName}
         </span>
+        {branchName && (
+          <span className="text-[10px] text-muted-foreground/60 truncate min-w-0 leading-tight">
+            {branchName}
+          </span>
+        )}
       </div>
-
-      {/* Branch name */}
-      {branchName && (
-        <div className="mt-0.5 text-[10px] text-muted-foreground/60 truncate">{branchName}</div>
-      )}
 
       {/* Agent rows with activity blocks */}
       {card.agents.length > 0 && (
