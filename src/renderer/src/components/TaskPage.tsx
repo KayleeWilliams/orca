@@ -474,11 +474,11 @@ export default function TaskPage(): React.JSX.Element {
       // (setupRunPolicy === 'ask') or the repo/agent resolution fails.
       void launchWorkItemDirect({
         item,
-        repoId,
+        repoId: item.repoId,
         openModalFallback: () => openComposerForItem(item)
       })
     },
-    [openComposerForItem, repoId]
+    [openComposerForItem]
   )
 
   const handleCreateNewIssue = useCallback(async (): Promise<void> => {
