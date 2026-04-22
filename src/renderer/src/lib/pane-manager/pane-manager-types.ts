@@ -53,12 +53,6 @@ export type ScrollState = {
   firstVisibleLineContent: string
   viewportY: number
   totalLines: number
-  cols: number
-  // Why: number of wrapped rows between the logical line start and the
-  // viewport row. When the anchor is the logical line start (not the
-  // viewport row itself), this offset lets restoreScrollState approximate
-  // the correct viewport position after reflow changes wrap points.
-  logicalLineOffset: number
 }
 
 export type ManagedPaneInternal = {
@@ -83,11 +77,6 @@ export type ManagedPaneInternal = {
   // terminal to a completely wrong position. Capturing once at drag start
   // and reusing that state for every restore eliminates accumulation.
   pendingDragScrollState: ScrollState | null
-  // Why: sidebar toggles and worktree switches resize the terminal container
-  // synchronously, corrupting scroll before ResizeObserver fires. Separate
-  // from pendingDragScrollState so a keyboard sidebar toggle during an active
-  // divider drag doesn't steal the drag's lock.
-  pendingLayoutScrollState: ScrollState | null
 } & ManagedPane
 
 export type DropZone = 'top' | 'bottom' | 'left' | 'right'

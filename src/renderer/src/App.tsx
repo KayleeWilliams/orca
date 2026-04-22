@@ -3,11 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
 import { Minimize2, PanelLeft, PanelRight } from 'lucide-react'
-import {
-  FOCUS_TERMINAL_PANE_EVENT,
-  LAYOUT_WILL_CHANGE_EVENT,
-  TOGGLE_TERMINAL_PANE_EXPAND_EVENT
-} from '@/constants/terminal'
+import { FOCUS_TERMINAL_PANE_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -503,7 +499,6 @@ function App(): React.JSX.Element {
       if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
         dispatchClearModifierHints()
         e.preventDefault()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         actions.toggleSidebar()
         return
       }
@@ -524,7 +519,6 @@ function App(): React.JSX.Element {
       if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
         dispatchClearModifierHints()
         e.preventDefault()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         actions.toggleRightSidebar()
         return
       }
@@ -533,7 +527,6 @@ function App(): React.JSX.Element {
       if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
         dispatchClearModifierHints()
         e.preventDefault()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         actions.setRightSidebarTab('explorer')
         actions.setRightSidebarOpen(true)
         return
@@ -543,7 +536,6 @@ function App(): React.JSX.Element {
       if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
         dispatchClearModifierHints()
         e.preventDefault()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         actions.setRightSidebarTab('search')
         actions.setRightSidebarOpen(true)
         return
@@ -560,7 +552,6 @@ function App(): React.JSX.Element {
         }
         dispatchClearModifierHints()
         e.preventDefault()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         actions.setRightSidebarTab('source-control')
         actions.setRightSidebarOpen(true)
       }
@@ -606,10 +597,7 @@ function App(): React.JSX.Element {
           <TooltipTrigger asChild>
             <button
               className="sidebar-toggle"
-              onClick={() => {
-                window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
-                actions.toggleSidebar()
-              }}
+              onClick={actions.toggleSidebar}
               aria-label="Toggle sidebar"
             >
               <PanelLeft size={16} />
@@ -738,10 +726,7 @@ function App(): React.JSX.Element {
       <TooltipTrigger asChild>
         <button
           className="sidebar-toggle mr-2"
-          onClick={() => {
-            window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
-            actions.toggleRightSidebar()
-          }}
+          onClick={actions.toggleRightSidebar}
           aria-label="Toggle right sidebar"
         >
           <PanelRight size={16} />
@@ -757,7 +742,6 @@ function App(): React.JSX.Element {
     if (activeView === 'tasks' && rightSidebarOpen) {
       // Why: hide the right sidebar immediately when entering the tasks page
       // so a previous open state can't bleed into that distraction-free view.
-      window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
       actions.setRightSidebarOpen(false)
     }
   }, [activeView, rightSidebarOpen, actions])

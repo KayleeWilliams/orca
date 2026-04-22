@@ -1,12 +1,10 @@
 import { useEffect, useRef } from 'react'
 import {
   FOCUS_TERMINAL_PANE_EVENT,
-  LAYOUT_WILL_CHANGE_EVENT,
   TOGGLE_TERMINAL_PANE_EXPAND_EVENT,
   type FocusTerminalPaneDetail
 } from '@/constants/terminal'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
-import type { ScrollState } from '@/lib/pane-manager/pane-manager-types'
 import { shellEscapePath } from './pane-helpers'
 import { fitAndFocusPanes, fitPanes, hasDimensionsChanged } from './pane-helpers'
 import type { PtyTransport } from './pty-transport'
@@ -71,14 +69,13 @@ export function useTerminalPaneGlobalEffects({
       return
     }
     if (isVisible) {
-      // Why: capture scroll states BEFORE resumeRendering() because WebGL
-      // context recreation and refresh() can fire xterm.js internal scroll
-      // events that corrupt viewportY. This is the same pre-corruption
-      // capture strategy used for sidebar toggles and divider drags.
-      const preResumeScrollStates = manager.captureAllScrollStates()
-
       // Why: resume WebGL immediately so the terminal shows its last-known
-      // state on the first painted frame.
+      // state on the first painted frame. Without this, the browser paints
+      // 1+ frames of stale xterm DOM-fallback content at wrong dimensions
+      // (the "stretched" flash). On macOS, WebGL context creation is ~5 ms
+      // — fast enough to feel instant. On Windows (ANGLE → D3D11) it can
+      // take 100–500 ms, but the alternative (deferring to a rAF) leaves
+      // the terminal visibly distorted, which is a worse UX tradeoff.
       manager.resumeRendering()
 
       fitEpochRef.current++
@@ -126,10 +123,10 @@ export function useTerminalPaneGlobalEffects({
         }
         fitRanForEpochRef.current = epoch
         if (isActive) {
-          fitAndFocusPanes(mgr, preResumeScrollStates)
+          fitAndFocusPanes(mgr)
           return
         }
-        fitPanes(mgr, preResumeScrollStates)
+        fitPanes(mgr)
       }
 
       if (entries.length === 0) {
@@ -256,36 +253,28 @@ export function useTerminalPaneGlobalEffects({
     // terminal running at a stale column count.
     const RESIZE_DEBOUNCE_MS = 150
     let timerId: ReturnType<typeof setTimeout> | null = null
-    // Why: scroll states must be captured at the instant the ResizeObserver
-    // fires, not 150ms later when the debounced fit runs. During the debounce
-    // window, async events (WebGL context loss, xterm.js Viewport._sync)
-    // can corrupt the scroll position, so a later capture would record the
-    // wrong viewportY. Capturing eagerly preserves the true pre-resize state.
-    let pendingScrollStates: Map<number, ScrollState> | null = null
     const resizeObserver = new ResizeObserver(() => {
-      const manager = managerRef.current
-      if (manager) {
-        pendingScrollStates = manager.captureAllScrollStates()
-      }
       if (timerId !== null) {
         clearTimeout(timerId)
       }
       timerId = setTimeout(() => {
         timerId = null
-        const mgr = managerRef.current
-        if (!mgr) {
+        const manager = managerRef.current
+        if (!manager) {
           return
         }
+        // Why: apply the same epoch-based deduplication as the isActive
+        // effect's rAF path.  Read the current epoch at fire time (not a
+        // captured value) because the ResizeObserver persists across the
+        // activation.  Dimension changes (e.g. window resize) bypass the
+        // dedup so legitimate refits are never suppressed.
         const currentEpoch = fitEpochRef.current
-        const dimensionsChanged = hasDimensionsChanged(mgr)
+        const dimensionsChanged = hasDimensionsChanged(manager)
         if (!dimensionsChanged && fitRanForEpochRef.current >= currentEpoch) {
-          pendingScrollStates = null
           return
         }
         fitRanForEpochRef.current = currentEpoch
-        const states = pendingScrollStates
-        pendingScrollStates = null
-        fitPanes(mgr, states ?? undefined)
+        fitPanes(manager)
       }, RESIZE_DEBOUNCE_MS)
     })
     resizeObserver.observe(container)
@@ -326,42 +315,4 @@ export function useTerminalPaneGlobalEffects({
       }
     })
   }, [isActiveRef, managerRef, paneTransportsRef])
-
-  // Why: instant layout changes (sidebar toggle via Cmd+L / Cmd+B) resize the
-  // terminal container synchronously. xterm.js fires internal scroll events on
-  // the viewport div during this synchronous reflow, corrupting scrollTop before
-  // any ResizeObserver callback can capture state. By locking scroll states in
-  // response to a synchronous event dispatched BEFORE the state change, we
-  // guarantee capture happens while the viewport is still at its original
-  // position — the same pattern that keeps divider drag scroll stable.
-  useEffect(() => {
-    let unlockTimer: ReturnType<typeof setTimeout> | null = null
-    const onLayoutWillChange = (): void => {
-      const manager = managerRef.current
-      if (!manager || !isVisibleRef.current) {
-        return
-      }
-      manager.lockAllScrollStates()
-      // Why: the sidebar CSS transition (200ms) + ResizeObserver debounce (150ms)
-      // means the final fitAllPanesInternal runs at ~350ms. The unlock must fire
-      // AFTER that fit so the locked state is used for the definitive restore.
-      // 500ms provides margin for CSS transition variance and frame scheduling.
-      // unlockAllScrollStates starts a 500ms settling rAF loop, so the lock
-      // actually persists until ~1000ms total, absorbing any SIGWINCH redraws.
-      if (unlockTimer !== null) {
-        clearTimeout(unlockTimer)
-      }
-      unlockTimer = setTimeout(() => {
-        unlockTimer = null
-        managerRef.current?.unlockAllScrollStates()
-      }, 500)
-    }
-    window.addEventListener(LAYOUT_WILL_CHANGE_EVENT, onLayoutWillChange)
-    return () => {
-      window.removeEventListener(LAYOUT_WILL_CHANGE_EVENT, onLayoutWillChange)
-      if (unlockTimer !== null) {
-        clearTimeout(unlockTimer)
-      }
-    }
-  }, [managerRef, isVisibleRef])
 }

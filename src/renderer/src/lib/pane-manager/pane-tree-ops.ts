@@ -1,9 +1,4 @@
-import type {
-  DropZone,
-  ManagedPaneInternal,
-  PaneStyleOptions,
-  ScrollState
-} from './pane-manager-types'
+import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
 import { createDivider } from './pane-divider'
 import { captureScrollState, restoreScrollState } from './pane-scroll'
 
@@ -31,21 +26,7 @@ export function safeFit(pane: ManagedPaneInternal): void {
     }
     if (pane.pendingDragScrollState) {
       pane.fitAddon.fit()
-      // Why: fit() → resize() → queueSync() schedules a deferred _sync via
-      // addRefreshCallback that updates the Scrollable's dimensions in the next
-      // animation frame. Any scroll position we set synchronously here can be
-      // silently clamped when that deferred _sync calls setScrollDimensions
-      // (with _suppressOnScrollHandler=true, so clamping updates neither
-      // _latestYDisp nor buffer.ydisp). By scheduling our restore via the same
-      // addRefreshCallback mechanism, we run AFTER the deferred _sync has
-      // corrected the Scrollable dimensions, so our setScrollPosition operates
-      // against accurate maxScrollTop and isn't clamped.
-      deferredDragScrollRestore(pane)
-      return
-    }
-    if (pane.pendingLayoutScrollState) {
-      pane.fitAddon.fit()
-      restoreScrollState(pane.terminal, pane.pendingLayoutScrollState)
+      restoreScrollState(pane.terminal, pane.pendingDragScrollState)
       return
     }
     const state = captureScrollState(pane.terminal)
@@ -56,32 +37,7 @@ export function safeFit(pane: ManagedPaneInternal): void {
   }
 }
 
-function deferredDragScrollRestore(pane: ManagedPaneInternal): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const renderService = (pane.terminal as any)._core?._renderService
-  if (!renderService?.addRefreshCallback) {
-    if (pane.pendingDragScrollState) {
-      restoreScrollState(pane.terminal, pane.pendingDragScrollState)
-    }
-    return
-  }
-  renderService.addRefreshCallback(() => {
-    try {
-      const state = pane.pendingDragScrollState
-      if (!state) {
-        return
-      }
-      restoreScrollState(pane.terminal, state)
-    } catch {
-      /* pane may have been disposed */
-    }
-  })
-}
-
-export function fitAllPanesInternal(
-  panes: Map<number, ManagedPaneInternal>,
-  preCapturedStates?: Map<number, ScrollState>
-): void {
+export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of panes.values()) {
     try {
       const dims = pane.fitAddon.proposeDimensions()
@@ -97,17 +53,7 @@ export function fitAllPanesInternal(
         restoreScrollState(pane.terminal, pane.pendingDragScrollState)
         continue
       }
-      if (pane.pendingLayoutScrollState) {
-        pane.fitAddon.fit()
-        restoreScrollState(pane.terminal, pane.pendingLayoutScrollState)
-        continue
-      }
-      // Why: use pre-captured state when available because the ResizeObserver
-      // debounce (150ms) gives async events (WebGL context loss, viewport
-      // _sync) time to corrupt the scroll position before we run. Capturing
-      // at the instant the ResizeObserver fires preserves the true pre-resize
-      // viewport position.
-      const state = preCapturedStates?.get(pane.id) ?? captureScrollState(pane.terminal)
+      const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()
       restoreScrollState(pane.terminal, state)
     } catch {

@@ -16,7 +16,6 @@ import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
-import { LAYOUT_WILL_CHANGE_EVENT } from '@/constants/terminal'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
@@ -48,7 +47,6 @@ export function useIpcEvents(): void {
     unsubs.push(
       window.api.ui.onToggleLeftSidebar(() => {
         dispatchClearModifierHints()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         useAppStore.getState().toggleSidebar()
       })
     )
@@ -56,7 +54,6 @@ export function useIpcEvents(): void {
     unsubs.push(
       window.api.ui.onToggleRightSidebar(() => {
         dispatchClearModifierHints()
-        window.dispatchEvent(new Event(LAYOUT_WILL_CHANGE_EVENT))
         useAppStore.getState().toggleRightSidebar()
       })
     )
