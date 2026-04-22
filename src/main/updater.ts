@@ -506,14 +506,18 @@ export function setupAutoUpdater(
 
   const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-    // Why: in-flight checks haven't persisted a timestamp yet, so the 24h
-    // gate below would pass and re-fire on rapid focus events.
     if (currentStatus.state === 'checking' || currentStatus.state === 'downloading') {
       return
     }
     const lastCheck = _getLastUpdateCheckAt?.() ?? null
     const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
     if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
+      // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
+      // fires on a later tick, so the state guard above can't block two rapid
+      // focus events (common on macOS window cycling) from both firing a
+      // check. Persist the timestamp synchronously to close the 24h gate
+      // before the second event arrives; a later completion just refreshes it.
+      recordCompletedUpdateCheck()
       runBackgroundUpdateCheck()
       scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
     }
