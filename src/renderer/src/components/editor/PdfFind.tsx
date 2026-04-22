@@ -16,14 +16,8 @@ export default function PdfFind({
 }: PdfFindProps): React.JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [activeMatch, setActiveMatch] = useState(0)
   const [totalMatches, setTotalMatches] = useState(0)
-
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 80)
-    return () => clearTimeout(id)
-  }, [query])
 
   const dispatchFind = useCallback(
     (type: string, findPrevious = false): void => {
@@ -34,27 +28,27 @@ export default function PdfFind({
       eventBus.dispatch('find', {
         source: null,
         type,
-        query: debouncedQuery,
+        query,
         highlightAll: true,
         caseSensitive: false,
         entireWord: false,
         findPrevious
       })
     },
-    [eventBusRef, debouncedQuery]
+    [eventBusRef, query]
   )
 
   const findNext = useCallback(() => {
-    if (debouncedQuery) {
+    if (query) {
       dispatchFind('again', false)
     }
-  }, [debouncedQuery, dispatchFind])
+  }, [query, dispatchFind])
 
   const findPrevious = useCallback(() => {
-    if (debouncedQuery) {
+    if (query) {
       dispatchFind('again', true)
     }
-  }, [debouncedQuery, dispatchFind])
+  }, [query, dispatchFind])
 
   useEffect(() => {
     if (isOpen) {
@@ -71,7 +65,7 @@ export default function PdfFind({
   }, [isOpen, eventBusRef])
 
   useEffect(() => {
-    if (!debouncedQuery) {
+    if (!query) {
       const eventBus = eventBusRef.current
       if (eventBus) {
         eventBus.dispatch('findbarclose', { source: null })
@@ -83,7 +77,7 @@ export default function PdfFind({
     if (isOpen) {
       dispatchFind('')
     }
-  }, [debouncedQuery, isOpen, dispatchFind, eventBusRef])
+  }, [query, isOpen, dispatchFind, eventBusRef])
 
   useEffect(() => {
     const eventBus = eventBusRef.current
