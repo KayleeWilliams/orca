@@ -96,28 +96,52 @@ const AgentDashboard = React.memo(function AgentDashboard() {
 
   const handleClearSearch = useCallback(() => setSearchQuery(''), [])
 
-  // Summary stats across all repos (unfiltered)
-  const stats = useMemo(() => {
-    let running = 0
-    let blocked = 0
-    let done = 0
-    for (const group of groups) {
-      for (const wt of group.worktrees) {
-        for (const agent of wt.agents) {
-          if (agent.state === 'working') {
-            running++
-          }
-          if (agent.state === 'blocked' || agent.state === 'waiting') {
-            blocked++
-          }
-          if (agent.state === 'done') {
-            done++
-          }
+  // Why: group filteredWorktrees by repo at render time so we can show a
+  // per-repo header with counts above each group — replacing the global
+  // stats strip that used to sit above everything. Sort order of worktrees
+  // is preserved (they're already sorted by earliestStartedAt in the filter
+  // hook); we just walk the sorted list and bucket adjacent same-repo
+  // entries together. Repos appear in the order their first worktree does.
+  const filteredByRepo = useMemo(() => {
+    type Group = {
+      repoId: string
+      repoDisplayName: string
+      repoBadgeColor: string
+      worktrees: typeof filteredWorktrees
+      running: number
+      blocked: number
+      done: number
+    }
+    const order: string[] = []
+    const byId = new Map<string, Group>()
+    for (const card of filteredWorktrees) {
+      let group = byId.get(card.repo.id)
+      if (!group) {
+        group = {
+          repoId: card.repo.id,
+          repoDisplayName: card.repo.displayName,
+          repoBadgeColor: card.repo.badgeColor,
+          worktrees: [],
+          running: 0,
+          blocked: 0,
+          done: 0
+        }
+        byId.set(card.repo.id, group)
+        order.push(card.repo.id)
+      }
+      group.worktrees.push(card)
+      for (const agent of card.agents) {
+        if (agent.state === 'working') {
+          group.running++
+        } else if (agent.state === 'blocked' || agent.state === 'waiting') {
+          group.blocked++
+        } else if (agent.state === 'done') {
+          group.done++
         }
       }
     }
-    return { running, blocked, done }
-  }, [groups])
+    return order.map((id) => byId.get(id)!)
+  }, [filteredWorktrees])
 
   if (groups.length === 0) {
     return (
@@ -138,31 +162,6 @@ const AgentDashboard = React.memo(function AgentDashboard() {
       tabIndex={-1}
       className="flex h-full w-full flex-col overflow-hidden outline-none"
     >
-      {/* Why: hide the stats strip entirely when there's nothing to count —
-          the empty-state message in the main panel already tells the user
-          there's no activity, and showing both reads as duplicated chrome. */}
-      {(stats.running > 0 || stats.blocked > 0 || stats.done > 0) && (
-        <div className="shrink-0 border-b border-border/40 px-3 py-2">
-          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-            {stats.running > 0 && (
-              <span>
-                <span className="font-semibold text-emerald-500">{stats.running}</span> active
-              </span>
-            )}
-            {stats.blocked > 0 && (
-              <span>
-                <span className="font-semibold text-amber-500">{stats.blocked}</span> blocked
-              </span>
-            )}
-            {stats.done > 0 && (
-              <span>
-                <span className="font-semibold text-sky-500/80">{stats.done}</span> done
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-border/40 px-2 py-1.5">
         <div className="relative flex items-center">
           <Search className="absolute left-2 size-3.5 text-muted-foreground pointer-events-none" />
@@ -192,17 +191,55 @@ const AgentDashboard = React.memo(function AgentDashboard() {
       <div className="flex-1 overflow-y-auto scrollbar-sleek">
         {hasResults ? (
           <div className="flex flex-col">
-            {filteredWorktrees.map((card, i) => (
-              <DashboardWorktreeCard
-                key={card.worktree.id}
-                card={card}
-                isFocused={focusedWorktreeId === card.worktree.id}
-                onFocus={() => setFocusedWorktreeId(card.worktree.id)}
-                onCheck={() => handleCheckWorktree(card.worktree.id)}
-                onDismissAgent={handleDismissAgent}
-                onActivateAgentTab={handleActivateAgentTab}
-                isLast={i === filteredWorktrees.length - 1}
-              />
+            {filteredByRepo.map((group) => (
+              <div key={group.repoId} className="flex flex-col">
+                {/* Why: repo header row replaces the old global stats strip.
+                    Counts live at the scope of the grouping, so the user sees
+                    per-repo agent load rather than a rollup floating at the
+                    top. Sticky so the repo label stays in view while scrolling
+                    through that repo's worktrees. */}
+                <div className="sticky top-0 z-10 flex items-center gap-2 bg-background/95 px-2.5 py-1 backdrop-blur">
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: group.repoBadgeColor }}
+                    aria-hidden
+                  />
+                  <span className="text-[11px] font-semibold text-foreground/80 truncate">
+                    {group.repoDisplayName}
+                  </span>
+                  <span className="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
+                    {group.running > 0 && (
+                      <span>
+                        <span className="font-semibold text-emerald-500">{group.running}</span>{' '}
+                        active
+                      </span>
+                    )}
+                    {group.blocked > 0 && (
+                      <span>
+                        <span className="font-semibold text-amber-500">{group.blocked}</span>{' '}
+                        blocked
+                      </span>
+                    )}
+                    {group.done > 0 && (
+                      <span>
+                        <span className="font-semibold text-sky-500/80">{group.done}</span> done
+                      </span>
+                    )}
+                  </span>
+                </div>
+                {group.worktrees.map((card, i) => (
+                  <DashboardWorktreeCard
+                    key={card.worktree.id}
+                    card={card}
+                    isFocused={focusedWorktreeId === card.worktree.id}
+                    onFocus={() => setFocusedWorktreeId(card.worktree.id)}
+                    onCheck={() => handleCheckWorktree(card.worktree.id)}
+                    onDismissAgent={handleDismissAgent}
+                    onActivateAgentTab={handleActivateAgentTab}
+                    isLast={i === group.worktrees.length - 1}
+                  />
+                ))}
+              </div>
             ))}
           </div>
         ) : (
