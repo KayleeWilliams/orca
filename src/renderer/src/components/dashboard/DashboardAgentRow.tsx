@@ -267,25 +267,36 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           </Tooltip>
         </span>
       </div>
-      {toolName && (
+      {/* Why: reserve the tool row's height while the agent is working, even
+          before the first tool call arrives or between calls. Without this,
+          the row jumps vertically every time toolName flips between empty
+          and populated mid-turn. Gate on isWorking so done/blocked rows
+          don't show a dangling empty wrench. */}
+      {(isWorking || toolName) && (
         <div
           className={cn(
             'mt-1 flex min-w-0 gap-1 pl-5 text-[11px] leading-snug text-muted-foreground/70',
             expanded ? 'items-start' : 'items-center'
           )}
         >
-          <Wrench className="mt-[2px] size-2.5 shrink-0" />
-          <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
-          {toolInput && (
-            <span
-              className={cn(
-                'min-w-0 text-muted-foreground/60',
-                expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+          {toolName ? (
+            <>
+              <Wrench className="mt-[2px] size-2.5 shrink-0" />
+              <code className="shrink-0 font-mono text-[11px]">{toolName}</code>
+              {toolInput && (
+                <span
+                  className={cn(
+                    'min-w-0 text-muted-foreground/60',
+                    expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+                  )}
+                  title={expanded ? undefined : toolInput}
+                >
+                  {toolInput}
+                </span>
               )}
-              title={expanded ? undefined : toolInput}
-            >
-              {toolInput}
-            </span>
+            </>
+          ) : (
+            ' '
           )}
         </div>
       )}
@@ -297,7 +308,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       {(lastAssistantMessage || !expanded) && (
         <div
           className={cn(
-            'mt-1 pl-5 text-[11px] italic leading-snug text-muted-foreground/70',
+            'mt-0.5 pl-5 text-[11px] italic leading-snug text-muted-foreground/70',
             expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
           )}
           title={!expanded && lastAssistantMessage ? lastAssistantMessage : undefined}
