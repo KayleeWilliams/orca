@@ -356,7 +356,10 @@ export type PreloadApi = {
     repoSlug: (args: { repoPath: string }) => Promise<{ owner: string; repo: string } | null>
     prForBranch: (args: { repoPath: string; branch: string }) => Promise<PRInfo | null>
     issue: (args: { repoPath: string; number: number }) => Promise<IssueInfo | null>
-    workItem: (args: { repoPath: string; number: number }) => Promise<GitHubWorkItem | null>
+    workItem: (args: {
+      repoPath: string
+      number: number
+    }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
     workItemDetails: (args: {
       repoPath: string
       number: number
@@ -380,7 +383,7 @@ export type PreloadApi = {
       repoPath: string
       limit?: number
       query?: string
-    }) => Promise<GitHubWorkItem[]>
+    }) => Promise<Omit<GitHubWorkItem, 'repoId'>[]>
     prChecks: (args: {
       repoPath: string
       prNumber: number

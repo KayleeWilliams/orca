@@ -559,7 +559,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
               url: item.url
             }
             data.linkedWorkItem = linkedWorkItem
-            data.prefilledName = getLinkedWorkItemSuggestedName(item)
+            data.prefilledName = getLinkedWorkItemSuggestedName({ title: item.title })
           } else {
             // Fallback: we couldn't resolve the URL, just seed the name.
             data.prefilledName = `${slug.owner}-${slug.repo}-${number}`
@@ -609,7 +609,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
               url: item.url
             }
             data.linkedWorkItem = linkedWorkItem
-            data.prefilledName = getLinkedWorkItemSuggestedName(item)
+            data.prefilledName = getLinkedWorkItemSuggestedName({ title: item.title })
           } else {
             data.prefilledName = trimmed
           }

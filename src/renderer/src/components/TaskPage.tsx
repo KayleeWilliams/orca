@@ -35,7 +35,9 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import RepoCombobox from '@/components/repo/RepoCombobox'
+import RepoMultiCombobox from '@/components/ui/repo-multi-combobox'
+import RepoDotLabel from '@/components/repo/RepoDotLabel'
+import { stripRepoQualifiers } from '../../../shared/task-query'
 import GitHubItemDrawer from '@/components/GitHubItemDrawer'
 import { cn } from '@/lib/utils'
 import { getLinkedWorkItemSuggestedName, getTaskPresetQuery } from '@/lib/new-workspace'
@@ -145,10 +147,9 @@ export default function TaskPage(): React.JSX.Element {
   const closeTaskPage = useAppStore((s) => s.closeTaskPage)
   const activeModal = useAppStore((s) => s.activeModal)
   const repos = useAppStore((s) => s.repos)
-  const activeRepoId = useAppStore((s) => s.activeRepoId)
   const openModal = useAppStore((s) => s.openModal)
   const updateSettings = useAppStore((s) => s.updateSettings)
-  const fetchWorkItems = useAppStore((s) => s.fetchWorkItems)
+  const fetchWorkItemsAcrossRepos = useAppStore((s) => s.fetchWorkItemsAcrossRepos)
   const getCachedWorkItems = useAppStore((s) => s.getCachedWorkItems)
   // Why: in workspace view (a worktree is active) App.tsx hides its
   // full-width titlebar, so this page renders its own 42px titlebar strip to
@@ -165,35 +166,77 @@ export default function TaskPage(): React.JSX.Element {
 
   const eligibleRepos = useMemo(() => repos.filter((repo) => isGitRepoKind(repo)), [repos])
 
-  // Why: resolve the initial repo from (1) explicit page data, (2) the app's
-  // currently active repo, (3) the first eligible repo. Falls back to '' so
-  // RepoCombobox renders its placeholder until the user picks one.
-  const resolvedInitialRepoId = useMemo(() => {
+  // Why: initial selection resolution honors (1) an explicit preselection from
+  // the caller, (2) the persisted defaultRepoSelection (null = sticky-all,
+  // array = curated subset, empty after filter = fall back to all), (3) fall
+  // back to "all eligible". An explicit preselection wins so "open tasks for
+  // this specific repo" entry points still land on a single-repo view.
+  const resolvedInitialSelection = useMemo<ReadonlySet<string>>(() => {
     const preferred = pageData.preselectedRepoId
     if (preferred && eligibleRepos.some((repo) => repo.id === preferred)) {
-      return preferred
+      return new Set([preferred])
     }
-    if (activeRepoId && eligibleRepos.some((repo) => repo.id === activeRepoId)) {
-      return activeRepoId
+    const persisted = settings?.defaultRepoSelection
+    if (Array.isArray(persisted)) {
+      const filtered = persisted.filter((id) => eligibleRepos.some((r) => r.id === id))
+      if (filtered.length > 0) {
+        return new Set(filtered)
+      }
+      // Why: empty after filtering (e.g. all persisted repos were removed)
+      // falls through to "all eligible" so the page never renders with an
+      // empty selection — see the multi-combobox invariant.
     }
-    return eligibleRepos[0]?.id ?? ''
-  }, [activeRepoId, eligibleRepos, pageData.preselectedRepoId])
+    return new Set(eligibleRepos.map((r) => r.id))
+  }, [eligibleRepos, pageData.preselectedRepoId, settings?.defaultRepoSelection])
 
-  const [repoId, setRepoId] = useState<string>(resolvedInitialRepoId)
+  const [repoSelection, setRepoSelection] = useState<ReadonlySet<string>>(resolvedInitialSelection)
 
-  // Why: if the repo list changes such that the current repoId is no longer
-  // eligible (e.g. repo removed), fall back to a valid one.
+  // Why: prune selection when a previously-selected repo is removed, and
+  // preserve sticky-all (when the selection equaled every eligible repo
+  // pre-change, keep it equal to every eligible repo post-change so "All
+  // repos" stays truthful). Recreating the Set every time eligibleRepos
+  // changes would churn the fetch effect — only write when the identity of
+  // the selection actually needs to change.
+  const prevEligibleCountRef = useRef(eligibleRepos.length)
   useEffect(() => {
-    if (!repoId && eligibleRepos[0]?.id) {
-      setRepoId(eligibleRepos[0].id)
+    const prevCount = prevEligibleCountRef.current
+    prevEligibleCountRef.current = eligibleRepos.length
+    const eligibleIds = new Set(eligibleRepos.map((r) => r.id))
+    const wasAll = repoSelection.size === prevCount && prevCount > 0
+    const pruned = new Set<string>()
+    for (const id of repoSelection) {
+      if (eligibleIds.has(id)) {
+        pruned.add(id)
+      }
+    }
+    if (wasAll) {
+      const allNow = new Set(eligibleIds)
+      if (allNow.size !== repoSelection.size || [...allNow].some((id) => !repoSelection.has(id))) {
+        setRepoSelection(allNow)
+      }
       return
     }
-    if (repoId && !eligibleRepos.some((repo) => repo.id === repoId)) {
-      setRepoId(eligibleRepos[0]?.id ?? '')
+    if (pruned.size === 0 && eligibleIds.size > 0) {
+      setRepoSelection(new Set(eligibleIds))
+      return
     }
-  }, [eligibleRepos, repoId])
+    if (pruned.size !== repoSelection.size) {
+      setRepoSelection(pruned)
+    }
+  }, [eligibleRepos, repoSelection])
 
-  const selectedRepo = eligibleRepos.find((repo) => repo.id === repoId)
+  const selectedRepos = useMemo(
+    () => eligibleRepos.filter((r) => repoSelection.has(r.id)),
+    [eligibleRepos, repoSelection]
+  )
+
+  // Why: many single-repo-only affordances (new-issue dialog target, drawer
+  // repo path lookup, optimistic stub) need *a* repo. When exactly one is
+  // selected we use it; otherwise we pick the first to keep the UI
+  // functional, and disable the single-repo features that don't make sense
+  // cross-repo (new-issue button) explicitly.
+  const primaryRepo = selectedRepos[0] ?? null
+  const isSingleRepo = selectedRepos.length === 1
 
   // Why: seed the preset + query from the user's saved default synchronously
   // so the first fetch effect issues exactly one request keyed to the final
@@ -211,19 +254,34 @@ export default function TaskPage(): React.JSX.Element {
   )
   const [tasksLoading, setTasksLoading] = useState(false)
   const [tasksError, setTasksError] = useState<string | null>(null)
+  // Why: per-repo failure count surfaced through the "N of M" banner. IPC-level
+  // rejections populate tasksError instead — the two are mutually exclusive so
+  // a successful-with-partial-failure read and a hard-reject don't double-show.
+  const [failedCount, setFailedCount] = useState(0)
   const [taskRefreshNonce, setTaskRefreshNonce] = useState(0)
   // Why: the fetch effect uses this to detect when a nonce bump is from the
   // user clicking the refresh button (force=true) vs. re-running for any
   // other reason — e.g. a repo change while the nonce happens to be > 0.
   const lastFetchedNonceRef = useRef(-1)
-  // Why: seed from the SWR cache so revisiting the page (or opening it after
-  // a hover-prefetch) shows the list instantly while the background revalidate
-  // keeps it current. Falls back to [] when nothing is cached yet.
+  // Why: seed from the SWR cache across every initially-selected repo so the
+  // first paint shows the merged-and-sorted view instantly when all repos are
+  // already cached. Any missing cache entry simply contributes nothing here
+  // and will be filled in by the effect's fetch.
   const [workItems, setWorkItems] = useState<GitHubWorkItem[]>(() => {
-    if (!selectedRepo) {
+    const trimmed = initialTaskQuery.trim()
+    const merged: GitHubWorkItem[] = []
+    for (const r of selectedRepos) {
+      const cached = getCachedWorkItems(r.path, WORK_ITEM_LIMIT, trimmed)
+      if (cached) {
+        merged.push(...cached)
+      }
+    }
+    if (merged.length === 0) {
       return []
     }
-    return getCachedWorkItems(selectedRepo.path, WORK_ITEM_LIMIT, initialTaskQuery.trim()) ?? []
+    return [...merged]
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, WORK_ITEM_LIMIT)
   })
   // Why: clicking a GitHub row opens this drawer for a read-only preview.
   // Drawer's "Use" button routes through the same direct-launch flow as the
@@ -267,68 +325,82 @@ export default function TaskPage(): React.JSX.Element {
   }, [taskSearchInput])
 
   useEffect(() => {
-    if (taskSource !== 'github' || !selectedRepo) {
+    if (taskSource !== 'github') {
       return
     }
+    if (selectedRepos.length === 0) {
+      return
+    } // unreachable — multi-combobox forbids empty
 
-    const trimmedQuery = appliedTaskSearch.trim()
-    const repoPath = selectedRepo.path
-
-    // Why: SWR — render cached items instantly, then revalidate in the
-    // background. Only show the spinner when we have nothing cached, so
-    // repeat visits feel instant instead of flashing a loading state.
-    const cached = getCachedWorkItems(repoPath, WORK_ITEM_LIMIT, trimmedQuery)
-    if (cached) {
-      setWorkItems(cached)
-      setTasksError(null)
-      setTasksLoading(false)
-    } else {
-      setTasksLoading(true)
-      setTasksError(null)
-    }
-
+    // Why: `repo:owner/name` qualifiers are silently dropped before fan-out
+    // because in cross-repo mode they would pin every per-repo fetch to a
+    // single repo and zero out the rest. See stripRepoQualifiers.
+    const q = stripRepoQualifiers(appliedTaskSearch.trim())
     let cancelled = false
-    // Why: force a refetch only when the nonce has incremented since the last
-    // fetch (i.e. the user hit the refresh button or clicked a preset). Other
-    // triggers — repo changes, search-box edits — should respect the SWR
-    // cache's TTL instead of hammering `gh` on every keystroke.
+
+    // Why: paint cached rows synchronously before awaiting the fan-out so
+    // selection changes don't leave the previous selection's rows on screen
+    // for a frame. Any repo without a cache entry simply contributes nothing
+    // to this pre-paint; the fetch will fill it in.
+    const preMerged: GitHubWorkItem[] = []
+    let anyUncached = false
+    for (const r of selectedRepos) {
+      const cached = getCachedWorkItems(r.path, WORK_ITEM_LIMIT, q)
+      if (cached === null) {
+        anyUncached = true
+      } else {
+        preMerged.push(...cached)
+      }
+    }
+    // Why: always replace — if preMerged is empty (e.g. query just changed and
+    // no repo has a cache entry for it), we clear the previous query's rows
+    // rather than leaving them on screen under the spinner.
+    setWorkItems(
+      preMerged.length > 0
+        ? [...preMerged]
+            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+            .slice(0, WORK_ITEM_LIMIT)
+        : []
+    )
+    setTasksError(null)
+    setFailedCount(0) // reset so a prior failure banner doesn't linger
+    setTasksLoading(anyUncached)
+
+    // Preserve the existing nonce-gated force behavior.
     const forceRefresh = taskRefreshNonce !== lastFetchedNonceRef.current
     lastFetchedNonceRef.current = taskRefreshNonce
 
-    // Why: the buttons below populate the same search bar the user can edit by
-    // hand, so the fetch path has to honor both the preset GitHub query and any
-    // ad-hoc qualifiers the user types (for example assignee:@me). The fetch is
-    // debounced through `appliedTaskSearch` so backspacing all the way to empty
-    // refires the query without spamming GitHub on every keystroke.
-    void fetchWorkItems(repoPath, WORK_ITEM_LIMIT, trimmedQuery, {
+    const repoArgs = selectedRepos.map((r) => ({ repoId: r.id, path: r.path }))
+    void fetchWorkItemsAcrossRepos(repoArgs, WORK_ITEM_LIMIT, q, {
       force: forceRefresh && taskRefreshNonce > 0
     })
-      .then((items) => {
-        if (!cancelled) {
-          setWorkItems(items)
+      .then(({ items, failedCount: failed }) => {
+        if (cancelled) {
+          return
         }
+        setWorkItems(items)
+        setFailedCount(failed)
+        setTasksLoading(false)
       })
-      .catch((error) => {
-        if (!cancelled) {
-          setTasksError(error instanceof Error ? error.message : 'Failed to load GitHub work.')
-          if (!cached) {
-            setWorkItems([])
-          }
+      .catch((err) => {
+        // Why: fetchWorkItemsAcrossRepos swallows per-repo failures, so a
+        // reject here means an IPC-level or programmer error — surface it.
+        if (cancelled) {
+          return
         }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setTasksLoading(false)
-        }
+        setTasksError(err instanceof Error ? err.message : 'Failed to load GitHub work.')
+        setFailedCount(0) // the per-repo banner would be misleading next to tasksError
+        setTasksLoading(false)
       })
 
     return () => {
       cancelled = true
     }
-    // Why: getCachedWorkItems is a stable zustand selector; depending on it
-    // would cause unnecessary effect re-runs on unrelated store updates.
+    // Why: getCachedWorkItems and fetchWorkItemsAcrossRepos are stable zustand
+    // selectors; depending on them would re-run the effect on unrelated store
+    // updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedTaskSearch, selectedRepo, taskRefreshNonce, taskSource, fetchWorkItems])
+  }, [selectedRepos, appliedTaskSearch, taskRefreshNonce, taskSource])
 
   const handleApplyTaskSearch = useCallback((): void => {
     const trimmed = taskSearchInput.trim()
@@ -386,10 +458,10 @@ export default function TaskPage(): React.JSX.Element {
       openModal('new-workspace-composer', {
         linkedWorkItem,
         prefilledName: getLinkedWorkItemSuggestedName(item),
-        initialRepoId: repoId
+        initialRepoId: item.repoId
       })
     },
-    [openModal, repoId]
+    [openModal]
   )
 
   const handleUseWorkItem = useCallback(
@@ -410,7 +482,7 @@ export default function TaskPage(): React.JSX.Element {
   )
 
   const handleCreateNewIssue = useCallback(async (): Promise<void> => {
-    if (!selectedRepo) {
+    if (!primaryRepo || !isSingleRepo) {
       return
     }
     const title = newIssueTitle.trim()
@@ -420,7 +492,7 @@ export default function TaskPage(): React.JSX.Element {
     setNewIssueSubmitting(true)
     try {
       const result = await window.api.gh.createIssue({
-        repoPath: selectedRepo.path,
+        repoPath: primaryRepo.path,
         title,
         body: newIssueBody
       })
@@ -447,6 +519,7 @@ export default function TaskPage(): React.JSX.Element {
       // has immediate content, then refine with the full `workItem` fetch.
       const stub: GitHubWorkItem = {
         id: `issue:${String(result.number)}`,
+        repoId: primaryRepo.id,
         type: 'issue',
         number: result.number,
         title,
@@ -457,18 +530,24 @@ export default function TaskPage(): React.JSX.Element {
         author: null
       }
       setDrawerWorkItem(stub)
+      const stubRepoId = primaryRepo.id
       void window.api.gh
-        .workItem({ repoPath: selectedRepo.path, number: result.number })
+        .workItem({ repoPath: primaryRepo.path, number: result.number })
         .then((full) => {
           if (full) {
-            setDrawerWorkItem(full)
+            // Why: `full` is `Omit<GitHubWorkItem, 'repoId'>` (IPC shape).
+            // Cast through unknown: spreading a discriminated union loses the
+            // discriminant, so `{ ...full, repoId }` doesn't typecheck as
+            // GitHubWorkItem. The runtime shape is correct by construction.
+            const withRepoId = { ...full, repoId: stubRepoId } as unknown as GitHubWorkItem
+            setDrawerWorkItem(withRepoId)
           }
         })
         .catch(() => {})
     } finally {
       setNewIssueSubmitting(false)
     }
-  }, [newIssueBody, newIssueSubmitting, newIssueTitle, selectedRepo])
+  }, [isSingleRepo, newIssueBody, newIssueSubmitting, newIssueTitle, primaryRepo])
 
   useEffect(() => {
     // Why: when a modal is open, let it own Esc dismissal.
@@ -585,7 +664,7 @@ export default function TaskPage(): React.JSX.Element {
           </Tooltip>
         </div>
 
-        <div className="mx-auto flex w-full max-w-[1120px] flex-1 flex-col min-h-0 px-5 pb-5 md:px-8 md:pb-7">
+        <div className="mx-auto flex w-full flex-1 flex-col min-h-0 px-5 pb-5 md:px-8 md:pb-7">
           <div className="flex-none flex flex-col gap-5">
             <section className="flex flex-col gap-4">
               <div className="flex flex-col gap-4">
@@ -602,14 +681,14 @@ export default function TaskPage(): React.JSX.Element {
                               onClick={() => setTaskSource(source.id)}
                               aria-label={source.label}
                               className={cn(
-                                'group flex h-11 w-11 items-center justify-center rounded-xl border transition',
+                                'group flex h-8 w-8 items-center justify-center rounded-md border transition',
                                 active
-                                  ? 'border-border bg-muted/70 shadow-sm'
-                                  : 'border-border/70 bg-muted/30 hover:bg-muted/60 hover:border-border',
+                                  ? 'border-foreground/40 bg-muted/70 text-foreground shadow-sm'
+                                  : 'border-border/40 bg-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground',
                                 source.disabled && 'cursor-not-allowed opacity-55'
                               )}
                             >
-                              <source.Icon className="size-4 text-foreground" />
+                              <source.Icon className="size-3.5" />
                             </button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" sideOffset={6}>
@@ -619,19 +698,34 @@ export default function TaskPage(): React.JSX.Element {
                       )
                     })}
                   </div>
-                  <div className="w-[240px]">
-                    <RepoCombobox
+                  <div className="w-[200px]">
+                    <RepoMultiCombobox
                       repos={eligibleRepos}
-                      value={repoId}
-                      onValueChange={setRepoId}
-                      placeholder="Select a repository"
-                      triggerClassName="h-11 w-full rounded-[10px] border border-border/50 bg-muted/50 px-3 text-sm font-medium shadow-sm transition hover:bg-muted/50 focus:ring-2 focus:ring-ring/20 focus:outline-none"
+                      selected={repoSelection}
+                      onChange={(next) => {
+                        setRepoSelection(next)
+                        // Why: persist the curated subset so the same set reopens
+                        // next launch. Sticky-all uses onSelectAll instead.
+                        void updateSettings({ defaultRepoSelection: [...next] }).catch(() => {
+                          toast.error('Failed to save repo selection.')
+                        })
+                      }}
+                      onSelectAll={() => {
+                        const allIds = new Set(eligibleRepos.map((r) => r.id))
+                        setRepoSelection(allIds)
+                        // Why: persist `null` so new repos added later are
+                        // automatically included — a frozen array would exclude them.
+                        void updateSettings({ defaultRepoSelection: null }).catch(() => {
+                          toast.error('Failed to save repo selection.')
+                        })
+                      }}
+                      triggerClassName="h-8 w-full rounded-md border border-border/50 bg-muted/50 px-2 text-xs font-medium shadow-sm transition hover:bg-muted/50 focus:ring-2 focus:ring-ring/20 focus:outline-none"
                     />
                   </div>
                 </div>
 
                 {taskSource === 'github' && (
-                  <div className="rounded-[16px] border border-border/50 bg-muted/50 p-4 shadow-sm">
+                  <div className="rounded-md rounded-b-none border border-border/50 bg-muted/50 p-3 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap gap-2">
                         {TASK_QUERY_PRESETS.map((option) => {
@@ -652,7 +746,7 @@ export default function TaskPage(): React.JSX.Element {
                                 handleSetDefaultTaskPreset(option.id)
                               }}
                               className={cn(
-                                'rounded-xl border px-3 py-2 text-sm transition',
+                                'rounded-md border px-2 py-1 text-xs transition',
                                 active
                                   ? 'border-border/50 bg-foreground/90 text-background backdrop-blur-md'
                                   : 'border-border/50 bg-transparent text-foreground hover:bg-muted/50'
@@ -675,7 +769,7 @@ export default function TaskPage(): React.JSX.Element {
                                 setNewIssueBody('')
                                 setNewIssueOpen(true)
                               }}
-                              disabled={!selectedRepo}
+                              disabled={!primaryRepo || !isSingleRepo}
                               aria-label="New GitHub issue"
                               className="border-border/50 bg-transparent hover:bg-muted/50 backdrop-blur-md supports-[backdrop-filter]:bg-transparent"
                             >
@@ -683,7 +777,9 @@ export default function TaskPage(): React.JSX.Element {
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" sideOffset={6}>
-                            New GitHub issue
+                            {isSingleRepo
+                              ? 'New GitHub issue'
+                              : 'Select a single repo to create an issue'}
                           </TooltipContent>
                         </Tooltip>
                         <Tooltip>
@@ -710,15 +806,15 @@ export default function TaskPage(): React.JSX.Element {
                       </div>
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                       <div className="relative min-w-[320px] flex-1">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                         <Input
                           value={taskSearchInput}
                           onChange={handleTaskSearchChange}
                           onKeyDown={handleTaskSearchKeyDown}
                           placeholder="GitHub search, e.g. assignee:@me is:open"
-                          className="h-10 border-border/50 bg-background pl-10 pr-10"
+                          className="h-8 rounded-md border-border/50 bg-background pl-8 pr-8 text-xs"
                         />
                         {taskSearchInput || appliedTaskSearch ? (
                           <button
@@ -744,12 +840,12 @@ export default function TaskPage(): React.JSX.Element {
           </div>
 
           {taskSource === 'github' ? (
-            <div className="mt-4 flex min-h-0 max-h-full flex-col rounded-[16px] border border-border/50 bg-muted/50 overflow-hidden shadow-sm">
-              <div className="flex-none hidden grid-cols-[96px_minmax(0,1.8fr)_minmax(140px,1fr)_150px_120px_90px] gap-4 border-b border-border/50 px-4 py-3 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground lg:grid">
+            <div className="flex min-h-0 max-h-full flex-col rounded-md border border-t-0 border-border/50 bg-muted/50 overflow-hidden rounded-t-none shadow-sm">
+              <div className="flex-none grid grid-cols-[80px_minmax(0,3fr)_minmax(110px,0.8fr)_100px_110px_80px] gap-3 border-b border-border/50 px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                 <span>ID</span>
                 <span>Title / Context</span>
                 <span>Source Branch</span>
-                <span>System Status</span>
+                <span>Status</span>
                 <span>Updated</span>
                 <span />
               </div>
@@ -764,6 +860,14 @@ export default function TaskPage(): React.JSX.Element {
                   </div>
                 ) : null}
 
+                {!tasksError && failedCount > 0 ? (
+                  // Why: per-repo partial-failure signal — distinct from a hard
+                  // IPC reject (tasksError). The two are mutually exclusive.
+                  <div className="border-b border-border/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-200">
+                    {failedCount} of {selectedRepos.length} repos failed to load
+                  </div>
+                ) : null}
+
                 {tasksLoading && filteredWorkItems.length === 0 ? (
                   // Why: shimmer skeleton stands in for the first ~3 rows while
                   // the initial fetch is in flight, so the card is never empty
@@ -773,7 +877,7 @@ export default function TaskPage(): React.JSX.Element {
                     {Array.from({ length: 3 }).map((_, i) => (
                       <div
                         key={i}
-                        className="grid w-full gap-4 px-4 py-4 lg:grid-cols-[96px_minmax(0,1.8fr)_minmax(140px,1fr)_150px_120px_90px]"
+                        className="grid w-full gap-2 px-3 py-2 grid-cols-[80px_minmax(0,3fr)_minmax(110px,0.8fr)_100px_110px_80px]"
                       >
                         <div className="flex items-center">
                           <div className="h-7 w-16 animate-pulse rounded-lg bg-muted/70" />
@@ -810,37 +914,65 @@ export default function TaskPage(): React.JSX.Element {
 
                 <div className="divide-y divide-border/50">
                   {filteredWorkItems.map((item) => {
+                    const itemRepo = repos.find((r) => r.id === item.repoId)
                     return (
-                      <button
+                      // Why: the row is a clickable container rather than a
+                      // <button> because it holds nested interactive elements
+                      // (Use button, ellipsis DropdownMenuTrigger, Radix
+                      // TooltipTrigger). A <button> ancestor of another
+                      // <button> is invalid HTML and triggers React hydration
+                      // errors that break rendering of the whole page.
+                      <div
                         key={item.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setDrawerWorkItem(item)}
-                        className="grid w-full gap-4 px-4 py-4 text-left transition hover:bg-muted/40 lg:grid-cols-[96px_minmax(0,1.8fr)_minmax(140px,1fr)_150px_120px_90px]"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setDrawerWorkItem(item)
+                          }
+                        }}
+                        className="grid w-full cursor-pointer gap-2 px-3 py-2 text-left transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 grid-cols-[80px_minmax(0,3fr)_minmax(110px,0.8fr)_100px_110px_80px]"
                       >
                         <div className="flex items-center">
-                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/40 px-2.5 py-1.5 text-muted-foreground">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5 text-muted-foreground">
                             {item.type === 'pr' ? (
-                              <GitPullRequest className="size-3.5" />
+                              <GitPullRequest className="size-3" />
                             ) : (
-                              <CircleDot className="size-3.5" />
+                              <CircleDot className="size-3" />
                             )}
-                            <span className="font-mono text-[13px] font-normal">
+                            <span className="font-mono text-[11px] font-normal">
                               #{item.number}
                             </span>
                           </span>
                         </div>
 
                         <div className="min-w-0">
-                          <h3 className="truncate text-[15px] font-semibold text-foreground">
-                            {item.title}
-                          </h3>
+                          <div className="flex items-center gap-2">
+                            <h3 className="truncate text-[15px] font-semibold text-foreground">
+                              {item.title}
+                            </h3>
+                            {selectedRepos.length > 1 && itemRepo ? (
+                              // Why: disambiguate rows when multiple repos are in
+                              // the merged list — a single-repo view doesn't need it.
+                              <RepoDotLabel
+                                name={itemRepo.displayName}
+                                color={itemRepo.badgeColor}
+                                dotClassName="size-1.5"
+                                className="shrink-0 text-[11px] text-muted-foreground"
+                              />
+                            ) : null}
+                          </div>
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                             <span>{item.author ?? 'unknown author'}</span>
-                            <span>{selectedRepo?.displayName}</span>
+                            {selectedRepos.length === 1 && itemRepo ? (
+                              <span>{itemRepo.displayName}</span>
+                            ) : null}
                             {item.labels.slice(0, 3).map((label) => (
                               <span
                                 key={label}
-                                className="rounded-full border border-border/50 bg-background/50 backdrop-blur-md px-2 py-0.5 text-[11px] text-muted-foreground supports-[backdrop-filter]:bg-background/50"
+                                className="rounded-full border border-border/50 bg-background/50 backdrop-blur-md px-1.5 py-0 text-[10px] text-muted-foreground supports-[backdrop-filter]:bg-background/50"
                               >
                                 {label}
                               </span>
@@ -848,7 +980,7 @@ export default function TaskPage(): React.JSX.Element {
                           </div>
                         </div>
 
-                        <div className="min-w-0 flex items-center text-sm text-muted-foreground">
+                        <div className="min-w-0 flex items-center text-xs text-muted-foreground">
                           <span className="truncate">
                             {item.branchName || item.baseRefName || 'workspace/default'}
                           </span>
@@ -857,7 +989,7 @@ export default function TaskPage(): React.JSX.Element {
                         <div className="flex items-center">
                           <span
                             className={cn(
-                              'rounded-full border px-2.5 py-1 text-xs font-medium',
+                              'rounded-full border px-2 py-0.5 text-[10px] font-medium',
                               getTaskStatusTone(item)
                             )}
                           >
@@ -867,7 +999,7 @@ export default function TaskPage(): React.JSX.Element {
 
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className="flex items-center text-sm text-muted-foreground">
+                            <div className="flex items-center text-[11px] text-muted-foreground">
                               {formatRelativeTime(item.updatedAt)}
                             </div>
                           </TooltipTrigger>
@@ -888,10 +1020,10 @@ export default function TaskPage(): React.JSX.Element {
                               e.stopPropagation()
                               handleUseWorkItem(item)
                             }}
-                            className="inline-flex items-center gap-1 rounded-xl border border-border/50 bg-background/50 backdrop-blur-md px-3 py-1.5 text-sm text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
+                            className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/50 backdrop-blur-md px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
                           >
                             Use
-                            <ArrowRight className="size-4" />
+                            <ArrowRight className="size-3" />
                           </button>
                           <DropdownMenu modal={false}>
                             <DropdownMenuTrigger asChild>
@@ -912,7 +1044,7 @@ export default function TaskPage(): React.JSX.Element {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>
@@ -946,7 +1078,7 @@ export default function TaskPage(): React.JSX.Element {
           <DialogHeader>
             <DialogTitle>New GitHub issue</DialogTitle>
             <DialogDescription>
-              Opens a new issue in {selectedRepo?.displayName ?? 'this repository'}.
+              Opens a new issue in {primaryRepo?.displayName ?? 'this repository'}.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
@@ -985,7 +1117,9 @@ export default function TaskPage(): React.JSX.Element {
             </Button>
             <Button
               onClick={() => void handleCreateNewIssue()}
-              disabled={!selectedRepo || !newIssueTitle.trim() || newIssueSubmitting}
+              disabled={
+                !primaryRepo || !isSingleRepo || !newIssueTitle.trim() || newIssueSubmitting
+              }
             >
               {newIssueSubmitting ? (
                 <>
@@ -1002,7 +1136,12 @@ export default function TaskPage(): React.JSX.Element {
 
       <GitHubItemDrawer
         workItem={drawerWorkItem}
-        repoPath={selectedRepo?.path ?? null}
+        repoPath={
+          // Why: the drawer is for a single item — resolve its repoPath from the
+          // item's own repoId (set when fan-out merged the list) so it works in
+          // cross-repo mode too.
+          drawerWorkItem ? (repos.find((r) => r.id === drawerWorkItem.repoId)?.path ?? null) : null
+        }
         onUse={(item) => {
           setDrawerWorkItem(null)
           handleUseWorkItem(item)

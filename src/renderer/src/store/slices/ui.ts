@@ -189,7 +189,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     const repo = targetRepoId ? state.repos.find((r) => r.id === targetRepoId) : null
     if (repo?.path) {
       const preset = state.settings?.defaultTaskViewPreset ?? 'all'
-      state.prefetchWorkItems(repo.path, 36, presetToQuery(preset))
+      state.prefetchWorkItems(repo.id, repo.path, 36, presetToQuery(preset))
     }
   },
   closeTaskPage: () =>

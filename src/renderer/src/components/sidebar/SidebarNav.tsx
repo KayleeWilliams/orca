@@ -36,7 +36,12 @@ const SidebarNav = React.memo(function SidebarNav() {
       // match TaskPage's `initialTaskQuery` derived from the same default
       // preset, otherwise the prefetch lands in a key the page never reads
       // and we pay the full round-trip after click.
-      prefetchWorkItems(firstGitRepo.path, 36, getTaskPresetQuery(defaultTaskViewPreset))
+      prefetchWorkItems(
+        firstGitRepo.id,
+        firstGitRepo.path,
+        36,
+        getTaskPresetQuery(defaultTaskViewPreset)
+      )
     }
   }, [activeRepoId, canBrowseTasks, defaultTaskViewPreset, prefetchWorkItems, repos])
 

@@ -1,7 +1,7 @@
 import { useAppStore } from '@/store'
 import type { AgentStartupPlan } from '@/lib/tui-agent-startup'
 import { isShellProcess } from '@/lib/tui-agent-startup'
-import type { GitHubWorkItem, OrcaHooks, TaskViewPresetId } from '../../../shared/types'
+import type { OrcaHooks, TaskViewPresetId } from '../../../shared/types'
 
 /**
  * Why: the TaskPage's preset buttons and the openTaskPage prefetcher both need
@@ -136,7 +136,7 @@ function slugifyForWorkspaceName(input: string): string {
   )
 }
 
-export function getLinkedWorkItemSuggestedName(item: GitHubWorkItem): string {
+export function getLinkedWorkItemSuggestedName(item: { title: string }): string {
   const withoutLeadingNumber = item.title
     .trim()
     .replace(/^(?:issue|pr|pull request)\s*#?\d+\s*[:-]\s*/i, '')

@@ -547,11 +547,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     let cancelled = false
     setLinkItemsLoading(true)
 
+    const lookupRepoId = selectedRepo.id
     void window.api.gh
       .listWorkItems({ repoPath: selectedRepo.path, limit: 100 })
       .then((items) => {
         if (!cancelled) {
-          setLinkItems(items)
+          // Why: IPC payload omits repoId — stamp it here from the repo we
+          // queried so downstream consumers typed against GitHubWorkItem work.
+          // Cast through unknown: spreading a discriminated union loses the
+          // discriminant, so the union-preserving shape must be asserted.
+          setLinkItems(
+            items.map((it) => ({ ...it, repoId: lookupRepoId })) as unknown as GitHubWorkItem[]
+          )
         }
       })
       .catch(() => {
@@ -583,11 +590,14 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     // number and still get a concrete selectable result. Orca mirrors that by
     // resolving direct lookups against the selected repo instead of requiring a
     // text match in the recent-items list.
+    const lookupRepoId = selectedRepo.id
     void window.api.gh
       .workItem({ repoPath: selectedRepo.path, number: normalizedLinkQuery.directNumber })
       .then((item) => {
         if (!cancelled) {
-          setLinkDirectItem(item)
+          setLinkDirectItem(
+            item ? ({ ...item, repoId: lookupRepoId } as unknown as GitHubWorkItem) : null
+          )
         }
       })
       .catch(() => {

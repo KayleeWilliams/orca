@@ -399,6 +399,11 @@ export type GitHubWorkItem = {
   author: string | null
   branchName?: string
   baseRefName?: string
+  /** Why: required because the cross-repo view merges items from every selected
+   *  repo — the table row's repo pill and the "open in browser" fallback need
+   *  to know which repo an item came from. Stamped by the renderer fetcher
+   *  (`fetchWorkItems`) and by optimistic stubs on the new-issue path. */
+  repoId: string
 }
 
 export type GitHubPRFile = {
@@ -419,7 +424,9 @@ export type GitHubPRFileContents = {
 }
 
 export type GitHubWorkItemDetails = {
-  item: GitHubWorkItem
+  // Why: main-process doesn't know Orca's Repo.id, so this inner item omits
+  // repoId. The renderer stamps it when routing the details through the store.
+  item: Omit<GitHubWorkItem, 'repoId'>
   body: string
   comments: PRComment[]
   /** Only set for PRs. Head/base SHAs used by the Files tab to fetch per-file content. */
@@ -660,6 +667,13 @@ export type GlobalSettings = {
   skipDeleteWorktreeConfirm: boolean
   /** Default preset in the new-workspace GitHub task view. */
   defaultTaskViewPreset: TaskViewPresetId
+  /** Why: persists the user's repo selection in the cross-repo tasks view.
+   *  `null` means sticky-all — every eligible repo is selected, including
+   *  repos added in future sessions, so the "All repos" label stays
+   *  truthful. An explicit array freezes the curated subset; ids no longer
+   *  eligible are silently dropped on load. An empty array after that drop
+   *  is treated as `null`. */
+  defaultRepoSelection: string[] | null
   /** Per-agent CLI command overrides. A missing key means use the catalog default binary name. */
   agentCmdOverrides: Partial<Record<TuiAgent, string>>
   /** Why: macOS terminals must choose between letting Option compose layout
