@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { Search, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { Search, X, ChevronDown, ChevronRight, FolderGit2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { Input } from '@/components/ui/input'
@@ -215,9 +215,13 @@ const AgentDashboard = React.memo(function AgentDashboard() {
                     aria-expanded={!isCollapsed}
                   >
                     <Icon className="size-3 shrink-0 text-muted-foreground/60" />
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: group.repo.badgeColor }}
+                    {/* Why: mirror the sidebar's worktree list — repos are
+                        keyed by the FolderGit2 glyph colored with the repo's
+                        own badgeColor, so the dashboard header reads as the
+                        same repo entity a user scans for in the sidebar. */}
+                    <FolderGit2
+                      className="size-3 shrink-0"
+                      style={{ color: group.repo.badgeColor }}
                       aria-hidden
                     />
                     <span className="truncate font-medium text-foreground/80">
