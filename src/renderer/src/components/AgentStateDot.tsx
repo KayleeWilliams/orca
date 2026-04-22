@@ -76,7 +76,7 @@ export const AgentStateDot = React.memo(function AgentStateDot({
           'block rounded-full',
           inner,
           state === 'blocked' || state === 'waiting' || state === 'permission'
-            ? 'bg-amber-500 animate-pulse'
+            ? 'bg-red-500 animate-pulse'
             : state === 'done'
               ? 'bg-sky-500/80'
               : 'bg-neutral-500/40'

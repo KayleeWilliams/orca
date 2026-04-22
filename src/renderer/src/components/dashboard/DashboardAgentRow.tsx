@@ -150,14 +150,15 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   }
 
   // Why: any state the user still needs to act on gets a full-height left
-  // accent bar — blocked/waiting (amber, needs input) and done (sky, needs
+  // accent bar — blocked/waiting (red, needs input) and done (sky, needs
   // review). The bar is the list-view convention (Linear, Jira, GitHub) for
   // "this row wants attention"; color communicates *what kind* of attention.
-  // Working/idle rows get no bar so the list scans cleanly to the things
-  // that actually need the user.
+  // Red matches the workspace sidebar's permission dot so the two surfaces
+  // agree on what "needs input" looks like. Working/idle rows get no bar so
+  // the list scans cleanly to the things that actually need the user.
   const accentColor =
     agent.state === 'blocked' || agent.state === 'waiting'
-      ? 'bg-amber-500'
+      ? 'bg-red-500'
       : agent.state === 'done'
         ? 'bg-sky-500/80'
         : null
@@ -170,8 +171,14 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       onKeyDown={handleActivateKeyDown}
       className={cn(
         'group relative flex flex-col pl-1 pr-1.5 py-0.5',
-        'cursor-pointer rounded-sm hover:bg-accent/30',
-        'focus-visible:outline-none focus-visible:bg-accent/40'
+        // Why: hover tints have to go in opposite directions per theme —
+        // dark mode adds light on dark (bg-accent/30), light mode needs to
+        // add *dark* on white. Alpha-on-accent in light mode collapses to
+        // near-nothing because accent (#f5f5f5) is already ~white. Use a
+        // black alpha overlay in light mode (mirrors WorktreeCard.tsx's
+        // active-state pattern) so the lift is symmetric across themes.
+        'cursor-pointer rounded-sm hover:bg-black/[0.06] dark:hover:bg-accent/30',
+        'focus-visible:outline-none focus-visible:bg-black/[0.09] dark:focus-visible:bg-accent/40'
       )}
       title={tsParts.length > 0 ? tsParts.join(' • ') : undefined}
     >
@@ -207,10 +214,18 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           <span className="inline-block size-3.5 shrink-0" aria-hidden />
         )}
         {prompt && (
+          // Why: animate between a 1-line clipped height and the content's
+          // natural height using Chromium's `interpolate-size: allow-keywords`
+          // — this is the only way to transition a `height` property to/from
+          // `auto` without measuring sizes in JS. Falls back to an instant
+          // swap in engines that don't support it. The inner span keeps
+          // overflow-hidden so the truncate→wrap class flip stays clipped
+          // during the interpolation.
           <span
             className={cn(
-              'min-w-0 flex-1 text-[11px] font-medium leading-snug text-foreground/90',
-              expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+              'block min-w-0 flex-1 overflow-hidden text-[11px] font-medium leading-snug text-foreground/90',
+              'transition-[height] duration-200 ease-out [interpolate-size:allow-keywords]',
+              expanded ? 'h-auto whitespace-pre-wrap break-words' : 'h-[1lh] truncate'
             )}
             title={expanded ? undefined : prompt}
           >
@@ -339,21 +354,30 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
         </div>
       )}
       {/* Why: message slot is always reserved in collapsed view so the row
-          height stays fixed as lastAssistantMessage arrives/clears. When
-          expanded an empty reserved slot reads as a visible gap, so only
-          render the placeholder when collapsed. */}
+          height stays fixed as lastAssistantMessage arrives/clears. The
+          expand animation lives on the CommentMarkdown itself (height +
+          interpolate-size) so the body reveals smoothly instead of snapping
+          open. When the message is empty we still render a placeholder in
+          the collapsed view to preserve the reserved line height. */}
       {lastAssistantMessage ? (
         <CommentMarkdown
           content={lastAssistantMessage}
-          // Why: render markdown in both states, but in the collapsed view
-          // force every nested element inline so `truncate` can ellipsize
-          // the whole thing on one line. The [&_*]:inline descendant
-          // selector flattens the markdown tree (lists, pre, headings,
-          // blockquotes) into inline flow; block margins and list markers
-          // are suppressed by [&_*]:!m-0 / [&_ul]:list-none so the preview
-          // reads as a single clean line.
+          // Why: animate between a 1-line clipped height and the content's
+          // natural height using Chromium's `interpolate-size: allow-keywords`
+          // so the message body expands/collapses smoothly instead of
+          // snapping. Height transition + overflow-hidden keeps the inline-
+          // flattened preview clipped during the interpolation. Render the
+          // markdown in both states; in the collapsed view we force every
+          // nested element inline so `truncate` can ellipsize the whole
+          // thing on one line. The [&_*]:inline descendant selector flattens
+          // the markdown tree (lists, pre, headings, blockquotes) into inline
+          // flow; block margins and list markers are suppressed by
+          // [&_*]:!m-0 / [&_ul]:list-none so the preview reads as a single
+          // clean line.
           className={cn(
-            'mt-0.5 pl-5 text-[10px] leading-snug text-muted-foreground/80',
+            'mt-0.5 overflow-hidden pl-5 text-[10px] leading-snug text-muted-foreground/80',
+            'transition-[height] duration-200 ease-out [interpolate-size:allow-keywords]',
+            expanded ? 'h-auto' : 'h-[1lh]',
             // Why: in collapsed mode we need a single truncated line. Markdown
             // blocks (pre, lists, headings) are flattened inline and forced
             // to inherit `white-space: nowrap` so <pre>/<code>'s preserved

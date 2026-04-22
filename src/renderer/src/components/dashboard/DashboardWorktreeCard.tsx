@@ -6,9 +6,9 @@ import type { DashboardWorktreeCard as DashboardWorktreeCardData } from './useDa
 
 type Props = {
   card: DashboardWorktreeCardData
-  isFocused: boolean
+  /** True when this worktree is the one the user is currently viewing. */
+  isActive: boolean
   onFocus: () => void
-  onCheck: () => void
   onDismissAgent: (paneKey: string) => void
   /** Navigate to a specific tab inside this card's worktree. */
   onActivateAgentTab: (worktreeId: string, tabId: string) => void
@@ -17,9 +17,8 @@ type Props = {
 
 const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
   card,
-  isFocused,
+  isActive,
   onFocus,
-  onCheck,
   onDismissAgent,
   onActivateAgentTab,
   isLast
@@ -27,14 +26,15 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const setActiveView = useAppStore((s) => s.setActiveView)
 
-  // Why: clicking a worktree row navigates to its terminal AND marks it as
-  // "checked" so done agents disappear from the active filter. The two actions
-  // (navigate + check) must both fire on click.
+  // Why: clicking a worktree row only navigates. It does NOT dismiss retained
+  // done agents — the user may have multiple agents done (e.g. Claude + Codex)
+  // and silently dropping any of them on row click erases a signal they were
+  // about to click through to investigate. Dismissal happens only through the
+  // explicit X button on each agent row.
   const handleClick = useCallback(() => {
     setActiveWorktree(card.worktree.id)
     setActiveView('terminal')
-    onCheck()
-  }, [card.worktree.id, setActiveWorktree, setActiveView, onCheck])
+  }, [card.worktree.id, setActiveWorktree, setActiveView])
 
   // Why: clicking an agent row only navigates to that agent's tab. It must not
   // call onCheck() — that would mark the worktree as checked AND dismiss all
@@ -69,9 +69,21 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
       onFocus={onFocus}
       className={cn(
         'cursor-pointer px-2.5 py-1 transition-colors duration-100',
-        'hover:bg-accent/20',
-        'focus-visible:outline-none focus-visible:bg-accent/30',
-        isFocused && 'bg-accent/25',
+        // Why: light-mode hovers have to darken (not lighten) the surface —
+        // `--accent` is #f5f5f5 so adding it to white lifts nothing. Use a
+        // black alpha overlay in light mode and keep the original
+        // alpha-on-accent for dark mode, mirroring WorktreeCard's active
+        // state pattern. Focus/focused are each one step stronger than
+        // hover, keeping the same hierarchy dark mode already reads.
+        'hover:bg-black/[0.04] dark:hover:bg-accent/20',
+        'focus-visible:outline-none focus-visible:bg-black/[0.06] dark:focus-visible:bg-accent/30',
+        // Why: the persistent tint tracks the *active* worktree (the one the
+        // user is viewing), not the last card that happened to receive focus.
+        // Focus state sticks around after click and never clears, so using
+        // it for the persistent highlight made every clicked row appear
+        // selected forever; tying it to activeWorktreeId keeps the highlight
+        // in sync with what the user actually has open.
+        isActive && 'bg-black/[0.05] dark:bg-accent/25',
         !isLast && 'border-b border-border/80'
       )}
     >

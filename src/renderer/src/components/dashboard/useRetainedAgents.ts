@@ -54,15 +54,16 @@ export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
 
 export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
   enrichedGroups: DashboardRepoGroup[]
-  dismissWorktreeAgents: (worktreeId: string) => void
   dismissAgent: (paneKey: string) => void
 } {
   // Why: the retention sync runs at App level (see useRetainedAgentsSync in
   // App.tsx) so retained entries persist across dashboard mounts. This hook
-  // only reads + dismisses.
+  // only reads + dismisses individual rows; bulk worktree-level dismissal
+  // was removed because silently dropping retained done agents when the
+  // user clicks a worktree can erase completion signals for other agents
+  // (e.g. a done Codex row while a live Claude row triggered the click).
   const retained = useAppStore((s) => s.retainedAgentsByPaneKey)
   const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
-  const dismissRetainedAgentsByWorktree = useAppStore((s) => s.dismissRetainedAgentsByWorktree)
 
   const enrichedGroups = useMemo(
     () => enrichGroupsWithRetained(liveGroups, retained),
@@ -76,14 +77,7 @@ export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
     [dismissRetainedAgent]
   )
 
-  const dismissWorktreeAgents = useCallback(
-    (worktreeId: string) => {
-      dismissRetainedAgentsByWorktree(worktreeId)
-    },
-    [dismissRetainedAgentsByWorktree]
-  )
-
-  return { enrichedGroups, dismissWorktreeAgents, dismissAgent }
+  return { enrichedGroups, dismissAgent }
 }
 
 export function enrichGroupsWithRetained(
