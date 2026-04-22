@@ -28,16 +28,13 @@ export default function ImageViewer({
   )
   const [findOpen, setFindOpen] = useState(false)
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
+  const pdfContainerRef = useRef<HTMLDivElement | null>(null)
 
   const filename = useMemo(() => filePath.split(/[/\\]/).pop() || filePath, [filePath])
   const cleanedContent = useMemo(() => content.replace(/\s/g, ''), [content])
   const isPdf = mimeType === 'application/pdf'
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  // Why: for PDFs we store content via IPC to a main-process memory store
-  // and load it via the custom orca-pdf: protocol in a webview. This avoids
-  // cross-origin blob URL issues that prevent webviews from loading
-  // renderer-created blob URLs.
-  const [pdfProtocolUrl, setPdfProtocolUrl] = useState<string | null>(null)
+  const [pdfReady, setPdfReady] = useState(false)
   const estimatedSize = useMemo(() => {
     const bytes = Math.floor((cleanedContent.length * 3) / 4)
     if (bytes < 1024) {
@@ -72,26 +69,52 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(objectUrl)
   }, [cleanedContent, mimeType, isPdf])
 
+  // Why: the webview is created imperatively (not via JSX) because Electron's
+  // webview custom element requires attribute-level control that React's JSX
+  // does not reliably provide. The BrowserPane uses the same pattern.
   useEffect(() => {
-    if (!isPdf || !cleanedContent) {
-      setPdfProtocolUrl(null)
+    const container = pdfContainerRef.current
+    if (!isPdf || !cleanedContent || !container) {
       return
     }
+
     let storeId: string | null = null
+    let webview: Electron.WebviewTag | null = null
     let cancelled = false
+
     window.api.ui.storePdfForViewer(cleanedContent).then((id) => {
       if (cancelled) {
         window.api.ui.releasePdfFromViewer(id)
         return
       }
       storeId = id
-      setPdfProtocolUrl(`orca-pdf://${id}`)
+      const url = `orca-pdf://${id}`
+
+      webview = document.createElement('webview') as Electron.WebviewTag
+      webview.setAttribute('partition', ORCA_PDF_VIEWER_PARTITION)
+      webview.setAttribute('src', url)
+      webview.style.display = 'flex'
+      webview.style.flex = '1'
+      webview.style.width = '100%'
+      webview.style.height = '100%'
+      webview.style.minHeight = '24rem'
+      webview.style.border = 'none'
+
+      webviewRef.current = webview
+      container.appendChild(webview)
+      setPdfReady(true)
     })
+
     return () => {
       cancelled = true
+      if (webview) {
+        webview.remove()
+        webviewRef.current = null
+      }
       if (storeId) {
         window.api.ui.releasePdfFromViewer(storeId)
       }
+      setPdfReady(false)
     }
   }, [isPdf, cleanedContent])
 
@@ -127,7 +150,7 @@ export default function ImageViewer({
     )
   }
 
-  if ((isPdf && !pdfProtocolUrl) || (!isPdf && !previewUrl)) {
+  if (!isPdf && !previewUrl) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         Loading preview...
@@ -137,19 +160,11 @@ export default function ImageViewer({
 
   const previewPane = isPdf ? (
     <div className="relative flex flex-1 flex-col overflow-auto">
-      <PdfFind isOpen={findOpen} onClose={closeFindBar} webviewRef={webviewRef} />
-      {/* Why: the PDF viewer webview loads content via the custom orca-pdf:
-          protocol served from a main-process memory store. This sidesteps
-          cross-origin blob URL limitations and data URL issues that prevent
-          Chromium's PDF viewer from activating in webview guests. Using a
-          webview gives us webview.findInPage() to search the PDF text layer. */}
-      <webview
-        ref={webviewRef}
-        src={pdfProtocolUrl!}
-        partition={ORCA_PDF_VIEWER_PARTITION}
-        className="flex-1 min-h-[24rem] w-full bg-background"
-        style={{ display: 'inline-flex' }}
-      />
+      {pdfReady && <PdfFind isOpen={findOpen} onClose={closeFindBar} webviewRef={webviewRef} />}
+      {/* Why: container for the imperatively created webview. See the useEffect
+          above that creates the webview via document.createElement('webview')
+          following the same pattern as BrowserPane. */}
+      <div ref={pdfContainerRef} className="flex flex-1 flex-col bg-background" />
     </div>
   ) : (
     <div
