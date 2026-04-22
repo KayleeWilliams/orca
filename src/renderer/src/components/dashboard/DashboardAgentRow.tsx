@@ -289,15 +289,20 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           )}
         </div>
       )}
-      {lastAssistantMessage && (
+      {/* Why: reserve the message row's height in collapsed view even when
+          empty, so the card doesn't shift vertically as lastAssistantMessage
+          arrives or clears mid-turn. When expanded we only render if there's
+          content — a blank reserved slot inside an already-expanded card
+          would read as a visible gap. */}
+      {(lastAssistantMessage || !expanded) && (
         <div
           className={cn(
             'mt-1 pl-5 text-[11px] italic leading-snug text-muted-foreground/70',
             expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
           )}
-          title={expanded ? undefined : lastAssistantMessage}
+          title={!expanded && lastAssistantMessage ? lastAssistantMessage : undefined}
         >
-          {lastAssistantMessage}
+          {lastAssistantMessage || ' '}
         </div>
       )}
     </div>
