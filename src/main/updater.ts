@@ -41,6 +41,7 @@ let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
+let _getLastUpdateCheckAt: (() => number | null) | null = null
 let activeUpdateNudgeId: string | null = null
 let awaitingNudgeCheckOutcome = false
 let nudgeCheckInFlight = false
@@ -428,6 +429,7 @@ export function setupAutoUpdater(
   mainWindowRef = mainWindow
   onBeforeQuitCleanup = opts?.onBeforeQuit ?? null
   persistLastUpdateCheckAt = opts?.setLastUpdateCheckAt ?? null
+  _getLastUpdateCheckAt = opts?.getLastUpdateCheckAt ?? null
   _getPendingUpdateNudgeId = opts?.getPendingUpdateNudgeId ?? null
   _getDismissedUpdateNudgeId = opts?.getDismissedUpdateNudgeId ?? null
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
@@ -502,12 +504,23 @@ export function setupAutoUpdater(
   void checkForUpdateNudge()
   scheduleUpdateNudgeCheck()
 
-  powerMonitor.on('resume', () => {
+  const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-  })
-  app.on('browser-window-focus', () => {
-    void checkForUpdateNudge()
-  })
+    // Why: in-flight checks haven't persisted a timestamp yet, so the 24h
+    // gate below would pass and re-fire on rapid focus events.
+    if (currentStatus.state === 'checking' || currentStatus.state === 'downloading') {
+      return
+    }
+    const lastCheck = _getLastUpdateCheckAt?.() ?? null
+    const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
+    if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
+      runBackgroundUpdateCheck()
+      scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+    }
+  }
+
+  powerMonitor.on('resume', checkDailyOnWake)
+  app.on('browser-window-focus', checkDailyOnWake)
 
   const lastUpdateCheckAt = opts?.getLastUpdateCheckAt?.() ?? null
   const msSinceLastCheck =

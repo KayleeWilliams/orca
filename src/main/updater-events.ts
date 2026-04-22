@@ -101,6 +101,10 @@ export function registerAutoUpdaterHandlers({
     // Guard: don't show an update that isn't actually newer than what's running.
     if (compareVersions(info.version, app.getVersion()) <= 0) {
       clearAvailableUpdateContext()
+      recordCompletedUpdateCheck()
+      if (!wasUserInitiated) {
+        scheduleAutomaticUpdateCheck(24 * 60 * 60 * 1000)
+      }
       sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
       return
     }
