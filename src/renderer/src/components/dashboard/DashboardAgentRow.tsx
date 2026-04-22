@@ -291,9 +291,9 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       )}
       {/* Why: reserve the message row's height in collapsed view even when
           empty, so the card doesn't shift vertically as lastAssistantMessage
-          arrives or clears mid-turn. Expanded view omits the row when empty
-          — the padding would read as a visible gap without the single-line
-          clamp to anchor it. */}
+          arrives or clears mid-turn. When expanded we only render if there's
+          content — a blank reserved slot inside an already-expanded card
+          would read as a visible gap. */}
       {(lastAssistantMessage || !expanded) && (
         <div
           className={cn(
@@ -302,7 +302,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           )}
           title={!expanded && lastAssistantMessage ? lastAssistantMessage : undefined}
         >
-          {lastAssistantMessage || ' '}
+          {lastAssistantMessage || ' '}
         </div>
       )}
     </div>

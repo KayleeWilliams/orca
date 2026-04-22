@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { Search, X } from 'lucide-react'
+import { Search, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -41,11 +42,31 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   )
 
   const [searchQuery, setSearchQuery] = useState('')
-  const { filter, setFilter, filteredWorktrees, hasResults } = useDashboardFilter(
-    groups,
-    searchQuery
-  )
+  const { filter, setFilter, filteredGroups, hasResults } = useDashboardFilter(groups, searchQuery)
   const [focusedWorktreeId, setFocusedWorktreeId] = useState<string | null>(null)
+  // Why: repo groups are collapsible so users can hide repos they aren't
+  // actively watching. State is per-session (intentionally not persisted) —
+  // a long-lived collapsed state across restarts would hide new activity
+  // under a closed header and silently erase the "needs attention" signal.
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
+  const toggleCollapse = useCallback((repoId: string) => {
+    setCollapsedRepos((prev) => {
+      const next = new Set(prev)
+      if (next.has(repoId)) {
+        next.delete(repoId)
+      } else {
+        next.add(repoId)
+      }
+      return next
+    })
+  }, [])
+  // Why: arrow-key nav should only step over worktrees whose repo header is
+  // expanded. Building this list here keeps the source of truth in one place
+  // for both the DOM render order and the keyboard iteration order.
+  const visibleWorktrees = useMemo(
+    () => filteredGroups.flatMap((g) => (collapsedRepos.has(g.repo.id) ? [] : g.worktrees)),
+    [filteredGroups, collapsedRepos]
+  )
 
   // Why: the keyboard hook scopes its listener to this container (not window)
   // so dashboard shortcuts (1-5, arrows, Enter, Escape) don't hijack the
@@ -78,7 +99,7 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   )
 
   useDashboardKeyboard({
-    filteredWorktrees,
+    filteredWorktrees: visibleWorktrees,
     focusedWorktreeId,
     setFocusedWorktreeId,
     filter,
@@ -95,53 +116,6 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   }, [])
 
   const handleClearSearch = useCallback(() => setSearchQuery(''), [])
-
-  // Why: group filteredWorktrees by repo at render time so we can show a
-  // per-repo header with counts above each group — replacing the global
-  // stats strip that used to sit above everything. Sort order of worktrees
-  // is preserved (they're already sorted by earliestStartedAt in the filter
-  // hook); we just walk the sorted list and bucket adjacent same-repo
-  // entries together. Repos appear in the order their first worktree does.
-  const filteredByRepo = useMemo(() => {
-    type Group = {
-      repoId: string
-      repoDisplayName: string
-      repoBadgeColor: string
-      worktrees: typeof filteredWorktrees
-      running: number
-      blocked: number
-      done: number
-    }
-    const order: string[] = []
-    const byId = new Map<string, Group>()
-    for (const card of filteredWorktrees) {
-      let group = byId.get(card.repo.id)
-      if (!group) {
-        group = {
-          repoId: card.repo.id,
-          repoDisplayName: card.repo.displayName,
-          repoBadgeColor: card.repo.badgeColor,
-          worktrees: [],
-          running: 0,
-          blocked: 0,
-          done: 0
-        }
-        byId.set(card.repo.id, group)
-        order.push(card.repo.id)
-      }
-      group.worktrees.push(card)
-      for (const agent of card.agents) {
-        if (agent.state === 'working') {
-          group.running++
-        } else if (agent.state === 'blocked' || agent.state === 'waiting') {
-          group.blocked++
-        } else if (agent.state === 'done') {
-          group.done++
-        }
-      }
-    }
-    return order.map((id) => byId.get(id)!)
-  }, [filteredWorktrees])
 
   if (groups.length === 0) {
     return (
@@ -191,56 +165,94 @@ const AgentDashboard = React.memo(function AgentDashboard() {
       <div className="flex-1 overflow-y-auto scrollbar-sleek">
         {hasResults ? (
           <div className="flex flex-col">
-            {filteredByRepo.map((group) => (
-              <div key={group.repoId} className="flex flex-col">
-                {/* Why: repo header row replaces the old global stats strip.
-                    Counts live at the scope of the grouping, so the user sees
-                    per-repo agent load rather than a rollup floating at the
-                    top. Sticky so the repo label stays in view while scrolling
-                    through that repo's worktrees. */}
-                <div className="sticky top-0 z-10 flex items-center gap-2 bg-background/95 px-2.5 py-1 backdrop-blur">
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: group.repoBadgeColor }}
-                    aria-hidden
-                  />
-                  <span className="text-[11px] font-semibold text-foreground/80 truncate">
-                    {group.repoDisplayName}
-                  </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
-                    {group.running > 0 && (
-                      <span>
-                        <span className="font-semibold text-emerald-500">{group.running}</span>{' '}
-                        active
-                      </span>
+            {filteredGroups.map((group, groupIdx) => {
+              const isCollapsed = collapsedRepos.has(group.repo.id)
+              // Why: per-repo stats replace the global stats strip that used
+              // to sit above the whole dashboard. Counts live at the scope
+              // of the grouping so the user sees per-repo agent load instead
+              // of a rollup that hides which repo is busy.
+              let groupRunning = 0
+              let groupBlocked = 0
+              let groupDone = 0
+              for (const wt of group.worktrees) {
+                for (const agent of wt.agents) {
+                  if (agent.state === 'working') {
+                    groupRunning++
+                  } else if (agent.state === 'blocked' || agent.state === 'waiting') {
+                    groupBlocked++
+                  } else if (agent.state === 'done') {
+                    groupDone++
+                  }
+                }
+              }
+              const Icon = isCollapsed ? ChevronRight : ChevronDown
+              return (
+                <div
+                  key={group.repo.id}
+                  className={cn(
+                    groupIdx !== filteredGroups.length - 1 && 'border-b border-border/40'
+                  )}
+                >
+                  {/* Why: the repo header is a lightweight row, not a card —
+                      no background fill, no border box. It stays an
+                      expand/collapse control so users can hide repos they
+                      aren't watching, but it doesn't wrap the children in
+                      chrome that duplicates the worktree row's own borders. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapse(group.repo.id)}
+                    className={cn(
+                      'flex w-full items-center gap-1.5 px-2.5 py-1.5',
+                      'text-left text-[11px] text-muted-foreground/80',
+                      'hover:bg-accent/20 transition-colors duration-100'
                     )}
-                    {group.blocked > 0 && (
-                      <span>
-                        <span className="font-semibold text-amber-500">{group.blocked}</span>{' '}
-                        blocked
-                      </span>
-                    )}
-                    {group.done > 0 && (
-                      <span>
-                        <span className="font-semibold text-sky-500/80">{group.done}</span> done
-                      </span>
-                    )}
-                  </span>
+                    aria-expanded={!isCollapsed}
+                  >
+                    <Icon className="size-3 shrink-0 text-muted-foreground/60" />
+                    <span
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: group.repo.badgeColor }}
+                      aria-hidden
+                    />
+                    <span className="truncate font-medium text-foreground/80">
+                      {group.repo.displayName}
+                    </span>
+                    <span className="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
+                      {groupRunning > 0 && (
+                        <span>
+                          <span className="font-semibold text-emerald-500">{groupRunning}</span>{' '}
+                          active
+                        </span>
+                      )}
+                      {groupBlocked > 0 && (
+                        <span>
+                          <span className="font-semibold text-amber-500">{groupBlocked}</span>{' '}
+                          blocked
+                        </span>
+                      )}
+                      {groupDone > 0 && (
+                        <span>
+                          <span className="font-semibold text-sky-500/80">{groupDone}</span> done
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  {!isCollapsed &&
+                    group.worktrees.map((card, i) => (
+                      <DashboardWorktreeCard
+                        key={card.worktree.id}
+                        card={card}
+                        isFocused={focusedWorktreeId === card.worktree.id}
+                        onFocus={() => setFocusedWorktreeId(card.worktree.id)}
+                        onCheck={() => handleCheckWorktree(card.worktree.id)}
+                        onDismissAgent={handleDismissAgent}
+                        onActivateAgentTab={handleActivateAgentTab}
+                        isLast={i === group.worktrees.length - 1}
+                      />
+                    ))}
                 </div>
-                {group.worktrees.map((card, i) => (
-                  <DashboardWorktreeCard
-                    key={card.worktree.id}
-                    card={card}
-                    isFocused={focusedWorktreeId === card.worktree.id}
-                    onFocus={() => setFocusedWorktreeId(card.worktree.id)}
-                    onCheck={() => handleCheckWorktree(card.worktree.id)}
-                    onDismissAgent={handleDismissAgent}
-                    onActivateAgentTab={handleActivateAgentTab}
-                    isLast={i === group.worktrees.length - 1}
-                  />
-                ))}
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 gap-2">

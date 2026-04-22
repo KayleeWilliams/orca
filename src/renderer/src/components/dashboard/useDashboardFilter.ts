@@ -7,6 +7,14 @@ import type {
 
 export type DashboardFilter = 'active' | 'all' | 'blocked' | 'done'
 
+export type FilteredDashboardGroup = {
+  repo: DashboardRepoGroup['repo']
+  worktrees: DashboardWorktreeCard[]
+  /** Earliest startedAt across all worktrees in this group. Stable once the
+   *  group has any agent — used for deterministic ordering between groups. */
+  earliestStartedAt: number
+}
+
 // Why: filters apply to individual AGENTS, not worktrees. Previously we filtered
 // by the worktree's dominantState, so a done agent stayed visible under the
 // 'active' tab if a sibling agent in the same worktree was working — which
@@ -62,15 +70,17 @@ export function useDashboardFilter(
 ): {
   filter: DashboardFilter
   setFilter: (f: DashboardFilter) => void
+  filteredGroups: FilteredDashboardGroup[]
   filteredWorktrees: DashboardWorktreeCard[]
   hasResults: boolean
 } {
   const [filter, setFilter] = useState<DashboardFilter>('all')
 
-  const filteredWorktrees = useMemo(() => {
+  const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    const flat: DashboardWorktreeCard[] = []
+    const out: FilteredDashboardGroup[] = []
     for (const group of groups) {
+      const worktrees: DashboardWorktreeCard[] = []
       for (const wt of group.worktrees) {
         const stateMatched = wt.agents.filter((a) => matchesAgent(a, filter))
         if (stateMatched.length === 0) {
@@ -85,21 +95,39 @@ export function useDashboardFilter(
         if (agents.length === 0) {
           continue
         }
-        flat.push({ ...wt, agents })
+        worktrees.push({ ...wt, agents })
       }
+      if (worktrees.length === 0) {
+        continue
+      }
+      // Why: sort worktrees within a group by earliest-started agent asc.
+      // Stable once populated — a new agent starting in a sibling worktree
+      // doesn't reshuffle this one while the user reads.
+      worktrees.sort((a, b) => a.earliestStartedAt - b.earliestStartedAt)
+      out.push({
+        repo: group.repo,
+        worktrees,
+        earliestStartedAt: worktrees[0]?.earliestStartedAt ?? 0
+      })
     }
-    // Why: sort worktrees by earliest-started agent (ascending). Stable once
-    // populated — a new agent starting in a different worktree doesn't
-    // reshuffle this one while the user is reading.
-    flat.sort((a, b) => a.earliestStartedAt - b.earliestStartedAt)
-    return flat
+    // Why: sort groups by the earliest-started worktree asc for the same
+    // "stop moving while I read" reason. Repos with no activity yet get 0
+    // and fall to the top, which is fine since they render empty anyway.
+    out.sort((a, b) => a.earliestStartedAt - b.earliestStartedAt)
+    return out
   }, [groups, filter, searchQuery])
+
+  const filteredWorktrees = useMemo(
+    () => filteredGroups.flatMap((g) => g.worktrees),
+    [filteredGroups]
+  )
 
   const hasResults = filteredWorktrees.length > 0
 
   return {
     filter,
     setFilter,
+    filteredGroups,
     filteredWorktrees,
     hasResults
   }

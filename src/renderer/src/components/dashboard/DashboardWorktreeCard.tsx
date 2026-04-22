@@ -75,8 +75,8 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
         !isLast && 'border-b border-border/60'
       )}
     >
-      {/* Worktree header row. Repo identity is already shown on the sticky
-          group header above, so the row itself only names the worktree. */}
+      {/* Worktree header row. Why: the repo is shown by the surrounding
+          group header, so the row itself only needs the worktree name. */}
       <div className="flex items-center gap-1.5 min-w-0">
         <span className="text-[11px] font-semibold text-foreground truncate leading-tight min-w-0">
           {card.worktree.displayName}
