@@ -149,12 +149,18 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     tsParts.push(`done ${formatTimeAgo(doneAt, now)}`)
   }
 
-  // Why: blocked/waiting agents are what the user actually needs to act on,
-  // and the inline state-dot is easy to miss in a long list. A full-height
-  // left accent bar is the list-view convention (Linear, Jira, GitHub review
-  // requests) for "this row needs attention" — it reads at a glance without
-  // stealing horizontal space or fighting the hover/focus backgrounds.
-  const needsAttention = agent.state === 'blocked' || agent.state === 'waiting'
+  // Why: any state the user still needs to act on gets a full-height left
+  // accent bar — blocked/waiting (amber, needs input) and done (sky, needs
+  // review). The bar is the list-view convention (Linear, Jira, GitHub) for
+  // "this row wants attention"; color communicates *what kind* of attention.
+  // Working/idle rows get no bar so the list scans cleanly to the things
+  // that actually need the user.
+  const accentColor =
+    agent.state === 'blocked' || agent.state === 'waiting'
+      ? 'bg-amber-500'
+      : agent.state === 'done'
+        ? 'bg-sky-500/80'
+        : null
 
   return (
     <div
@@ -169,8 +175,11 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       )}
       title={tsParts.length > 0 ? tsParts.join(' • ') : undefined}
     >
-      {needsAttention && (
-        <span className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-amber-500" aria-hidden />
+      {accentColor && (
+        <span
+          className={cn('absolute inset-y-0 left-0 w-0.5 rounded-full', accentColor)}
+          aria-hidden
+        />
       )}
       <div className="flex items-center gap-1.5">
         {/* Why: chevron on the far left mirrors the disclosure-row pattern
