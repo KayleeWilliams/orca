@@ -189,8 +189,15 @@ const AgentDashboard = React.memo(function AgentDashboard() {
               return (
                 <div
                   key={group.repo.id}
+                  // Why: the entire repo group tints on hover (children and
+                  // all) so the user sees a clear visual container for the
+                  // repo — mirroring the worktree → agent pattern where the
+                  // whole worktree tints when hovered and its nested agent
+                  // rows tint more strongly on top. No card chrome, just an
+                  // ambient hover.
                   className={cn(
-                    groupIdx !== filteredGroups.length - 1 && 'border-b border-border/40'
+                    'transition-colors duration-100 hover:bg-accent/10',
+                    groupIdx !== filteredGroups.length - 1 && 'border-b border-border'
                   )}
                 >
                   {/* Why: the repo header is a lightweight row, not a card —
@@ -203,8 +210,7 @@ const AgentDashboard = React.memo(function AgentDashboard() {
                     onClick={() => toggleCollapse(group.repo.id)}
                     className={cn(
                       'flex w-full items-center gap-1.5 px-2.5 py-1.5',
-                      'text-left text-[11px] text-muted-foreground/80',
-                      'hover:bg-accent/20 transition-colors duration-100'
+                      'text-left text-[11px] text-muted-foreground/80'
                     )}
                     aria-expanded={!isCollapsed}
                   >
@@ -255,12 +261,12 @@ const AgentDashboard = React.memo(function AgentDashboard() {
             })}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-12 gap-2">
+          <div className="flex flex-col items-center pt-4 pb-6 gap-2">
             <div className="text-[11px] text-muted-foreground/60">
               {showNoResults
                 ? 'No matches.'
                 : filter === 'active'
-                  ? 'No agents need your attention.'
+                  ? 'No active agents.'
                   : filter === 'blocked'
                     ? 'No agents are blocked.'
                     : filter === 'done'

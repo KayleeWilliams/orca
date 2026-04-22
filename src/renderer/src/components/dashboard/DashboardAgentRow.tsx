@@ -5,6 +5,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { AgentStateDot, agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
+import CommentMarkdown from '@/components/sidebar/CommentMarkdown'
 import type { DashboardAgentRow as DashboardAgentRowData } from './useDashboardData'
 
 // Why: the dashboard tracks its own rollup states (incl. 'idle'); narrow to the
@@ -308,17 +309,34 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           arrives or clears mid-turn. When expanded we only render if there's
           content — a blank reserved slot inside an already-expanded card
           would read as a visible gap. */}
-      {(lastAssistantMessage || !expanded) && (
-        <div
-          className={cn(
-            'mt-0.5 pl-5 text-[11px] italic leading-snug text-muted-foreground/70',
-            expanded ? 'whitespace-pre-wrap break-words' : 'truncate'
-          )}
-          title={!expanded && lastAssistantMessage ? lastAssistantMessage : undefined}
-        >
-          {lastAssistantMessage || ' '}
-        </div>
-      )}
+      {(lastAssistantMessage || !expanded) &&
+        (lastAssistantMessage ? (
+          <CommentMarkdown
+            content={lastAssistantMessage}
+            // Why: render markdown in both states, but in the collapsed view
+            // force every nested element inline so `truncate` can ellipsize
+            // the whole thing on one line. The [&_*]:inline descendant
+            // selector flattens the markdown tree (lists, pre, headings,
+            // blockquotes) into inline flow; block margins and list markers
+            // are suppressed by [&_*]:!m-0 / [&_ul]:list-none so the preview
+            // reads as a single clean line.
+            className={cn(
+              'mt-0.5 pl-5 text-[11px] leading-snug text-muted-foreground/80',
+              // Why: in collapsed mode we need a single truncated line. Markdown
+              // blocks (pre, lists, headings) are flattened inline and forced
+              // to inherit `white-space: nowrap` so <pre>/<code>'s preserved
+              // newlines don't break out of the truncation container. The
+              // `!` prefixes override CommentMarkdown's own layout styles so
+              // nothing (margins, list markers, block line-breaks) can push
+              // the preview onto a second line.
+              !expanded &&
+                'truncate whitespace-nowrap [&_*]:inline [&_*]:!whitespace-nowrap [&_*]:!m-0 [&_*]:!p-0 [&_ul]:list-none [&_ol]:list-none [&_br]:hidden'
+            )}
+            title={!expanded ? lastAssistantMessage : undefined}
+          />
+        ) : (
+          <div className="mt-0.5 pl-5 text-[11px] leading-snug text-muted-foreground/70"> </div>
+        ))}
     </div>
   )
 })
