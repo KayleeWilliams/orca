@@ -91,6 +91,15 @@ export default function QuickOpen(): React.JSX.Element | null {
     [activeWorktreeId]
   )
 
+  // Why: reset input only on open. Keeping this out of the file-load effect
+  // prevents unrelated store updates (which can produce a new excludePaths
+  // array reference) from wiping a query the user is currently typing.
+  useEffect(() => {
+    if (visible) {
+      setQuery('')
+    }
+  }, [visible])
+
   // Load file list when opened
   useEffect(() => {
     if (!visible) {
@@ -103,7 +112,6 @@ export default function QuickOpen(): React.JSX.Element | null {
     }
 
     let cancelled = false
-    setQuery('')
     setFiles([])
     setLoadError(null)
     setLoading(true)
