@@ -65,25 +65,43 @@ export default function QuickOpen(): React.JSX.Element | null {
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Find active worktree path and sibling worktree paths to exclude
-  const { worktreePath, excludePaths } = useMemo(() => {
+  // Why: the derived tuple (worktreePath, excludePaths) must have a stable
+  // identity across unrelated store updates. We key the memo on a joined
+  // string so any worktreesByRepo mutation that doesn't affect this worktree's
+  // path or its siblings leaves our array reference untouched, which in turn
+  // keeps the file-load effect below from refetching and blinking the list.
+  const worktreePath = useMemo(() => {
     if (!activeWorktreeId) {
-      return { worktreePath: null, excludePaths: [] as string[] }
+      return null
     }
     for (const worktrees of Object.values(worktreesByRepo)) {
       const wt = worktrees.find((w) => w.id === activeWorktreeId)
       if (wt) {
-        // Why: when the active worktree is the repo root (isMainWorktree),
-        // linked worktrees are nested subdirectories. Without excluding them,
-        // file listing returns files from every worktree, not just this one.
-        const siblings = worktrees
-          .filter((w) => w.id !== activeWorktreeId && w.path.startsWith(`${wt.path}/`))
-          .map((w) => w.path)
-        return { worktreePath: wt.path, excludePaths: siblings }
+        return wt.path
       }
     }
-    return { worktreePath: null, excludePaths: [] as string[] }
+    return null
   }, [activeWorktreeId, worktreesByRepo])
+
+  const excludePathsKey = useMemo(() => {
+    if (!activeWorktreeId || !worktreePath) {
+      return ''
+    }
+    for (const worktrees of Object.values(worktreesByRepo)) {
+      if (!worktrees.some((w) => w.id === activeWorktreeId)) {
+        continue
+      }
+      // Why: when the active worktree is the repo root (isMainWorktree),
+      // linked worktrees are nested subdirectories. Without excluding them,
+      // file listing returns files from every worktree, not just this one.
+      return worktrees
+        .filter((w) => w.id !== activeWorktreeId && w.path.startsWith(`${worktreePath}/`))
+        .map((w) => w.path)
+        .sort()
+        .join('\n')
+    }
+    return ''
+  }, [activeWorktreeId, worktreePath, worktreesByRepo])
 
   const connectionId = useMemo(
     () => getConnectionId(activeWorktreeId ?? null) ?? undefined,
@@ -115,6 +133,8 @@ export default function QuickOpen(): React.JSX.Element | null {
     setLoadError(null)
     setLoading(true)
 
+    const excludePaths = excludePathsKey ? excludePathsKey.split('\n') : undefined
+
     void window.api.fs
       // Why: quick-open shares the active worktree path model with file explorer
       // and search, so remote worktrees must include connectionId. Without this,
@@ -122,7 +142,7 @@ export default function QuickOpen(): React.JSX.Element | null {
       .listFiles({
         rootPath: worktreePath,
         connectionId,
-        excludePaths: excludePaths.length > 0 ? excludePaths : undefined
+        excludePaths
       })
       .then((result) => {
         if (!cancelled) {
@@ -146,7 +166,7 @@ export default function QuickOpen(): React.JSX.Element | null {
     return () => {
       cancelled = true
     }
-  }, [visible, worktreePath, connectionId, excludePaths])
+  }, [visible, worktreePath, connectionId, excludePathsKey])
 
   // Filter files by fuzzy match
   const filtered = useMemo(() => {
