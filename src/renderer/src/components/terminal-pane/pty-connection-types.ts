@@ -18,7 +18,7 @@ export type PtyConnectionDeps = {
   updateTabTitle: (tabId: string, title: string) => void
   setRuntimePaneTitle: (tabId: string, paneId: number, title: string) => void
   clearRuntimePaneTitle: (tabId: string, paneId: number) => void
-  updateTabPtyId: (tabId: string, ptyId: string) => void
+  updateTabPtyId: (tabId: string, ptyId: string, options?: { isReattach?: boolean }) => void
   markWorktreeUnread: (worktreeId: string) => void
   dispatchNotification: (event: {
     source: 'agent-task-complete' | 'terminal-bell'

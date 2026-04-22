@@ -385,6 +385,13 @@ describe('connectPanePty', () => {
     expect(transport.attach).not.toHaveBeenCalled()
     await Promise.resolve()
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'leaf-pty-2')
+    // Why: deferred daemon reattach must flag updateTabPtyId with isReattach
+    // so the worktree slice skips bumpWorktreeActivity. Without the flag,
+    // cold-start reconnect of background worktree terminals would stamp
+    // lastActivityAt=Date.now() and reorder Recent against the user.
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'leaf-pty-2', {
+      isReattach: true
+    })
   })
 
   it('reuses the existing local PTY on split remount when the daemon is disabled', async () => {
@@ -420,7 +427,13 @@ describe('connectPanePty', () => {
     )
     expect(transport.connect).not.toHaveBeenCalled()
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'pty-local-detached')
-    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-local-detached')
+    // Why: reattach must flag updateTabPtyId with isReattach so the worktree
+    // slice skips the bumpWorktreeActivity call. Without this flag, a
+    // background worktree's split-remount would stamp lastActivityAt=Date.now()
+    // and bump itself above a just-created foreground worktree in Recent.
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-local-detached', {
+      isReattach: true
+    })
   })
 
   it('reattaches via daemon sessionId when the daemon is enabled and an in-session PTY is live', async () => {

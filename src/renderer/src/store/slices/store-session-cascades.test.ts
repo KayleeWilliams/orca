@@ -643,6 +643,75 @@ describe('terminal slice behaviors', () => {
     expect(tab.ptyId).toBe('pty-1')
     expect(store.getState().ptyIdsByTabId['tab-1']).toEqual(['pty-1', 'pty-2'])
   })
+
+  it('bumps lastActivityAt on a fresh PTY spawn', () => {
+    // Why: the happy path — a new PTY spawn is a real activity signal and
+    // must stamp the worktree so Recent sort reflects the user's action.
+    const store = createTestStore()
+    const worktreeId = 'repo1::/path/wt1'
+
+    store.setState({
+      repos: [
+        { id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }
+      ],
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: '/path/wt1',
+            lastActivityAt: 1000
+          })
+        ]
+      },
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'tab-1', worktreeId, ptyId: null })]
+      }
+    })
+
+    const before = Date.now()
+    store.getState().updateTabPtyId('tab-1', 'pty-fresh')
+    const after = Date.now()
+
+    const wt = store.getState().worktreesByRepo.repo1[0]
+    expect(wt.lastActivityAt).toBeGreaterThanOrEqual(before)
+    expect(wt.lastActivityAt).toBeLessThanOrEqual(after)
+  })
+
+  it('does not bump lastActivityAt when updateTabPtyId is called on a reattach', () => {
+    // Why: PTY reattach (deferred cold-start reattach, daemon-off split
+    // remount, same-tab pending-spawn reuse) re-binds an existing PTY to a
+    // tab. The PTY's activity was already counted when it first spawned;
+    // re-stamping now would knock a just-created worktree out of Recent's
+    // top slot whenever a background worktree's terminals reconnect.
+    const store = createTestStore()
+    const worktreeId = 'repo1::/path/wt1'
+
+    store.setState({
+      repos: [
+        { id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }
+      ],
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: '/path/wt1',
+            lastActivityAt: 1000
+          })
+        ]
+      },
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'tab-1', worktreeId, ptyId: null })]
+      }
+    })
+
+    store.getState().updateTabPtyId('tab-1', 'pty-reattached', { isReattach: true })
+
+    const wt = store.getState().worktreesByRepo.repo1[0]
+    expect(wt.lastActivityAt).toBe(1000)
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
 })
 
 // ─── Reconnect persisted terminals ──────────────────────────────────
