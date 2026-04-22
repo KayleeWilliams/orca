@@ -19,6 +19,7 @@ import {
 import { Button } from '@/components/ui/button'
 import TabBar from './tab-bar/TabBar'
 import TerminalPane from './terminal-pane/TerminalPane'
+import { focusNewTerminalTab } from './terminal-pane/focus-new-tab'
 import {
   ORCA_EDITOR_SAVE_AND_CLOSE_EVENT,
   ORCA_EDITOR_REQUEST_CMD_SAVE_EVENT,
@@ -350,7 +351,12 @@ function Terminal(): React.JSX.Element | null {
     if (!shouldAutoCreateInitialTerminal(renderableTabCount)) {
       return
     }
-    createTab(activeWorktreeId)
+    const newTab = createTab(activeWorktreeId)
+    // Why: immediately after a workspace is created (or restored with no
+    // renderable tabs), the freshly-mounted xterm has no element to hold
+    // keyboard focus yet. Without this, the user's first keystroke lands on
+    // <body> and is dropped until they click into the terminal.
+    focusNewTerminalTab(newTab.id)
   }, [workspaceSessionReady, activeWorktreeId, createTab, reconcileWorktreeTabModel])
 
   const handleNewTab = useCallback(() => {
@@ -384,6 +390,11 @@ function Terminal(): React.JSX.Element | null {
     const order = base.filter((id) => id !== newTab.id)
     order.push(newTab.id)
     setTabBarOrder(activeWorktreeId, order)
+    // Why: Cmd+T and the legacy-titlebar TabBar both route through handleNewTab
+    // without going through Radix's onCloseAutoFocus path, so the new xterm
+    // never receives focus on its own. Trigger the deferred focus helper so the
+    // user can start typing immediately without clicking into the pane.
+    focusNewTerminalTab(newTab.id)
   }, [activeWorktreeId, createTab, setActiveTabType, setTabBarOrder])
 
   const handleNewBrowserTab = useCallback(() => {

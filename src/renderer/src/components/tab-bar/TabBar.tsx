@@ -14,6 +14,7 @@ import EditorFileTab from './EditorFileTab'
 import BrowserTab from './BrowserTab'
 import { QuickLaunchAgentMenuItems } from './QuickLaunchButton'
 import { reconcileTabOrder } from './reconcile-order'
+import { focusNewTerminalTab } from '../terminal-pane/focus-new-tab'
 import type { TabDragItemData } from '../tab-group/useTabDragSplit'
 import {
   DropdownMenu,
@@ -169,21 +170,10 @@ function TabBarInner({
     // Why: creating a terminal from the "+" menu is a two-step focus race:
     // React must first mount the new TerminalPane/xterm, then Radix closes the
     // menu. Even after suppressing trigger focus restore, the terminal's hidden
-    // textarea may not exist until the next paint. Double-rAF waits for that
-    // commit so the new tab, not the "+" button, ends up owning keyboard focus.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const scoped = document.querySelector(
-          `[data-terminal-tab-id="${tabId}"] .xterm-helper-textarea`
-        ) as HTMLElement | null
-        if (scoped) {
-          scoped.focus()
-          return
-        }
-        const fallback = document.querySelector('.xterm-helper-textarea') as HTMLElement | null
-        fallback?.focus()
-      })
-    })
+    // textarea may not exist until the next paint. focusNewTerminalTab polls
+    // across rAFs so the new tab, not the "+" button, ends up owning keyboard
+    // focus even when WebGL setup pushes attachment past the first frame.
+    focusNewTerminalTab(tabId)
   }, [])
 
   // Horizontal wheel scrolling for the tab strip
