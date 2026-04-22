@@ -72,7 +72,7 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
         'hover:bg-accent/20',
         'focus-visible:outline-none focus-visible:bg-accent/30',
         isFocused && 'bg-accent/25',
-        !isLast && 'border-b border-border/60'
+        !isLast && 'border-b border-border/80'
       )}
     >
       {/* Worktree header row. Why: the repo is shown by the surrounding
@@ -90,7 +90,7 @@ const DashboardWorktreeCard = React.memo(function DashboardWorktreeCard({
 
       {/* Agent rows with activity blocks */}
       {card.agents.length > 0 && (
-        <div className="mt-1.5 flex flex-col divide-y divide-border/60">
+        <div className="mt-1.5 flex flex-col divide-y divide-border">
           {card.agents.map((agent, index) => (
             <div key={agent.paneKey} className={cn(index === 0 ? 'pb-1' : 'py-1')}>
               <DashboardAgentRow
