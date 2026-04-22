@@ -1,7 +1,7 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
 
-export type Status = 'active' | 'working' | 'permission' | 'inactive'
+export type Status = 'active' | 'working' | 'permission' | 'done' | 'inactive'
 
 type StatusIndicatorProps = React.ComponentProps<'span'> & {
   status: Status
@@ -35,7 +35,11 @@ const StatusIndicator = React.memo(function StatusIndicator({
             ? 'bg-emerald-500'
             : status === 'permission'
               ? 'bg-red-500'
-              : 'bg-neutral-500/40'
+              : status === 'done'
+                ? // Why: sky-500/80 matches the dashboard AgentStateDot's
+                  // `done` color so the two surfaces read as the same state.
+                  'bg-sky-500/80'
+                : 'bg-neutral-500/40'
         )}
       />
     </span>

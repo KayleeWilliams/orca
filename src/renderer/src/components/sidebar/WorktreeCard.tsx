@@ -230,10 +230,12 @@ const WorktreeCard = React.memo(function WorktreeCard({
     if (hasWorking) {
       return 'working'
     }
-    // Why done maps to 'active': a completed agent still has a live terminal —
-    // 'inactive' (gray dot) would incorrectly suggest nothing is there.
+    // Why: surface 'done' as its own status so the sidebar dot turns blue
+    // (sky-500/80) — matching the dashboard's done color. A completed agent
+    // still has a live terminal, so 'inactive' would be misleading; calling
+    // it 'done' keeps the two surfaces in agreement on what the agent is.
     if (hasDone) {
-      return 'active'
+      return 'done'
     }
     // Why: execution reaches this point only when hasTerminals is true (top guard
     // returned inactive otherwise), so any worktree here has at least one live

@@ -1,12 +1,13 @@
 import { detectAgentStatusFromTitle } from '@/lib/agent-status'
 import type { TerminalTab } from '../../../shared/types'
 
-export type WorktreeStatus = 'active' | 'working' | 'permission' | 'inactive'
+export type WorktreeStatus = 'active' | 'working' | 'permission' | 'done' | 'inactive'
 
 const STATUS_LABELS: Record<WorktreeStatus, string> = {
   active: 'Active',
   working: 'Working',
   permission: 'Needs permission',
+  done: 'Done',
   inactive: 'Inactive'
 }
 
