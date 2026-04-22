@@ -209,7 +209,7 @@ const AgentDashboard = React.memo(function AgentDashboard() {
                     type="button"
                     onClick={() => toggleCollapse(group.repo.id)}
                     className={cn(
-                      'flex w-full items-center gap-1.5 px-2.5 py-1.5',
+                      'flex w-full items-center gap-1.5 px-2.5 pt-1.5 pb-1',
                       'text-left text-[11px] text-muted-foreground/80'
                     )}
                     aria-expanded={!isCollapsed}
