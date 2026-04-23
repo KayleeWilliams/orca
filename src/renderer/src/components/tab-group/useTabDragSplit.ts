@@ -1,3 +1,6 @@
+/* oxlint-disable max-lines -- Why: the drag-split hook co-locates drop-zone
+ * resolution, same-group reordering, and cross-group handoff so state
+ * transitions stay readable in one place. */
 import { useCallback, useState } from 'react'
 import {
   closestCenter,
@@ -12,11 +15,14 @@ import {
   useSensor,
   useSensors
 } from '@dnd-kit/core'
-import { arrayMove } from '@dnd-kit/sortable'
 import type { TabGroup } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import type { TabSplitDirection } from '../../store/slices/tabs'
-import { useHoveredTabInsertion, type HoveredTabInsertion } from './tab-insertion'
+import {
+  resolveTabInsertion,
+  useHoveredTabInsertion,
+  type HoveredTabInsertion
+} from './tab-insertion'
 
 export type { HoveredTabInsertion }
 
@@ -29,6 +35,12 @@ export type TabDragItemData = {
   unifiedTabId: string
   visibleTabId: string
   tabType: 'terminal' | 'editor' | 'browser'
+  /** Rendered by the DragOverlay ghost that follows the cursor across
+   *  groups. Source tab strips use overflow-hidden, so without the overlay
+   *  the dragged tab would be invisible once the cursor leaves its own
+   *  group's strip. */
+  label: string
+  color?: string | null
 }
 
 export type TabPaneDropData = {
@@ -290,20 +302,29 @@ export function useTabDragSplit({
           return
         }
 
+        // Why: dnd-kit's `over` is the hovered tab, but the drop's true
+        // insertion point depends on which side of that tab the cursor sits.
+        // Using the bar's computed side (re-derived here to avoid stale
+        // closures) means the drop always lands where the blue bar was drawn.
+        const insertion = resolveTabInsertion(event, isTabDragData, getDragCenter)
+        const overIndex = targetGroup.tabOrder.indexOf(overData.unifiedTabId)
+        const rawInsertIndex = overIndex + (insertion?.side === 'right' ? 1 : 0)
+
         if (activeData.groupId === overData.groupId) {
           const oldIndex = targetGroup.tabOrder.indexOf(activeData.unifiedTabId)
-          const newIndex = targetGroup.tabOrder.indexOf(overData.unifiedTabId)
-          if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-            reorderUnifiedTabs(
-              overData.groupId,
-              arrayMove(targetGroup.tabOrder, oldIndex, newIndex)
-            )
+          // Why: splicing out the dragged tab before inserting would shift the
+          // intended target slot left by one when moving forward. Adjust the
+          // insertion index to match the post-removal order.
+          const nextIndex = oldIndex < rawInsertIndex ? rawInsertIndex - 1 : rawInsertIndex
+          if (oldIndex !== -1 && oldIndex !== nextIndex) {
+            const nextOrder = targetGroup.tabOrder.filter((id) => id !== activeData.unifiedTabId)
+            nextOrder.splice(nextIndex, 0, activeData.unifiedTabId)
+            reorderUnifiedTabs(overData.groupId, nextOrder)
           }
         } else {
-          const targetIndex = targetGroup.tabOrder.indexOf(overData.unifiedTabId)
           dropUnifiedTab(activeData.unifiedTabId, {
             groupId: overData.groupId,
-            index: targetIndex === -1 ? targetGroup.tabOrder.length : targetIndex
+            index: overIndex === -1 ? targetGroup.tabOrder.length : rawInsertIndex
           })
         }
 

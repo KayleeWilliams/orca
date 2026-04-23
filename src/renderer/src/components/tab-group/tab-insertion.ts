@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { DragMoveEvent, DragOverEvent } from '@dnd-kit/core'
+import type { DragEndEvent, DragMoveEvent, DragOverEvent } from '@dnd-kit/core'
 import type { TabDragItemData } from './useTabDragSplit'
 
 // Why: when a tab is dragged over another tab's sortable rect, we compute
@@ -13,10 +13,18 @@ export type HoveredTabInsertion = {
   side: 'left' | 'right'
 }
 
-function resolve(
-  event: DragMoveEvent | DragOverEvent,
+export type TabIndicatorEdge = {
+  visibleTabId: string
+  side: 'left' | 'right'
+}
+
+export function resolveTabInsertion(
+  event: DragMoveEvent | DragOverEvent | DragEndEvent,
   isTabDragData: (value: unknown) => value is TabDragItemData,
-  getDragCenter: (event: DragMoveEvent | DragOverEvent) => { x: number; y: number } | null
+  getDragCenter: (event: DragMoveEvent | DragOverEvent | DragEndEvent) => {
+    x: number
+    y: number
+  } | null
 ): HoveredTabInsertion | null {
   const overData = event.over?.data.current
   const activeData = event.active.data.current
@@ -38,6 +46,34 @@ function resolve(
     visibleTabId: overData.visibleTabId,
     side: center.x < midpoint ? 'left' : 'right'
   }
+}
+
+export function resolveTabIndicatorEdges(
+  orderedVisibleTabIds: string[],
+  hoveredTabInsertion: HoveredTabInsertion | null
+): TabIndicatorEdge[] {
+  if (!hoveredTabInsertion || orderedVisibleTabIds.length === 0) {
+    return []
+  }
+
+  const hoveredIndex = orderedVisibleTabIds.indexOf(hoveredTabInsertion.visibleTabId)
+  if (hoveredIndex === -1) {
+    return []
+  }
+
+  const insertionIndex = hoveredIndex + (hoveredTabInsertion.side === 'right' ? 1 : 0)
+  const edges: TabIndicatorEdge[] = []
+
+  // Why: VS Code draws the insertion cue by marking both tabs adjacent to the
+  // slot so the two 1px edges read as one continuous bar between them.
+  if (insertionIndex > 0) {
+    edges.push({ visibleTabId: orderedVisibleTabIds[insertionIndex - 1]!, side: 'right' })
+  }
+  if (insertionIndex < orderedVisibleTabIds.length) {
+    edges.push({ visibleTabId: orderedVisibleTabIds[insertionIndex]!, side: 'left' })
+  }
+
+  return edges
 }
 
 function equal(a: HoveredTabInsertion | null, b: HoveredTabInsertion | null): boolean {
@@ -64,7 +100,7 @@ export function useHoveredTabInsertion(
   const [hoveredTabInsertion, setHoveredTabInsertion] = useState<HoveredTabInsertion | null>(null)
   const update = useCallback(
     (event: DragMoveEvent | DragOverEvent) => {
-      const next = resolve(event, isTabDragData, getDragCenter)
+      const next = resolveTabInsertion(event, isTabDragData, getDragCenter)
       setHoveredTabInsertion((prev) => (equal(prev, next) ? prev : next))
     },
     [isTabDragData, getDragCenter]

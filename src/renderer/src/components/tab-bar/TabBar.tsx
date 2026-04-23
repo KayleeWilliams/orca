@@ -4,7 +4,7 @@
  * branches share little beyond drag data, so consolidating them would cost
  * more clarity than the ~5 lines of bloat is worth. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
+import { SortableContext } from '@dnd-kit/sortable'
 import { FilePlus, Globe, Plus, TerminalSquare } from 'lucide-react'
 import type {
   BrowserTab as BrowserTabState,
@@ -16,10 +16,13 @@ import { buildStatusMap } from '../right-sidebar/status-display'
 import type { OpenFile } from '../../store/slices/editor'
 import SortableTab from './SortableTab'
 import EditorFileTab from './EditorFileTab'
-import BrowserTab from './BrowserTab'
+import BrowserTab, { getBrowserTabLabel } from './BrowserTab'
 import { QuickLaunchAgentMenuItems } from './QuickLaunchButton'
+import type { DropIndicator } from './drop-indicator'
 import { reconcileTabOrder } from './reconcile-order'
 import type { HoveredTabInsertion, TabDragItemData } from '../tab-group/useTabDragSplit'
+import { resolveTabIndicatorEdges } from '../tab-group/tab-insertion'
+import { getEditorDisplayLabel } from '@/components/editor/editor-labels'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,6 +86,16 @@ type TabItem =
       unifiedTabId: string
       data: BrowserTabState & { tabId?: string }
     }
+
+function getTabDragLabel(item: TabItem): string {
+  if (item.type === 'terminal') {
+    return item.data.customTitle ?? item.data.title
+  }
+  if (item.type === 'browser') {
+    return getBrowserTabLabel(item.data)
+  }
+  return getEditorDisplayLabel(item.data)
+}
 
 function TabBarInner({
   tabs,
@@ -172,12 +185,18 @@ function TabBarInner({
 
   const sortableIds = useMemo(() => orderedItems.map((item) => item.id), [orderedItems])
 
-  // Why: VS Code shows a single blue insertion bar at the edge of the hovered
-  // tab during a drag. dnd-kit already animates sibling tabs sliding apart, so
-  // one bar on the over-tab's correct side tells the user where it will land.
-  // Scoped to this group's resolvedGroupId so sibling groups don't flash too.
   const activeIndicator =
     hoveredTabInsertion?.groupId === resolvedGroupId ? hoveredTabInsertion : null
+  const dropIndicatorByVisibleId = useMemo(() => {
+    const indicators = new Map<string, DropIndicator>()
+    for (const edge of resolveTabIndicatorEdges(
+      orderedItems.map((item) => item.id),
+      activeIndicator
+    )) {
+      indicators.set(edge.visibleTabId, edge.side)
+    }
+    return indicators
+  }, [activeIndicator, orderedItems])
 
   const focusTerminalTabSurface = useCallback((tabId: string) => {
     // Why: creating a terminal from the "+" menu is a two-step focus race:
@@ -308,7 +327,11 @@ function TabBarInner({
       // editor drop zone.
       data-native-file-drop-target="editor"
     >
-      <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+      {/* Why: no strategy means dnd-kit does not animate siblings aside for
+          the active tab. Combined with dropping transform/transition on the
+          dragged tab (see SortableTab etc.), this keeps every tab visually
+          anchored during a drag so only the blue insertion bar moves. */}
+      <SortableContext items={sortableIds}>
         {/* Why: no-drag lets tab interactions work inside the titlebar's drag
             region. The outer container inherits drag so empty space after the
             "+" button remains window-draggable. */}
@@ -324,7 +347,9 @@ function TabBarInner({
               groupId: resolvedGroupId,
               unifiedTabId: item.unifiedTabId,
               visibleTabId: item.id,
-              tabType: item.type
+              tabType: item.type,
+              label: getTabDragLabel(item),
+              color: item.type === 'terminal' ? (item.data.color ?? null) : null
             }
             if (item.type === 'terminal') {
               return (
@@ -346,9 +371,7 @@ function TabBarInner({
                     onCreateSplitGroup?.(direction, sourceVisibleTabId)
                   }
                   dragData={dragData}
-                  dropIndicator={
-                    activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
-                  }
+                  dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
                 />
               )
             }
@@ -367,9 +390,7 @@ function TabBarInner({
                   }
                   onDuplicate={() => onDuplicateBrowserTab?.(item.id)}
                   dragData={dragData}
-                  dropIndicator={
-                    activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
-                  }
+                  dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
                 />
               )
             }
@@ -389,9 +410,7 @@ function TabBarInner({
                   onCreateSplitGroup?.(direction, sourceVisibleTabId)
                 }
                 dragData={dragData}
-                dropIndicator={
-                  activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
-                }
+                dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
               />
             )
           })}

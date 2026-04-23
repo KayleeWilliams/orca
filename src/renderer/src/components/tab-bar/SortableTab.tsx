@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { X, Terminal as TerminalIcon, Minimize2, Columns2, Rows2 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -64,17 +63,15 @@ export default function SortableTab({
   dragData,
   dropIndicator
 }: SortableTabProps): React.JSX.Element {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef } = useSortable({
     id: tab.id,
     data: dragData
   })
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 10 : undefined,
-    opacity: isDragging ? 0.8 : 1
-  }
+  // Why: intentionally no transform/transition/opacity here. The PR's
+  // design is that tabs stay visually anchored during a drag — only the
+  // blue insertion bar moves. Siblings also don't shift (see
+  // SortableContext in TabBar.tsx, which omits a strategy for that reason).
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 })
   const [isEditing, setIsEditing] = useState(false)
@@ -153,7 +150,6 @@ export default function SortableTab({
       >
         <div
           ref={setNodeRef}
-          style={style}
           data-testid="sortable-tab"
           data-tab-title={tab.customTitle ?? tab.title}
           {...attributes}

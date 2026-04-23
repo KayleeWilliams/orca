@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { Globe, X, ExternalLink, Columns2, Rows2, Copy } from 'lucide-react'
 import {
   DropdownMenu,
@@ -28,7 +27,7 @@ function formatBrowserTabUrlLabel(url: string): string {
   }
 }
 
-function getBrowserTabLabel(tab: BrowserTabState): string {
+export function getBrowserTabLabel(tab: BrowserTabState): string {
   if (
     !tab.title ||
     tab.title === tab.url ||
@@ -67,7 +66,9 @@ export default function BrowserTab({
   dragData: TabDragItemData
   dropIndicator?: DropIndicator
 }): React.JSX.Element {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  // Why: no transform/transition/isDragging styling — the drag design is
+  // that tabs stay visually anchored; only the blue insertion bar moves.
+  const { attributes, listeners, setNodeRef } = useSortable({
     id: tab.id,
     data: dragData
   })
@@ -104,12 +105,6 @@ export default function BrowserTab({
       >
         <div
           ref={setNodeRef}
-          style={{
-            transform: CSS.Transform.toString(transform),
-            transition,
-            zIndex: isDragging ? 10 : undefined,
-            opacity: isDragging ? 0.8 : 1
-          }}
           {...attributes}
           {...listeners}
           className={`group relative flex items-center h-full px-3 text-sm cursor-pointer select-none shrink-0 border-r border-border ${getDropIndicatorClasses(dropIndicator ?? null)} ${
