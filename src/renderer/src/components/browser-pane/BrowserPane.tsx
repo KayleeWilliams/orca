@@ -1552,7 +1552,8 @@ function BrowserPagePane({
 
   const submitAddressBar = (): void => {
     keepAddressBarFocusRef.current = false
-    const nextUrl = normalizeBrowserNavigationUrl(addressBarValue)
+    const searchEngine = useAppStore.getState().browserDefaultSearchEngine
+    const nextUrl = normalizeBrowserNavigationUrl(addressBarValue, searchEngine)
     if (!nextUrl) {
       onUpdatePageStateRef.current(browserTab.id, {
         loadError: {

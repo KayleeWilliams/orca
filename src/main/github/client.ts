@@ -8,6 +8,8 @@ import type {
   GitHubViewer,
   GitHubWorkItem
 } from '../../shared/types'
+import { parseTaskQuery, type ParsedTaskQuery } from '../../shared/task-query'
+import { sortWorkItemsByUpdatedAt } from '../../shared/work-items'
 import { getPRConflictSummary } from './conflict-summary'
 import { execFileAsync, ghExecFileAsync, acquire, release, getOwnerRepo } from './gh-utils'
 export { _resetOwnerRepoCache } from './gh-utils'
@@ -89,7 +91,12 @@ export async function getAuthenticatedViewer(): Promise<GitHubViewer | null> {
   }
 }
 
-function mapIssueWorkItem(item: Record<string, unknown>): GitHubWorkItem {
+// Why: main-process maps omit repoId because the IPC handler never receives
+// a repo identifier beyond path. The renderer stamps repoId after IPC so
+// single-repo and cross-repo items are uniform downstream.
+type MainWorkItem = Omit<GitHubWorkItem, 'repoId'>
+
+function mapIssueWorkItem(item: Record<string, unknown>): MainWorkItem {
   return {
     id: `issue:${String(item.number)}`,
     type: 'issue',
@@ -116,7 +123,7 @@ function mapIssueWorkItem(item: Record<string, unknown>): GitHubWorkItem {
   }
 }
 
-function mapPullRequestWorkItem(item: Record<string, unknown>): GitHubWorkItem {
+function mapPullRequestWorkItem(item: Record<string, unknown>): MainWorkItem {
   return {
     id: `pr:${String(item.number)}`,
     type: 'pr',
@@ -156,115 +163,6 @@ function mapPullRequestWorkItem(item: Record<string, unknown>): GitHubWorkItem {
         ? String((item.base as { ref?: unknown }).ref ?? '')
         : String(item.baseRefName ?? '')
   }
-}
-
-function sortWorkItemsByUpdatedAt(items: GitHubWorkItem[]): GitHubWorkItem[] {
-  return [...items].sort((left, right) => {
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  })
-}
-
-type ParsedTaskQuery = {
-  scope: 'all' | 'issue' | 'pr'
-  state: 'open' | 'closed' | 'all' | 'merged' | null
-  assignee: string | null
-  author: string | null
-  reviewRequested: string | null
-  reviewedBy: string | null
-  labels: string[]
-  freeText: string
-}
-
-function tokenizeSearchQuery(rawQuery: string): string[] {
-  const tokens: string[] = []
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(rawQuery)) !== null) {
-    tokens.push(match[1] ?? match[2] ?? match[3] ?? '')
-  }
-  return tokens
-}
-
-function parseTaskQuery(rawQuery: string): ParsedTaskQuery {
-  const query: ParsedTaskQuery = {
-    scope: 'all',
-    state: null,
-    assignee: null,
-    author: null,
-    reviewRequested: null,
-    reviewedBy: null,
-    labels: [],
-    freeText: ''
-  }
-
-  const freeTextTokens: string[] = []
-  for (const token of tokenizeSearchQuery(rawQuery.trim())) {
-    const normalized = token.toLowerCase()
-    if (normalized === 'is:issue') {
-      if (query.scope === 'pr') {
-        continue
-      }
-      query.scope = 'issue'
-      continue
-    }
-    if (normalized === 'is:pr') {
-      query.scope = query.scope === 'issue' ? 'all' : 'pr'
-      continue
-    }
-    if (normalized === 'is:open') {
-      query.state = 'open'
-      continue
-    }
-    if (normalized === 'is:closed') {
-      query.state = 'closed'
-      continue
-    }
-    if (normalized === 'is:merged') {
-      query.state = 'merged'
-      continue
-    }
-    if (normalized === 'is:draft') {
-      query.scope = 'pr'
-      query.state = 'open'
-      continue
-    }
-
-    const [rawKey, ...rest] = token.split(':')
-    const value = rest.join(':').trim()
-    const key = rawKey.toLowerCase()
-    if (!value) {
-      freeTextTokens.push(token)
-      continue
-    }
-
-    if (key === 'assignee') {
-      query.assignee = value
-      continue
-    }
-    if (key === 'author') {
-      query.author = value
-      continue
-    }
-    if (key === 'review-requested') {
-      query.scope = 'pr'
-      query.reviewRequested = value
-      continue
-    }
-    if (key === 'reviewed-by') {
-      query.scope = 'pr'
-      query.reviewedBy = value
-      continue
-    }
-    if (key === 'label') {
-      query.labels.push(value)
-      continue
-    }
-
-    freeTextTokens.push(token)
-  }
-
-  query.freeText = freeTextTokens.join(' ').trim()
-  return query
 }
 
 function buildWorkItemListArgs(args: {
@@ -338,7 +236,7 @@ async function listRecentWorkItems(
   repoPath: string,
   ownerRepo: { owner: string; repo: string } | null,
   limit: number
-): Promise<GitHubWorkItem[]> {
+): Promise<MainWorkItem[]> {
   if (ownerRepo) {
     const [issuesResult, prsResult] = await Promise.all([
       ghExecFileAsync(
@@ -419,8 +317,8 @@ async function listQueriedWorkItems(
   ownerRepo: { owner: string; repo: string } | null,
   query: ParsedTaskQuery,
   limit: number
-): Promise<GitHubWorkItem[]> {
-  const fetchers: Promise<GitHubWorkItem[]>[] = []
+): Promise<MainWorkItem[]> {
+  const fetchers: Promise<MainWorkItem[]>[] = []
   const issueScope = query.scope !== 'pr'
   const prScope = query.scope !== 'issue'
 
@@ -460,19 +358,21 @@ export async function listWorkItems(
   repoPath: string,
   limit = 24,
   query?: string
-): Promise<GitHubWorkItem[]> {
+): Promise<MainWorkItem[]> {
   const ownerRepo = await getOwnerRepo(repoPath)
   const trimmedQuery = query?.trim() ?? ''
   await acquire()
   try {
+    // Why: errors propagate to IPC so the renderer's cross-repo aggregator can
+    // count this repo as failed and surface the partial-failure banner. A
+    // catch-all here would make an auth/network failure indistinguishable from
+    // an empty result and silently under-report per-repo failures.
     if (!trimmedQuery) {
       return await listRecentWorkItems(repoPath, ownerRepo, limit)
     }
 
     const parsedQuery = parseTaskQuery(trimmedQuery)
     return await listQueriedWorkItems(repoPath, ownerRepo, parsedQuery, limit)
-  } catch {
-    return []
   } finally {
     release()
   }
@@ -484,10 +384,7 @@ export async function getRepoSlug(
   return getOwnerRepo(repoPath)
 }
 
-export async function getWorkItem(
-  repoPath: string,
-  number: number
-): Promise<GitHubWorkItem | null> {
+export async function getWorkItem(repoPath: string, number: number): Promise<MainWorkItem | null> {
   await acquire()
   try {
     const ownerRepo = await getOwnerRepo(repoPath)

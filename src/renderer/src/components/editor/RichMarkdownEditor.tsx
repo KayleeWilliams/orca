@@ -25,6 +25,7 @@ import { createRichMarkdownKeyHandler } from './rich-markdown-key-handler'
 import { normalizeSoftBreaks } from './rich-markdown-normalize'
 import { autoFocusRichEditor } from './rich-markdown-auto-focus'
 import { handleRichMarkdownCut } from './rich-markdown-cut-handler'
+import { openHttpLink } from '@/lib/http-link-routing'
 import { toast } from 'sonner'
 import {
   absolutePathToFileUri as toFileUrlForOsEscape,
@@ -41,6 +42,10 @@ type RichMarkdownEditorProps = {
   onContentChange: (content: string) => void
   onDirtyStateHint: (dirty: boolean) => void
   onSave: (content: string) => void
+  // Why: front-matter is stripped from the rich editor's content but we still
+  // want it visible to the user. It renders between the toolbar and the editor
+  // surface so the formatting toolbar stays at the top of the pane.
+  headerSlot?: React.ReactNode
 }
 
 const richMarkdownExtensions = createRichMarkdownExtensions({
@@ -55,7 +60,8 @@ export default function RichMarkdownEditor({
   scrollCacheKey,
   onContentChange,
   onDirtyStateHint,
-  onSave
+  onSave,
+  headerSlot
 }: RichMarkdownEditorProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
@@ -195,7 +201,7 @@ export default function RichMarkdownEditor({
             return true
           }
           if (classified.kind === 'external') {
-            void window.api.shell.openUrl(classified.url)
+            openHttpLink(classified.url, { forceSystemBrowser: true })
           } else if (classified.kind === 'markdown') {
             void window.api.shell.pathExists(classified.absolutePath).then((exists) => {
               if (!exists) {
@@ -495,18 +501,24 @@ export default function RichMarkdownEditor({
         onToggleLink={toggleLinkFromToolbar}
         onImagePick={handleLocalImagePick}
       />
-      <RichMarkdownSearchBar
-        activeMatchIndex={activeMatchIndex}
-        isOpen={isSearchOpen}
-        matchCount={matchCount}
-        onClose={closeSearch}
-        onMoveToMatch={moveToMatch}
-        onQueryChange={setSearchQuery}
-        query={searchQuery}
-        searchInputRef={searchInputRef}
-      />
-      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
-        <EditorContent editor={editor} />
+      {headerSlot}
+      {/* Why: wrap scroll area + search bar in a relative container so the
+          search bar overlays the content (Monaco-style) instead of occupying
+          layout space and shifting the document down when opened. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollContainerRef} className="h-full overflow-auto scrollbar-editor">
+          <EditorContent editor={editor} />
+        </div>
+        <RichMarkdownSearchBar
+          activeMatchIndex={activeMatchIndex}
+          isOpen={isSearchOpen}
+          matchCount={matchCount}
+          onClose={closeSearch}
+          onMoveToMatch={moveToMatch}
+          onQueryChange={setSearchQuery}
+          query={searchQuery}
+          searchInputRef={searchInputRef}
+        />
       </div>
       {linkBubble ? (
         <RichMarkdownLinkBubble

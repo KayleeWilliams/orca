@@ -21,6 +21,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { useAppStore } from '@/store'
+import { useRepoById } from '@/store/selectors'
 import type { Worktree } from '../../../../shared/types'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { runWorktreeDeleteWithToast } from './delete-worktree-flow'
@@ -35,7 +36,7 @@ const CLOSE_ALL_CONTEXT_MENUS_EVENT = 'orca-close-all-context-menus'
 const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, children }: Props) {
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const openModal = useAppStore((s) => s.openModal)
-  const repos = useAppStore((s) => s.repos)
+  const repo = useRepoById(worktree.repoId)
   const skipDeleteConfirm = useAppStore((s) => s.settings?.skipDeleteWorktreeConfirm ?? false)
   const shutdownWorktreeTerminals = useAppStore((s) => s.shutdownWorktreeTerminals)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
@@ -45,7 +46,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 })
   const isDeleting = deleteState?.isDeleting ?? false
-  const repo = repos.find((entry) => entry.id === worktree.repoId)
   const isFolder = repo ? isFolderRepo(repo) : false
 
   useEffect(() => {
@@ -213,9 +213,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
                 Sleep
               </DropdownMenuItem>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} className="max-w-[240px]">
-              Close all terminals in this workspace to free up memory and CPU. They&apos;ll be
-              re-created when you reopen it.
+            <TooltipContent side="right" sideOffset={8} className="max-w-[200px] text-pretty">
+              Close all active panels in this workspace to free up memory and CPU.
             </TooltipContent>
           </Tooltip>
           {/* Why: `git worktree remove` always rejects the main worktree, so we

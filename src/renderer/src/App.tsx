@@ -1,9 +1,8 @@
 /* eslint-disable max-lines */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
-import { isGitRepoKind } from '../../shared/repo-kind'
 
-import { Minimize2, PanelLeft, PanelRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
 import { FOCUS_TERMINAL_PANE_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { toast } from 'sonner'
@@ -15,13 +14,7 @@ import { useIpcEvents } from './hooks/useIpcEvents'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
-import Landing from './components/Landing'
-import NewWorkspacePage from './components/NewWorkspacePage'
-import Settings from './components/settings/Settings'
 import RightSidebar from './components/right-sidebar'
-import QuickOpen from './components/QuickOpen'
-import WorktreeJumpPalette from './components/WorktreeJumpPalette'
-import NewWorkspaceComposerModal from './components/NewWorkspaceComposerModal'
 import { StatusBar } from './components/status-bar/StatusBar'
 import { UpdateCard } from './components/UpdateCard'
 import { StarNagCard } from './components/StarNagCard'
@@ -40,9 +33,19 @@ import { countWorkingAgents, getWorkingAgentsPerWorktree } from './lib/agent-sta
 import { activateAndRevealWorktree } from './lib/worktree-activation'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { findWorktreeById, getRepoIdFromWorktreeId } from '@/store/slices/worktree-helpers'
+import {
+  canGoBackWorktreeHistory,
+  canGoForwardWorktreeHistory
+} from '@/store/slices/worktree-nav-history'
 import { dispatchClearModifierHints } from './hooks/useModifierHint'
 
 const isMac = navigator.userAgent.includes('Mac')
+const Landing = lazy(() => import('./components/Landing'))
+const TaskPage = lazy(() => import('./components/TaskPage'))
+const Settings = lazy(() => import('./components/settings/Settings'))
+const QuickOpen = lazy(() => import('./components/QuickOpen'))
+const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
+const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -97,6 +100,7 @@ function App(): React.JSX.Element {
   )
 
   const activeView = useAppStore((s) => s.activeView)
+  const activeModal = useAppStore((s) => s.activeModal)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -116,7 +120,6 @@ function App(): React.JSX.Element {
   const expandedPaneByTabId = useAppStore((s) => s.expandedPaneByTabId)
   const canExpandPaneByTabId = useAppStore((s) => s.canExpandPaneByTabId)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
-  const repos = useAppStore((s) => s.repos)
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const groupBy = useAppStore((s) => s.groupBy)
@@ -128,8 +131,11 @@ function App(): React.JSX.Element {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const isFullScreen = useAppStore((s) => s.isFullScreen)
   const settings = useAppStore((s) => s.settings)
+  const canGoBackWorktree = useAppStore(canGoBackWorktreeHistory)
+  const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
   const [collapsedSidebarHeaderWidth, setCollapsedSidebarHeaderWidth] = useState(0)
+  const [mountedLazyModalIds, setMountedLazyModalIds] = useState(() => new Set<string>())
 
   // Subscribe to IPC push events
   useIpcEvents()
@@ -449,9 +455,9 @@ function App(): React.JSX.Element {
   // full-width titlebar is replaced by a sidebar-width left header so the
   // terminal + tab groups extend to the very top of the window.
   const workspaceActive = activeView !== 'settings' && activeWorktreeId !== null
-  // Why: suppress right sidebar controls on new-workspace page since that
-  // surface is intentionally distraction-free (no right sidebar).
-  const showRightSidebarControls = activeView !== 'settings' && activeView !== 'new-workspace'
+  // Why: suppress right sidebar controls on the tasks page since that surface
+  // is intentionally distraction-free (no right sidebar).
+  const showRightSidebarControls = activeView !== 'settings' && activeView !== 'tasks'
 
   const handleToggleExpand = (): void => {
     if (!effectiveActiveTabId) {
@@ -493,6 +499,33 @@ function App(): React.JSX.Element {
       if (isEditableTarget(e.target)) {
         return
       }
+
+      // Cmd/Ctrl+Alt+Arrow — worktree history back/forward. Handled before the
+      // `mod && !alt` branch below since this is the one renderer-side shortcut
+      // that intentionally requires Alt.
+      if (
+        e.altKey &&
+        !e.shiftKey &&
+        (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) &&
+        (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
+      ) {
+        // Why: hidden buttons in non-terminal views mean the shortcut must be
+        // a no-op there too — navigating worktree history from Settings or
+        // Tasks is not a meaningful action.
+        if (activeView !== 'terminal') {
+          return
+        }
+        dispatchClearModifierHints()
+        e.preventDefault()
+        const store = useAppStore.getState()
+        if (e.code === 'ArrowLeft') {
+          store.goBackWorktree()
+        } else {
+          store.goForwardWorktree()
+        }
+        return
+      }
+
       if (!mod) {
         return
       }
@@ -505,20 +538,15 @@ function App(): React.JSX.Element {
         return
       }
 
-      // Cmd/Ctrl+N — new workspace (opens the lightweight composer modal)
-      if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
-        if (!repos.some((repo) => isGitRepoKind(repo))) {
-          return
-        }
-        dispatchClearModifierHints()
-        e.preventDefault()
-        actions.openModal('new-workspace-composer')
-        return
-      }
+      // Why: Cmd/Ctrl+N is handled via the main-process before-input-event
+      // allowlist (see window-shortcut-policy.ts / useIpcEvents.ts) so it works
+      // globally — including when focus lives inside the markdown rich editor
+      // (contentEditable) or a browser guest webContents, both of which bypass
+      // this renderer-side window keydown listener.
 
-      // Why: the new-workspace composer should not be able to reveal the right
-      // sidebar at all, because that surface is intentionally distraction-free.
-      if (activeView === 'new-workspace') {
+      // Why: the tasks page should not be able to reveal the right sidebar at
+      // all, because that surface is intentionally distraction-free.
+      if (activeView === 'tasks') {
         return
       }
 
@@ -566,7 +594,7 @@ function App(): React.JSX.Element {
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [activeView, activeWorktreeId, actions, repos])
+  }, [activeView, activeWorktreeId, actions])
 
   useLayoutEffect(() => {
     const controls = titlebarLeftControlsRef.current
@@ -592,6 +620,26 @@ function App(): React.JSX.Element {
     workspaceActive,
     sidebarOpen
   ])
+
+  useEffect(() => {
+    if (
+      activeModal !== 'quick-open' &&
+      activeModal !== 'worktree-palette' &&
+      activeModal !== 'new-workspace-composer'
+    ) {
+      return
+    }
+    setMountedLazyModalIds((currentIds) => {
+      if (currentIds.has(activeModal)) {
+        return currentIds
+      }
+      const nextIds = new Set(currentIds)
+      // Why: lazy-load these modals only after first use, then keep them mounted
+      // so repeat opens preserve their local state and avoid re-fetch flashes.
+      nextIds.add(activeModal)
+      return nextIds
+    })
+  }, [activeModal])
 
   // Why: extracted so both the full-width titlebar (settings/landing) and
   // the sidebar-width left header (workspace view) can share the same
@@ -674,9 +722,9 @@ function App(): React.JSX.Element {
                           {wt?.displayName ?? fallbackName}
                         </span>
                       </button>
-                      {agents.map((agent, index) => (
+                      {agents.map((agent) => (
                         <button
-                          key={index}
+                          key={`${agent.tabId}:${agent.paneId ?? 'none'}:${agent.label}`}
                           className="titlebar-agent-hovercard-agent"
                           onClick={() => {
                             activateAndRevealWorktree(worktreeId)
@@ -725,6 +773,44 @@ function App(): React.JSX.Element {
           </PopoverContent>
         </Popover>
       ) : null}
+      {/* Why: Back/Forward navigate worktree-activation history. Only
+          meaningful while viewing a worktree (terminal view); hidden in
+          Settings/Tasks/Landing to keep the titlebar compact and the
+          semantics unambiguous. */}
+      {activeView === 'terminal' && (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="sidebar-toggle"
+                onClick={() => useAppStore.getState().goBackWorktree()}
+                disabled={!canGoBackWorktree}
+                aria-label="Go back"
+              >
+                <ChevronLeft size={16} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {`Go back (${isMac ? '⌘⌥←' : 'Ctrl+Alt+←'})`}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="sidebar-toggle"
+                onClick={() => useAppStore.getState().goForwardWorktree()}
+                disabled={!canGoForwardWorktree}
+                aria-label="Go forward"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {`Go forward (${isMac ? '⌘⌥→' : 'Ctrl+Alt+→'})`}
+            </TooltipContent>
+          </Tooltip>
+        </>
+      )}
     </div>
   )
 
@@ -746,9 +832,9 @@ function App(): React.JSX.Element {
   ) : null
 
   useEffect(() => {
-    if (activeView === 'new-workspace' && rightSidebarOpen) {
-      // Why: hide the right sidebar immediately when entering the composer so
-      // a previous open state can't bleed into the dedicated workspace flow.
+    if (activeView === 'tasks' && rightSidebarOpen) {
+      // Why: hide the right sidebar immediately when entering the tasks page
+      // so a previous open state can't bleed into that distraction-free view.
       actions.setRightSidebarOpen(false)
     }
   }, [activeView, rightSidebarOpen, actions])
@@ -766,7 +852,7 @@ function App(): React.JSX.Element {
         {/* Why: in workspace view (split groups always enabled), the full-width
             titlebar is removed so tab groups + terminal extend to the top of
             the window. Left titlebar controls move to a header above the sidebar.
-            Settings, landing, and new-workspace views keep the full-width titlebar. */}
+            Settings, landing, and the tasks page keep the full-width titlebar. */}
         {!workspaceActive ? (
           <div className="titlebar">
             <div
@@ -859,15 +945,17 @@ function App(): React.JSX.Element {
               >
                 <Terminal />
               </div>
-              {activeView === 'settings' ? <Settings /> : null}
-              {activeView === 'new-workspace' ? <NewWorkspacePage /> : null}
-              {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              <Suspense fallback={null}>
+                {activeView === 'settings' ? <Settings /> : null}
+                {activeView === 'tasks' ? <TaskPage /> : null}
+                {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              </Suspense>
             </div>
           </div>
           {/* Why: keep RightSidebar mounted even when closed so that its
               child components (FileExplorer, SourceControl, etc.) and their
               filesystem watchers + cached directory trees survive across
-              open/close toggles. Unmount on new-workspace view since that
+              open/close toggles. Unmount on the tasks view since that
               surface is intentionally distraction-free. */}
           {showRightSidebarControls ? <RightSidebar /> : null}
         </div>
@@ -876,10 +964,14 @@ function App(): React.JSX.Element {
             when mounted outside a TooltipProvider ancestor. Keep the global
             composer modal inside this provider so the card renders safely
             whether triggered from Cmd+J or any future entry point. */}
-        <NewWorkspaceComposerModal />
+        <Suspense fallback={null}>
+          {mountedLazyModalIds.has('new-workspace-composer') ? <NewWorkspaceComposerModal /> : null}
+        </Suspense>
       </TooltipProvider>
-      <QuickOpen />
-      <WorktreeJumpPalette />
+      <Suspense fallback={null}>
+        {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
+        {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
+      </Suspense>
       <UpdateCard />
       <StarNagCard />
       <ZoomOverlay />

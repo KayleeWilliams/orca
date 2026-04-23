@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store'
+import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 
 const NonGitFolderDialog = React.memo(function NonGitFolderDialog() {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -39,6 +40,14 @@ const NonGitFolderDialog = React.memo(function NonGitFolderDialog() {
             useAppStore.setState({ repos: [...state.repos, repo] })
           }
           await state.fetchWorktrees(repo.id)
+          // Why: mirror the local non-git folder flow — without this the
+          // dialog closes and the UI shows no visible change, making the
+          // add feel like a no-op. Activating the synthetic folder
+          // worktree reveals it in the sidebar and opens the workspace.
+          const folderWorktree = useAppStore.getState().worktreesByRepo[repo.id]?.[0]
+          if (folderWorktree) {
+            activateAndRevealWorktree(folderWorktree.id)
+          }
         } catch (err) {
           // This code path calls addRemote directly (not through the store),
           // so the store's toast handling does not apply.

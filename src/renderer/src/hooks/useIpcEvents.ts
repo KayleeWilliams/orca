@@ -6,6 +6,8 @@ import {
   activateAndRevealWorktree,
   ensureWorktreeHasInitialTerminal
 } from '@/lib/worktree-activation'
+import { SPLIT_TERMINAL_PANE_EVENT, CLOSE_TERMINAL_PANE_EVENT } from '@/constants/terminal'
+import type { SplitTerminalPaneDetail, CloseTerminalPaneDetail } from '@/constants/terminal'
 import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
 import { nextEditorFontZoomLevel, computeEditorFontSize } from '@/lib/editor-font-zoom'
 import type { UpdateStatus } from '../../../shared/types'
@@ -16,6 +18,7 @@ import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -80,6 +83,20 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
+      window.api.ui.onOpenNewWorkspace(() => {
+        // Why: mirror the renderer's App.tsx Cmd+N guard — only open the
+        // composer when there is at least one real git repo configured, so
+        // users on a fresh install don't get a modal with nothing to target.
+        const store = useAppStore.getState()
+        if (!store.repos.some((repo) => isGitRepoKind(repo))) {
+          return
+        }
+        dispatchClearModifierHints()
+        store.openModal('new-workspace-composer')
+      })
+    )
+
+    unsubs.push(
       window.api.ui.onJumpToWorktreeIndex((index) => {
         dispatchClearModifierHints()
         const store = useAppStore.getState()
@@ -89,6 +106,25 @@ export function useIpcEvents(): void {
         const visibleIds = getVisibleWorktreeIds()
         if (index < visibleIds.length) {
           activateAndRevealWorktree(visibleIds[index])
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onWorktreeHistoryNavigate((direction) => {
+        dispatchClearModifierHints()
+        const store = useAppStore.getState()
+        // Why: mirror the button-visibility rule — worktree history navigation
+        // is only meaningful in the terminal (worktree) view. Settings/Tasks
+        // transitions aren't worktree activations and the buttons are hidden,
+        // so the shortcut no-ops there too.
+        if (store.activeView !== 'terminal') {
+          return
+        }
+        if (direction === 'back') {
+          store.goBackWorktree()
+        } else {
+          store.goForwardWorktree()
         }
       })
     )
@@ -118,6 +154,102 @@ export function useIpcEvents(): void {
         })().catch((error) => {
           console.error('Failed to activate CLI-created worktree:', error)
         })
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCreateTerminal(({ worktreeId, command, title }) => {
+        const store = useAppStore.getState()
+        store.setActiveView('terminal')
+        store.setActiveWorktree(worktreeId)
+        const tab = store.createTab(worktreeId)
+        store.setActiveTabType('terminal')
+        store.setActiveTab(tab.id)
+        store.revealWorktreeInSidebar(worktreeId)
+        if (title) {
+          store.setTabCustomTitle(tab.id, title)
+        }
+        if (command) {
+          store.queueTabStartupCommand(tab.id, { command })
+        }
+      })
+    )
+
+    // Why: CLI-driven terminal creation sends a request and waits for the
+    // tabId reply so it can resolve a handle the caller can use immediately.
+    // This mirrors the browser's onRequestTabCreate/replyTabCreate pattern.
+    unsubs.push(
+      window.api.ui.onRequestTerminalCreate((data) => {
+        try {
+          const store = useAppStore.getState()
+          const worktreeId = data.worktreeId ?? store.activeWorktreeId
+          if (!worktreeId) {
+            window.api.ui.replyTerminalCreate({
+              requestId: data.requestId,
+              error: 'No active worktree'
+            })
+            return
+          }
+          store.setActiveView('terminal')
+          store.setActiveWorktree(worktreeId)
+          const tab = store.createTab(worktreeId)
+          store.setActiveTabType('terminal')
+          store.setActiveTab(tab.id)
+          store.revealWorktreeInSidebar(worktreeId)
+          if (data.title) {
+            store.setTabCustomTitle(tab.id, data.title)
+          }
+          if (data.command) {
+            store.queueTabStartupCommand(tab.id, { command: data.command })
+          }
+          window.api.ui.replyTerminalCreate({
+            requestId: data.requestId,
+            tabId: tab.id,
+            title: data.title ?? tab.title
+          })
+        } catch (err) {
+          window.api.ui.replyTerminalCreate({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Terminal creation failed'
+          })
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onSplitTerminal(({ tabId, paneRuntimeId, direction, command }) => {
+        const detail: SplitTerminalPaneDetail = { tabId, paneRuntimeId, direction, command }
+        window.dispatchEvent(new CustomEvent(SPLIT_TERMINAL_PANE_EVENT, { detail }))
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onRenameTerminal(({ tabId, title }) => {
+        useAppStore.getState().setTabCustomTitle(tabId, title)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onFocusTerminal(({ tabId, worktreeId }) => {
+        const store = useAppStore.getState()
+        store.setActiveWorktree(worktreeId)
+        store.setActiveView('terminal')
+        store.setActiveTab(tabId)
+        store.revealWorktreeInSidebar(worktreeId)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCloseTerminal(({ tabId, paneRuntimeId }) => {
+        if (paneRuntimeId != null) {
+          // Why: when targeting a specific pane in a split layout, dispatch to the
+          // lifecycle hook so PaneManager.closePane() handles sibling promotion.
+          // The lifecycle hook falls through to closeTab() if this is the last pane.
+          const detail: CloseTerminalPaneDetail = { tabId, paneRuntimeId }
+          window.dispatchEvent(new CustomEvent(CLOSE_TERMINAL_PANE_EVENT, { detail }))
+        } else {
+          useAppStore.getState().closeTab(tabId)
+        }
       })
     )
 
@@ -221,7 +353,20 @@ export function useIpcEvents(): void {
             window.api.ui.replyTabCreate({ requestId: data.requestId, error: 'No active worktree' })
             return
           }
-          const workspace = store.createBrowserTab(worktreeId, data.url, { title: data.url })
+          // Why: CLI-created tabs should land in the same group as the active
+          // browser tab, not the terminal's group (which is typically the
+          // UI-active group when an agent is running commands).
+          const activeBrowserTabId = store.activeBrowserTabIdByWorktree[worktreeId]
+          const activeBrowserUnifiedTab = activeBrowserTabId
+            ? (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
+                (t) => t.contentType === 'browser' && t.entityId === activeBrowserTabId
+              )
+            : undefined
+
+          const workspace = store.createBrowserTab(worktreeId, data.url, {
+            title: data.url,
+            targetGroupId: activeBrowserUnifiedTab?.groupId
+          })
           // Why: registerGuest fires with the page ID (not workspace ID) as
           // browserPageId. Return the page ID so waitForTabRegistration can
           // correlate correctly.
@@ -435,6 +580,11 @@ export function useIpcEvents(): void {
         }
 
         if (state.status === 'connected') {
+          // Why: the file explorer may have tried (and failed) to load the tree
+          // before the SSH connection was established. Bumping the generation
+          // lets it detect that providers are now available and retry.
+          store.bumpSshConnectedGeneration()
+
           void Promise.all(remoteRepos.map((r) => store.fetchWorktrees(r.id))).then(() => {
             // Why: terminal panes that failed to spawn (no PTY provider on cold
             // start) sit inert. Bumping generation forces TerminalPane to remount

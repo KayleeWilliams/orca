@@ -48,18 +48,17 @@
 }
 
 .rich-markdown-search {
-  position: sticky;
-  top: 0;
+  /* Why: overlay the editor like Monaco's find widget instead of occupying
+     layout space — otherwise opening cmd+f shifts the document content down. */
+  position: absolute;
+  top: 8px;
+  right: 12px;
   z-index: 20;
   display: flex;
   align-items: center;
   gap: 0;
   width: fit-content;
-  max-width: min(100%, 460px);
-  margin-left: auto;
-  margin-right: 12px;
-  margin-top: 8px;
-  margin-bottom: 6px;
+  max-width: min(calc(100% - 24px), 460px);
   padding: 0 2px 0 4px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -233,7 +232,9 @@
   appearance: none;
   width: 16px;
   height: 16px;
-  border: 1.5px solid color-mix(in srgb, var(--foreground) 35%, transparent);
+  /* Why: bumped from 35% to 55% so the unchecked border stays legible in
+     dark mode where low-alpha foreground nearly disappears on --background. */
+  border: 1.5px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
@@ -253,7 +254,10 @@
   top: 1px;
   width: 5px;
   height: 9px;
-  border: solid white;
+  /* Why: --primary flips between dark and light per theme, so a hardcoded
+     white tick is invisible in dark mode (light-on-light). Use the paired
+     token so the tick always contrasts against the filled box. */
+  border: solid var(--primary-foreground);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }

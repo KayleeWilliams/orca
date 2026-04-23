@@ -11,6 +11,7 @@ import {
   Palette,
   Server,
   SlidersHorizontal,
+  Blocks,
   SquareTerminal
 } from 'lucide-react'
 import type { OrcaHooks } from '../../../../shared/types'
@@ -32,12 +33,14 @@ import { SshPane, SSH_PANE_SEARCH_ENTRIES } from './SshPane'
 import { ExperimentalPane, EXPERIMENTAL_PANE_SEARCH_ENTRIES } from './ExperimentalPane'
 import { AgentsPane, AGENTS_PANE_SEARCH_ENTRIES } from './AgentsPane'
 import { StatsPane, STATS_PANE_SEARCH_ENTRIES } from '../stats/StatsPane'
+import { IntegrationsPane, INTEGRATIONS_PANE_SEARCH_ENTRIES } from './IntegrationsPane'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSection } from './SettingsSection'
 import { matchesSettingsSearch, type SettingsSearchEntry } from './settings-search'
 
 type SettingsNavTarget =
   | 'general'
+  | 'integrations'
   | 'browser'
   | 'git'
   | 'appearance'
@@ -137,6 +140,11 @@ function Settings(): React.JSX.Element {
     getFallbackTerminalFonts()
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
+  // Why: the hidden-experimental group is an unlock — Shift-clicking the
+  // Experimental sidebar entry reveals it for the remainder of the session.
+  // Not persisted on purpose: it's a power-user affordance we don't want to
+  // leak through into a normal reopen of Settings.
+  const [hiddenExperimentalUnlocked, setHiddenExperimentalUnlocked] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const terminalFontsLoadedRef = useRef(false)
   const pendingNavSectionRef = useRef<string | null>(null)
@@ -326,6 +334,13 @@ function Settings(): React.JSX.Element {
         searchEntries: SHORTCUTS_PANE_SEARCH_ENTRIES
       },
       {
+        id: 'integrations',
+        title: 'Integrations',
+        description: 'GitHub, Linear, and other service connections.',
+        icon: Blocks,
+        searchEntries: INTEGRATIONS_PANE_SEARCH_ENTRIES
+      },
+      {
         id: 'stats',
         title: 'Stats & Usage',
         description: 'Orca stats and Claude usage analytics.',
@@ -343,7 +358,7 @@ function Settings(): React.JSX.Element {
       {
         id: 'experimental',
         title: 'Experimental',
-        description: 'Features that are still being stabilized. Enable at your own risk.',
+        description: 'New features that are still taking shape. Give them a try.',
         icon: FlaskConical,
         searchEntries: EXPERIMENTAL_PANE_SEARCH_ENTRIES
       },
@@ -464,11 +479,25 @@ function Settings(): React.JSX.Element {
     }
   }, [visibleNavSections])
 
-  const scrollToSection = useCallback((sectionId: string) => {
-    scrollSectionIntoView(sectionId, contentScrollRef.current)
-    flashSectionHighlight(sectionId)
-    setActiveSectionId(sectionId)
-  }, [])
+  const scrollToSection = useCallback(
+    (
+      sectionId: string,
+      modifiers?: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
+    ) => {
+      // Why: Shift-clicking the Experimental sidebar entry unlocks a hidden
+      // power-user group. Keep this scoped to the Experimental row so normal
+      // shortcut combos on other rows don't accidentally flip state. The
+      // unlock persists for the life of the Settings view (resets when
+      // Settings is reopened).
+      if (sectionId === 'experimental' && modifiers?.shiftKey) {
+        setHiddenExperimentalUnlocked((previous) => !previous)
+      }
+      scrollSectionIntoView(sectionId, contentScrollRef.current)
+      flashSectionHighlight(sectionId)
+      setActiveSectionId(sectionId)
+    },
+    []
+  )
 
   if (!settings) {
     return (
@@ -515,6 +544,15 @@ function Settings(): React.JSX.Element {
                   searchEntries={GENERAL_PANE_SEARCH_ENTRIES}
                 >
                   <GeneralPane settings={settings} updateSettings={updateSettings} />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="integrations"
+                  title="Integrations"
+                  description="GitHub, Linear, and other service connections."
+                  searchEntries={INTEGRATIONS_PANE_SEARCH_ENTRIES}
+                >
+                  <IntegrationsPane />
                 </SettingsSection>
 
                 <SettingsSection
@@ -617,10 +655,14 @@ function Settings(): React.JSX.Element {
                 <SettingsSection
                   id="experimental"
                   title="Experimental"
-                  description="Features that are still being stabilized. Enable at your own risk."
+                  description="New features that are still taking shape. Give them a try."
                   searchEntries={EXPERIMENTAL_PANE_SEARCH_ENTRIES}
                 >
-                  <ExperimentalPane settings={settings} updateSettings={updateSettings} />
+                  <ExperimentalPane
+                    settings={settings}
+                    updateSettings={updateSettings}
+                    hiddenExperimentalUnlocked={hiddenExperimentalUnlocked}
+                  />
                 </SettingsSection>
 
                 {repos.map((repo) => {

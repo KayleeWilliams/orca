@@ -12,6 +12,7 @@ import type { OpenFile } from '../../store/slices/editor'
 import SortableTab from './SortableTab'
 import EditorFileTab from './EditorFileTab'
 import BrowserTab from './BrowserTab'
+import { QuickLaunchAgentMenuItems } from './QuickLaunchButton'
 import { reconcileTabOrder } from './reconcile-order'
 import type { TabDragItemData } from '../tab-group/useTabDragSplit'
 import {
@@ -52,6 +53,7 @@ type TabBarProps = {
   onCloseFile?: (fileId: string) => void
   onActivateBrowserTab?: (tabId: string) => void
   onCloseBrowserTab?: (tabId: string) => void
+  onDuplicateBrowserTab?: (tabId: string) => void
   onCloseAllFiles?: () => void
   onPinFile?: (fileId: string, tabId?: string) => void
   tabBarOrder?: string[]
@@ -101,6 +103,7 @@ function TabBarInner({
   onCloseFile,
   onActivateBrowserTab,
   onCloseBrowserTab,
+  onDuplicateBrowserTab,
   onCloseAllFiles,
   onPinFile,
   tabBarOrder,
@@ -346,6 +349,7 @@ function TabBarInner({
                   onSplitGroup={(direction, sourceVisibleTabId) =>
                     onCreateSplitGroup?.(direction, sourceVisibleTabId)
                   }
+                  onDuplicate={() => onDuplicateBrowserTab?.(item.id)}
                   dragData={dragData}
                 />
               )
@@ -425,6 +429,11 @@ function TabBarInner({
               <DropdownMenuShortcut>{NEW_FILE_SHORTCUT}</DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
+          <QuickLaunchAgentMenuItems
+            worktreeId={worktreeId}
+            groupId={resolvedGroupId}
+            onFocusTerminal={focusTerminalTabSurface}
+          />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

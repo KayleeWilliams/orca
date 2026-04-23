@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { useAppStore } from '../store'
+import { useAllWorktrees } from '../store/selectors'
 import { findWorktreeById } from '../store/slices/worktree-helpers'
 import { createUntitledMarkdownFile } from '../lib/create-untitled-markdown'
 import { extractIpcErrorMessage } from '../lib/ipc-error'
@@ -26,7 +27,9 @@ import {
 } from './editor/editor-autosave'
 import { isUpdaterQuitAndInstallInProgress } from '@/lib/updater-beforeunload'
 import EditorAutosaveController from './editor/EditorAutosaveController'
+import type { TabGroupLayoutNode } from '../../../shared/types'
 import BrowserPane, { destroyPersistentWebview } from './browser-pane/BrowserPane'
+import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
 import { reconcileTabOrder } from './tab-bar/reconcile-order'
 import TabGroupSplitLayout from './tab-group/TabGroupSplitLayout'
 import { shouldAutoCreateInitialTerminal } from './terminal/initial-terminal'
@@ -39,9 +42,9 @@ import CodexRestartChip from './CodexRestartChip'
 const EditorPanel = lazy(() => import('./editor/EditorPanel'))
 
 function Terminal(): React.JSX.Element | null {
+  const allWorktrees = useAllWorktrees()
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const activeView = useAppStore((s) => s.activeView)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
   const createTab = useAppStore((s) => s.createTab)
@@ -82,7 +85,6 @@ function Terminal(): React.JSX.Element | null {
     () => (activeWorktreeId ? (tabsByWorktree[activeWorktreeId] ?? []) : []),
     [activeWorktreeId, tabsByWorktree]
   )
-  const allWorktrees = Object.values(worktreesByRepo).flat()
 
   // Why: the TabBar is rendered into the titlebar via a portal so tabs share
   // the same row as the "Orca" title. The target element is created by App.tsx.
@@ -393,6 +395,25 @@ function Terminal(): React.JSX.Element | null {
     const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
     createBrowserTab(activeWorktreeId, defaultUrl, { title: 'New Browser Tab' })
   }, [activeWorktreeId, createBrowserTab])
+
+  const handleDuplicateBrowserTab = useCallback(
+    (browserTabId: string) => {
+      if (!activeWorktreeId) {
+        return
+      }
+      const state = useAppStore.getState()
+      const tabs = state.browserTabsByWorktree[activeWorktreeId] ?? []
+      const source = tabs.find((t) => t.id === browserTabId)
+      if (!source) {
+        return
+      }
+      createBrowserTab(activeWorktreeId, source.url, {
+        title: source.title,
+        sessionProfileId: source.sessionProfileId
+      })
+    },
+    [activeWorktreeId, createBrowserTab]
+  )
 
   const handleNewFile = useCallback(async () => {
     if (!activeWorktreeId) {
@@ -963,6 +984,7 @@ function Terminal(): React.JSX.Element | null {
             onCloseFile={handleCloseFile}
             onActivateBrowserTab={handleActivateBrowserTab}
             onCloseBrowserTab={handleCloseBrowserTab}
+            onDuplicateBrowserTab={handleDuplicateBrowserTab}
             onCloseAllFiles={closeAllFiles}
             onPinFile={pinFile}
             tabBarOrder={tabBarOrder}
@@ -990,22 +1012,16 @@ function Terminal(): React.JSX.Element | null {
                 return null
               }
               // Why: use strict equality with 'terminal' instead of !== 'settings'
-              // so the terminal/browser surface hides on the new-workspace page too.
+              // so the terminal/browser surface hides on the tasks page too.
               const isVisible = activeView === 'terminal' && worktree.id === activeWorktreeId
               return (
-                <div
+                <WorktreeSplitSurface
                   key={`tab-groups-${worktree.id}`}
-                  className={isVisible ? 'absolute inset-0 flex' : 'absolute inset-0 hidden'}
-                  aria-hidden={!isVisible}
-                >
-                  <CodexRestartChip worktreeId={worktree.id} />
-                  <TabGroupSplitLayout
-                    layout={layout}
-                    worktreeId={worktree.id}
-                    focusedGroupId={activeGroupIdByWorktree[worktree.id]}
-                    isWorktreeActive={isVisible}
-                  />
-                </div>
+                  worktreeId={worktree.id}
+                  layout={layout}
+                  focusedGroupId={activeGroupIdByWorktree[worktree.id]}
+                  isVisible={isVisible}
+                />
               )
             })}
         </div>
@@ -1048,7 +1064,7 @@ function Terminal(): React.JSX.Element | null {
               .filter((wt) => mountedWorktreeIdsRef.current.has(wt.id))
               .map((worktree) => {
                 // Why: use strict equality with 'terminal' instead of !== 'settings'
-                // so the terminal/browser surface hides on the new-workspace page too.
+                // so the terminal/browser surface hides on the tasks page too.
                 const isVisible = activeView === 'terminal' && worktree.id === activeWorktreeId
                 return (
                   <div
@@ -1094,7 +1110,7 @@ function Terminal(): React.JSX.Element | null {
             {allWorktrees.map((worktree) => {
               const browserTabs = browserTabsByWorktree[worktree.id] ?? []
               // Why: use strict equality with 'terminal' instead of !== 'settings'
-              // so browser panes also hide on the new-workspace page.
+              // so browser panes also hide on the tasks page.
               const isVisibleWorktree =
                 activeView === 'terminal' && worktree.id === activeWorktreeId
               if (browserTabs.length === 0) {
@@ -1216,5 +1232,48 @@ function Terminal(): React.JSX.Element | null {
     </div>
   )
 }
+
+// Why: each TabGroupPanel tags its body element with an `anchor-name`, and
+// a single worktree-level BrowserPaneOverlayLayer renders every browser tab
+// for this worktree once — keyed by browserTab.id only — and pins each pane
+// to the owning group's anchor via CSS `position-anchor`. Moving a tab
+// between groups now only changes which anchor-name the overlay references,
+// so the `<webview>` is never reparented (and never reloads). Mirrors
+// VS Code's OverlayWebview claim/release pattern, with the browser doing all
+// layout tracking for free.
+//
+// Why `React.memo`: Terminal.tsx has many store subscriptions and re-renders
+// on unrelated updates (terminal keystrokes, editor edits, focus changes).
+// Without memoization, every Terminal re-render would cascade into
+// BrowserPaneOverlayLayer and its BrowserPane subtrees. Memoizing here means
+// the surface only re-renders when its own props (worktreeId / layout /
+// focusedGroupId / isVisible) actually change.
+const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
+  worktreeId,
+  layout,
+  focusedGroupId,
+  isVisible
+}: {
+  worktreeId: string
+  layout: TabGroupLayoutNode
+  focusedGroupId?: string
+  isVisible: boolean
+}): React.JSX.Element {
+  return (
+    <div
+      className={isVisible ? 'absolute inset-0 flex' : 'absolute inset-0 hidden'}
+      aria-hidden={!isVisible}
+    >
+      <CodexRestartChip worktreeId={worktreeId} />
+      <TabGroupSplitLayout
+        layout={layout}
+        worktreeId={worktreeId}
+        focusedGroupId={focusedGroupId}
+        isWorktreeActive={isVisible}
+      />
+      <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
+    </div>
+  )
+})
 
 export default React.memo(Terminal)

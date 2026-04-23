@@ -245,6 +245,12 @@ describe('getAgentLabel', () => {
     expect(getAgentLabel('⠂ Claude Code')).toBe('Claude Code')
     expect(getAgentLabel('⠋ Codex is thinking')).toBe('Codex')
   })
+
+  it('labels GitHub Copilot CLI', () => {
+    expect(getAgentLabel('copilot working')).toBe('GitHub Copilot')
+    expect(getAgentLabel('copilot idle')).toBe('GitHub Copilot')
+    expect(getAgentLabel('GitHub Copilot CLI')).toBe('GitHub Copilot')
+  })
 })
 
 describe('createAgentStatusTracker', () => {

@@ -38,6 +38,8 @@ import {
   TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES,
   TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES
 } from './terminal-search'
+import { useDetectedOptionAsAlt } from '@/lib/keyboard-layout/use-effective-mac-option-as-alt'
+import { detectedCategoryToDefault } from '@/lib/keyboard-layout/detect-option-as-alt'
 import { DarkTerminalThemeSection, LightTerminalThemeSection } from './TerminalThemeSections'
 
 type TerminalPaneProps = {
@@ -72,6 +74,14 @@ export function TerminalPane({
     systemPrefersDark
   )
   const paneStyleOptions = resolvePaneStyleOptions(settings)
+  const detectedLayout = useDetectedOptionAsAlt()
+  const autoDetectedDefault = detectedCategoryToDefault(detectedLayout)
+  const detectedLayoutLabel =
+    detectedLayout === 'us'
+      ? 'US English — Option sends Alt/Esc sequences'
+      : detectedLayout === 'non-us'
+        ? 'non-US layout — Option composes characters like @, €, [, ]'
+        : 'unknown layout — Option composes characters (safe default)'
   const scrollbackMb = Math.max(1, Math.round(settings.terminalScrollbackBytes / 1_000_000))
   const isPreset = SCROLLBACK_PRESETS_MB.includes(
     scrollbackMb as (typeof SCROLLBACK_PRESETS_MB)[number]
@@ -434,6 +444,51 @@ export function TerminalPane({
             />
           </button>
         </SearchableSetting>
+
+        <SearchableSetting
+          title="Allow TUI Clipboard Writes (OSC 52)"
+          description="Let terminal programs like tmux, Neovim, and fzf copy to the system clipboard over the PTY (including over SSH). Off by default because untrusted output piped into the terminal could silently overwrite your clipboard."
+          keywords={[
+            'osc 52',
+            'osc52',
+            'clipboard',
+            'tmux',
+            'neovim',
+            'nvim',
+            'fzf',
+            'ssh',
+            'remote',
+            'copy',
+            'paste'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Allow TUI Clipboard Writes (OSC 52)</Label>
+            <p className="text-xs text-muted-foreground">
+              Let programs running inside the terminal (tmux, Neovim, fzf, ssh sessions) copy to
+              your system clipboard. Disabled by default for safety.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.terminalAllowOsc52Clipboard}
+            onClick={() =>
+              updateSettings({
+                terminalAllowOsc52Clipboard: !settings.terminalAllowOsc52Clipboard
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.terminalAllowOsc52Clipboard ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.terminalAllowOsc52Clipboard ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
       </section>
     ) : null,
     matchesSettingsSearch(searchQuery, TERMINAL_DARK_THEME_SEARCH_ENTRIES) ? (
@@ -602,6 +657,58 @@ export function TerminalPane({
           ) : null}
         </SearchableSetting>
 
+        <SearchableSetting
+          title="Force Hyperlink Escapes"
+          description="Set FORCE_HYPERLINK=1 in every terminal so tools emit OSC-8 clickable links. Turn off if your shell startup is slow."
+          keywords={[
+            'terminal',
+            'hyperlink',
+            'link',
+            'osc',
+            'osc8',
+            'osc-8',
+            'force_hyperlink',
+            'slow',
+            'startup',
+            'zsh',
+            'zshrc',
+            'oh-my-zsh',
+            'p10k',
+            'powerlevel10k'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Force Hyperlink Escapes</Label>
+            <p className="text-xs text-muted-foreground">
+              Sets{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">FORCE_HYPERLINK=1</code> in
+              every spawned terminal so tools like <code>ls</code>, <code>git</code>, and{' '}
+              <code>eza</code> emit OSC-8 clickable links. Disable if your shell startup feels slow
+              — heavy setups (oh-my-zsh, powerlevel10k, nvm, pyenv, conda) can take measurably
+              longer with this on. Only affects newly spawned terminals.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.terminalForceHyperlink}
+            onClick={() =>
+              updateSettings({
+                terminalForceHyperlink: !settings.terminalForceHyperlink
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.terminalForceHyperlink ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.terminalForceHyperlink ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
+
         {isMac ? (
           <SearchableSetting
             title="Option as Alt"
@@ -625,7 +732,7 @@ export function TerminalPane({
           >
             <Label>Option as Alt</Label>
             <div className="flex w-fit gap-1 rounded-md border border-border/50 p-1">
-              {(['true', 'left', 'right', 'false'] as const).map((option) => (
+              {(['auto', 'true', 'left', 'right', 'false'] as const).map((option) => (
                 <button
                   key={option}
                   onClick={() => updateSettings({ terminalMacOptionAsAlt: option })}
@@ -635,22 +742,30 @@ export function TerminalPane({
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {option === 'false'
-                    ? 'Off'
-                    : option === 'true'
-                      ? 'Both'
-                      : option === 'left'
-                        ? 'Left'
-                        : 'Right'}
+                  {option === 'auto'
+                    ? 'Auto'
+                    : option === 'false'
+                      ? 'Off'
+                      : option === 'true'
+                        ? 'Both'
+                        : option === 'left'
+                          ? 'Left'
+                          : 'Right'}
                 </button>
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {settings.terminalMacOptionAsAlt === 'false'
-                ? 'Option composes special characters for your keyboard layout. Core readline shortcuts (Option+B/F/D) are handled automatically.'
-                : settings.terminalMacOptionAsAlt === 'true'
-                  ? 'Both Option keys send Alt/Esc sequences for full readline and shell support. Special character input via Option is unavailable.'
-                  : `The ${settings.terminalMacOptionAsAlt} Option key sends Alt/Esc sequences; the other composes special characters.`}
+              {settings.terminalMacOptionAsAlt === 'auto'
+                ? `Auto — detected: ${detectedLayoutLabel}. ${
+                    autoDetectedDefault === 'true'
+                      ? 'Both Option keys act as Alt, matching macOS power-user readline expectations. Switch to "Off" if you need to type Option-layer characters.'
+                      : 'Option composes your keyboard layout’s special characters (@, €, [, ], etc.). Core readline shortcuts (Option+B/F/D) are handled automatically.'
+                  }`
+                : settings.terminalMacOptionAsAlt === 'false'
+                  ? 'Option composes special characters for your keyboard layout. Core readline shortcuts (Option+B/F/D) are handled automatically.'
+                  : settings.terminalMacOptionAsAlt === 'true'
+                    ? 'Both Option keys send Alt/Esc sequences for full readline and shell support. Special character input via Option is unavailable.'
+                    : `The ${settings.terminalMacOptionAsAlt} Option key sends Alt/Esc sequences; the other composes special characters.`}
             </p>
           </SearchableSetting>
         ) : null}

@@ -8,6 +8,7 @@ import type { PtyConnectResult } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
 import type { PtyConnectionDeps } from './pty-connection-types'
+import { isPaneReplaying, replayIntoTerminal } from './replay-guard'
 
 const pendingSpawnByTabId = new Map<string, Promise<string | null>>()
 
@@ -25,6 +26,17 @@ function isCodexPaneStale(args: { tabId: string; panePtyId: string | null }): bo
   }
 
   return false
+}
+
+// Why: daemon session IDs use the format `${worktreeId}@@${shortUuid}`.
+// This validates that a session ID actually belongs to the given worktree,
+// preventing cross-workspace contamination during restore.
+function isSessionOwnedByWorktree(sessionId: string, worktreeId: string): boolean {
+  const separatorIdx = sessionId.lastIndexOf('@@')
+  if (separatorIdx === -1) {
+    return true
+  }
+  return sessionId.slice(0, separatorIdx) === worktreeId
 }
 
 export function connectPanePty(
@@ -179,6 +191,16 @@ export function connectPanePty(
   deps.paneTransportsRef.current.set(pane.id, transport)
 
   const onDataDisposable = pane.terminal.onData((data) => {
+    // Why: xterm auto-replies to embedded query sequences (DA1, DECRQM,
+    // OSC 10/11, focus, CPR) via onData. When we replay recorded PTY bytes
+    // into xterm for scrollback/cold-restore/snapshot, those queries would
+    // otherwise pipe replies into the freshly spawned shell as stray input
+    // ("?1;2c", "2026;2$y", OSC color fragments, ...). The replay sites
+    // engage the guard via replayIntoTerminal; here we drop everything
+    // xterm emits while the guard is active. See replay-guard.ts.
+    if (isPaneReplaying(deps.replayingPanesRef, pane.id)) {
+      return
+    }
     const currentPtyId = transport.getPtyId()
     // Why: after a Codex account switch, the runtime auth has already moved to
     // the newly selected account. Stale panes must not keep sending input until
@@ -248,6 +270,7 @@ export function connectPanePty(
           rows,
           callbacks: {
             onData: dataCallback,
+            onReplayData: replayDataCallback,
             onError: reportError
           }
         })
@@ -262,6 +285,21 @@ export function connectPanePty(
           }
         })
       pendingSpawnByTabId.set(deps.tabId, spawnPromise)
+    }
+
+    // Why: replay bytes (eager-buffer flush, attach-time screen clear) must
+    // always go through the replay guard so xterm's auto-replies to embedded
+    // query sequences don't leak to the shell. Unlike dataCallback we do not
+    // honor isVisibleRef — the visibility branch is a perf batching strategy
+    // for live output that defers parsing until the worktree is foregrounded,
+    // but deferring replay parsing drops the bytes into pendingWritesRef,
+    // which later flushes through plain pane.terminal.write (in
+    // use-terminal-pane-global-effects) with no guard engaged. xterm's
+    // write() buffers internally regardless of DOM visibility, and the guard
+    // stays engaged via the write-completion callback until xterm finishes
+    // parsing — so writing directly here is both correct and safe.
+    const replayDataCallback = (data: string): void => {
+      replayIntoTerminal(pane, deps.replayingPanesRef, data)
     }
 
     const dataCallback = (data: string): void => {
@@ -334,12 +372,22 @@ export function connectPanePty(
             : null
           : existingPtyId
         : null
-    const deferredReattachSessionId =
+    const candidateReattachSessionId =
       restoredSessionId && restoredSessionId !== detachedLivePtyId
         ? restoredSessionId
         : daemonEnabled
           ? detachedLivePtyId
           : null
+    // Why: daemon session IDs encode `${worktreeId}@@${uuid}`. After a daemon
+    // crash + cold restore, corrupted or stale session-to-tab mappings can
+    // cause a tab in workspace A to hold a ptyId from workspace B. Restoring
+    // that session would paint the wrong terminal content in this pane. Drop
+    // the reattach and spawn a fresh session instead.
+    const deferredReattachSessionId =
+      candidateReattachSessionId &&
+      isSessionOwnedByWorktree(candidateReattachSessionId, deps.worktreeId)
+        ? candidateReattachSessionId
+        : null
     if (deferredReattachSessionId) {
       allowInitialIdleCacheSeed = true
 
@@ -350,6 +398,7 @@ export function connectPanePty(
         sessionId: deferredReattachSessionId,
         callbacks: {
           onData: dataCallback,
+          onReplayData: replayDataCallback,
           onError: reportError
         }
       })
@@ -376,9 +425,17 @@ export function connectPanePty(
             // buffer before this rAF ran. The cold-restore scrollback from
             // disk history overlaps with that content. Without clearing first,
             // the terminal shows duplicated output.
-            pane.terminal.write('\x1b[2J\x1b[3J\x1b[H')
-            pane.terminal.write(connectResult.coldRestore.scrollback)
-            pane.terminal.write('\r\n\x1b[2m--- session restored ---\x1b[0m\r\n\r\n')
+            // Why replayIntoTerminal: the recorded scrollback is raw PTY output
+            // that may contain query sequences the previous agent CLI emitted;
+            // writing them through xterm.write would trigger auto-replies that
+            // land in the new shell's stdin. See replay-guard.ts.
+            replayIntoTerminal(pane, deps.replayingPanesRef, '\x1b[2J\x1b[3J\x1b[H')
+            replayIntoTerminal(pane, deps.replayingPanesRef, connectResult.coldRestore.scrollback)
+            replayIntoTerminal(
+              pane,
+              deps.replayingPanesRef,
+              '\r\n\x1b[2m--- session restored ---\x1b[0m\r\n\r\n'
+            )
             window.api.pty.ackColdRestore(ptyId!)
           } else if (connectResult?.snapshot) {
             // Why: always clear before writing the daemon snapshot to prevent
@@ -386,8 +443,9 @@ export function connectPanePty(
             // wrote earlier. The alt-screen case previously skipped this,
             // leaving stale scrollback in the normal buffer that reappeared
             // when the user exited the TUI (e.g. Claude Code).
-            pane.terminal.write('\x1b[2J\x1b[3J\x1b[H')
-            pane.terminal.write(connectResult.snapshot)
+            // Why replayIntoTerminal: same rationale as the cold-restore path.
+            replayIntoTerminal(pane, deps.replayingPanesRef, '\x1b[2J\x1b[3J\x1b[H')
+            replayIntoTerminal(pane, deps.replayingPanesRef, connectResult.snapshot)
           }
 
           if (ptyId) {
@@ -425,6 +483,7 @@ export function connectPanePty(
           rows,
           callbacks: {
             onData: dataCallback,
+            onReplayData: replayDataCallback,
             onError: reportError
           }
         })
@@ -472,6 +531,7 @@ export function connectPanePty(
               rows,
               callbacks: {
                 onData: dataCallback,
+                onReplayData: replayDataCallback,
                 onError: reportError
               }
             })

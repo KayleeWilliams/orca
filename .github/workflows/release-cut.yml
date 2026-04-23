@@ -1,0 +1,231 @@
+name: Cut Release
+
+# Why: single entry point for manually cutting a release from any ref.
+# Replaces the old local `pnpm release:*` scripts so releases are always
+# reproducible from CI and can never be accidentally tagged against an
+# uncommitted or non-main working tree.
+#
+# Flow:
+#   1. Resolve `ref` to a SHA.
+#   2. Read the latest stable release from GitHub.
+#   3. Compute the next version from `kind` (rc | patch | minor | major).
+#   4. For stable kinds, REFUSE if the new version is <= the latest stable.
+#      This is the only guard electron-updater actually needs — it compares
+#      semver within a channel, so a regressing "latest" is the one thing
+#      that breaks auto-update for fresh installs.
+#   5. Write package.json, commit (detached), tag, push tag.
+#   6. If ref was the tip of origin/main, fast-forward main to include the
+#      version-bump commit so developers see the right version locally.
+#   7. Invoke release.yml to build and publish artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Release kind
+        required: true
+        type: choice
+        default: rc
+        options:
+          - rc
+          - patch
+          - minor
+          - major
+      ref:
+        description: Branch, tag, or SHA to release from (default main)
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve ref SHA
+        id: resolve
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+
+          # Why: only push the version-bump commit back to main when the
+          # caller is releasing the exact tip of main. For any older or
+          # off-main ref we leave main alone and only publish the tag.
+          git fetch origin main --quiet
+          main_sha="$(git rev-parse origin/main)"
+          if [[ "$sha" == "$main_sha" ]]; then
+            echo "push_main=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "push_main=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+
+          # Latest published stable release (excludes drafts + prereleases).
+          latest_stable="$(gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts \
+              --exclude-pre-releases \
+              --limit 1 \
+              --json tagName \
+              --jq '.[0].tagName // ""')"
+          latest_stable="${latest_stable#v}"
+          echo "Latest stable: ${latest_stable:-<none>}"
+
+          # Latest tag of any kind on the repo (including RCs). Used only
+          # when kind=rc to figure out the current RC series base.
+          latest_tag="$(git tag --sort=-v:refname | head -n 1 || true)"
+          latest_tag="${latest_tag#v}"
+          echo "Latest tag:    ${latest_tag:-<none>}"
+
+          # Strip any existing -rc.N suffix for base-version math.
+          base_of() { echo "${1%%-rc.*}"; }
+
+          semver_gt() {
+            # returns 0 if $1 > $2 by semver rules (ignoring prerelease)
+            node -e '
+              const a = process.argv[1].split(".").map(Number);
+              const b = process.argv[2].split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if ((a[i]||0) > (b[i]||0)) process.exit(0);
+                if ((a[i]||0) < (b[i]||0)) process.exit(1);
+              }
+              process.exit(1);
+            ' "$1" "$2"
+          }
+
+          bump() {
+            # $1=version, $2=level (patch|minor|major)
+            node -e '
+              const v = process.argv[1].split(".").map(Number);
+              const level = process.argv[2];
+              if (level === "major") console.log(`${(v[0]||0)+1}.0.0`);
+              else if (level === "minor") console.log(`${v[0]||0}.${(v[1]||0)+1}.0`);
+              else console.log(`${v[0]||0}.${v[1]||0}.${(v[2]||0)+1}`);
+            ' "$1" "$2"
+          }
+
+          next_rc_in_series() {
+            # Given a base version, find the highest existing -rc.N for it
+            # and return base-rc.(N+1). If none exists, base-rc.0.
+            local base="$1"
+            local highest
+            highest="$(git tag --list "v${base}-rc.*" \
+                | sed -E "s/^v${base//./\\.}-rc\.//" \
+                | sort -n \
+                | tail -n 1 || true)"
+            if [[ -z "$highest" ]]; then
+              echo "${base}-rc.0"
+            else
+              echo "${base}-rc.$((highest + 1))"
+            fi
+          }
+
+          # Fresh repo fallback so the math below never divides by zero.
+          if [[ -z "$latest_stable" ]]; then
+            latest_stable="0.0.0"
+          fi
+
+          case "$KIND" in
+            rc)
+              # Why: an RC continues the current series if there is one,
+              # otherwise starts a new series on the next patch version.
+              # This keeps the "I just want another RC" case one click.
+              if [[ -n "$latest_tag" && "$latest_tag" == *"-rc."* ]]; then
+                base="$(base_of "$latest_tag")"
+              else
+                base="$(bump "$latest_stable" patch)"
+              fi
+              new="$(next_rc_in_series "$base")"
+              ;;
+            patch|minor|major)
+              new="$(bump "$latest_stable" "$KIND")"
+              # Updater-safety gate: stable must strictly increase.
+              if ! semver_gt "$new" "$latest_stable"; then
+                echo "::error::Refusing to cut $KIND $new: not greater than latest stable $latest_stable." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown kind: $KIND" >&2
+              exit 1
+              ;;
+          esac
+
+          # Refuse tag collisions (possible if someone already tagged manually).
+          if git rev-parse "v$new" >/dev/null 2>&1; then
+            echo "::error::Tag v$new already exists." >&2
+            exit 1
+          fi
+
+          echo "version=$new" >>"$GITHUB_OUTPUT"
+          echo "Next version: $new"
+
+      - name: Bump package.json and tag
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Why: use npm version --no-git-tag-version so we control the commit
+          # message and tag name explicitly (avoids npm's `v1.2.3` prefix
+          # assumptions and any lifecycle scripts that would run on bump).
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          git add package.json
+          git commit -m "release: v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          echo "tag=v$VERSION" >>"$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Push tag
+        env:
+          PUSH_MAIN: ${{ steps.resolve.outputs.push_main }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$PUSH_MAIN" == "true" ]]; then
+            # Fast-forward main to include the version-bump commit.
+            git push origin "HEAD:refs/heads/main"
+            git push origin "$TAG"
+          else
+            # Off-main release — only the tag is published; main is untouched.
+            git push origin "$TAG"
+          fi
+
+  release:
+    needs: cut
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.cut.outputs.tag }}
+    secrets: inherit

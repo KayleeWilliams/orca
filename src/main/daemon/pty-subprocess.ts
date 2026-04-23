@@ -35,7 +35,11 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     ...opts.env,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Orca'
+    TERM_PROGRAM: 'Orca',
+    // Why: TUIs feature-gate on TERM_PROGRAM_VERSION. The daemon is forked
+    // by main (daemon-init.ts:93) with the parent's env, so ORCA_APP_VERSION
+    // — set in src/main/index.ts from app.getVersion() — is inherited here.
+    TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev'
   } as Record<string, string>
 
   env.LANG ??= 'en_US.UTF-8'
@@ -72,11 +76,48 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   proc.onData((data) => onDataCb?.(data))
   proc.onExit(({ exitCode }) => onExitCb?.(exitCode))
 
+  // Why: node-pty's native NAPI layer throws a C++ Napi::Error when
+  // write/resize/kill is called on a PTY whose underlying fd is already
+  // closed. This happens in the race window between the child process
+  // exiting and the JS onExit callback firing. An uncaught Napi::Error
+  // propagates to std::terminate, killing the entire daemon process.
+  let dead = false
+  proc.onExit(() => {
+    dead = true
+  })
+
   return {
     pid: proc.pid,
-    write: (data) => proc.write(data),
-    resize: (cols, rows) => proc.resize(cols, rows),
-    kill: () => proc.kill(),
+    write: (data) => {
+      if (dead) {
+        return
+      }
+      try {
+        proc.write(data)
+      } catch {
+        dead = true
+      }
+    },
+    resize: (cols, rows) => {
+      if (dead) {
+        return
+      }
+      try {
+        proc.resize(cols, rows)
+      } catch {
+        dead = true
+      }
+    },
+    kill: () => {
+      if (dead) {
+        return
+      }
+      try {
+        proc.kill()
+      } catch {
+        dead = true
+      }
+    },
     forceKill: () => {
       try {
         process.kill(proc.pid, 'SIGKILL')

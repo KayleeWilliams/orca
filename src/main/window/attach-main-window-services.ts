@@ -144,6 +144,40 @@ function registerRuntimeWindowLifecycle(
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId, setup })
       }
+    },
+    createTerminal: (worktreeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:createTerminal', {
+          worktreeId,
+          command: opts.command,
+          title: opts.title
+        })
+      }
+    },
+    splitTerminal: (tabId, paneRuntimeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:splitTerminal', {
+          tabId,
+          paneRuntimeId,
+          direction: opts.direction,
+          command: opts.command
+        })
+      }
+    },
+    renameTerminal: (tabId, title) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:renameTerminal', { tabId, title })
+      }
+    },
+    focusTerminal: (tabId, worktreeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:focusTerminal', { tabId, worktreeId })
+      }
+    },
+    closeTerminal: (tabId, paneRuntimeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:closeTerminal', { tabId, paneRuntimeId })
+      }
     }
   })
   // Why: the runtime must fail closed while the renderer graph is being torn
@@ -231,7 +265,9 @@ export function registerUpdaterHandlers(_store: Store): void {
 
   ipcMain.handle('updater:getStatus', () => getUpdateStatus())
   ipcMain.handle('updater:getVersion', () => app.getVersion())
-  ipcMain.handle('updater:check', () => checkForUpdatesFromMenu())
+  ipcMain.handle('updater:check', (_event, options?: { includePrerelease?: boolean }) =>
+    checkForUpdatesFromMenu(options)
+  )
   ipcMain.handle('updater:download', () => downloadUpdate())
   ipcMain.handle('updater:quitAndInstall', () => quitAndInstall())
   ipcMain.handle('updater:dismissNudge', () => dismissNudge())

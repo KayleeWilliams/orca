@@ -25,6 +25,14 @@ let currentStatus: UpdateStatus = { state: 'idle' }
 let userInitiatedCheck = false
 let onBeforeQuitCleanup: (() => void) | null = null
 let autoUpdaterInitialized = false
+// Why: Shift-clicking "Check for Updates" opts the user into the RC release
+// channel for the rest of this process. We switch to the GitHub provider
+// with allowPrerelease=true so both the check AND any follow-up download
+// resolve against the same (possibly prerelease) release manifest.
+// Resetting only after the check would leave a downloaded RC pointing at a
+// feed URL that no longer advertises it. See design comment in
+// enableIncludePrerelease.
+let includePrereleaseActive = false
 let availableVersion: string | null = null
 let availableReleaseUrl: string | null = null
 let pendingCheckFailureKey: string | null = null
@@ -33,6 +41,8 @@ let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
+let _getLastUpdateCheckAt: (() => number | null) | null = null
+let backgroundCheckLaunchPending = false
 let activeUpdateNudgeId: string | null = null
 let awaitingNudgeCheckOutcome = false
 let nudgeCheckInFlight = false
@@ -116,6 +126,10 @@ function sendStatus(status: UpdateStatus): void {
   }
   currentStatus = decoratedStatus
   mainWindowRef?.webContents.send('updater:status', decoratedStatus)
+}
+
+function clearBackgroundCheckLaunchPending(): void {
+  backgroundCheckLaunchPending = false
 }
 
 function sendErrorStatus(message: string, userInitiated?: boolean): void {
@@ -246,6 +260,9 @@ function recordCompletedUpdateCheck(): void {
 function runBackgroundUpdateCheck(
   nudgeId: string | null = getPersistedPendingUpdateNudgeId()
 ): void {
+  if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
+    return
+  }
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available' })
     return
@@ -256,9 +273,15 @@ function runBackgroundUpdateCheck(
   // the persisted pending id for ordinary background checks so a nudge-driven
   // card can still be dismissed correctly after relaunch or a later 24h check.
   activeUpdateNudgeId = nudgeId
+  // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
+  // arrives on a later tick, so a second focus/resume event can slip in before
+  // currentStatus flips to 'checking'. Track the launch in memory to dedupe
+  // that gap without persisting a successful-check timestamp before the result.
+  backgroundCheckLaunchPending = true
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
   autoUpdater.checkForUpdates().catch((err) => {
+    backgroundCheckLaunchPending = false
     void sendCheckFailureStatus(String(err?.message ?? err))
   })
 }
@@ -267,11 +290,34 @@ export function checkForUpdates(): void {
   runBackgroundUpdateCheck()
 }
 
+function enableIncludePrerelease(): void {
+  if (includePrereleaseActive) {
+    return
+  }
+  // Why: the default feed points at GitHub's /releases/latest/download/
+  // manifest, which is scoped to the most recent non-prerelease release.
+  // Switch to the native github provider with allowPrerelease so latest.yml
+  // is sourced from the newest release on the repo regardless of the
+  // prerelease flag. Staying on this feed for the rest of the process
+  // keeps the download manifest consistent with the check result.
+  autoUpdater.allowPrerelease = true
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'stablyai',
+    repo: 'orca'
+  })
+  includePrereleaseActive = true
+}
+
 /** Menu-triggered check — delegates feedback to renderer toasts via userInitiated flag */
-export function checkForUpdatesFromMenu(): void {
+export function checkForUpdatesFromMenu(options?: { includePrerelease?: boolean }): void {
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available', userInitiated: true })
     return
+  }
+
+  if (options?.includePrerelease) {
+    enableIncludePrerelease()
   }
 
   userInitiatedCheck = true
@@ -397,6 +443,7 @@ export function setupAutoUpdater(
   mainWindowRef = mainWindow
   onBeforeQuitCleanup = opts?.onBeforeQuit ?? null
   persistLastUpdateCheckAt = opts?.setLastUpdateCheckAt ?? null
+  _getLastUpdateCheckAt = opts?.getLastUpdateCheckAt ?? null
   _getPendingUpdateNudgeId = opts?.getPendingUpdateNudgeId ?? null
   _getDismissedUpdateNudgeId = opts?.getDismissedUpdateNudgeId ?? null
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
@@ -457,6 +504,7 @@ export function setupAutoUpdater(
     recordCompletedUpdateCheck,
     sendStatus,
     scheduleAutomaticUpdateCheck,
+    clearBackgroundCheckLaunchPending,
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl
     },
@@ -471,12 +519,25 @@ export function setupAutoUpdater(
   void checkForUpdateNudge()
   scheduleUpdateNudgeCheck()
 
-  powerMonitor.on('resume', () => {
+  const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-  })
-  app.on('browser-window-focus', () => {
-    void checkForUpdateNudge()
-  })
+    if (
+      backgroundCheckLaunchPending ||
+      currentStatus.state === 'checking' ||
+      currentStatus.state === 'downloading'
+    ) {
+      return
+    }
+    const lastCheck = _getLastUpdateCheckAt?.() ?? null
+    const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
+    if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
+      runBackgroundUpdateCheck()
+      scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+    }
+  }
+
+  powerMonitor.on('resume', checkDailyOnWake)
+  app.on('browser-window-focus', checkDailyOnWake)
 
   const lastUpdateCheckAt = opts?.getLastUpdateCheckAt?.() ?? null
   const msSinceLastCheck =
@@ -491,7 +552,17 @@ export function setupAutoUpdater(
 }
 
 export function downloadUpdate(): void {
-  if (currentStatus.state !== 'available' || downloadInFlight) {
+  if (downloadInFlight) {
+    return
+  }
+  // Why: permit retry from 'error' when we still have a cached availableVersion —
+  // a failed download leaves the status at 'error' but availableVersion intact,
+  // and the error card's "Retry Download" button must be able to restart the
+  // download. Without this, the button would appear to do nothing.
+  const canStart =
+    currentStatus.state === 'available' ||
+    (currentStatus.state === 'error' && hasNewerDownloadedVersion())
+  if (!canStart) {
     return
   }
   downloadInFlight = true

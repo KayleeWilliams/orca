@@ -22,7 +22,10 @@ type SettingsSidebarProps = {
   searchQuery: string
   onBack: () => void
   onSearchChange: (query: string) => void
-  onSelectSection: (sectionId: string) => void
+  onSelectSection: (
+    sectionId: string,
+    modifiers: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
+  ) => void
 }
 
 export function SettingsSidebar({
@@ -71,7 +74,14 @@ export function SettingsSidebar({
               return (
                 <button
                   key={section.id}
-                  onClick={() => onSelectSection(section.id)}
+                  onClick={(event) =>
+                    onSelectSection(section.id, {
+                      metaKey: event.metaKey,
+                      ctrlKey: event.ctrlKey,
+                      shiftKey: event.shiftKey,
+                      altKey: event.altKey
+                    })
+                  }
                   className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                     isActive
                       ? 'bg-accent font-medium text-accent-foreground'
@@ -103,7 +113,14 @@ export function SettingsSidebar({
                   return (
                     <button
                       key={section.id}
-                      onClick={() => onSelectSection(section.id)}
+                      onClick={(event) =>
+                        onSelectSection(section.id, {
+                          metaKey: event.metaKey,
+                          ctrlKey: event.ctrlKey,
+                          shiftKey: event.shiftKey,
+                          altKey: event.altKey
+                        })
+                      }
                       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                         isActive
                           ? 'bg-accent font-medium text-accent-foreground'

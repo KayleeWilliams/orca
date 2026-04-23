@@ -5,16 +5,26 @@ import type { GlobalSettings } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useAppStore } from '../../store'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
-import { normalizeBrowserNavigationUrl } from '../../../../shared/browser-url'
+import {
+  normalizeBrowserNavigationUrl,
+  SEARCH_ENGINE_LABELS,
+  type SearchEngine
+} from '../../../../shared/browser-url'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
-import { BROWSER_PANE_SEARCH_ENTRIES } from './browser-search'
+import { BROWSER_PANE_SEARCH_ENTRIES as BROWSER_CORE_SEARCH_ENTRIES } from './browser-search'
+import { BROWSER_USE_PANE_SEARCH_ENTRIES } from './browser-use-search'
 import { BrowserProfileRow } from './BrowserProfileRow'
+import { BrowserUseSetup } from './BrowserUsePane'
 
-export { BROWSER_PANE_SEARCH_ENTRIES }
+export const BROWSER_PANE_SEARCH_ENTRIES = [
+  ...BROWSER_USE_PANE_SEARCH_ENTRIES,
+  ...BROWSER_CORE_SEARCH_ENTRIES
+]
 
 type BrowserPaneProps = {
   settings: GlobalSettings
@@ -25,6 +35,8 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
   const browserDefaultUrl = useAppStore((s) => s.browserDefaultUrl)
   const setBrowserDefaultUrl = useAppStore((s) => s.setBrowserDefaultUrl)
+  const browserDefaultSearchEngine = useAppStore((s) => s.browserDefaultSearchEngine)
+  const setBrowserDefaultSearchEngine = useAppStore((s) => s.setBrowserDefaultSearchEngine)
   const browserSessionProfiles = useAppStore((s) => s.browserSessionProfiles)
   const detectedBrowsers = useAppStore((s) => s.detectedBrowsers)
   const browserSessionImportState = useAppStore((s) => s.browserSessionImportState)
@@ -44,12 +56,36 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
     setHomePageDraft(browserDefaultUrl ?? '')
   }, [browserDefaultUrl])
 
-  const showHomePage = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[0]])
-  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[1]])
-  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_PANE_SEARCH_ENTRIES[2]])
+  const showHomePage = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[0]])
+  const showSearchEngine = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[1]])
+  const showLinkRouting = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[2]])
+  const showCookies = matchesSettingsSearch(searchQuery, [BROWSER_CORE_SEARCH_ENTRIES[3]])
+  const showBrowserUse = matchesSettingsSearch(searchQuery, BROWSER_USE_PANE_SEARCH_ENTRIES)
+
+  const scrollToSessionCookies = (): void => {
+    // Why: the "Session & Cookies" block is search-gated, so if the user has
+    // filtered to a query that excludes it the target element won't be in the
+    // DOM. Clear the search first, then scroll on the next frame so the block
+    // has mounted.
+    useAppStore.getState().setSettingsSearchQuery('')
+    // Why: double RAF to ensure React has committed the re-render triggered by
+    // the store update before we query the DOM — a single RAF can fire before
+    // commit and miss the newly-mounted element.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById('browser-session-cookies')
+        if (!el) {
+          return
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    })
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {showBrowserUse ? <BrowserUseSetup onConfigureMoreBrowsers={scrollToSessionCookies} /> : null}
+
       {showHomePage ? (
         <SearchableSetting
           title="Default Home Page"
@@ -96,18 +132,61 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
         </SearchableSetting>
       ) : null}
 
-      {showLinkRouting ? (
+      {showSearchEngine ? (
         <SearchableSetting
-          title="Terminal Link Routing"
-          description="Cmd/Ctrl+click opens terminal http(s) links in Orca. Shift+Cmd/Ctrl+click uses the system browser."
-          keywords={['browser', 'preview', 'links', 'localhost', 'webview']}
+          title="Default Search Engine"
+          description="Search engine used when typing non-URL text in the address bar."
+          keywords={['browser', 'search', 'engine', 'google', 'duckduckgo', 'bing', 'omnibox']}
           className="flex items-center justify-between gap-4 px-1 py-2"
         >
           <div className="space-y-0.5">
-            <Label>Terminal Link Routing</Label>
+            <Label>Default Search Engine</Label>
             <p className="text-xs text-muted-foreground">
-              Cmd/Ctrl+click opens terminal links in Orca. Shift+Cmd/Ctrl+click opens the same link
-              in your system browser.
+              Used when typing non-URL text in the address bar.
+            </p>
+          </div>
+          <Select
+            value={browserDefaultSearchEngine ?? 'google'}
+            onValueChange={(value) => {
+              const engine = value as SearchEngine
+              setBrowserDefaultSearchEngine(engine === 'google' ? null : engine)
+            }}
+          >
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SEARCH_ENGINE_LABELS) as SearchEngine[]).map((engine) => (
+                <SelectItem key={engine} value={engine} className="text-xs">
+                  {SEARCH_ENGINE_LABELS[engine]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SearchableSetting>
+      ) : null}
+
+      {showLinkRouting ? (
+        <SearchableSetting
+          title="Link Routing"
+          description="Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor. Shift+Cmd/Ctrl+click always uses your system browser."
+          keywords={[
+            'browser',
+            'preview',
+            'links',
+            'localhost',
+            'webview',
+            'markdown',
+            'file',
+            'editor'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Link Routing</Label>
+            <p className="text-xs text-muted-foreground">
+              Open http(s) links in Orca&apos;s built-in browser — from the terminal, markdown, and
+              the editor. Shift+Cmd/Ctrl+click always uses your system browser.
             </p>
           </div>
           <button
@@ -129,6 +208,7 @@ export function BrowserPane({ settings, updateSettings }: BrowserPaneProps): Rea
 
       {showCookies ? (
         <SearchableSetting
+          id="browser-session-cookies"
           title="Session & Cookies"
           description="Manage browser profiles and import cookies from Chrome, Edge, or other browsers."
           keywords={[

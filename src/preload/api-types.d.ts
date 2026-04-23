@@ -21,6 +21,9 @@ import type {
   GitHubWorkItemDetails,
   GitHubViewer,
   IssueInfo,
+  LinearViewer,
+  LinearConnectionStatus,
+  LinearIssue,
   NotificationDispatchRequest,
   NotificationDispatchResult,
   OpenCodeStatusEvent,
@@ -163,6 +166,7 @@ export type DetectedBrowserInfo = {
 export type PreflightStatus = {
   git: { installed: boolean }
   gh: { installed: boolean; authenticated: boolean }
+  linear: { connected: boolean }
 }
 
 export type RefreshAgentsResult = {
@@ -294,7 +298,7 @@ export type PreloadApi = {
     }) => Promise<{ repo: Repo } | { error: string }>
     onCloneProgress: (callback: (data: { phase: string; percent: number }) => void) => () => void
     getGitUsername: (args: { repoId: string }) => Promise<string>
-    getBaseRefDefault: (args: { repoId: string }) => Promise<string>
+    getBaseRefDefault: (args: { repoId: string }) => Promise<string | null>
     searchBaseRefs: (args: { repoId: string; query: string; limit?: number }) => Promise<string[]>
     onChanged: (callback: () => void) => () => void
   }
@@ -356,7 +360,10 @@ export type PreloadApi = {
     repoSlug: (args: { repoPath: string }) => Promise<{ owner: string; repo: string } | null>
     prForBranch: (args: { repoPath: string; branch: string }) => Promise<PRInfo | null>
     issue: (args: { repoPath: string; number: number }) => Promise<IssueInfo | null>
-    workItem: (args: { repoPath: string; number: number }) => Promise<GitHubWorkItem | null>
+    workItem: (args: {
+      repoPath: string
+      number: number
+    }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
     workItemDetails: (args: {
       repoPath: string
       number: number
@@ -380,7 +387,7 @@ export type PreloadApi = {
       repoPath: string
       limit?: number
       query?: string
-    }) => Promise<GitHubWorkItem[]>
+    }) => Promise<Omit<GitHubWorkItem, 'repoId'>[]>
     prChecks: (args: {
       repoPath: string
       prNumber: number
@@ -405,6 +412,19 @@ export type PreloadApi = {
     }) => Promise<{ ok: true } | { ok: false; error: string }>
     checkOrcaStarred: () => Promise<boolean | null>
     starOrca: () => Promise<boolean>
+  }
+  linear: {
+    connect: (args: {
+      apiKey: string
+    }) => Promise<{ ok: true; viewer: LinearViewer } | { ok: false; error: string }>
+    disconnect: () => Promise<void>
+    status: () => Promise<LinearConnectionStatus>
+    searchIssues: (args: { query: string; limit?: number }) => Promise<LinearIssue[]>
+    listIssues: (args?: {
+      filter?: 'assigned' | 'created' | 'all' | 'completed'
+      limit?: number
+    }) => Promise<LinearIssue[]>
+    getIssue: (args: { id: string }) => Promise<LinearIssue | null>
   }
   starNag: {
     onShow: (callback: () => void) => () => void
@@ -484,7 +504,7 @@ export type PreloadApi = {
   updater: {
     getVersion: () => Promise<string>
     getStatus: () => Promise<UpdateStatus>
-    check: () => Promise<void>
+    check: (options?: { includePrerelease?: boolean }) => Promise<void>
     download: () => Promise<void>
     quitAndInstall: () => Promise<void>
     dismissNudge: () => Promise<void>
@@ -613,7 +633,9 @@ export type PreloadApi = {
     onToggleRightSidebar: (callback: () => void) => () => void
     onToggleWorktreePalette: (callback: () => void) => () => void
     onOpenQuickOpen: (callback: () => void) => () => void
+    onOpenNewWorkspace: (callback: () => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
+    onWorktreeHistoryNavigate: (callback: (direction: 'back' | 'forward') => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
     onRequestTabCreate: (
       callback: (data: { requestId: string; url: string; worktreeId?: string }) => void
@@ -634,6 +656,38 @@ export type PreloadApi = {
     onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
       callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
+    ) => () => void
+    onCreateTerminal: (
+      callback: (data: { worktreeId: string; command?: string; title?: string }) => void
+    ) => () => void
+    onRequestTerminalCreate: (
+      callback: (data: {
+        requestId: string
+        worktreeId?: string
+        command?: string
+        title?: string
+      }) => void
+    ) => () => void
+    replyTerminalCreate: (reply: {
+      requestId: string
+      tabId?: string
+      title?: string
+      error?: string
+    }) => void
+    onSplitTerminal: (
+      callback: (data: {
+        tabId: string
+        paneRuntimeId: number
+        direction: 'horizontal' | 'vertical'
+        command?: string
+      }) => void
+    ) => () => void
+    onRenameTerminal: (
+      callback: (data: { tabId: string; title: string | null }) => void
+    ) => () => void
+    onFocusTerminal: (callback: (data: { tabId: string; worktreeId: string }) => void) => () => void
+    onCloseTerminal: (
+      callback: (data: { tabId: string; paneRuntimeId?: number }) => void
     ) => () => void
     onTerminalZoom: (callback: (direction: 'in' | 'out' | 'reset') => void) => () => void
     readClipboardText: () => Promise<string>

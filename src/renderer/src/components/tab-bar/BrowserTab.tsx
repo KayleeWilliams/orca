@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Globe, X, ExternalLink, Columns2, Rows2 } from 'lucide-react'
+import { Globe, X, ExternalLink, Columns2, Rows2, Copy } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +51,7 @@ export default function BrowserTab({
   onClose,
   onCloseToRight,
   onSplitGroup,
+  onDuplicate,
   dragData
 }: {
   tab: BrowserTabState
@@ -60,6 +61,7 @@ export default function BrowserTab({
   onClose: () => void
   onCloseToRight: () => void
   onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
+  onDuplicate: () => void
   dragData: TabDragItemData
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -185,6 +187,11 @@ export default function BrowserTab({
           <DropdownMenuItem onSelect={() => onSplitGroup('right', tab.id)}>
             <Columns2 className="mr-1.5 size-3.5" />
             Split Right
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onDuplicate}>
+            <Copy className="mr-1.5 size-3.5" />
+            Duplicate Tab
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onClose}>Close</DropdownMenuItem>

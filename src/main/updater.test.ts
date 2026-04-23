@@ -48,12 +48,14 @@ const {
     autoUpdaterMock.downloadUpdate.mockReset()
     autoUpdaterMock.quitAndInstall.mockReset()
     autoUpdaterMock.setFeedURL.mockClear()
+    autoUpdaterMock.allowPrerelease = false
     delete (autoUpdaterMock as Record<string, unknown>).verifyUpdateCodeSignature
   }
 
   const autoUpdaterMock = {
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    allowPrerelease: false,
     on,
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
@@ -203,6 +205,47 @@ describe('updater', () => {
     )
   })
 
+  it('opts into the RC channel when checkForUpdatesFromMenu is called with includePrerelease', async () => {
+    autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+    const mainWindow = { webContents: { send: vi.fn() } }
+
+    const { setupAutoUpdater, checkForUpdatesFromMenu } = await import('./updater')
+
+    // Why: pass a recent timestamp so the startup background check is
+    // deferred. We want to observe the state of the updater *before* any
+    // RC-mode call, not race with the startup check.
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    const setupFeedUrlCalls = autoUpdaterMock.setFeedURL.mock.calls.length
+    expect(autoUpdaterMock.allowPrerelease).not.toBe(true)
+
+    checkForUpdatesFromMenu({ includePrerelease: true })
+
+    expect(autoUpdaterMock.allowPrerelease).toBe(true)
+    const newCalls = autoUpdaterMock.setFeedURL.mock.calls.slice(setupFeedUrlCalls)
+    expect(newCalls).toEqual([[{ provider: 'github', owner: 'stablyai', repo: 'orca' }]])
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+
+    // Second RC-mode invocation should not re-set the feed URL.
+    checkForUpdatesFromMenu({ includePrerelease: true })
+    expect(autoUpdaterMock.setFeedURL.mock.calls.length).toBe(setupFeedUrlCalls + 1)
+  })
+
+  it('leaves the feed URL alone for a normal user-initiated check', async () => {
+    autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+    const mainWindow = { webContents: { send: vi.fn() } }
+
+    const { setupAutoUpdater, checkForUpdatesFromMenu } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    const initialFeedUrlCalls = autoUpdaterMock.setFeedURL.mock.calls.length
+
+    checkForUpdatesFromMenu()
+    checkForUpdatesFromMenu({ includePrerelease: false })
+
+    expect(autoUpdaterMock.setFeedURL.mock.calls.length).toBe(initialFeedUrlCalls)
+    expect(autoUpdaterMock.allowPrerelease).not.toBe(true)
+  })
+
   it('defers quitAndInstall through the shared main-process entrypoint', async () => {
     vi.useFakeTimers()
 
@@ -293,6 +336,59 @@ describe('updater', () => {
 
     vi.advanceTimersByTime(60 * 1000)
     expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(setLastUpdateCheckAt).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates rapid focus-triggered daily checks before checking status arrives', async () => {
+    let lastUpdateCheckAt = Date.now()
+    const mainWindow = { webContents: { send: vi.fn() } }
+
+    autoUpdaterMock.checkForUpdates.mockImplementation(() => new Promise(() => {}))
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, {
+      getLastUpdateCheckAt: () => lastUpdateCheckAt
+    })
+
+    lastUpdateCheckAt = Date.now() - 25 * 60 * 60 * 1000
+    appMock.emit('browser-window-focus')
+    appMock.emit('browser-window-focus')
+
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not persist lastUpdateCheckAt when a focus-triggered check fails benignly', async () => {
+    let lastUpdateCheckAt = Date.now()
+    const setLastUpdateCheckAt = vi.fn()
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    autoUpdaterMock.checkForUpdates.mockImplementation(() => {
+      autoUpdaterMock.emit('checking-for-update')
+      queueMicrotask(() => {
+        autoUpdaterMock.emit('error', new Error('net::ERR_FAILED'))
+      })
+      return Promise.reject(new Error('net::ERR_FAILED'))
+    })
+
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, {
+      getLastUpdateCheckAt: () => lastUpdateCheckAt,
+      setLastUpdateCheckAt
+    })
+
+    lastUpdateCheckAt = Date.now() - 25 * 60 * 60 * 1000
+    appMock.emit('browser-window-focus')
+
+    await vi.waitFor(() => {
+      const statuses = sendMock.mock.calls
+        .filter(([channel]) => channel === 'updater:status')
+        .map(([, status]) => status)
+      expect(statuses).toContainEqual({ state: 'idle' })
+    })
+
     expect(setLastUpdateCheckAt).not.toHaveBeenCalled()
   })
 

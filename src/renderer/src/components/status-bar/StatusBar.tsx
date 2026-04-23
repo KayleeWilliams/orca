@@ -1,17 +1,12 @@
 /* eslint-disable max-lines -- Why: the status bar keeps provider rendering,
 interaction menus, and compact-layout behavior together so the hover/click
 states stay consistent across Claude and Codex. */
-import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Terminal, Wifi } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
-  ContextMenu,
-  ContextMenuCheckboxItem,
-  ContextMenuContent,
-  ContextMenuTrigger
-} from '@/components/ui/context-menu'
-import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -22,6 +17,7 @@ import { useAppStore } from '../../store'
 import type { CodexRateLimitAccountsState } from '../../../../shared/types'
 import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
 import { ProviderIcon, ProviderPanel } from './tooltip'
+import { ClaudeIcon, OpenAIIcon } from './icons'
 import { markLiveCodexSessionsForRestart } from '@/lib/codex-session-restart'
 import { SshStatusSegment } from './SshStatusSegment'
 import { SessionsStatusSegment } from './SessionsStatusSegment'
@@ -399,6 +395,8 @@ function ProviderDetailsMenu({
 // StatusBar
 // ---------------------------------------------------------------------------
 
+const CLOSE_ALL_CONTEXT_MENUS_EVENT = 'orca-close-all-context-menus'
+
 function StatusBarInner(): React.JSX.Element | null {
   const rateLimits = useAppStore((s) => s.rateLimits)
   const refreshRateLimits = useAppStore((s) => s.refreshRateLimits)
@@ -407,9 +405,17 @@ function StatusBarInner(): React.JSX.Element | null {
   const toggleStatusBarItem = useAppStore((s) => s.toggleStatusBarItem)
   const containerRef = useRef<HTMLDivElement>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 })
 
   const [containerWidth, setContainerWidth] = useState(900)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+
+  useEffect(() => {
+    const closeMenu = (): void => setMenuOpen(false)
+    window.addEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+    return () => window.removeEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
+  }, [])
 
   const containerRefCallback = useCallback((node: HTMLDivElement | null) => {
     if (resizeObserverRef.current) {
@@ -462,80 +468,103 @@ function StatusBarInner(): React.JSX.Element | null {
   const iconOnly = containerWidth < 500
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          ref={containerRefCallback}
-          className="flex items-center h-6 min-h-[24px] px-3 gap-4 border-t border-border bg-[var(--bg-titlebar,var(--card))] text-xs select-none shrink-0"
-        >
-          <div className="flex items-center gap-3">
-            {showClaude && (
-              <ProviderDetailsMenu
-                provider={claude}
-                compact={compact}
-                iconOnly={iconOnly}
-                ariaLabel="Open Claude usage details"
-              />
-            )}
-            {showCodex && <CodexSwitcherMenu codex={codex} compact={compact} iconOnly={iconOnly} />}
-            {anyVisible && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleRefresh}
-                    disabled={isRefreshing}
-                    className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-                    aria-label="Refresh rate limits"
-                  >
-                    <RefreshCw
-                      size={11}
-                      className={isRefreshing || anyFetching ? 'animate-spin' : ''}
-                    />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6}>
-                  Refresh usage data
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+    <div
+      ref={containerRefCallback}
+      className="flex items-center h-6 min-h-[24px] px-3 gap-4 border-t border-border bg-[var(--bg-titlebar,var(--card))] text-xs select-none shrink-0 relative"
+      onContextMenuCapture={(event) => {
+        // Why: mirror the right-click pattern used across the app
+        // (WorktreeContextMenu, TerminalContextMenu, tab bar) — dispatch the
+        // global close event so peer menus dismiss, then place a hidden
+        // trigger at the cursor so the menu anchors there. This also lets a
+        // second right-click reposition the menu instead of leaving it where
+        // it first opened.
+        event.preventDefault()
+        window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
+        const bounds = event.currentTarget.getBoundingClientRect()
+        setMenuPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
+        setMenuOpen(true)
+      }}
+    >
+      <div className="flex items-center gap-3">
+        {showClaude && (
+          <ProviderDetailsMenu
+            provider={claude}
+            compact={compact}
+            iconOnly={iconOnly}
+            ariaLabel="Open Claude usage details"
+          />
+        )}
+        {showCodex && <CodexSwitcherMenu codex={codex} compact={compact} iconOnly={iconOnly} />}
+        {anyVisible && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                aria-label="Refresh rate limits"
+              >
+                <RefreshCw
+                  size={11}
+                  className={isRefreshing || anyFetching ? 'animate-spin' : ''}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={6}>
+              Refresh usage data
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
-          <div className="flex-1" />
+      <div className="flex-1" />
 
-          <div className="flex items-center gap-3">
-            {showSessions && <SessionsStatusSegment compact={compact} iconOnly={iconOnly} />}
-            {showSsh && <SshStatusSegment compact={compact} iconOnly={iconOnly} />}
-          </div>
-        </div>
-      </ContextMenuTrigger>
+      <div className="flex items-center gap-3">
+        {showSessions && <SessionsStatusSegment compact={compact} iconOnly={iconOnly} />}
+        {showSsh && <SshStatusSegment compact={compact} iconOnly={iconOnly} />}
+      </div>
 
-      <ContextMenuContent className="min-w-0 w-fit">
-        <ContextMenuCheckboxItem
-          checked={statusBarItems.includes('claude')}
-          onCheckedChange={() => toggleStatusBarItem('claude')}
-        >
-          Claude Usage
-        </ContextMenuCheckboxItem>
-        <ContextMenuCheckboxItem
-          checked={statusBarItems.includes('codex')}
-          onCheckedChange={() => toggleStatusBarItem('codex')}
-        >
-          Codex Usage
-        </ContextMenuCheckboxItem>
-        <ContextMenuCheckboxItem
-          checked={statusBarItems.includes('ssh')}
-          onCheckedChange={() => toggleStatusBarItem('ssh')}
-        >
-          SSH Status
-        </ContextMenuCheckboxItem>
-        <ContextMenuCheckboxItem
-          checked={statusBarItems.includes('sessions')}
-          onCheckedChange={() => toggleStatusBarItem('sessions')}
-        >
-          Terminal Sessions
-        </ContextMenuCheckboxItem>
-      </ContextMenuContent>
-    </ContextMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            aria-hidden
+            tabIndex={-1}
+            className="pointer-events-none absolute size-px opacity-0"
+            style={{ left: menuPoint.x, top: menuPoint.y }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="min-w-0 w-fit" sideOffset={0} align="start">
+          <DropdownMenuCheckboxItem
+            checked={statusBarItems.includes('claude')}
+            onCheckedChange={() => toggleStatusBarItem('claude')}
+          >
+            <ClaudeIcon size={14} />
+            Claude Usage
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={statusBarItems.includes('codex')}
+            onCheckedChange={() => toggleStatusBarItem('codex')}
+          >
+            <OpenAIIcon size={14} />
+            Codex Usage
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={statusBarItems.includes('ssh')}
+            onCheckedChange={() => toggleStatusBarItem('ssh')}
+          >
+            <Wifi className="size-3.5" />
+            SSH Status
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={statusBarItems.includes('sessions')}
+            onCheckedChange={() => toggleStatusBarItem('sessions')}
+          >
+            <Terminal className="size-3.5" />
+            Terminal Sessions
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 

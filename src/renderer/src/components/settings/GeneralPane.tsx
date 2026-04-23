@@ -768,7 +768,14 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.api.updater.check()}
+              // Why: Shift-click opts this check into the release-candidate
+              // channel. Keep the affordance hidden — it's a power-user
+              // shortcut, not a discoverable toggle.
+              onClick={(event) =>
+                window.api.updater.check({
+                  includePrerelease: event.shiftKey
+                })
+              }
               disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
               className="gap-2"
             >

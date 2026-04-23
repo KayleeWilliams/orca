@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Globe } from 'lucide-react'
+import { Globe, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
 import { useAppStore } from '@/store'
+import {
+  buildSearchUrl,
+  looksLikeSearchQuery,
+  normalizeBrowserNavigationUrl,
+  SEARCH_ENGINE_LABELS,
+  DEFAULT_SEARCH_ENGINE,
+  type SearchEngine
+} from '../../../../shared/browser-url'
 
 const MAX_SUGGESTIONS = 8
+
+type SuggestionEntry = {
+  url: string
+  title: string
+  subtitle: string
+  lastVisitedAt: number
+  visitCount: number
+  isSearch: boolean
+}
 
 type BrowserAddressBarProps = {
   value: string
@@ -47,39 +64,81 @@ export default function BrowserAddressBar({
   const [open, setOpen] = useState(false)
   const [selectedValue, setSelectedValue] = useState('')
   const browserUrlHistory = useAppStore((s) => s.browserUrlHistory)
+  const browserDefaultSearchEngine = useAppStore((s) => s.browserDefaultSearchEngine)
   const closingRef = useRef(false)
   const openedAtRef = useRef(0)
 
-  const suggestions = useMemo(() => {
-    if (browserUrlHistory.length === 0) {
-      return []
-    }
+  const searchEngine: SearchEngine =
+    (browserDefaultSearchEngine as SearchEngine | null) ?? DEFAULT_SEARCH_ENGINE
+
+  const suggestions = useMemo((): SuggestionEntry[] => {
     const trimmed = value.trim()
     if (trimmed === '' || trimmed === 'about:blank' || trimmed.startsWith('data:')) {
+      if (browserUrlHistory.length === 0) {
+        return []
+      }
       return [...browserUrlHistory]
         .sort((a, b) => b.lastVisitedAt - a.lastVisitedAt)
         .slice(0, MAX_SUGGESTIONS)
+        .map((entry) => ({ ...entry, subtitle: entry.url, isSearch: false }))
     }
 
-    const scored = browserUrlHistory
-      .map((entry) => ({ entry, score: scoreSuggestion(entry, trimmed) }))
-      .filter((item) => item.score >= 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MAX_SUGGESTIONS)
+    const historySuggestions: SuggestionEntry[] =
+      browserUrlHistory.length > 0
+        ? browserUrlHistory
+            .map((entry) => ({ entry, score: scoreSuggestion(entry, trimmed) }))
+            .filter((item) => item.score >= 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, MAX_SUGGESTIONS - 1)
+            .map((item) => ({ ...item.entry, subtitle: item.entry.url, isSearch: false }))
+        : []
 
-    return scored.map((item) => item.entry)
-  }, [browserUrlHistory, value])
+    // Why: the top row of the dropdown must always mirror what pressing Enter
+    // will do — i.e. what `normalizeBrowserNavigationUrl` resolves to. Chrome
+    // and Firefox omniboxes work this way: for URL-like inputs the top row is
+    // the typed URL itself (navigate), and for bare queries it is the search.
+    // The earlier implementation appended a "Google Search" row as a fallback
+    // for URL-like inputs, which then got auto-selected when no history
+    // matched — so Enter on "www.example.com" hit Google instead of the site.
+    const isQuery = looksLikeSearchQuery(trimmed)
+    const topAction: SuggestionEntry = isQuery
+      ? {
+          url: buildSearchUrl(trimmed, searchEngine),
+          title: trimmed,
+          subtitle: `${SEARCH_ENGINE_LABELS[searchEngine]} Search`,
+          lastVisitedAt: 0,
+          visitCount: 0,
+          isSearch: true
+        }
+      : {
+          url: normalizeBrowserNavigationUrl(trimmed, searchEngine) ?? trimmed,
+          title: trimmed,
+          subtitle: '',
+          lastVisitedAt: 0,
+          visitCount: 0,
+          isSearch: false
+        }
+
+    // Why: if a history row already targets the same URL as the top action,
+    // skip the synthetic top row — the history row is more informative (real
+    // page title) and will be auto-selected, so Enter still navigates to the
+    // same place.
+    const duplicateIdx = historySuggestions.findIndex((h) => h.url === topAction.url)
+    if (duplicateIdx >= 0) {
+      return historySuggestions.slice(0, MAX_SUGGESTIONS)
+    }
+
+    return [topAction, ...historySuggestions].slice(0, MAX_SUGGESTIONS)
+  }, [browserUrlHistory, value, searchEngine])
 
   const handleFocus = useCallback(() => {
     if (closingRef.current) {
       return
     }
     inputRef.current?.select()
-    if (browserUrlHistory.length > 0) {
-      openedAtRef.current = Date.now()
-      setOpen(true)
-    }
-  }, [browserUrlHistory.length, inputRef])
+    openedAtRef.current = Date.now()
+    setOpen(true)
+  }, [inputRef])
 
   const handleBlur = useCallback(() => {
     // Why: delay close so that clicking a suggestion item registers before
@@ -156,11 +215,19 @@ export default function BrowserAddressBar({
     [open, suggestions, selectedValue, handleSelect]
   )
 
+  // Why: close the dropdown only when the input has lost focus AND there are
+  // no suggestions. Previously this closed unconditionally on empty suggestions,
+  // which caused the dropdown to vanish mid-typing when backspacing produced a
+  // query that didn't match any history entries. Keeping the popover open while
+  // focused lets the user continue editing and see results reappear.
   useEffect(() => {
     if (open && suggestions.length === 0) {
+      if (inputRef.current && document.activeElement === inputRef.current) {
+        return
+      }
       setOpen(false)
     }
-  }, [open, suggestions.length])
+  }, [open, suggestions.length, inputRef])
 
   // Why: auto-select the top suggestion so Enter navigates to the best match
   // without an extra ArrowDown. Fall back to clearing selection when nothing
@@ -234,10 +301,18 @@ export default function BrowserAddressBar({
                     onSelect={() => handleSelect(entry.url)}
                     className="flex items-center gap-2 px-3 py-2"
                   >
-                    <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                    {entry.isSearch ? (
+                      <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                    )}
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate text-sm">{entry.title}</span>
-                      <span className="truncate text-xs text-muted-foreground">{entry.url}</span>
+                      {entry.subtitle ? (
+                        <span className="truncate text-xs text-muted-foreground">
+                          {entry.subtitle}
+                        </span>
+                      ) : null}
                     </div>
                   </CommandItem>
                 ))}

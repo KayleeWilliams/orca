@@ -230,7 +230,7 @@ export async function getWorkItemDetails(
   // Why: getWorkItem already handles acquire/release. We call it first (outside
   // our semaphore) so the known-cheap lookup doesn't compete with the richer
   // detail fetches that follow.
-  const item: GitHubWorkItem | null = await getWorkItem(repoPath, number)
+  const item: Omit<GitHubWorkItem, 'repoId'> | null = await getWorkItem(repoPath, number)
   if (!item) {
     return null
   }

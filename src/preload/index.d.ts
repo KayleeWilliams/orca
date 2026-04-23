@@ -37,7 +37,7 @@ type ReposApi = {
   cloneAbort: () => Promise<void>
   onCloneProgress: (callback: (data: { phase: string; percent: number }) => void) => () => void
   getGitUsername: (args: { repoId: string }) => Promise<string>
-  getBaseRefDefault: (args: { repoId: string }) => Promise<string>
+  getBaseRefDefault: (args: { repoId: string }) => Promise<string | null>
   searchBaseRefs: (args: { repoId: string; query: string; limit?: number }) => Promise<string[]>
   onChanged: (callback: () => void) => () => void
 }
@@ -89,7 +89,13 @@ type GhApi = {
   repoSlug: (args: { repoPath: string }) => Promise<{ owner: string; repo: string } | null>
   prForBranch: (args: { repoPath: string; branch: string }) => Promise<PRInfo | null>
   issue: (args: { repoPath: string; number: number }) => Promise<IssueInfo | null>
-  workItem: (args: { repoPath: string; number: number }) => Promise<GitHubWorkItem | null>
+  // Why: main-process mappers don't know the Orca Repo.id, so IPC returns
+  // items without `repoId`. The renderer stamps repoId based on the requesting
+  // repo before exposing items to UI code.
+  workItem: (args: {
+    repoPath: string
+    number: number
+  }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
   workItemDetails: (args: {
     repoPath: string
     number: number
@@ -108,7 +114,7 @@ type GhApi = {
     repoPath: string
     limit?: number
     query?: string
-  }) => Promise<GitHubWorkItem[]>
+  }) => Promise<Omit<GitHubWorkItem, 'repoId'>[]>
   prChecks: (args: {
     repoPath: string
     prNumber: number

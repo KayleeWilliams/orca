@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { CornerDownLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // Why: rendered as a DOM sibling overlay inside the editor container rather
@@ -21,8 +22,8 @@ export function DiffCommentPopover({
   onSubmit
 }: Props): React.JSX.Element {
   const [body, setBody] = useState('')
-  // Why: `submitting` prevents duplicate comment rows when the user
-  // double-clicks the Comment button or hits Cmd/Ctrl+Enter twice before the
+  // Why: `submitting` prevents duplicate note rows when the user
+  // double-clicks the Add note button or hits Enter twice before the
   // IPC round-trip resolves. Iteration 1 made submission async and keeps the
   // popover open on failure (to preserve the draft); that widened the window
   // between the first click and `setPopover(null)` during which a second
@@ -112,7 +113,7 @@ export function DiffCommentPopover({
       <textarea
         ref={textareaRef}
         className="orca-diff-comment-popover-textarea"
-        placeholder="Add comment for the AI"
+        placeholder="Add note for the AI"
         value={body}
         onChange={(e) => {
           setBody(e.target.value)
@@ -124,11 +125,18 @@ export function DiffCommentPopover({
             onCancel()
             return
           }
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          // Why: plain Enter submits so the note popover behaves like a
+          // single-field form. Shift+Enter inserts a newline (browser default)
+          // so multi-line notes are still possible. We also accept
+          // Cmd/Ctrl+Enter as a submit alias so users who learned the old
+          // shortcut aren't silently broken. IME composition (isComposing) is
+          // excluded because Enter during composition only confirms the
+          // conversion candidate — submitting then would send a half-typed
+          // note for CJK/IME users. We guard against a second Enter while an
+          // earlier submit is still awaiting IPC — otherwise it would enqueue
+          // a duplicate addDiffComment call.
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
             e.preventDefault()
-            // Why: guard against a second Cmd/Ctrl+Enter while an earlier
-            // submit is still awaiting IPC — otherwise it would enqueue a
-            // duplicate addDiffComment call.
             if (submitting) {
               return
             }
@@ -142,7 +150,8 @@ export function DiffCommentPopover({
           Cancel
         </Button>
         <Button size="sm" onClick={handleSubmit} disabled={submitting || body.trim().length === 0}>
-          {submitting ? 'Saving…' : 'Comment'}
+          {submitting ? 'Saving…' : 'Add note'}
+          {!submitting && <CornerDownLeft className="ml-1 size-3 opacity-70" />}
         </Button>
       </div>
     </div>

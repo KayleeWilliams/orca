@@ -86,6 +86,7 @@ import { createTabsSlice } from './tabs'
 import { createUISlice } from './ui'
 import { createSettingsSlice } from './settings'
 import { createGitHubSlice } from './github'
+import { createLinearSlice } from './linear'
 import { createEditorSlice } from './editor'
 import { createStatsSlice } from './stats'
 import { createClaudeUsageSlice } from './claude-usage'
@@ -94,6 +95,8 @@ import { createBrowserSlice } from './browser'
 import { createRateLimitSlice } from './rate-limits'
 import { createSshSlice } from './ssh'
 import { createDiffCommentsSlice } from './diffComments'
+import { createDetectedAgentsSlice } from './detected-agents'
+import { createWorktreeNavHistorySlice } from './worktree-nav-history'
 
 const WT = 'repo1::/tmp/feature'
 
@@ -106,6 +109,7 @@ function createTestStore() {
     ...createUISlice(...a),
     ...createSettingsSlice(...a),
     ...createGitHubSlice(...a),
+    ...createLinearSlice(...a),
     ...createEditorSlice(...a),
     ...createStatsSlice(...a),
     ...createClaudeUsageSlice(...a),
@@ -113,7 +117,9 @@ function createTestStore() {
     ...createBrowserSlice(...a),
     ...createRateLimitSlice(...a),
     ...createSshSlice(...a),
-    ...createDiffCommentsSlice(...a)
+    ...createDiffCommentsSlice(...a),
+    ...createDetectedAgentsSlice(...a),
+    ...createWorktreeNavHistorySlice(...a)
   }))
 }
 
@@ -761,6 +767,7 @@ describe('TabsSlice', () => {
               comment: '',
               linkedIssue: null,
               linkedPR: null,
+              linkedLinearIssue: null,
               isArchived: false,
               isUnread: false,
               isPinned: false,
@@ -853,6 +860,7 @@ describe('TabsSlice', () => {
               comment: '',
               linkedIssue: null,
               linkedPR: null,
+              linkedLinearIssue: null,
               isArchived: false,
               isUnread: false,
               isPinned: false,
@@ -925,6 +933,7 @@ describe('TabsSlice', () => {
               comment: '',
               linkedIssue: null,
               linkedPR: null,
+              linkedLinearIssue: null,
               isArchived: false,
               isUnread: false,
               isPinned: false,

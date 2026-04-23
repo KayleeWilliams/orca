@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, ExternalLink, RefreshCw, Terminal } from 'lucide-react'
 import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
 import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
+import { useDetectedAgents } from '@/hooks/useDetectedAgents'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { cn } from '@/lib/utils'
@@ -204,35 +205,22 @@ function AgentRow({
 }
 
 export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React.JSX.Element {
-  const [detectedIds, setDetectedIds] = useState<Set<string> | null>(null)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-
-  useEffect(() => {
-    void window.api.preflight.detectAgents().then((ids) => {
-      setDetectedIds(new Set(ids))
-    })
-  }, [])
-
-  const handleRefresh = useCallback(async (): Promise<void> => {
-    // Why: refresh re-spawns the user's login shell to re-capture PATH
-    // (preflight:refreshAgents on the main side). This handles the
-    // "installed a new CLI, Orca doesn't see it yet" case without a restart.
-    if (isRefreshing) {
-      return
-    }
-    setIsRefreshing(true)
-    try {
-      const result = await window.api.preflight.refreshAgents()
-      setDetectedIds(new Set(result.agents))
-    } finally {
-      setIsRefreshing(false)
-    }
-  }, [isRefreshing])
+  const { detectedIds: detectedList, isRefreshing, refresh } = useDetectedAgents()
+  // Why: refresh re-spawns the user's login shell to re-capture PATH
+  // (preflight:refreshAgents on the main side). This handles the
+  // "installed a new CLI, Orca doesn't see it yet" case without a restart.
+  const handleRefresh = (): void => {
+    void refresh()
+  }
+  const detectedIds = useMemo<Set<string> | null>(
+    () => (detectedList ? new Set(detectedList) : null),
+    [detectedList]
+  )
 
   const defaultAgent = settings.defaultTuiAgent
   const cmdOverrides = settings.agentCmdOverrides ?? {}
 
-  const setDefault = (id: TuiAgent | null): void => {
+  const setDefault = (id: TuiAgent | 'blank' | null): void => {
     updateSettings({ defaultTuiAgent: id })
   }
 
@@ -251,7 +239,12 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
     (a) => detectedIds !== null && !detectedIds.has(a.id)
   )
 
-  const isAutoDefault = defaultAgent === null || !detectedIds?.has(defaultAgent)
+  // Why: 'blank' is an explicit no-agent preference, not an auto fallback,
+  // so the Auto pill should only light up when the default is null OR when a
+  // selected agent id is no longer detected on PATH.
+  const isAutoDefault =
+    defaultAgent === null || (defaultAgent !== 'blank' && !detectedIds?.has(defaultAgent))
+  const isBlankDefault = defaultAgent === 'blank'
 
   return (
     <div className="space-y-8">
@@ -260,8 +253,7 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Default Agent</h3>
           <p className="text-xs text-muted-foreground">
-            Pre-selected agent when opening a new workspace. Set to Auto to use the first detected
-            agent.
+            Pre-selected agent when opening a new workspace.
           </p>
         </div>
 
@@ -279,6 +271,25 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
           >
             {isAutoDefault && <Check className="size-3.5" />}
             Auto
+          </button>
+
+          {/* Why: users who prefer to open a raw shell by default need a
+              first-class "no agent" choice here — without it, the Auto pill
+              is the closest option but silently launches the first detected
+              agent, which is the opposite of what they want. */}
+          <button
+            type="button"
+            onClick={() => setDefault('blank')}
+            className={cn(
+              'flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-all',
+              isBlankDefault
+                ? 'border-foreground/20 bg-foreground/8 font-medium ring-1 ring-foreground/15'
+                : 'border-border/50 bg-muted/30 text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground'
+            )}
+          >
+            <Terminal className="size-3.5" />
+            No agent (blank terminal)
+            {isBlankDefault && <Check className="size-3.5" />}
           </button>
 
           {/* Detected agent pills */}
@@ -315,7 +326,7 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
             </span>
             <button
               type="button"
-              onClick={() => void handleRefresh()}
+              onClick={handleRefresh}
               disabled={isRefreshing}
               title="Re-read your shell PATH and re-detect installed agents"
               className={cn(

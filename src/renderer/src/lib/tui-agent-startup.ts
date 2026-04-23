@@ -20,15 +20,24 @@ export function buildAgentStartupPlan(args: {
   prompt: string
   cmdOverrides: Partial<Record<TuiAgent, string>>
   platform: NodeJS.Platform
+  allowEmptyPromptLaunch?: boolean
 }): AgentStartupPlan | null {
-  const { agent, prompt, cmdOverrides, platform } = args
+  const { agent, prompt, cmdOverrides, platform, allowEmptyPromptLaunch = false } = args
   const trimmedPrompt = prompt.trim()
-  if (!trimmedPrompt) {
-    return null
-  }
-
   const config = TUI_AGENT_CONFIG[agent]
   const baseCommand = cmdOverrides[agent] ?? config.launchCmd
+
+  if (!trimmedPrompt) {
+    if (!allowEmptyPromptLaunch) {
+      return null
+    }
+    return {
+      launchCommand: baseCommand,
+      expectedProcess: config.expectedProcess,
+      followupPrompt: null
+    }
+  }
+
   const quotedPrompt = quoteStartupArg(trimmedPrompt, platform)
 
   if (config.promptInjectionMode === 'argv') {

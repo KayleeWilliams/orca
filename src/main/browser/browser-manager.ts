@@ -33,6 +33,7 @@ import {
   setupGuestContextMenu,
   setupGuestShortcutForwarding
 } from './browser-guest-ui'
+import { ANTI_DETECTION_SCRIPT } from './anti-detection'
 
 export type BrowserGuestRegistration = {
   browserPageId?: string
@@ -97,6 +98,66 @@ export class BrowserManager {
   private readonly pendingDownloadIdsByGuestId = new Map<number, string[]>()
   private readonly downloadsById = new Map<string, ActiveDownload>()
   private readonly grabSessionController = new BrowserGrabSessionController()
+
+  // Why: Page.addScriptToEvaluateOnNewDocument (via the CDP debugger) is the
+  // only reliable way to run JS before page scripts on every navigation.
+  // The previous approach — executeJavaScript on did-start-navigation — ran
+  // on the OLD page context during navigation, so overrides were never
+  // present when the new page's Turnstile script executed.
+  //
+  // Returns a cleanup function that removes the detach listener and prevents
+  // further re-attach attempts.
+  private injectAntiDetection(guest: Electron.WebContents): () => void {
+    let disposed = false
+
+    const attach = (): void => {
+      if (disposed || guest.isDestroyed()) {
+        return
+      }
+      try {
+        if (!guest.debugger.isAttached()) {
+          guest.debugger.attach('1.3')
+        }
+        void guest.debugger
+          .sendCommand('Page.enable', {})
+          .then(() =>
+            guest.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+              source: ANTI_DETECTION_SCRIPT
+            })
+          )
+          .catch(() => {})
+      } catch {
+        /* best-effort — debugger may be unavailable */
+      }
+    }
+
+    // Why: the CDP proxy and bridge detach the debugger when they stop,
+    // which removes addScriptToEvaluateOnNewDocument injections. Re-attach
+    // so manual browsing retains anti-detection overrides after agent
+    // sessions end. The 500ms delay avoids racing with the proxy/bridge if
+    // it is mid-restart (detach → re-attach).
+    const onDetach = (): void => {
+      if (!disposed && !guest.isDestroyed()) {
+        setTimeout(attach, 500)
+      }
+    }
+
+    try {
+      attach()
+      guest.debugger.on('detach', onDetach)
+    } catch {
+      /* best-effort */
+    }
+
+    return () => {
+      disposed = true
+      try {
+        guest.debugger.off('detach', onDetach)
+      } catch {
+        /* guest may already be destroyed */
+      }
+    }
+  }
 
   private resolveBrowserTabIdForGuestWebContentsId(guestWebContentsId: number): string | null {
     return this.tabIdByWebContentsId.get(guestWebContentsId) ?? null
@@ -333,6 +394,13 @@ export class BrowserManager {
       return
     }
     this.policyAttachedGuestIds.add(guest.id)
+
+    // Why: Cloudflare Turnstile and similar bot detectors probe browser APIs
+    // (navigator.webdriver, plugins, window.chrome) that differ in Electron
+    // webviews vs real Chrome. Inject overrides on every page load so manual
+    // browsing passes challenges even without the CDP debugger attached.
+    const disposeAntiDetection = this.injectAntiDetection(guest)
+
     // Why: background throttling must be disabled so agent-driven screenshots
     // (Page.captureScreenshot via CDP proxy) can capture frames even when the
     // Orca window is not the focused foreground app. With throttling enabled,
@@ -373,6 +441,23 @@ export class BrowserManager {
     })
 
     const navigationGuard = (event: Electron.Event, url: string): void => {
+      // Why: blob: URLs are same-origin (inherit the creator's origin) and are
+      // used by Cloudflare Turnstile to load challenge resources inside iframes.
+      // Blocking them triggers error 600010 ("bot behavior detected"). Only
+      // allow blobs whose embedded origin is http(s) to maintain defense-in-depth
+      // against blob:null or other opaque-origin blobs.
+      if (url.startsWith('blob:https://') || url.startsWith('blob:http://')) {
+        return
+      }
+      // Why: file:// is permitted at `will-attach-webview` so the preview pane
+      // can render local HTML the user explicitly opened. After that initial
+      // load, a page must not be able to redirect the guest to file:// — that
+      // would let a remote page probe the local filesystem. Keep the in-guest
+      // navigation guard strict even though initial attach is permissive.
+      if (url.startsWith('file:')) {
+        event.preventDefault()
+        return
+      }
       if (!normalizeBrowserNavigationUrl(url)) {
         // Why: `will-attach-webview` only validates the initial src. Main must
         // keep enforcing the same allowlist for later guest navigations too.
@@ -405,6 +490,7 @@ export class BrowserManager {
     // guest surface is torn down, preventing the callbacks from preventing GC of
     // the underlying WebContents wrapper.
     this.policyCleanupByGuestId.set(guest.id, () => {
+      disposeAntiDetection()
       if (!guest.isDestroyed()) {
         guest.off('will-navigate', navigationGuard)
         guest.off('will-redirect', navigationGuard)

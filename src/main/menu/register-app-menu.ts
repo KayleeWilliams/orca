@@ -2,7 +2,7 @@ import { BrowserWindow, Menu, app } from 'electron'
 
 type RegisterAppMenuOptions = {
   onOpenSettings: () => void
-  onCheckForUpdates: () => void
+  onCheckForUpdates: (options: { includePrerelease: boolean }) => void
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomReset: () => void
@@ -38,7 +38,16 @@ export function registerAppMenu({
         { role: 'about' },
         {
           label: 'Check for Updates...',
-          click: () => onCheckForUpdates()
+          // Why: holding Shift while clicking opts this check into the
+          // release-candidate channel. The event carries the modifier keys
+          // down from the native menu — we only act on the mouse chord, not
+          // accelerator-triggered invocations (there is no accelerator on
+          // this item, so triggeredByAccelerator should always be false here,
+          // but guarding makes the intent explicit).
+          click: (_menuItem, _window, event) => {
+            const includePrerelease = !event.triggeredByAccelerator && event.shiftKey === true
+            onCheckForUpdates({ includePrerelease })
+          }
         },
         {
           label: 'Settings',
