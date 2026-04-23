@@ -184,15 +184,24 @@ export function registerFilesystemHandlers(store: Store): void {
 
   ipcMain.handle(
     'fs:deletePath',
-    async (_event, args: { targetPath: string; connectionId?: string }): Promise<void> => {
+    async (
+      _event,
+      args: { targetPath: string; connectionId?: string; recursive?: boolean }
+    ): Promise<void> => {
       if (args.connectionId) {
         const provider = getSshFilesystemProvider(args.connectionId)
         if (!provider) {
           throw new Error(`No filesystem provider for connection "${args.connectionId}"`)
         }
-        return provider.deletePath(args.targetPath)
+        return provider.deletePath(args.targetPath, args.recursive)
       }
-      const targetPath = await resolveAuthorizedPath(args.targetPath, store)
+      // Why: deleting must operate on the symlink itself, not its target.
+      // Following the link with realpath() would trash the real file — which
+      // could be another file inside the worktree, or a path outside all
+      // allowed roots that we would never be able to delete again.
+      const targetPath = await resolveAuthorizedPath(args.targetPath, store, {
+        preserveSymlink: true
+      })
 
       // Why: once auto-refresh exists, an external delete can race with a
       // UI-initiated delete. Swallowing ENOENT keeps the action idempotent

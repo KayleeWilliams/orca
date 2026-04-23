@@ -92,7 +92,7 @@ export type IFilesystemProvider = {
   readFile(filePath: string): Promise<FileReadResult>
   writeFile(filePath: string, content: string): Promise<void>
   stat(filePath: string): Promise<FileStat>
-  deletePath(targetPath: string): Promise<void>
+  deletePath(targetPath: string, recursive?: boolean): Promise<void>
   createFile(filePath: string): Promise<void>
   createDir(dirPath: string): Promise<void>
   rename(oldPath: string, newPath: string): Promise<void>
