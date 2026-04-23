@@ -20,7 +20,7 @@ import {
 import { basename, normalizeRelativePath } from '@/lib/path'
 import { getEditorDisplayLabel } from '@/components/editor/editor-labels'
 import { renameFileOnDisk } from '@/lib/rename-file'
-import { useAppStore } from '@/store'
+import { useWorktreeById } from '@/store/selectors'
 import { STATUS_COLORS, STATUS_LABELS } from '../right-sidebar/status-display'
 import type { GitFileStatus } from '../../../../shared/types'
 import type { OpenFile } from '../../store/slices/editor'
@@ -65,6 +65,7 @@ export default function EditorFileTab({
   dragData: TabDragItemData
   dropIndicator?: DropIndicator
 }): React.JSX.Element {
+  const worktree = useWorktreeById(file.worktreeId)
   // Why: no transform/transition/isDragging styling — the drag design is
   // that tabs stay visually anchored; only the blue insertion bar moves.
   const { attributes, listeners, setNodeRef } = useSortable({
@@ -111,16 +112,7 @@ export default function EditorFileTab({
     if (newName === oldName) {
       return
     }
-    const worktreePath = (() => {
-      const state = useAppStore.getState()
-      for (const worktrees of Object.values(state.worktreesByRepo)) {
-        const wt = worktrees.find((w) => w.id === file.worktreeId)
-        if (wt) {
-          return wt.path
-        }
-      }
-      return null
-    })()
+    const worktreePath = worktree?.path ?? null
     if (!worktreePath) {
       return
     }

@@ -29,9 +29,16 @@ import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-optio
 import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
 import type { PtyTransport } from './pty-transport'
+import type { ReplayingPanesRef } from './replay-guard'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { e2eConfig } from '@/lib/e2e-config'
+import {
+  SPLIT_TERMINAL_PANE_EVENT,
+  CLOSE_TERMINAL_PANE_EVENT,
+  type SplitTerminalPaneDetail,
+  type CloseTerminalPaneDetail
+} from '@/constants/terminal'
 
 type UseTerminalPaneLifecycleDeps = {
   tabId: string
@@ -70,6 +77,7 @@ type UseTerminalPaneLifecycleDeps = {
   paneLastThemeModeRef: React.RefObject<Map<number, 'dark' | 'light'>>
   panePtyBindingsRef: React.RefObject<Map<number, IDisposable>>
   pendingWritesRef: React.RefObject<Map<number, string>>
+  replayingPanesRef: ReplayingPanesRef
   isActiveRef: React.RefObject<boolean>
   isVisibleRef: React.RefObject<boolean>
   onPtyExitRef: React.RefObject<(ptyId: string) => void>
@@ -148,6 +156,7 @@ export function useTerminalPaneLifecycle({
   paneLastThemeModeRef,
   panePtyBindingsRef,
   pendingWritesRef,
+  replayingPanesRef,
   isActiveRef,
   isVisibleRef,
   onPtyExitRef,
@@ -280,6 +289,7 @@ export function useTerminalPaneLifecycle({
       startup,
       paneTransportsRef,
       pendingWritesRef,
+      replayingPanesRef,
       isActiveRef,
       isVisibleRef,
       onPtyExitRef,
@@ -383,7 +393,18 @@ export function useTerminalPaneLifecycle({
         selectionDisposablesRef.current.set(pane.id, selectionDisposable)
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
-          activate: (event, text) => handleOscLink(text, event as MouseEvent | undefined, linkDeps),
+          activate: (event, text) => {
+            handleOscLink(text, event as MouseEvent | undefined, linkDeps)
+            // Why: Cmd/Ctrl+clicking a link activates Orca handling (open file,
+            // new browser tab, system browser) which can steal focus from the
+            // terminal before the click's mouseup reaches ownerDocument. Without
+            // that mouseup, xterm's SelectionService leaves its drag-select
+            // mousemove listener attached, so returning to the terminal and
+            // moving the mouse extends a selection until the next click/Esc.
+            // clearSelection() explicitly detaches those listeners (see
+            // SelectionService._removeMouseDownListeners).
+            pane.terminal.clearSelection()
+          },
           // Show bottom-left tooltip on hover for OSC 8 hyperlinks (e.g.
           // GitHub owner/repo#issue references emitted by CLI tools) — same
           // behaviour as the WebLinksAddon provides for plain-text URLs.
@@ -461,6 +482,7 @@ export function useTerminalPaneLifecycle({
         clearRuntimePaneTitle(tabId, paneId)
         paneFontSizesRef.current.delete(paneId)
         pendingWritesRef.current.delete(paneId)
+        replayingPanesRef.current.delete(paneId)
         // Clean up pane title state so closed panes don't leave stale entries.
         setPaneTitles((prev) => {
           if (!(paneId in prev)) {
@@ -545,6 +567,14 @@ export function useTerminalPaneLifecycle({
           return
         }
         void handleOscLink(url, event, linkDeps)
+        // Why: Cmd/Ctrl+click on a plain-text URL (WebLinksAddon) takes focus
+        // away from the terminal before the click's mouseup reaches
+        // ownerDocument. That leaves xterm's SelectionService drag-select
+        // mousemove listener attached, so subsequent mouse motion extends a
+        // phantom selection until the next click/Esc. Explicitly clearing the
+        // selection also detaches those listeners (see
+        // SelectionService._removeMouseDownListeners).
+        managerRef.current?.getActivePane()?.terminal.clearSelection()
       }
     })
 
@@ -561,7 +591,8 @@ export function useTerminalPaneLifecycle({
     restoreScrollbackBuffers(
       manager,
       initialLayoutRef.current.buffersByLeafId,
-      restoredPaneByLeafId
+      restoredPaneByLeafId,
+      replayingPanesRef
     )
 
     // Seed pane titles from the persisted snapshot using the same
@@ -668,7 +699,56 @@ export function useTerminalPaneLifecycle({
     persistLayoutSnapshot()
     scheduleRuntimeGraphSync()
 
+    // Why: CLI-driven splits go through splitPaneWithOneShotStartup so the
+    // startup command is delivered via the PTY connection path (which waits
+    // for shell readiness) instead of terminal.paste() which can lose input
+    // if the shell hasn't started reading stdin yet.
+    function onCliSplitPane(event: Event): void {
+      const detail = (event as CustomEvent<SplitTerminalPaneDetail>).detail
+      if (!detail?.tabId || detail.tabId !== tabId) {
+        return
+      }
+      const mgr = managerRef.current
+      if (!mgr) {
+        return
+      }
+      if (detail.command) {
+        splitPaneWithOneShotStartup(ptyDeps, { command: detail.command }, () =>
+          mgr.splitPane(detail.paneRuntimeId, detail.direction)
+        )
+      } else {
+        mgr.splitPane(detail.paneRuntimeId, detail.direction)
+      }
+    }
+    window.addEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
+
+    // Why: CLI-driven pane close dispatches a CustomEvent so PaneManager handles
+    // sibling promotion in split layouts. Falls back to closing the whole tab
+    // when the target pane is the only one remaining.
+    function onCliClosePane(event: Event): void {
+      const detail = (event as CustomEvent<CloseTerminalPaneDetail>).detail
+      if (!detail?.tabId || detail.tabId !== tabId) {
+        return
+      }
+      const mgr = managerRef.current
+      if (!mgr) {
+        return
+      }
+      if (mgr.getPanes().length <= 1) {
+        useAppStore.getState().closeTab(tabId)
+      } else {
+        mgr.closePane(detail.paneRuntimeId)
+        scheduleRuntimeGraphSync()
+        syncCanExpandState()
+        queueResizeAll(isActive)
+        persistLayoutSnapshot()
+      }
+    }
+    window.addEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
+
     return () => {
+      window.removeEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
+      window.removeEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
       const tabStillExists = Boolean(
         useAppStore
           .getState()

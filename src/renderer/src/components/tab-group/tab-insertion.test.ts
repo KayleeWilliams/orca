@@ -46,7 +46,7 @@ function makeDragEvent({
         }
       : null,
     delta: { x: 0, y: 0 }
-  } as Parameters<typeof resolveTabInsertion>[0]
+  } as unknown as Parameters<typeof resolveTabInsertion>[0]
 }
 
 // ---------------------------------------------------------------------------

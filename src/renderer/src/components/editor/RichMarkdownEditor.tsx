@@ -25,6 +25,7 @@ import { createRichMarkdownKeyHandler } from './rich-markdown-key-handler'
 import { normalizeSoftBreaks } from './rich-markdown-normalize'
 import { autoFocusRichEditor } from './rich-markdown-auto-focus'
 import { handleRichMarkdownCut } from './rich-markdown-cut-handler'
+import { openHttpLink } from '@/lib/http-link-routing'
 import { toast } from 'sonner'
 import {
   absolutePathToFileUri as toFileUrlForOsEscape,
@@ -200,7 +201,7 @@ export default function RichMarkdownEditor({
             return true
           }
           if (classified.kind === 'external') {
-            void window.api.shell.openUrl(classified.url)
+            openHttpLink(classified.url, { forceSystemBrowser: true })
           } else if (classified.kind === 'markdown') {
             void window.api.shell.pathExists(classified.absolutePath).then((exists) => {
               if (!exists) {
@@ -501,18 +502,23 @@ export default function RichMarkdownEditor({
         onImagePick={handleLocalImagePick}
       />
       {headerSlot}
-      <RichMarkdownSearchBar
-        activeMatchIndex={activeMatchIndex}
-        isOpen={isSearchOpen}
-        matchCount={matchCount}
-        onClose={closeSearch}
-        onMoveToMatch={moveToMatch}
-        onQueryChange={setSearchQuery}
-        query={searchQuery}
-        searchInputRef={searchInputRef}
-      />
-      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto scrollbar-editor">
-        <EditorContent editor={editor} />
+      {/* Why: wrap scroll area + search bar in a relative container so the
+          search bar overlays the content (Monaco-style) instead of occupying
+          layout space and shifting the document down when opened. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollContainerRef} className="h-full overflow-auto scrollbar-editor">
+          <EditorContent editor={editor} />
+        </div>
+        <RichMarkdownSearchBar
+          activeMatchIndex={activeMatchIndex}
+          isOpen={isSearchOpen}
+          matchCount={matchCount}
+          onClose={closeSearch}
+          onMoveToMatch={moveToMatch}
+          onQueryChange={setSearchQuery}
+          query={searchQuery}
+          searchInputRef={searchInputRef}
+        />
       </div>
       {linkBubble ? (
         <RichMarkdownLinkBubble

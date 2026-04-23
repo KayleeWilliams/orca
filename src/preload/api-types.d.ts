@@ -21,6 +21,9 @@ import type {
   GitHubWorkItemDetails,
   GitHubViewer,
   IssueInfo,
+  LinearViewer,
+  LinearConnectionStatus,
+  LinearIssue,
   NotificationDispatchRequest,
   NotificationDispatchResult,
   OpenCodeStatusEvent,
@@ -163,6 +166,7 @@ export type DetectedBrowserInfo = {
 export type PreflightStatus = {
   git: { installed: boolean }
   gh: { installed: boolean; authenticated: boolean }
+  linear: { connected: boolean }
 }
 
 export type RefreshAgentsResult = {
@@ -409,6 +413,19 @@ export type PreloadApi = {
     checkOrcaStarred: () => Promise<boolean | null>
     starOrca: () => Promise<boolean>
   }
+  linear: {
+    connect: (args: {
+      apiKey: string
+    }) => Promise<{ ok: true; viewer: LinearViewer } | { ok: false; error: string }>
+    disconnect: () => Promise<void>
+    status: () => Promise<LinearConnectionStatus>
+    searchIssues: (args: { query: string; limit?: number }) => Promise<LinearIssue[]>
+    listIssues: (args?: {
+      filter?: 'assigned' | 'created' | 'all' | 'completed'
+      limit?: number
+    }) => Promise<LinearIssue[]>
+    getIssue: (args: { id: string }) => Promise<LinearIssue | null>
+  }
   starNag: {
     onShow: (callback: () => void) => () => void
     dismiss: () => Promise<void>
@@ -639,6 +656,38 @@ export type PreloadApi = {
     onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
       callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
+    ) => () => void
+    onCreateTerminal: (
+      callback: (data: { worktreeId: string; command?: string; title?: string }) => void
+    ) => () => void
+    onRequestTerminalCreate: (
+      callback: (data: {
+        requestId: string
+        worktreeId?: string
+        command?: string
+        title?: string
+      }) => void
+    ) => () => void
+    replyTerminalCreate: (reply: {
+      requestId: string
+      tabId?: string
+      title?: string
+      error?: string
+    }) => void
+    onSplitTerminal: (
+      callback: (data: {
+        tabId: string
+        paneRuntimeId: number
+        direction: 'horizontal' | 'vertical'
+        command?: string
+      }) => void
+    ) => () => void
+    onRenameTerminal: (
+      callback: (data: { tabId: string; title: string | null }) => void
+    ) => () => void
+    onFocusTerminal: (callback: (data: { tabId: string; worktreeId: string }) => void) => () => void
+    onCloseTerminal: (
+      callback: (data: { tabId: string; paneRuntimeId?: number }) => void
     ) => () => void
     onTerminalZoom: (callback: (direction: 'in' | 'out' | 'reset') => void) => () => void
     readClipboardText: () => Promise<string>

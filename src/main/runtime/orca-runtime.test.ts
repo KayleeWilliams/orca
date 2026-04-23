@@ -111,6 +111,7 @@ const store = {
       comment: '',
       linkedIssue: 123,
       linkedPR: null,
+      linkedLinearIssue: null,
       isArchived: false,
       isUnread: false,
       isPinned: false,
@@ -332,7 +333,7 @@ describe('OrcaRuntimeService', () => {
       status: 'running',
       tail: ['hello', 'world'],
       truncated: false,
-      nextCursor: null
+      nextCursor: expect.any(String)
     })
 
     const send = await runtime.sendTerminal(terminal.handle, {
@@ -384,6 +385,59 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('keeps partial-line output readable across cursor-based pagination', async () => {
+    const runtime = new OrcaRuntimeService(store)
+
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-1',
+          worktreeId: 'repo-1::/tmp/worktree-a',
+          title: 'Claude',
+          activeLeafId: 'pane:1',
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-1',
+          worktreeId: 'repo-1::/tmp/worktree-a',
+          leafId: 'pane:1',
+          paneRuntimeId: 1,
+          ptyId: 'pty-1'
+        }
+      ]
+    })
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData('pty-1', 'hel', 100)
+
+    // Non-cursor reads include the partial line for UI display
+    const firstRead = await runtime.readTerminal(terminal.handle)
+    expect(firstRead.tail).toEqual(['hel'])
+    expect(firstRead.nextCursor).toBe('0')
+
+    runtime.onPtyData('pty-1', 'lo', 101)
+
+    // Cursor-based reads exclude partial lines to prevent duplication:
+    // without this, the consumer would see "hello" now as a partial, then
+    // see "hello" again as a completed line on the next read.
+    const secondRead = await runtime.readTerminal(terminal.handle, {
+      cursor: Number(firstRead.nextCursor)
+    })
+    expect(secondRead.tail).toEqual([])
+    expect(secondRead.nextCursor).toBe('0')
+
+    runtime.onPtyData('pty-1', '\nworld\n', 102)
+
+    const thirdRead = await runtime.readTerminal(terminal.handle, {
+      cursor: Number(secondRead.nextCursor)
+    })
+    expect(thirdRead.tail).toEqual(['hello', 'world'])
+    expect(thirdRead.nextCursor).toBe('2')
+  })
+
   it('fails terminal waits closed when the handle goes stale during reload', async () => {
     const runtime = new OrcaRuntimeService(store)
 
@@ -414,6 +468,91 @@ describe('OrcaRuntimeService', () => {
     runtime.markRendererReloading(1)
 
     await expect(waitPromise).rejects.toThrow('terminal_handle_stale')
+  })
+
+  it('tui-idle times out when PTY data has no agent OSC title transitions', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, {
+        tabs: [
+          {
+            tabId: 'tab-1',
+            worktreeId: 'repo-1::/tmp/worktree-a',
+            title: 'Claude',
+            activeLeafId: 'pane:1',
+            layout: null
+          }
+        ],
+        leaves: [
+          {
+            tabId: 'tab-1',
+            worktreeId: 'repo-1::/tmp/worktree-a',
+            leafId: 'pane:1',
+            paneRuntimeId: 1,
+            ptyId: 'pty-1'
+          }
+        ]
+      })
+      runtime.onPtyData('pty-1', 'running migration step 4/9\n', 123)
+
+      const [terminal] = (await runtime.listTerminals()).terminals
+      const waitPromise = runtime.waitForTerminal(terminal.handle, {
+        condition: 'tui-idle',
+        timeoutMs: 1_000
+      })
+      const timeoutAssertion = expect(waitPromise).rejects.toThrow('timeout')
+
+      await vi.advanceTimersByTimeAsync(12_000)
+
+      await timeoutAssertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tui-idle resolves on agent working→idle OSC title transition', async () => {
+    const runtime = new OrcaRuntimeService(store)
+
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-1',
+          worktreeId: 'repo-1::/tmp/worktree-a',
+          title: 'Claude',
+          activeLeafId: 'pane:1',
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-1',
+          worktreeId: 'repo-1::/tmp/worktree-a',
+          leafId: 'pane:1',
+          paneRuntimeId: 1,
+          ptyId: 'pty-1'
+        }
+      ]
+    })
+
+    // Simulate agent starting work (braille spinner = working)
+    runtime.onPtyData('pty-1', '\x1b]0;\u280b Working on task\x07output\n', 100)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const waitPromise = runtime.waitForTerminal(terminal.handle, {
+      condition: 'tui-idle',
+      timeoutMs: 5_000
+    })
+
+    // Simulate agent finishing (✳ = Claude Code idle)
+    runtime.onPtyData('pty-1', '\x1b]0;\u2733 Task complete\x07done\n', 200)
+
+    const result = await waitPromise
+    expect(result.condition).toBe('tui-idle')
+    expect(result.satisfied).toBe(true)
   })
 
   it('builds a compact worktree summary from persisted and live runtime state', async () => {
@@ -607,7 +746,12 @@ describe('OrcaRuntimeService', () => {
     runtime.setNotifier({
       worktreesChanged: vi.fn(),
       reposChanged: vi.fn(),
-      activateWorktree
+      activateWorktree,
+      createTerminal: vi.fn(),
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn()
     })
     runtime.attachWindow(1)
 
@@ -678,7 +822,12 @@ describe('OrcaRuntimeService', () => {
     runtime.setNotifier({
       worktreesChanged: vi.fn(),
       reposChanged: vi.fn(),
-      activateWorktree: vi.fn()
+      activateWorktree: vi.fn(),
+      createTerminal: vi.fn(),
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn()
     })
 
     computeWorktreePathMock.mockReturnValue('/tmp/workspaces/cli-worktree')
@@ -725,6 +874,7 @@ describe('OrcaRuntimeService', () => {
           comment: meta.comment ?? existingMeta?.comment ?? '',
           linkedIssue: meta.linkedIssue ?? existingMeta?.linkedIssue ?? null,
           linkedPR: meta.linkedPR ?? existingMeta?.linkedPR ?? null,
+          linkedLinearIssue: meta.linkedLinearIssue ?? existingMeta?.linkedLinearIssue ?? null,
           isArchived: meta.isArchived ?? existingMeta?.isArchived ?? false,
           isUnread: meta.isUnread ?? existingMeta?.isUnread ?? false,
           isPinned: meta.isPinned ?? existingMeta?.isPinned ?? false,

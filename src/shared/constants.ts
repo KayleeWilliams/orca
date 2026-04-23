@@ -153,7 +153,12 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalMacOptionAsAlt: 'auto',
     terminalMacOptionAsAltMigrated: false,
     experimentalTerminalDaemon: false,
-    experimentalTerminalDaemonNoticeShown: false
+    experimentalTerminalDaemonNoticeShown: false,
+    // Why: keep the historical default (on) so no existing user's terminal
+    // loses clickable-link emission on upgrade. Users with heavy zshrc setups
+    // can disable it from Settings → Terminal → Advanced to reclaim startup
+    // time.
+    terminalForceHyperlink: true
   }
 }
 

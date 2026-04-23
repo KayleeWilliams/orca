@@ -11,6 +11,7 @@ import { getConnectionId } from '@/lib/connection-context'
 import { absolutePathToFileUri } from '@/components/editor/markdown-internal-links'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { openHttpLink } from '@/lib/http-link-routing'
 
 export type LinkHandlerDeps = {
   worktreeId: string
@@ -179,8 +180,14 @@ export function createFilePathLinkProvider(
 
           return {
             range: {
+              // Why: xterm's IBufferRange uses 1-based *inclusive* coords on
+              // both ends (the hit-test is `x >= start.x && x <= end.x`),
+              // but `parsed.endIndex` is the exclusive string-slice end.
+              // Converting start = +1 but end = +0 maps correctly so the
+              // underline stops on the last filename cell instead of bleeding
+              // into the trailing whitespace of column-padded `ls` output.
               start: { x: parsed.startIndex + 1, y: bufferLineNumber },
-              end: { x: parsed.endIndex + 1, y: bufferLineNumber }
+              end: { x: parsed.endIndex, y: bufferLineNumber }
             },
             text: parsed.displayText,
             activate: (event) => {
@@ -235,8 +242,13 @@ export function handleOscLink(
   // Why: xterm renders URL links as clickable anchors. Once Orca decides to
   // handle a modified click itself, we must suppress the browser's default
   // anchor navigation or Electron will still launch the system browser.
+  // Note: we intentionally do NOT stopPropagation here — xterm's
+  // SelectionService listens for mouseup on ownerDocument to clear the
+  // pending drag-select state initiated by the mousedown of the same click.
+  // Stopping propagation leaves SelectionService's mousemove/mouseup handlers
+  // attached, so returning focus to the terminal and moving the mouse (even
+  // without holding a button) extends a selection until the next click/Esc.
   event?.preventDefault?.()
-  event?.stopPropagation?.()
 
   let parsed: URL
   try {
@@ -246,19 +258,10 @@ export function handleOscLink(
   }
 
   if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-    const store = useAppStore.getState()
-    // Why: openLinksInApp controls whether Cmd/Ctrl+click routes http(s) URLs
-    // into Orca's embedded browser or passes them to the system browser.
-    // Shift is always the explicit override to the system browser regardless of
-    // the setting. Default is true so new installs get in-app routing.
-    const routeToOrca =
-      deps.worktreeId && !event?.shiftKey && store.settings?.openLinksInApp !== false
-    if (routeToOrca) {
-      store.setActiveWorktree(deps.worktreeId)
-      store.createBrowserTab(deps.worktreeId, parsed.toString())
-      return
-    }
-    void window.api.shell.openUrl(parsed.toString())
+    openHttpLink(parsed.toString(), {
+      worktreeId: deps.worktreeId,
+      forceSystemBrowser: Boolean(event?.shiftKey)
+    })
     return
   }
 

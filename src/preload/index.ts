@@ -425,6 +425,28 @@ const api = {
     starOrca: (): Promise<boolean> => ipcRenderer.invoke('gh:starOrca')
   },
 
+  linear: {
+    connect: (args: {
+      apiKey: string
+    }): Promise<{ ok: true; viewer: unknown } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('linear:connect', args),
+
+    disconnect: (): Promise<void> => ipcRenderer.invoke('linear:disconnect'),
+
+    status: (): Promise<unknown> => ipcRenderer.invoke('linear:status'),
+
+    searchIssues: (args: { query: string; limit?: number }): Promise<unknown[]> =>
+      ipcRenderer.invoke('linear:searchIssues', args),
+
+    listIssues: (args?: {
+      filter?: 'assigned' | 'created' | 'all' | 'completed'
+      limit?: number
+    }): Promise<unknown[]> => ipcRenderer.invoke('linear:listIssues', args),
+
+    getIssue: (args: { id: string }): Promise<unknown> =>
+      ipcRenderer.invoke('linear:getIssue', args)
+  },
+
   starNag: {
     onShow: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent): void => callback()
@@ -468,6 +490,7 @@ const api = {
     }): Promise<{
       git: { installed: boolean }
       gh: { installed: boolean; authenticated: boolean }
+      linear: { connected: boolean }
     }> => ipcRenderer.invoke('preflight:check', args),
     detectAgents: (): Promise<string[]> => ipcRenderer.invoke('preflight:detectAgents'),
     refreshAgents: (): Promise<{
@@ -1187,6 +1210,89 @@ const api = {
       ) => callback(data)
       ipcRenderer.on('ui:activateWorktree', listener)
       return () => ipcRenderer.removeListener('ui:activateWorktree', listener)
+    },
+    onCreateTerminal: (
+      callback: (data: { worktreeId: string; command?: string; title?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { worktreeId: string; command?: string; title?: string }
+      ) => callback(data)
+      ipcRenderer.on('ui:createTerminal', listener)
+      return () => ipcRenderer.removeListener('ui:createTerminal', listener)
+    },
+    onRequestTerminalCreate: (
+      callback: (data: {
+        requestId: string
+        worktreeId?: string
+        command?: string
+        title?: string
+      }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { requestId: string; worktreeId?: string; command?: string; title?: string }
+      ) => callback(data)
+      ipcRenderer.on('terminal:requestTabCreate', listener)
+      return () => ipcRenderer.removeListener('terminal:requestTabCreate', listener)
+    },
+    replyTerminalCreate: (reply: {
+      requestId: string
+      tabId?: string
+      title?: string
+      error?: string
+    }): void => {
+      ipcRenderer.send('terminal:tabCreateReply', reply)
+    },
+    onSplitTerminal: (
+      callback: (data: {
+        tabId: string
+        paneRuntimeId: number
+        direction: 'horizontal' | 'vertical'
+        command?: string
+      }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          tabId: string
+          paneRuntimeId: number
+          direction: 'horizontal' | 'vertical'
+          command?: string
+        }
+      ) => callback(data)
+      ipcRenderer.on('ui:splitTerminal', listener)
+      return () => ipcRenderer.removeListener('ui:splitTerminal', listener)
+    },
+    onRenameTerminal: (
+      callback: (data: { tabId: string; title: string | null }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { tabId: string; title: string | null }
+      ) => callback(data)
+      ipcRenderer.on('ui:renameTerminal', listener)
+      return () => ipcRenderer.removeListener('ui:renameTerminal', listener)
+    },
+    onFocusTerminal: (
+      callback: (data: { tabId: string; worktreeId: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { tabId: string; worktreeId: string }
+      ) => callback(data)
+      ipcRenderer.on('ui:focusTerminal', listener)
+      return () => ipcRenderer.removeListener('ui:focusTerminal', listener)
+    },
+    onCloseTerminal: (
+      callback: (data: { tabId: string; paneRuntimeId?: number }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { tabId: string; paneRuntimeId?: number }
+      ) => callback(data)
+      ipcRenderer.on('ui:closeTerminal', listener)
+      return () => ipcRenderer.removeListener('ui:closeTerminal', listener)
     },
     onTerminalZoom: (callback: (direction: 'in' | 'out' | 'reset') => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, direction: 'in' | 'out' | 'reset') =>

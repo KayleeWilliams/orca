@@ -1,7 +1,8 @@
 /* oxlint-disable max-lines */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { File } from 'lucide-react'
 import { useAppStore } from '@/store'
+import { useActiveWorktree, useWorktreesForRepo } from '@/store/selectors'
 import { detectLanguage } from '@/lib/language-detect'
 import { joinPath } from '@/lib/path'
 import { getConnectionId } from '@/lib/connection-context'
@@ -57,55 +58,43 @@ export default function QuickOpen(): React.JSX.Element | null {
   const visible = useAppStore((s) => s.activeModal === 'quick-open')
   const closeModal = useAppStore((s) => s.closeModal)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const openFile = useAppStore((s) => s.openFile)
+  const activeWorktree = useActiveWorktree()
+  const repoWorktrees = useWorktreesForRepo(activeWorktree?.repoId ?? null)
 
   const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
   const [files, setFiles] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const lastFilesRequestKeyRef = useRef('')
 
-  // Why: the derived tuple (worktreePath, excludePaths) must have a stable
-  // identity across unrelated store updates. We key the memo on a joined
-  // string so any worktreesByRepo mutation that doesn't affect this worktree's
-  // path or its siblings leaves our array reference untouched, which in turn
-  // keeps the file-load effect below from refetching and blinking the list.
-  const worktreePath = useMemo(() => {
-    if (!activeWorktreeId) {
-      return null
-    }
-    for (const worktrees of Object.values(worktreesByRepo)) {
-      const wt = worktrees.find((w) => w.id === activeWorktreeId)
-      if (wt) {
-        return wt.path
-      }
-    }
-    return null
-  }, [activeWorktreeId, worktreesByRepo])
+  const worktreePath = activeWorktree?.path ?? null
 
   const excludePathsKey = useMemo(() => {
-    if (!activeWorktreeId || !worktreePath) {
+    if (!activeWorktreeId || !worktreePath || repoWorktrees.length === 0) {
       return ''
     }
-    for (const worktrees of Object.values(worktreesByRepo)) {
-      if (!worktrees.some((w) => w.id === activeWorktreeId)) {
-        continue
-      }
-      // Why: when the active worktree is the repo root (isMainWorktree),
-      // linked worktrees are nested subdirectories. Without excluding them,
-      // file listing returns files from every worktree, not just this one.
-      return worktrees
-        .filter((w) => w.id !== activeWorktreeId && w.path.startsWith(`${worktreePath}/`))
-        .map((w) => w.path)
-        .sort()
-        .join('\n')
-    }
-    return ''
-  }, [activeWorktreeId, worktreePath, worktreesByRepo])
+    // Why: when the active worktree is the repo root (isMainWorktree), linked
+    // worktrees are nested subdirectories. Restricting the exclusion scan to
+    // sibling worktrees in the same repo avoids rescanning the entire store.
+    return repoWorktrees
+      .filter(
+        (worktree) =>
+          worktree.id !== activeWorktreeId && worktree.path.startsWith(`${worktreePath}/`)
+      )
+      .map((worktree) => worktree.path)
+      .sort()
+      .join('\n')
+  }, [activeWorktreeId, repoWorktrees, worktreePath])
 
   const connectionId = useMemo(
     () => getConnectionId(activeWorktreeId ?? null) ?? undefined,
     [activeWorktreeId]
+  )
+  const filesRequestKey = useMemo(
+    () => `${worktreePath ?? ''}\n${connectionId ?? ''}\n${excludePathsKey}`,
+    [connectionId, excludePathsKey, worktreePath]
   )
 
   // Why: reset input only on open. Keeping this out of the file-load effect
@@ -125,11 +114,17 @@ export default function QuickOpen(): React.JSX.Element | null {
 
     if (!worktreePath) {
       setFiles([])
+      setLoadError(null)
+      setLoading(false)
       return
     }
 
     let cancelled = false
-    setFiles([])
+    const requestKeyChanged = lastFilesRequestKeyRef.current !== filesRequestKey
+    if (requestKeyChanged) {
+      setFiles([])
+    }
+    lastFilesRequestKeyRef.current = filesRequestKey
     setLoadError(null)
     setLoading(true)
 
@@ -166,24 +161,25 @@ export default function QuickOpen(): React.JSX.Element | null {
     return () => {
       cancelled = true
     }
-  }, [visible, worktreePath, connectionId, excludePathsKey])
+  }, [visible, worktreePath, connectionId, excludePathsKey, filesRequestKey])
 
   // Filter files by fuzzy match
   const filtered = useMemo(() => {
-    if (!query.trim()) {
+    const normalizedQuery = deferredQuery.trim()
+    if (!normalizedQuery) {
       // Show first 50 files when no query
       return files.slice(0, 50).map((f) => ({ path: f, score: 0 }))
     }
     const results: { path: string; score: number }[] = []
     for (const f of files) {
-      const score = fuzzyMatch(query.trim(), f)
+      const score = fuzzyMatch(normalizedQuery, f)
       if (score !== -1) {
         results.push({ path: f, score })
       }
     }
     results.sort((a, b) => a.score - b.score)
     return results.slice(0, 50)
-  }, [files, query])
+  }, [deferredQuery, files])
 
   const handleSelect = useCallback(
     (relativePath: string) => {
@@ -256,7 +252,7 @@ export default function QuickOpen(): React.JSX.Element | null {
       </CommandList>
       {/* Accessibility: announce result count changes */}
       <div aria-live="polite" className="sr-only">
-        {query.trim() ? `${filtered.length} files found` : ''}
+        {deferredQuery.trim() ? `${filtered.length} files found` : ''}
       </div>
     </CommandDialog>
   )

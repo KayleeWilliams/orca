@@ -6,6 +6,8 @@ import {
   activateAndRevealWorktree,
   ensureWorktreeHasInitialTerminal
 } from '@/lib/worktree-activation'
+import { SPLIT_TERMINAL_PANE_EVENT, CLOSE_TERMINAL_PANE_EVENT } from '@/constants/terminal'
+import type { SplitTerminalPaneDetail, CloseTerminalPaneDetail } from '@/constants/terminal'
 import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
 import { nextEditorFontZoomLevel, computeEditorFontSize } from '@/lib/editor-font-zoom'
 import type { UpdateStatus } from '../../../shared/types'
@@ -152,6 +154,102 @@ export function useIpcEvents(): void {
         })().catch((error) => {
           console.error('Failed to activate CLI-created worktree:', error)
         })
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCreateTerminal(({ worktreeId, command, title }) => {
+        const store = useAppStore.getState()
+        store.setActiveView('terminal')
+        store.setActiveWorktree(worktreeId)
+        const tab = store.createTab(worktreeId)
+        store.setActiveTabType('terminal')
+        store.setActiveTab(tab.id)
+        store.revealWorktreeInSidebar(worktreeId)
+        if (title) {
+          store.setTabCustomTitle(tab.id, title)
+        }
+        if (command) {
+          store.queueTabStartupCommand(tab.id, { command })
+        }
+      })
+    )
+
+    // Why: CLI-driven terminal creation sends a request and waits for the
+    // tabId reply so it can resolve a handle the caller can use immediately.
+    // This mirrors the browser's onRequestTabCreate/replyTabCreate pattern.
+    unsubs.push(
+      window.api.ui.onRequestTerminalCreate((data) => {
+        try {
+          const store = useAppStore.getState()
+          const worktreeId = data.worktreeId ?? store.activeWorktreeId
+          if (!worktreeId) {
+            window.api.ui.replyTerminalCreate({
+              requestId: data.requestId,
+              error: 'No active worktree'
+            })
+            return
+          }
+          store.setActiveView('terminal')
+          store.setActiveWorktree(worktreeId)
+          const tab = store.createTab(worktreeId)
+          store.setActiveTabType('terminal')
+          store.setActiveTab(tab.id)
+          store.revealWorktreeInSidebar(worktreeId)
+          if (data.title) {
+            store.setTabCustomTitle(tab.id, data.title)
+          }
+          if (data.command) {
+            store.queueTabStartupCommand(tab.id, { command: data.command })
+          }
+          window.api.ui.replyTerminalCreate({
+            requestId: data.requestId,
+            tabId: tab.id,
+            title: data.title ?? tab.title
+          })
+        } catch (err) {
+          window.api.ui.replyTerminalCreate({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Terminal creation failed'
+          })
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onSplitTerminal(({ tabId, paneRuntimeId, direction, command }) => {
+        const detail: SplitTerminalPaneDetail = { tabId, paneRuntimeId, direction, command }
+        window.dispatchEvent(new CustomEvent(SPLIT_TERMINAL_PANE_EVENT, { detail }))
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onRenameTerminal(({ tabId, title }) => {
+        useAppStore.getState().setTabCustomTitle(tabId, title)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onFocusTerminal(({ tabId, worktreeId }) => {
+        const store = useAppStore.getState()
+        store.setActiveWorktree(worktreeId)
+        store.setActiveView('terminal')
+        store.setActiveTab(tabId)
+        store.revealWorktreeInSidebar(worktreeId)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCloseTerminal(({ tabId, paneRuntimeId }) => {
+        if (paneRuntimeId != null) {
+          // Why: when targeting a specific pane in a split layout, dispatch to the
+          // lifecycle hook so PaneManager.closePane() handles sibling promotion.
+          // The lifecycle hook falls through to closeTab() if this is the last pane.
+          const detail: CloseTerminalPaneDetail = { tabId, paneRuntimeId }
+          window.dispatchEvent(new CustomEvent(CLOSE_TERMINAL_PANE_EVENT, { detail }))
+        } else {
+          useAppStore.getState().closeTab(tabId)
+        }
       })
     )
 

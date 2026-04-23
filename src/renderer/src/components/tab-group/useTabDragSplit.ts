@@ -184,16 +184,16 @@ export function useTabDragSplit({
   const [hoveredDropTarget, setHoveredDropTarget] = useState<HoveredTabDropTarget | null>(null)
   const tabInsertion = useHoveredTabInsertion(isTabDragData, getDragCenter)
 
-  const pointerSensor = useSensor(PointerSensor, {
-    activationConstraint: { distance: 5 }
-  })
-  const activeSensors = useSensors(pointerSensor)
-  const emptySensors = useSensors()
   // Why: hidden worktrees stay mounted so their PTYs survive worktree
-  // switches, but their DndContext should not register pointer listeners
-  // on the document. Multiple active DndContext instances can interfere
-  // with each other.
-  const sensors = enabled ? activeSensors : emptySensors
+  // switches, but their DndContext should not activate drags. We use an
+  // impossible activation distance rather than switching between
+  // useSensors(ptr) / useSensors(), because dnd-kit internally spreads
+  // the sensors array into a useEffect dependency list — changing its
+  // length between renders violates React's rules of hooks.
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: enabled ? 5 : Number.MAX_SAFE_INTEGER }
+  })
+  const sensors = useSensors(pointerSensor)
 
   const clearDragState = useCallback(() => {
     setActiveDrag(null)

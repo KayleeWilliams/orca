@@ -2,10 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '@/store'
+import { useActiveWorktree } from '@/store/selectors'
 import { dirname } from '@/lib/path'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { FileDeleteDialog } from './FileDeleteDialog'
 import { FileExplorerBackgroundMenu } from './FileExplorerBackgroundMenu'
 import { FileExplorerVirtualRows } from './FileExplorerVirtualRows'
 import { splitPathSegments } from './path-tree'
@@ -17,7 +17,6 @@ import { useFileExplorerReveal } from './useFileExplorerReveal'
 import { useFileExplorerInlineInput } from './useFileExplorerInlineInput'
 import { clearFileExplorerUndoHistory } from './fileExplorerUndoRedo'
 import { useFileExplorerKeys } from './useFileExplorerKeys'
-import { useActiveWorktreePath } from './useActiveWorktreePath'
 import { useFileDuplicate } from './useFileDuplicate'
 import { useFileExplorerDragDrop } from './useFileExplorerDragDrop'
 import { useFileExplorerImport } from './useFileExplorerImport'
@@ -26,7 +25,7 @@ import { useFileExplorerWatch } from './useFileExplorerWatch'
 
 function FileExplorerInner(): React.JSX.Element {
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
+  const activeWorktree = useActiveWorktree()
   const sshConnectedGeneration = useAppStore((s) => s.sshConnectedGeneration)
   const expandedDirs = useAppStore((s) => s.expandedDirs)
   const toggleDir = useAppStore((s) => s.toggleDir)
@@ -39,7 +38,7 @@ function FileExplorerInner(): React.JSX.Element {
   const openFiles = useAppStore((s) => s.openFiles)
   const closeFile = useAppStore((s) => s.closeFile)
 
-  const worktreePath = useActiveWorktreePath(activeWorktreeId, worktreesByRepo)
+  const worktreePath = activeWorktree?.path ?? null
 
   const expanded = useMemo(
     () =>
@@ -85,16 +84,7 @@ function FileExplorerInner(): React.JSX.Element {
   const statusByRelativePath = useMemo(() => buildStatusMap(entries), [entries])
   const folderStatusByRelativePath = useMemo(() => buildFolderStatusMap(entries), [entries])
 
-  const {
-    pendingDelete,
-    isDeleting,
-    deleteShortcutLabel,
-    deleteActionLabel,
-    deleteDescription,
-    requestDelete,
-    closeDeleteDialog,
-    confirmDelete
-  } = useFileDeletion({
+  const { deleteShortcutLabel, requestDelete } = useFileDeletion({
     activeWorktreeId,
     openFiles,
     closeFile,
@@ -192,14 +182,16 @@ function FileExplorerInner(): React.JSX.Element {
     refreshDir,
     refreshTree,
     inlineInput,
-    dragSourcePath
+    dragSourcePath,
+    isNativeDragOver
   })
 
   useFileExplorerImport({
     worktreePath,
     activeWorktreeId,
     refreshDir,
-    clearNativeDragState
+    clearNativeDragState,
+    setSelectedPath
   })
 
   const totalCount = flatRows.length + (inlineInputIndex >= 0 ? 1 : 0)
@@ -398,15 +390,6 @@ function FileExplorerInner(): React.JSX.Element {
         point={bgMenuPoint}
         worktreePath={worktreePath}
         onStartNew={startNew}
-      />
-
-      <FileDeleteDialog
-        pendingDelete={pendingDelete}
-        isDeleting={isDeleting}
-        deleteDescription={deleteDescription}
-        deleteActionLabel={deleteActionLabel}
-        onClose={closeDeleteDialog}
-        onConfirm={() => void confirmDelete()}
       />
     </>
   )

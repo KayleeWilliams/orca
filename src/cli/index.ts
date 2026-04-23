@@ -14,6 +14,11 @@ import type {
   RuntimeTerminalShow,
   RuntimeTerminalSend,
   RuntimeTerminalWait,
+  RuntimeTerminalCreate,
+  RuntimeTerminalSplit,
+  RuntimeTerminalRename,
+  RuntimeTerminalFocus,
+  RuntimeTerminalClose,
   BrowserSnapshotResult,
   BrowserClickResult,
   BrowserGotoResult,
@@ -183,26 +188,36 @@ export const COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['terminal', 'show'],
     summary: 'Show terminal metadata and preview',
-    usage: 'orca terminal show --terminal <handle> [--json]',
+    usage: 'orca terminal show [--terminal <handle>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'terminal']
   },
   {
     path: ['terminal', 'read'],
     summary: 'Read bounded terminal output',
-    usage: 'orca terminal read --terminal <handle> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'terminal']
+    usage: 'orca terminal read [--terminal <handle>] [--cursor <n>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'cursor'],
+    notes: [
+      'Omit --terminal to target the active terminal in the current worktree.',
+      'Use --cursor with the nextCursor value from a previous read to get only new output since that read.',
+      'Useful for capturing the response to a command: read before sending, then read --cursor <prev> after waiting.'
+    ],
+    examples: [
+      'orca terminal read --json',
+      'orca terminal read --terminal term_abc123 --cursor 42 --json'
+    ]
   },
   {
     path: ['terminal', 'send'],
     summary: 'Send input to a live terminal',
     usage:
-      'orca terminal send --terminal <handle> [--text <text>] [--enter] [--interrupt] [--json]',
+      'orca terminal send [--terminal <handle>] [--text <text>] [--enter] [--interrupt] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'text', 'enter', 'interrupt']
   },
   {
     path: ['terminal', 'wait'],
     summary: 'Wait for a terminal condition',
-    usage: 'orca terminal wait --terminal <handle> --for exit [--timeout-ms <ms>] [--json]',
+    usage:
+      'orca terminal wait [--terminal <handle>] --for exit|tui-idle [--timeout-ms <ms>] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'for', 'timeout-ms']
   },
   {
@@ -210,6 +225,60 @@ export const COMMAND_SPECS: CommandSpec[] = [
     summary: 'Stop terminals for a worktree',
     usage: 'orca terminal stop --worktree <selector> [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'worktree']
+  },
+  {
+    path: ['terminal', 'create'],
+    summary: 'Create a new terminal tab in the current worktree',
+    usage:
+      'orca terminal create [--worktree <selector>] [--title <name>] [--command <text>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'worktree', 'command', 'title'],
+    examples: [
+      'orca terminal create --json',
+      'orca terminal create --worktree path:/projects/myapp --title "RUNNER" --command "opencode"'
+    ]
+  },
+  {
+    path: ['terminal', 'switch'],
+    summary: 'Switch to a terminal tab in the UI',
+    usage: 'orca terminal switch [--terminal <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal'],
+    examples: ['orca terminal switch --terminal term_abc123']
+  },
+  {
+    path: ['terminal', 'focus'],
+    summary: 'Switch to a terminal tab in the UI (alias for terminal switch)',
+    usage: 'orca terminal focus [--terminal <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal'],
+    examples: ['orca terminal focus --terminal term_abc123']
+  },
+  {
+    path: ['terminal', 'close'],
+    summary: 'Close a terminal tab (kills PTY if running)',
+    usage: 'orca terminal close [--terminal <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal'],
+    examples: ['orca terminal close --terminal term_abc123']
+  },
+  {
+    path: ['terminal', 'rename'],
+    summary: 'Set or clear the title of a terminal tab',
+    usage: 'orca terminal rename [--terminal <handle>] [--title <text>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'title'],
+    notes: ['Omit --title or pass an empty string to reset to the auto-generated title.'],
+    examples: [
+      'orca terminal rename --terminal term_abc123 --title "RUNNER"',
+      'orca terminal rename --terminal term_abc123 --json'
+    ]
+  },
+  {
+    path: ['terminal', 'split'],
+    summary: 'Split an existing terminal pane',
+    usage:
+      'orca terminal split [--terminal <handle>] [--direction horizontal|vertical] [--command <text>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'direction', 'command'],
+    examples: [
+      'orca terminal split --terminal term_abc123 --direction horizontal --json',
+      'orca terminal split --terminal term_abc123 --command "codex"'
+    ]
   },
   // ── Browser automation ──
   {
@@ -751,21 +820,30 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
 
     if (matches(commandPath, ['terminal', 'show'])) {
       const result = await client.call<{ terminal: RuntimeTerminalShow }>('terminal.show', {
-        terminal: getRequiredStringFlag(parsed.flags, 'terminal')
+        terminal: await getTerminalHandle(parsed.flags, cwd, client)
       })
       return printResult(result, json, formatTerminalShow)
     }
 
     if (matches(commandPath, ['terminal', 'read'])) {
+      const cursorFlag = getOptionalStringFlag(parsed.flags, 'cursor')
+      const cursor =
+        cursorFlag !== undefined && /^\d+$/.test(cursorFlag)
+          ? Number.parseInt(cursorFlag, 10)
+          : undefined
+      if (cursorFlag !== undefined && cursor === undefined) {
+        throw new RuntimeClientError('invalid_argument', '--cursor must be a non-negative integer')
+      }
       const result = await client.call<{ terminal: RuntimeTerminalRead }>('terminal.read', {
-        terminal: getRequiredStringFlag(parsed.flags, 'terminal')
+        terminal: await getTerminalHandle(parsed.flags, cwd, client),
+        ...(cursor !== undefined ? { cursor } : {})
       })
       return printResult(result, json, formatTerminalRead)
     }
 
     if (matches(commandPath, ['terminal', 'send'])) {
       const result = await client.call<{ send: RuntimeTerminalSend }>('terminal.send', {
-        terminal: getRequiredStringFlag(parsed.flags, 'terminal'),
+        terminal: await getTerminalHandle(parsed.flags, cwd, client),
         text: getOptionalStringFlag(parsed.flags, 'text'),
         enter: parsed.flags.get('enter') === true,
         interrupt: parsed.flags.get('interrupt') === true
@@ -778,7 +856,7 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
       const result = await client.call<{ wait: RuntimeTerminalWait }>(
         'terminal.wait',
         {
-          terminal: getRequiredStringFlag(parsed.flags, 'terminal'),
+          terminal: await getTerminalHandle(parsed.flags, cwd, client),
           for: getRequiredStringFlag(parsed.flags, 'for'),
           timeoutMs
         },
@@ -797,6 +875,60 @@ export async function main(argv = process.argv.slice(2), cwd = process.cwd()): P
         worktree: await getRequiredWorktreeSelector(parsed.flags, 'worktree', cwd, client)
       })
       return printResult(result, json, (value) => `Stopped ${value.stopped} terminals.`)
+    }
+
+    if (matches(commandPath, ['terminal', 'rename'])) {
+      const result = await client.call<{ rename: RuntimeTerminalRename }>('terminal.rename', {
+        terminal: await getTerminalHandle(parsed.flags, cwd, client),
+        title: getOptionalStringFlag(parsed.flags, 'title') ?? null
+      })
+      return printResult(result, json, formatTerminalRename)
+    }
+
+    if (matches(commandPath, ['terminal', 'create'])) {
+      const result = await client.call<{ terminal: RuntimeTerminalCreate }>('terminal.create', {
+        worktree: await getBrowserWorktreeSelector(parsed.flags, cwd, client),
+        command: getOptionalStringFlag(parsed.flags, 'command'),
+        title: getOptionalStringFlag(parsed.flags, 'title')
+      })
+      return printResult(result, json, formatTerminalCreate)
+    }
+
+    if (
+      matches(commandPath, ['terminal', 'focus']) ||
+      matches(commandPath, ['terminal', 'switch'])
+    ) {
+      const result = await client.call<{ focus: RuntimeTerminalFocus }>('terminal.focus', {
+        terminal: await getTerminalHandle(parsed.flags, cwd, client)
+      })
+      return printResult(result, json, formatTerminalFocus)
+    }
+
+    if (matches(commandPath, ['terminal', 'close'])) {
+      const result = await client.call<{ close: RuntimeTerminalClose }>('terminal.close', {
+        terminal: await getTerminalHandle(parsed.flags, cwd, client)
+      })
+      return printResult(result, json, formatTerminalClose)
+    }
+
+    if (matches(commandPath, ['terminal', 'split'])) {
+      const directionFlag = getOptionalStringFlag(parsed.flags, 'direction')
+      if (
+        directionFlag !== undefined &&
+        directionFlag !== 'horizontal' &&
+        directionFlag !== 'vertical'
+      ) {
+        throw new RuntimeClientError(
+          'invalid_argument',
+          '--direction must be horizontal or vertical'
+        )
+      }
+      const result = await client.call<{ split: RuntimeTerminalSplit }>('terminal.split', {
+        terminal: await getTerminalHandle(parsed.flags, cwd, client),
+        direction: directionFlag,
+        command: getOptionalStringFlag(parsed.flags, 'command')
+      })
+      return printResult(result, json, formatTerminalSplit)
     }
 
     if (matches(commandPath, ['worktree', 'ps'])) {
@@ -1831,6 +1963,23 @@ async function getBrowserWorktreeSelector(
   }
 }
 
+// Why: mirrors browser's implicit active-tab targeting. When --terminal is
+// omitted, resolve the active terminal in the current worktree so commands
+// like `orca terminal send --text "hello" --enter` Just Work.
+async function getTerminalHandle(
+  flags: Map<string, string | boolean>,
+  cwd: string,
+  client: RuntimeClient
+): Promise<string> {
+  const explicit = getOptionalStringFlag(flags, 'terminal')
+  if (explicit) {
+    return explicit
+  }
+  const worktree = await getBrowserWorktreeSelector(flags, cwd, client)
+  const response = await client.call<{ handle: string }>('terminal.resolveActive', { worktree })
+  return response.result.handle
+}
+
 async function getBrowserCommandTarget(
   flags: Map<string, string | boolean>,
   cwd: string,
@@ -2010,13 +2159,40 @@ function formatTerminalShow(result: { terminal: RuntimeTerminalShow }): string {
 
 function formatTerminalRead(result: { terminal: RuntimeTerminalRead }): string {
   const terminal = result.terminal
-  return [`handle: ${terminal.handle}`, `status: ${terminal.status}`, '', ...terminal.tail].join(
-    '\n'
-  )
+  const header = [
+    `handle: ${terminal.handle}`,
+    `status: ${terminal.status}`,
+    ...(terminal.nextCursor !== null ? [`cursor: ${terminal.nextCursor}`] : [])
+  ]
+  return [...header, '', ...terminal.tail].join('\n')
 }
 
 function formatTerminalSend(result: { send: RuntimeTerminalSend }): string {
   return `Sent ${result.send.bytesWritten} bytes to ${result.send.handle}.`
+}
+
+function formatTerminalRename(result: { rename: RuntimeTerminalRename }): string {
+  return result.rename.title
+    ? `Renamed terminal ${result.rename.handle} to "${result.rename.title}".`
+    : `Cleared title for terminal ${result.rename.handle}.`
+}
+
+function formatTerminalCreate(result: { terminal: RuntimeTerminalCreate }): string {
+  const titleNote = result.terminal.title ? ` (title: "${result.terminal.title}")` : ''
+  return `Created terminal ${result.terminal.handle}${titleNote}`
+}
+
+function formatTerminalSplit(result: { split: RuntimeTerminalSplit }): string {
+  return `Split pane ${result.split.handle} in tab ${result.split.tabId}`
+}
+
+function formatTerminalFocus(result: { focus: RuntimeTerminalFocus }): string {
+  return `Focused terminal ${result.focus.handle} (tab ${result.focus.tabId}).`
+}
+
+function formatTerminalClose(result: { close: RuntimeTerminalClose }): string {
+  const ptyNote = result.close.ptyKilled ? ' PTY killed.' : ''
+  return `Closed terminal ${result.close.handle}.${ptyNote}`
 }
 
 function formatTerminalWait(result: { wait: RuntimeTerminalWait }): string {
@@ -2158,8 +2334,14 @@ Terminals:
   terminal show             Show terminal metadata and preview
   terminal read             Read bounded terminal output
   terminal send             Send input to a live terminal
-  terminal wait             Wait for a terminal condition
+  terminal wait             Wait for a terminal condition (exit, tui-idle)
   terminal stop             Stop terminals for a worktree
+  terminal create           Create a new terminal tab in a worktree
+  terminal rename           Set or clear the title of a terminal tab
+  terminal split            Split an existing terminal pane
+  terminal switch           Bring a terminal tab to the foreground
+  terminal focus            Alias for terminal switch
+  terminal close            Close a terminal pane (or tab if last pane)
 
 Browser Automation:
   tab create                Create a new browser tab (navigates to --url)
@@ -2227,11 +2409,15 @@ Common Commands:
   orca worktree rm --worktree <selector> [--force] [--json]
   orca worktree ps [--limit <n>] [--json]
   orca terminal list [--worktree <selector>] [--limit <n>] [--json]
-  orca terminal show --terminal <handle> [--json]
-  orca terminal read --terminal <handle> [--json]
-  orca terminal send --terminal <handle> [--text <text>] [--enter] [--interrupt] [--json]
-  orca terminal wait --terminal <handle> --for exit [--timeout-ms <ms>] [--json]
+  orca terminal show [--terminal <handle>] [--json]
+  orca terminal read [--terminal <handle>] [--json]
+  orca terminal send [--terminal <handle>] [--text <text>] [--enter] [--interrupt] [--json]
+  orca terminal wait [--terminal <handle>] --for exit|tui-idle [--timeout-ms <ms>] [--json]
   orca terminal stop --worktree <selector> [--json]
+  orca terminal create [--worktree <selector>] [--title <name>] [--command <text>] [--json]
+  orca terminal split [--terminal <handle>] [--direction horizontal|vertical] [--json]
+  orca terminal switch [--terminal <handle>] [--json]
+  orca terminal close [--terminal <handle>] [--json]
   orca repo list [--json]
   orca repo add --path <path> [--json]
   orca repo show --repo <selector> [--json]
@@ -2356,11 +2542,15 @@ function formatGroupHelp(group: string): string {
 function formatFlagHelp(flag: string): string {
   const helpByFlag: Record<string, string> = {
     'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
+    command: '--command <text>       Command to run in the terminal on startup',
     comment: '--comment <text>       Comment stored in Orca metadata',
+    cursor: '--cursor <n>           Line cursor from a previous read (returns only new output)',
+    direction: '--direction <dir>      Direction: horizontal|vertical (split) or up|down (scroll)',
     'display-name': '--display-name <name>  Override the Orca display name',
+    title: '--title <text>         Custom title for the terminal tab (omit to reset)',
     enter: '--enter                Append Enter after sending text',
     force: '--force                Force worktree removal when supported',
-    for: '--for exit             Wait condition to satisfy',
+    for: '--for exit|tui-idle    Wait condition to satisfy',
     help: '--help                 Show this help message',
     interrupt: '--interrupt            Send as an interrupt-style input when supported',
     issue: '--issue <number|null>  Linked GitHub issue number',
@@ -2382,7 +2572,6 @@ function formatFlagHelp(flag: string): string {
     value: '--value <text>         Value to fill or select',
     input: '--input <text>         Text to type at current focus',
     expression: '--expression <js>     JavaScript expression to evaluate',
-    direction: '--direction <up|down>  Scroll direction',
     amount: '--amount <pixels>      Scroll distance in pixels',
     index: '--index <n>            Tab index to switch to',
     page: '--page <id>            Stable browser page id from `orca tab list --json`',

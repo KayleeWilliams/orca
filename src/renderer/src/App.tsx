@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
 import { ChevronLeft, ChevronRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
@@ -14,13 +14,7 @@ import { useIpcEvents } from './hooks/useIpcEvents'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
-import Landing from './components/Landing'
-import TaskPage from './components/TaskPage'
-import Settings from './components/settings/Settings'
 import RightSidebar from './components/right-sidebar'
-import QuickOpen from './components/QuickOpen'
-import WorktreeJumpPalette from './components/WorktreeJumpPalette'
-import NewWorkspaceComposerModal from './components/NewWorkspaceComposerModal'
 import { StatusBar } from './components/status-bar/StatusBar'
 import { UpdateCard } from './components/UpdateCard'
 import { StarNagCard } from './components/StarNagCard'
@@ -46,6 +40,12 @@ import {
 import { dispatchClearModifierHints } from './hooks/useModifierHint'
 
 const isMac = navigator.userAgent.includes('Mac')
+const Landing = lazy(() => import('./components/Landing'))
+const TaskPage = lazy(() => import('./components/TaskPage'))
+const Settings = lazy(() => import('./components/settings/Settings'))
+const QuickOpen = lazy(() => import('./components/QuickOpen'))
+const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
+const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -100,6 +100,7 @@ function App(): React.JSX.Element {
   )
 
   const activeView = useAppStore((s) => s.activeView)
+  const activeModal = useAppStore((s) => s.activeModal)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -134,6 +135,7 @@ function App(): React.JSX.Element {
   const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
   const [collapsedSidebarHeaderWidth, setCollapsedSidebarHeaderWidth] = useState(0)
+  const [mountedLazyModalIds, setMountedLazyModalIds] = useState(() => new Set<string>())
 
   // Subscribe to IPC push events
   useIpcEvents()
@@ -619,6 +621,26 @@ function App(): React.JSX.Element {
     sidebarOpen
   ])
 
+  useEffect(() => {
+    if (
+      activeModal !== 'quick-open' &&
+      activeModal !== 'worktree-palette' &&
+      activeModal !== 'new-workspace-composer'
+    ) {
+      return
+    }
+    setMountedLazyModalIds((currentIds) => {
+      if (currentIds.has(activeModal)) {
+        return currentIds
+      }
+      const nextIds = new Set(currentIds)
+      // Why: lazy-load these modals only after first use, then keep them mounted
+      // so repeat opens preserve their local state and avoid re-fetch flashes.
+      nextIds.add(activeModal)
+      return nextIds
+    })
+  }, [activeModal])
+
   // Why: extracted so both the full-width titlebar (settings/landing) and
   // the sidebar-width left header (workspace view) can share the same
   // controls without duplicating the agent badge popover.
@@ -700,9 +722,9 @@ function App(): React.JSX.Element {
                           {wt?.displayName ?? fallbackName}
                         </span>
                       </button>
-                      {agents.map((agent, index) => (
+                      {agents.map((agent) => (
                         <button
-                          key={index}
+                          key={`${agent.tabId}:${agent.paneId ?? 'none'}:${agent.label}`}
                           className="titlebar-agent-hovercard-agent"
                           onClick={() => {
                             activateAndRevealWorktree(worktreeId)
@@ -923,9 +945,11 @@ function App(): React.JSX.Element {
               >
                 <Terminal />
               </div>
-              {activeView === 'settings' ? <Settings /> : null}
-              {activeView === 'tasks' ? <TaskPage /> : null}
-              {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              <Suspense fallback={null}>
+                {activeView === 'settings' ? <Settings /> : null}
+                {activeView === 'tasks' ? <TaskPage /> : null}
+                {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              </Suspense>
             </div>
           </div>
           {/* Why: keep RightSidebar mounted even when closed so that its
@@ -940,10 +964,14 @@ function App(): React.JSX.Element {
             when mounted outside a TooltipProvider ancestor. Keep the global
             composer modal inside this provider so the card renders safely
             whether triggered from Cmd+J or any future entry point. */}
-        <NewWorkspaceComposerModal />
+        <Suspense fallback={null}>
+          {mountedLazyModalIds.has('new-workspace-composer') ? <NewWorkspaceComposerModal /> : null}
+        </Suspense>
       </TooltipProvider>
-      <QuickOpen />
-      <WorktreeJumpPalette />
+      <Suspense fallback={null}>
+        {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
+        {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
+      </Suspense>
       <UpdateCard />
       <StarNagCard />
       <ZoomOverlay />
