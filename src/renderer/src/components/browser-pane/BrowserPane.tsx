@@ -37,11 +37,16 @@ import {
   normalizeExternalBrowserUrl
 } from '../../../../shared/browser-url'
 import {
-  clearLiveBrowserUrl,
   consumeEvictedBrowserTab,
   markEvictedBrowserTab,
   rememberLiveBrowserUrl
 } from './browser-runtime'
+import {
+  webviewRegistry,
+  registeredWebContentsIds,
+  parkedAtByTabId,
+  destroyPersistentWebview
+} from './webview-registry'
 import type {
   BrowserDownloadRequestedEvent,
   BrowserDownloadProgressEvent,
@@ -83,9 +88,6 @@ type BrowserDownloadState = BrowserDownloadRequestedEvent & {
   status: 'requested' | 'downloading'
 }
 
-const webviewRegistry = new Map<string, Electron.WebviewTag>()
-const registeredWebContentsIds = new Map<string, number>()
-const parkedAtByTabId = new Map<string, number>()
 let hiddenContainer: HTMLDivElement | null = null
 const DRAG_LISTENER_KEY = '__orcaBrowserPaneDragListeners'
 const MAX_PARKED_WEBVIEWS = 6
@@ -138,21 +140,7 @@ if (typeof window !== 'undefined') {
   listenerHost[DRAG_LISTENER_KEY] = { dragstart, dragend, drop }
 }
 
-export function destroyPersistentWebview(browserTabId: string): void {
-  const webview = webviewRegistry.get(browserTabId)
-  if (!webview) {
-    registeredWebContentsIds.delete(browserTabId)
-    parkedAtByTabId.delete(browserTabId)
-    clearLiveBrowserUrl(browserTabId)
-    return
-  }
-  void window.api.browser.unregisterGuest({ browserPageId: browserTabId })
-  webview.remove()
-  webviewRegistry.delete(browserTabId)
-  registeredWebContentsIds.delete(browserTabId)
-  parkedAtByTabId.delete(browserTabId)
-  clearLiveBrowserUrl(browserTabId)
-}
+export { destroyPersistentWebview } from './webview-registry'
 
 function buildLoadError(event: {
   errorCode?: number

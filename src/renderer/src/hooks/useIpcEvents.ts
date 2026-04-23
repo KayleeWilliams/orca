@@ -19,6 +19,7 @@ import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { destroyPersistentWebview } from '@/components/browser-pane/webview-registry'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -478,6 +479,11 @@ export function useIpcEvents(): void {
       window.api.ui.onCloseActiveTab(() => {
         const store = useAppStore.getState()
         if (store.activeTabType === 'browser' && store.activeBrowserTabId) {
+          // Why: destroy the webview DOM element before the store update so
+          // the BrowserPane cleanup effect does not re-park it in the hidden
+          // container — re-parking resumes paused media and leaves an
+          // unkillable background video.
+          destroyPersistentWebview(store.activeBrowserTabId)
           store.closeBrowserTab(store.activeBrowserTabId)
         }
       })
