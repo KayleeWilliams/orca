@@ -106,7 +106,11 @@ describe('handleOscLink', () => {
     expect(openUrlMock).toHaveBeenCalledWith('https://example.com/')
     expect(createBrowserTabMock).not.toHaveBeenCalled()
     expect(preventDefault).toHaveBeenCalled()
-    expect(stopPropagation).toHaveBeenCalled()
+    // Why: we intentionally do NOT stopPropagation — xterm's SelectionService
+    // relies on the mouseup bubbling to ownerDocument to detach its drag-select
+    // mousemove listener. Stopping propagation was causing phantom selections
+    // after Cmd+clicking a link and then moving the mouse back over the terminal.
+    expect(stopPropagation).not.toHaveBeenCalled()
   })
 
   it('defaults to Orca when settings have not hydrated yet', () => {

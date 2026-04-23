@@ -235,8 +235,13 @@ export function handleOscLink(
   // Why: xterm renders URL links as clickable anchors. Once Orca decides to
   // handle a modified click itself, we must suppress the browser's default
   // anchor navigation or Electron will still launch the system browser.
+  // Note: we intentionally do NOT stopPropagation here — xterm's
+  // SelectionService listens for mouseup on ownerDocument to clear the
+  // pending drag-select state initiated by the mousedown of the same click.
+  // Stopping propagation leaves SelectionService's mousemove/mouseup handlers
+  // attached, so returning focus to the terminal and moving the mouse (even
+  // without holding a button) extends a selection until the next click/Esc.
   event?.preventDefault?.()
-  event?.stopPropagation?.()
 
   let parsed: URL
   try {

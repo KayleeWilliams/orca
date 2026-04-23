@@ -393,7 +393,18 @@ export function useTerminalPaneLifecycle({
         selectionDisposablesRef.current.set(pane.id, selectionDisposable)
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
-          activate: (event, text) => handleOscLink(text, event as MouseEvent | undefined, linkDeps),
+          activate: (event, text) => {
+            handleOscLink(text, event as MouseEvent | undefined, linkDeps)
+            // Why: Cmd/Ctrl+clicking a link activates Orca handling (open file,
+            // new browser tab, system browser) which can steal focus from the
+            // terminal before the click's mouseup reaches ownerDocument. Without
+            // that mouseup, xterm's SelectionService leaves its drag-select
+            // mousemove listener attached, so returning to the terminal and
+            // moving the mouse extends a selection until the next click/Esc.
+            // clearSelection() explicitly detaches those listeners (see
+            // SelectionService._removeMouseDownListeners).
+            pane.terminal.clearSelection()
+          },
           // Show bottom-left tooltip on hover for OSC 8 hyperlinks (e.g.
           // GitHub owner/repo#issue references emitted by CLI tools) — same
           // behaviour as the WebLinksAddon provides for plain-text URLs.
@@ -556,6 +567,14 @@ export function useTerminalPaneLifecycle({
           return
         }
         void handleOscLink(url, event, linkDeps)
+        // Why: Cmd/Ctrl+click on a plain-text URL (WebLinksAddon) takes focus
+        // away from the terminal before the click's mouseup reaches
+        // ownerDocument. That leaves xterm's SelectionService drag-select
+        // mousemove listener attached, so subsequent mouse motion extends a
+        // phantom selection until the next click/Esc. Explicitly clearing the
+        // selection also detaches those listeners (see
+        // SelectionService._removeMouseDownListeners).
+        managerRef.current?.getActivePane()?.terminal.clearSelection()
       }
     })
 
