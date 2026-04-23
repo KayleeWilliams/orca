@@ -26,6 +26,18 @@ function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows:
   }
 }
 
+function refreshViewport(pane: ManagedPaneInternal): void {
+  try {
+    // Why: xterm's resize path updates the buffer/viewport state, but complex
+    // TUIs like Codex can still leave the last rows visually stale until the
+    // next paint-triggering write. Refreshing after a real fit keeps the
+    // bottom-of-screen prompt/status rows visible through repeated drags.
+    pane.terminal.refresh(0, pane.terminal.rows - 1)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
     const dims = getProposedDimensions(pane)
@@ -37,16 +49,19 @@ export function safeFit(pane: ManagedPaneInternal): void {
     }
     if (pane.pendingSplitScrollState) {
       pane.fitAddon.fit()
+      refreshViewport(pane)
       return
     }
     if (pane.pendingDragScrollState) {
       pane.fitAddon.fit()
       restoreScrollState(pane.terminal, pane.pendingDragScrollState)
+      refreshViewport(pane)
       return
     }
     const state = captureScrollState(pane.terminal)
     pane.fitAddon.fit()
     restoreScrollState(pane.terminal, state)
+    refreshViewport(pane)
   } catch {
     // Container may not have dimensions yet
   }
@@ -61,16 +76,19 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
       }
       if (pane.pendingSplitScrollState) {
         pane.fitAddon.fit()
+        refreshViewport(pane)
         continue
       }
       if (pane.pendingDragScrollState) {
         pane.fitAddon.fit()
         restoreScrollState(pane.terminal, pane.pendingDragScrollState)
+        refreshViewport(pane)
         continue
       }
       const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()
       restoreScrollState(pane.terminal, state)
+      refreshViewport(pane)
     } catch {
       /* ignore */
     }

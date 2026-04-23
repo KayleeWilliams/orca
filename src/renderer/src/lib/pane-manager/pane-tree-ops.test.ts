@@ -27,7 +27,8 @@ function createPane({
     },
     scrollToBottom: vi.fn(),
     scrollToLine: vi.fn(),
-    scrollLines: vi.fn()
+    scrollLines: vi.fn(),
+    refresh: vi.fn()
   }
 
   return {
@@ -79,6 +80,7 @@ describe('safeFit', () => {
     safeFit(pane)
 
     expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
   })
 
   it('still refits when a split-scroll lock is active and the grid changed', () => {
@@ -98,5 +100,19 @@ describe('safeFit', () => {
     safeFit(pane)
 
     expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
+  })
+
+  it('does not refresh when the pane grid dimensions did not change', () => {
+    const pane = createPane({
+      proposedCols: 120,
+      proposedRows: 32,
+      terminalCols: 120,
+      terminalRows: 32
+    })
+
+    safeFit(pane)
+
+    expect(pane.terminal.refresh).not.toHaveBeenCalled()
   })
 })
