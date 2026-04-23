@@ -146,6 +146,7 @@ export function registerPtyHandlers(
   if (localProvider instanceof LocalPtyProvider) {
     localProvider.configure({
       isHistoryEnabled: () => getSettings?.()?.terminalScopeHistoryByWorktree ?? true,
+      isForceHyperlinkEnabled: () => getSettings?.()?.terminalForceHyperlink ?? true,
       buildSpawnEnv: (id, baseEnv) => {
         const selectedCodexHomePath = getSelectedCodexHomePath?.() ?? null
 

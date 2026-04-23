@@ -657,6 +657,58 @@ export function TerminalPane({
           ) : null}
         </SearchableSetting>
 
+        <SearchableSetting
+          title="Force Hyperlink Escapes"
+          description="Set FORCE_HYPERLINK=1 in every terminal so tools emit OSC-8 clickable links. Turn off if your shell startup is slow."
+          keywords={[
+            'terminal',
+            'hyperlink',
+            'link',
+            'osc',
+            'osc8',
+            'osc-8',
+            'force_hyperlink',
+            'slow',
+            'startup',
+            'zsh',
+            'zshrc',
+            'oh-my-zsh',
+            'p10k',
+            'powerlevel10k'
+          ]}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Force Hyperlink Escapes</Label>
+            <p className="text-xs text-muted-foreground">
+              Sets{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">FORCE_HYPERLINK=1</code> in
+              every spawned terminal so tools like <code>ls</code>, <code>git</code>, and{' '}
+              <code>eza</code> emit OSC-8 clickable links. Disable if your shell startup feels slow
+              — heavy setups (oh-my-zsh, powerlevel10k, nvm, pyenv, conda) can take measurably
+              longer with this on. Only affects newly spawned terminals.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.terminalForceHyperlink}
+            onClick={() =>
+              updateSettings({
+                terminalForceHyperlink: !settings.terminalForceHyperlink
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.terminalForceHyperlink ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.terminalForceHyperlink ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
+
         {isMac ? (
           <SearchableSetting
             title="Option as Alt"
