@@ -179,8 +179,14 @@ export function createFilePathLinkProvider(
 
           return {
             range: {
+              // Why: xterm's IBufferRange uses 1-based *inclusive* coords on
+              // both ends (the hit-test is `x >= start.x && x <= end.x`),
+              // but `parsed.endIndex` is the exclusive string-slice end.
+              // Converting start = +1 but end = +0 maps correctly so the
+              // underline stops on the last filename cell instead of bleeding
+              // into the trailing whitespace of column-padded `ls` output.
               start: { x: parsed.startIndex + 1, y: bufferLineNumber },
-              end: { x: parsed.endIndex + 1, y: bufferLineNumber }
+              end: { x: parsed.endIndex, y: bufferLineNumber }
             },
             text: parsed.displayText,
             activate: (event) => {
