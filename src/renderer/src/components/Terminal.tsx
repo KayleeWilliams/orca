@@ -731,6 +731,11 @@ function Terminal(): React.JSX.Element | null {
         if (state.activeTabType === 'editor' && state.activeFileId) {
           handleCloseFile(state.activeFileId)
         } else if (state.activeTabType === 'browser' && state.activeBrowserTabId) {
+          // Why: destroy the webview DOM element before the store update so
+          // the BrowserPane cleanup effect does not re-park it in the hidden
+          // container — re-parking resumes paused media and leaves an
+          // unkillable background video.
+          destroyPersistentWebview(state.activeBrowserTabId)
           closeBrowserTab(state.activeBrowserTabId)
         }
         return
@@ -844,7 +849,16 @@ function Terminal(): React.JSX.Element | null {
   // call destroyPersistentWebview (renderer-only DOM code). This subscriber
   // detects when browser tabs disappear from a worktree (e.g. worktree deleted)
   // and destroys orphaned webview elements to prevent memory leaks.
-  const prevBrowserTabIdsRef = useRef<Set<string>>(new Set())
+  // Why: seed with the current set of browser tab IDs so the subscriber
+  // can detect removals even if no browserTabsByWorktree change occurred
+  // between effect setup and the first tab close (e.g. session-restored tabs).
+  const prevBrowserTabIdsRef = useRef<Set<string>>(
+    new Set(
+      Object.values(useAppStore.getState().browserTabsByWorktree)
+        .flat()
+        .map((tab) => tab.id)
+    )
+  )
   useEffect(() => {
     let prevBrowserTabs = useAppStore.getState().browserTabsByWorktree
     return useAppStore.subscribe((state) => {
