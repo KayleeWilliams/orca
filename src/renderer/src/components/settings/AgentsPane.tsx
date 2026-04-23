@@ -231,11 +231,6 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
 
   const defaultAgent = settings.defaultTuiAgent
   const cmdOverrides = settings.agentCmdOverrides ?? {}
-  // Why: treat an absent value as the default (on). Settings written by an
-  // older build or snapshotted by a long-lived main process may not yet carry
-  // this field — rendering it as "off" would look like the user had disabled
-  // the dashboard when they never touched the toggle.
-  const showAgentDashboard = settings.showAgentDashboard ?? true
 
   const setDefault = (id: TuiAgent | null): void => {
     updateSettings({ defaultTuiAgent: id })
@@ -272,18 +267,18 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
           </div>
           <button
             role="switch"
-            aria-checked={showAgentDashboard}
+            aria-checked={settings.showAgentDashboard}
             aria-label="Show Agent Dashboard"
-            onClick={() => updateSettings({ showAgentDashboard: !showAgentDashboard })}
+            onClick={() => updateSettings({ showAgentDashboard: !settings.showAgentDashboard })}
             className={cn(
               'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors',
-              showAgentDashboard ? 'bg-foreground' : 'bg-muted-foreground/30'
+              settings.showAgentDashboard ? 'bg-foreground' : 'bg-muted-foreground/30'
             )}
           >
             <span
               className={cn(
                 'pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform',
-                showAgentDashboard ? 'translate-x-4' : 'translate-x-0.5'
+                settings.showAgentDashboard ? 'translate-x-4' : 'translate-x-0.5'
               )}
             />
           </button>

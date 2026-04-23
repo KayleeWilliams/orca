@@ -127,9 +127,10 @@ function RightSidebarInner(): React.JSX.Element {
   const setActivityBarPosition = useAppStore((s) => s.setActivityBarPosition)
   // Why: the bottom-docked agent dashboard is opt-out via Settings → Agents.
   // Users who prefer a quieter sidebar can hide the panel without losing any
-  // in-terminal agent status — the per-tab status indicators remain. Default
-  // to visible while settings are still loading so the panel doesn't flash in.
-  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard ?? true)
+  // in-terminal agent status — the per-tab status indicators remain. While
+  // settings are still loading, render the panel so it doesn't flash in once
+  // settings arrive.
+  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard !== false)
 
   // Why: source control and checks are meaningless for non-git folders.
   // Hide those tabs so the activity bar only shows relevant actions.
