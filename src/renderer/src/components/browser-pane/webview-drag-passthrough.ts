@@ -10,7 +10,28 @@
 // useTabDragSplit can call this without pulling in the entire BrowserPane
 // component tree.
 
-const registry = new Set<HTMLElement>()
+// Why: Vite HMR reloads this module in isolation, replacing the module-level
+// binding with a fresh empty Set while the live `<webview>` elements persist
+// (they're registered once from BrowserPane.tsx's "create new webview" branch,
+// not on every mount). Stashing the Set on `window` lets the reloaded module
+// instance re-adopt the existing registrations so drag passthrough keeps
+// working across HMR. Mirrors the DRAG_LISTENER_KEY pattern in BrowserPane.tsx.
+const DRAG_PASSTHROUGH_REGISTRY_KEY = '__orcaBrowserWebviewDragPassthroughRegistry'
+const registry: Set<HTMLElement> = (() => {
+  if (typeof window === 'undefined') {
+    // Fall back to a module-local Set in non-DOM contexts (tests, SSR-like
+    // codepaths). Behavior matches the pre-HMR-fix implementation there.
+    return new Set<HTMLElement>()
+  }
+  const host = window as Window & { [DRAG_PASSTHROUGH_REGISTRY_KEY]?: Set<HTMLElement> }
+  const existing = host[DRAG_PASSTHROUGH_REGISTRY_KEY]
+  if (existing) {
+    return existing
+  }
+  const created = new Set<HTMLElement>()
+  host[DRAG_PASSTHROUGH_REGISTRY_KEY] = created
+  return created
+})()
 
 export function registerBrowserWebviewForDragPassthrough(webview: HTMLElement): void {
   registry.add(webview)
