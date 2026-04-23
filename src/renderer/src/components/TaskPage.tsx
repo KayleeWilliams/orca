@@ -972,7 +972,7 @@ export default function TaskPage(): React.JSX.Element {
                             {item.labels.slice(0, 3).map((label) => (
                               <span
                                 key={label}
-                                className="rounded-full border border-border/50 bg-background/50 backdrop-blur-md px-1.5 py-0 text-[10px] text-muted-foreground supports-[backdrop-filter]:bg-background/50"
+                                className="rounded-full border border-border/50 bg-background/80 px-1.5 py-0 text-[10px] text-muted-foreground"
                               >
                                 {label}
                               </span>
@@ -1020,7 +1020,7 @@ export default function TaskPage(): React.JSX.Element {
                               e.stopPropagation()
                               handleUseWorkItem(item)
                             }}
-                            className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/50 backdrop-blur-md px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
+                            className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/80 px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/60"
                           >
                             Use
                             <ArrowRight className="size-3" />
