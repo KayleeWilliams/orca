@@ -134,6 +134,8 @@ export function createPaneDOM(
     fitAddon,
     fitResizeObserver: null,
     pendingObservedFitRafId: null,
+    pendingDragFitTimeoutId: null,
+    lastDragFitAtMs: null,
     searchAddon,
     serializeAddon,
     unicode11Addon,

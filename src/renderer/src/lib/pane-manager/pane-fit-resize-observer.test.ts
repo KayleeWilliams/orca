@@ -49,6 +49,8 @@ function createPane(): ManagedPaneInternal {
     } as never,
     fitResizeObserver: null,
     pendingObservedFitRafId: null,
+    pendingDragFitTimeoutId: null,
+    lastDragFitAtMs: null,
     searchAddon: {} as never,
     serializeAddon: {} as never,
     unicode11Addon: {} as never,
@@ -89,6 +91,7 @@ describe('attachPaneFitResizeObserver', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -124,7 +127,8 @@ describe('attachPaneFitResizeObserver', () => {
     expect(pane.pendingObservedFitRafId).toBeNull()
   })
 
-  it('skips drag-time fits while a divider drag lock is active', () => {
+  it('keeps drag-time fits throttled instead of dropping them completely', () => {
+    vi.useFakeTimers()
     const pane = createPane()
     pane.pendingSplitScrollState = null
     pane.pendingDragScrollState = {
@@ -133,11 +137,18 @@ describe('attachPaneFitResizeObserver', () => {
       viewportY: 0,
       totalLines: 24
     } satisfies ScrollState
+    pane.lastDragFitAtMs = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => 10)
 
     attachPaneFitResizeObserver(pane)
     mockResizeObservers[0]?.trigger()
     flushAnimationFrames()
 
     expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+
+    vi.spyOn(performance, 'now').mockImplementation(() => 50)
+    vi.advanceTimersByTime(40)
+
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
   })
 })

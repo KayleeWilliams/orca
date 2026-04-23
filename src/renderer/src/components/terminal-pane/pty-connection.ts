@@ -46,8 +46,6 @@ export function connectPanePty(
 ): IDisposable {
   let disposed = false
   let connectFrame: number | null = null
-  let pendingDragResize: { cols: number; rows: number } | null = null
-  let pendingDragResizeFrame: number | null = null
   let startupInjectTimer: ReturnType<typeof setTimeout> | null = null
   // Why: startup commands must only run once — in the pane they were
   // targeted at. Capture `deps.startup` into a local and clear the field on
@@ -216,40 +214,10 @@ export function connectPanePty(
     transport.sendInput(data)
   })
 
-  const flushPendingDragResize = (): void => {
-    pendingDragResizeFrame = null
-    if (disposed) {
-      return
-    }
-    if (pane.pendingDragScrollState) {
-      pendingDragResizeFrame = requestAnimationFrame(flushPendingDragResize)
-      return
-    }
-    if (!pendingDragResize) {
-      return
-    }
-    const { cols, rows } = pendingDragResize
-    pendingDragResize = null
-    transport.resize(cols, rows)
-  }
-
   const onResizeDisposable = pane.terminal.onResize(({ cols, rows }) => {
-    if (pane.pendingDragScrollState) {
-      pendingDragResize = { cols, rows }
-      if (pendingDragResizeFrame === null) {
-        // Why: Codex/Ink-style TUIs can leave xterm visually corrupted after a
-        // storm of intermediate SIGWINCH events from divider drags. Keep xterm
-        // fitted live so the pane stays usable, but only forward the final
-        // settled rows/cols to the PTY once the drag completes.
-        pendingDragResizeFrame = requestAnimationFrame(flushPendingDragResize)
-      }
-      return
-    }
-    pendingDragResize = null
-    if (pendingDragResizeFrame !== null) {
-      cancelAnimationFrame(pendingDragResizeFrame)
-      pendingDragResizeFrame = null
-    }
+    // Why: pane-tree-ops already throttles drag-time xterm fits to a safe
+    // cadence. Once the grid actually changes, the PTY should see that same
+    // live size so Codex can reflow during the drag instead of only on drop.
     transport.resize(cols, rows)
   })
 
@@ -595,10 +563,6 @@ export function connectPanePty(
         // handler wiring from the current pane.
         cancelAnimationFrame(connectFrame)
         connectFrame = null
-      }
-      if (pendingDragResizeFrame !== null) {
-        cancelAnimationFrame(pendingDragResizeFrame)
-        pendingDragResizeFrame = null
       }
       onDataDisposable.dispose()
       onResizeDisposable.dispose()

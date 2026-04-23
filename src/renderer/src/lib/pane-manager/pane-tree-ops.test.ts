@@ -44,6 +44,8 @@ function createPane({
     } as never,
     fitResizeObserver: null,
     pendingObservedFitRafId: null,
+    pendingDragFitTimeoutId: null,
+    lastDragFitAtMs: null,
     searchAddon: {} as never,
     serializeAddon: {} as never,
     unicode11Addon: {} as never,
@@ -103,7 +105,7 @@ describe('safeFit', () => {
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
   })
 
-  it('skips drag-time refits while a drag scroll lock is active', () => {
+  it('fits immediately on the first drag-time resize', () => {
     const pane = createPane({
       proposedCols: 100,
       proposedRows: 32,
@@ -119,8 +121,8 @@ describe('safeFit', () => {
 
     safeFit(pane)
 
-    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
-    expect(pane.terminal.refresh).not.toHaveBeenCalled()
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
   })
 
   it('still performs the final refit when drag-time fits are explicitly allowed', () => {
@@ -141,6 +143,47 @@ describe('safeFit', () => {
 
     expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
+  })
+
+  it('throttles repeated drag-time refits to a capped cadence', () => {
+    vi.useFakeTimers()
+    const nowSpy = vi.spyOn(performance, 'now')
+    const pane = createPane({
+      proposedCols: 100,
+      proposedRows: 32,
+      terminalCols: 120,
+      terminalRows: 32
+    })
+    pane.pendingDragScrollState = {
+      wasAtBottom: true,
+      firstVisibleLineContent: '',
+      viewportY: 0,
+      totalLines: 32
+    } satisfies ScrollState
+
+    let nowMs = 0
+    nowSpy.mockImplementation(() => nowMs)
+
+    safeFit(pane)
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+
+    pane.fitAddon.fit.mockClear()
+    ;(pane.terminal.refresh as ReturnType<typeof vi.fn>).mockClear()
+
+    nowMs = 10
+    safeFit(pane)
+
+    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+    expect(pane.pendingDragFitTimeoutId).not.toBeNull()
+
+    nowMs = 50
+    vi.advanceTimersByTime(40)
+
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
+
+    nowSpy.mockRestore()
+    vi.useRealTimers()
   })
 
   it('does not refresh when the pane grid dimensions did not change', () => {

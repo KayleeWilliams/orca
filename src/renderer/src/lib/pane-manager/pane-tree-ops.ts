@@ -22,6 +22,8 @@ export type RefitOptions = {
   allowWhileDragLocked?: boolean
 }
 
+const DRAG_REFIT_INTERVAL_MS = 50
+
 function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows: number } | null {
   try {
     return pane.fitAddon.proposeDimensions() ?? null
@@ -42,6 +44,31 @@ function refreshViewport(pane: ManagedPaneInternal): void {
   }
 }
 
+function getNowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function clearScheduledDragFit(pane: ManagedPaneInternal): void {
+  if (pane.pendingDragFitTimeoutId === null) {
+    return
+  }
+  clearTimeout(pane.pendingDragFitTimeoutId)
+  pane.pendingDragFitTimeoutId = null
+}
+
+function scheduleDragFit(pane: ManagedPaneInternal, delayMs: number): void {
+  if (pane.pendingDragFitTimeoutId !== null) {
+    return
+  }
+  // Why: Codex/Ink TUIs break under resize storms, but removing drag-time
+  // fits entirely makes split resizing feel dead. A capped cadence keeps the
+  // pane responsive without re-entering the worst-case xterm path every frame.
+  pane.pendingDragFitTimeoutId = setTimeout(() => {
+    pane.pendingDragFitTimeoutId = null
+    safeFit(pane)
+  }, delayMs)
+}
+
 export function safeFit(pane: ManagedPaneInternal, opts: RefitOptions = {}): void {
   try {
     const dims = getProposedDimensions(pane)
@@ -51,11 +78,21 @@ export function safeFit(pane: ManagedPaneInternal, opts: RefitOptions = {}): voi
       // churn, which was causing visible terminal blinking while resizing.
       return
     }
-    // Why: repeated xterm fits while a divider is actively being dragged can
-    // corrupt browser-side rendering for Codex/Ink TUIs. Keep the pane flexing
-    // live, but defer the terminal grid resize until the drag settles.
-    if (pane.pendingDragScrollState && !opts.allowWhileDragLocked) {
-      return
+    if (!pane.pendingDragScrollState) {
+      clearScheduledDragFit(pane)
+      pane.lastDragFitAtMs = null
+    } else if (opts.allowWhileDragLocked) {
+      clearScheduledDragFit(pane)
+    } else {
+      const now = getNowMs()
+      const lastFitAt = pane.lastDragFitAtMs
+      const remainingMs =
+        lastFitAt === null ? 0 : Math.max(0, DRAG_REFIT_INTERVAL_MS - (now - lastFitAt))
+      if (remainingMs > 0) {
+        scheduleDragFit(pane, remainingMs)
+        return
+      }
+      pane.lastDragFitAtMs = now
     }
     if (pane.pendingSplitScrollState) {
       pane.fitAddon.fit()
@@ -79,32 +116,7 @@ export function safeFit(pane: ManagedPaneInternal, opts: RefitOptions = {}): voi
 
 export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of panes.values()) {
-    try {
-      const dims = getProposedDimensions(pane)
-      if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
-        continue
-      }
-      if (pane.pendingDragScrollState) {
-        continue
-      }
-      if (pane.pendingSplitScrollState) {
-        pane.fitAddon.fit()
-        refreshViewport(pane)
-        continue
-      }
-      if (pane.pendingDragScrollState) {
-        pane.fitAddon.fit()
-        restoreScrollState(pane.terminal, pane.pendingDragScrollState)
-        refreshViewport(pane)
-        continue
-      }
-      const state = captureScrollState(pane.terminal)
-      pane.fitAddon.fit()
-      restoreScrollState(pane.terminal, state)
-      refreshViewport(pane)
-    } catch {
-      /* ignore */
-    }
+    safeFit(pane)
   }
 }
 

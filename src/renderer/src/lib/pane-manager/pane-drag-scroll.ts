@@ -8,6 +8,11 @@ import { captureScrollState, restoreScrollState } from './pane-scroll'
 
 export function lockDragScroll(el: HTMLElement, panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of findManagedPanesUnder(el, panes)) {
+    if (pane.pendingDragFitTimeoutId !== null) {
+      clearTimeout(pane.pendingDragFitTimeoutId)
+      pane.pendingDragFitTimeoutId = null
+    }
+    pane.lastDragFitAtMs = null
     if (!pane.pendingDragScrollState) {
       pane.pendingDragScrollState = captureScrollState(pane.terminal)
     }
@@ -16,6 +21,11 @@ export function lockDragScroll(el: HTMLElement, panes: Map<number, ManagedPaneIn
 
 export function unlockDragScroll(el: HTMLElement, panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of findManagedPanesUnder(el, panes)) {
+    if (pane.pendingDragFitTimeoutId !== null) {
+      clearTimeout(pane.pendingDragFitTimeoutId)
+      pane.pendingDragFitTimeoutId = null
+    }
+    pane.lastDragFitAtMs = null
     if (pane.pendingDragScrollState) {
       try {
         restoreScrollState(pane.terminal, pane.pendingDragScrollState)
