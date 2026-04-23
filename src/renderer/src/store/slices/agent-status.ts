@@ -38,6 +38,10 @@ export type AgentStatusSlice = {
    *  overwrites the snapshot. Shared between the dashboard and the sidebar
    *  agent-status hover so the two surfaces display identical rows. */
   retainedAgentsByPaneKey: Record<string, RetainedAgentEntry>
+  /** Pane keys explicitly torn down (pane close, tab close, PTY exit, manual
+   *  dismissal) and therefore forbidden from being re-retained on their next
+   *  disappearance. Consumed by the retention sync as a one-shot suppressor. */
+  retentionSuppressedPaneKeys: Record<string, true>
 
   /** Update or insert an agent status entry from a status payload. */
   setAgentStatus: (
@@ -53,6 +57,14 @@ export type AgentStatusSlice = {
    *  Used when a tab is closed — same prefix-sweep as cacheTimerByKey cleanup. */
   removeAgentStatusByTabPrefix: (tabIdPrefix: string) => void
 
+  /** Remove a single entry and suppress re-retention on its next disappearance.
+   *  Used for explicit teardown paths where the row should stay gone. */
+  dropAgentStatus: (paneKey: string) => void
+
+  /** Remove all entries under a tab and suppress re-retention for them.
+   *  Used when the user closes the whole tab. */
+  dropAgentStatusByTabPrefix: (tabIdPrefix: string) => void
+
   /** Retain an agent snapshot (called by the top-level retention sync effect). */
   retainAgent: (retained: RetainedAgentEntry) => void
 
@@ -64,6 +76,10 @@ export type AgentStatusSlice = {
 
   /** Prune retained entries whose worktreeId is not in the given set. */
   pruneRetainedAgents: (validWorktreeIds: Set<string>) => void
+
+  /** Clear one-shot teardown suppressors after the retention sync observes
+   *  that disappearance and decides not to retain the row. */
+  clearRetentionSuppressedPaneKeys: (paneKeys: string[]) => void
 }
 
 export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusSlice> = (
@@ -111,6 +127,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     agentStatusByPaneKey: {},
     agentStatusEpoch: 0,
     retainedAgentsByPaneKey: {},
+    retentionSuppressedPaneKeys: {},
 
     setAgentStatus: (paneKey, payload, terminalTitle) => {
       set((s) => {
@@ -161,8 +178,11 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           // it when a new turn starts (working → Stop reprices it).
           interrupted: payload.interrupted
         }
+        const nextRetentionSuppressedPaneKeys = { ...s.retentionSuppressedPaneKeys }
+        delete nextRetentionSuppressedPaneKeys[paneKey]
         return {
           agentStatusByPaneKey: { ...s.agentStatusByPaneKey, [paneKey]: entry },
+          retentionSuppressedPaneKeys: nextRetentionSuppressedPaneKeys,
           // Why: bump both epochs so WorktreeCard re-derives its visual status
           // and WorktreeList re-sorts immediately when an agent reports status.
           agentStatusEpoch: s.agentStatusEpoch + 1,
@@ -204,6 +224,79 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         return {
           agentStatusByPaneKey: next,
           agentStatusEpoch: s.agentStatusEpoch + 1
+        }
+      })
+      queueMicrotask(() => scheduleNextFreshnessExpiry())
+    },
+
+    dropAgentStatus: (paneKey) => {
+      set((s) => {
+        const hasLive = paneKey in s.agentStatusByPaneKey
+        const hasRetained = paneKey in s.retainedAgentsByPaneKey
+        const alreadySuppressed = paneKey in s.retentionSuppressedPaneKeys
+        if (!hasLive && !hasRetained && alreadySuppressed) {
+          return s
+        }
+
+        const nextLive = hasLive ? { ...s.agentStatusByPaneKey } : s.agentStatusByPaneKey
+        if (hasLive) {
+          delete nextLive[paneKey]
+        }
+
+        const nextRetained = hasRetained
+          ? { ...s.retainedAgentsByPaneKey }
+          : s.retainedAgentsByPaneKey
+        if (hasRetained) {
+          delete nextRetained[paneKey]
+        }
+
+        return {
+          agentStatusByPaneKey: nextLive,
+          retainedAgentsByPaneKey: nextRetained,
+          // Why: explicit teardown means "the user is done with this row", so
+          // the next retention sync must not resurrect it from the previous frame.
+          retentionSuppressedPaneKeys: {
+            ...s.retentionSuppressedPaneKeys,
+            [paneKey]: true
+          },
+          agentStatusEpoch: hasLive ? s.agentStatusEpoch + 1 : s.agentStatusEpoch
+        }
+      })
+      queueMicrotask(() => scheduleNextFreshnessExpiry())
+    },
+
+    dropAgentStatusByTabPrefix: (tabIdPrefix) => {
+      set((s) => {
+        const prefix = `${tabIdPrefix}:`
+        const liveKeys = Object.keys(s.agentStatusByPaneKey).filter((k) => k.startsWith(prefix))
+        const retainedKeys = Object.keys(s.retainedAgentsByPaneKey).filter((k) =>
+          k.startsWith(prefix)
+        )
+        const paneKeys = new Set<string>([...liveKeys, ...retainedKeys])
+        if (paneKeys.size === 0) {
+          return s
+        }
+
+        const nextLive = { ...s.agentStatusByPaneKey }
+        for (const key of liveKeys) {
+          delete nextLive[key]
+        }
+
+        const nextRetained = { ...s.retainedAgentsByPaneKey }
+        for (const key of retainedKeys) {
+          delete nextRetained[key]
+        }
+
+        const nextRetentionSuppressedPaneKeys = { ...s.retentionSuppressedPaneKeys }
+        for (const key of paneKeys) {
+          nextRetentionSuppressedPaneKeys[key] = true
+        }
+
+        return {
+          agentStatusByPaneKey: nextLive,
+          retainedAgentsByPaneKey: nextRetained,
+          retentionSuppressedPaneKeys: nextRetentionSuppressedPaneKeys,
+          agentStatusEpoch: liveKeys.length > 0 ? s.agentStatusEpoch + 1 : s.agentStatusEpoch
         }
       })
       queueMicrotask(() => scheduleNextFreshnessExpiry())
@@ -256,6 +349,21 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           next[key] = ra
         }
         return changed ? { retainedAgentsByPaneKey: next } : s
+      })
+    },
+
+    clearRetentionSuppressedPaneKeys: (paneKeys) => {
+      set((s) => {
+        let changed = false
+        const next = { ...s.retentionSuppressedPaneKeys }
+        for (const paneKey of paneKeys) {
+          if (!(paneKey in next)) {
+            continue
+          }
+          delete next[paneKey]
+          changed = true
+        }
+        return changed ? { retentionSuppressedPaneKeys: next } : s
       })
     }
   }

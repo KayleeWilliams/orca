@@ -78,6 +78,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
     agentCmdOverrides: {},
+    showAgentDashboard: true,
     terminalMacOptionAsAlt: 'false',
     experimentalTerminalDaemon: false,
     experimentalTerminalDaemonNoticeShown: false,

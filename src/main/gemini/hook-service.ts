@@ -3,6 +3,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import {
+  createManagedCommandMatcher,
   readHooksJson,
   removeManagedCommands,
   writeHooksJson,
@@ -27,12 +28,12 @@ function getConfigPath(): string {
   return join(homedir(), '.gemini', 'settings.json')
 }
 
+function getManagedScriptFileName(): string {
+  return process.platform === 'win32' ? 'gemini-hook.cmd' : 'gemini-hook.sh'
+}
+
 function getManagedScriptPath(): string {
-  return join(
-    app.getPath('userData'),
-    'agent-hooks',
-    process.platform === 'win32' ? 'gemini-hook.cmd' : 'gemini-hook.sh'
-  )
+  return join(app.getPath('userData'), 'agent-hooks', getManagedScriptFileName())
 }
 
 function getManagedCommand(scriptPath: string): string {
@@ -144,11 +145,16 @@ export class GeminiHookService {
     }
 
     const command = getManagedCommand(scriptPath)
+    // Why: match by script filename (not exact command string) so a fresh
+    // install sweeps stale entries left by older builds or a different
+    // Electron userData path (dev vs. prod). Without this, repeated installs
+    // accumulate duplicate hook entries pointing at defunct scripts.
+    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
     const nextHooks = { ...config.hooks }
 
     for (const eventName of GEMINI_EVENTS) {
       const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []
-      const cleaned = removeManagedCommands(current, (currentCommand) => currentCommand === command)
+      const cleaned = removeManagedCommands(current, isManagedCommand)
       const definition: HookDefinition = {
         hooks: [{ type: 'command', command }]
       }
@@ -163,7 +169,6 @@ export class GeminiHookService {
 
   remove(): AgentHookInstallStatus {
     const configPath = getConfigPath()
-    const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
       return {
@@ -175,13 +180,12 @@ export class GeminiHookService {
       }
     }
 
-    const command = getManagedCommand(scriptPath)
+    // Why: same broad matcher as install(), so remove() also cleans up stale
+    // entries from older builds even if the current scriptPath has moved.
+    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
     const nextHooks = { ...config.hooks }
     for (const [eventName, definitions] of Object.entries(nextHooks)) {
-      const cleaned = removeManagedCommands(
-        definitions,
-        (currentCommand) => currentCommand === command
-      )
+      const cleaned = removeManagedCommands(definitions, isManagedCommand)
       if (cleaned.length === 0) {
         delete nextHooks[eventName]
       } else {

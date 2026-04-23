@@ -58,7 +58,7 @@ export function connectPanePty(
     deps.setCacheTimerStartedAt(cacheKey, null)
     // Why: a dead terminal has no running agent — remove its explicit status
     // entry so the hover UI only shows what is running *now*.
-    useAppStore.getState().removeAgentStatus(cacheKey)
+    useAppStore.getState().dropAgentStatus(cacheKey)
     // The runtime graph is the CLI's source for live terminal bindings, so
     // we must republish when a pane loses its PTY instead of waiting for a
     // broader layout change that may never happen.
@@ -156,7 +156,7 @@ export function connectPanePty(
     deps.setCacheTimerStartedAt(cacheKey, null)
     // Why: the agent process is gone, so its explicit status is no longer meaningful.
     // Remove the entry so the hover UI does not show stale "working" for a dead agent.
-    useAppStore.getState().removeAgentStatus(cacheKey)
+    useAppStore.getState().dropAgentStatus(cacheKey)
   }
   // Why: inject ORCA_PANE_KEY so global Claude/Codex hooks can attribute their
   // callbacks to the correct Orca pane without resolving worktrees from cwd.

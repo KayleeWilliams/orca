@@ -9,11 +9,9 @@ import {
   normalizeTerminalTitle,
   extractLastOscTitle
 } from '../../../../shared/agent-detection'
-import type { OpenCodeStatusEvent } from '../../../../shared/types'
 import {
   ptyDataHandlers,
   ptyExitHandlers,
-  openCodeStatusHandlers,
   ptyTeardownHandlers,
   ensurePtyDispatcher,
   getEagerPtyBufferHandle
@@ -178,8 +176,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   let suppressAttentionEvents = false
   const processAgentStatusChunk = createAgentStatusOscProcessor()
   let lastEmittedTitle: string | null = null
-  let lastObservedTerminalTitle: string | null = null
-  let openCodeStatus: OpenCodeStatusEvent['status'] | null = null
   let staleTitleTimer: ReturnType<typeof setTimeout> | null = null
   const agentTracker =
     onAgentBecameIdle || onAgentBecameWorking || onAgentExited
@@ -200,53 +196,14 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   function unregisterPtyHandlers(id: string): void {
     ptyDataHandlers.delete(id)
     ptyExitHandlers.delete(id)
-    openCodeStatusHandlers.delete(id)
     ptyTeardownHandlers.delete(id)
   }
 
   function unregisterPtyDataAndStatusHandlers(id: string): void {
     ptyDataHandlers.delete(id)
-    openCodeStatusHandlers.delete(id)
-  }
-
-  function getSyntheticOpenCodeTitle(status: OpenCodeStatusEvent['status']): string {
-    const baseTitle =
-      lastObservedTerminalTitle && lastObservedTerminalTitle !== 'OpenCode'
-        ? `OpenCode · ${lastObservedTerminalTitle}`
-        : 'OpenCode'
-
-    if (status === 'working') {
-      return `⠋ ${baseTitle}`
-    }
-    if (status === 'permission') {
-      return `${baseTitle} permission needed`
-    }
-    return baseTitle
-  }
-
-  function applyOpenCodeStatus(event: OpenCodeStatusEvent): void {
-    openCodeStatus = event.status
-    if (staleTitleTimer) {
-      clearTimeout(staleTitleTimer)
-      staleTitleTimer = null
-    }
-
-    const rawTitle = getSyntheticOpenCodeTitle(event.status)
-    const title = normalizeTerminalTitle(rawTitle)
-    lastEmittedTitle = title
-    onTitleChange?.(title, rawTitle)
-    agentTracker?.handleTitle(rawTitle)
   }
 
   function applyObservedTerminalTitle(title: string): void {
-    lastObservedTerminalTitle = title
-    // Why: while OpenCode has an explicit non-idle status, that status is the
-    // source of truth — the observed title is only used as context text.
-    if (openCodeStatus && openCodeStatus !== 'idle') {
-      applyOpenCodeStatus({ ptyId: ptyId ?? '', status: openCodeStatus })
-      return
-    }
-
     lastEmittedTitle = normalizeTerminalTitle(title)
     onTitleChange?.(lastEmittedTitle, title)
     agentTracker?.handleTitle(title)
@@ -301,7 +258,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       staleTitleTimer = null
     }
     agentTracker?.reset()
-    openCodeStatus = null
   }
 
   function registerPtyExitHandler(id: string): void {
@@ -314,7 +270,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       storedCallbacks.onDisconnect?.()
       onPtyExit?.(id)
     })
-    openCodeStatusHandlers.set(id, applyOpenCodeStatus)
     // Why: shutdownWorktreeTerminals bypasses the transport layer — it
     // kills PTYs directly via IPC without calling disconnect()/destroy().
     // This teardown callback lets unregisterPtyDataHandlers cancel
@@ -451,7 +406,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         clearTimeout(staleTitleTimer)
         staleTitleTimer = null
       }
-      openCodeStatus = null
       if (ptyId) {
         const id = ptyId
         window.api.pty.kill(id)
@@ -467,7 +421,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         clearTimeout(staleTitleTimer)
         staleTitleTimer = null
       }
-      openCodeStatus = null
       if (ptyId) {
         // Why: detach() is used for in-session remounts such as moving a tab
         // between split groups. Stop delivering data/title events into the

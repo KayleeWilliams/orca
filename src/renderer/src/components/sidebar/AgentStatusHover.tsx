@@ -23,7 +23,7 @@ const AgentStatusHover = React.memo(function AgentStatusHover({
 }: AgentStatusHoverProps) {
   const liveGroups = useDashboardData()
   const retained = useAppStore((s) => s.retainedAgentsByPaneKey)
-  const removeAgentStatus = useAppStore((s) => s.removeAgentStatus)
+  const dropAgentStatus = useAppStore((s) => s.dropAgentStatus)
   const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
@@ -46,10 +46,10 @@ const AgentStatusHover = React.memo(function AgentStatusHover({
   // retained snapshot if either is present.
   const handleDismissAgent = useCallback(
     (paneKey: string) => {
-      removeAgentStatus(paneKey)
+      dropAgentStatus(paneKey)
       dismissRetainedAgent(paneKey)
     },
-    [removeAgentStatus, dismissRetainedAgent]
+    [dropAgentStatus, dismissRetainedAgent]
   )
 
   // Why: clicking a row activates the specific tab the agent runs in. Retained

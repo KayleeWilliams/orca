@@ -155,7 +155,9 @@ export function registerPtyHandlers(
         if (baseEnv.OPENCODE_CONFIG_DIR) {
           // Why: OPENCODE_CONFIG_DIR is a singular extra config root. Replacing a
           // user-provided directory would silently hide their custom OpenCode
-          // config, so preserve it and fall back to title-only detection there.
+          // config, so preserve it. The Orca status plugin will not load, so
+          // the dashboard falls back to a blank status for that pane until the
+          // user unsets their override.
           delete openCodeHookEnv.OPENCODE_CONFIG_DIR
         }
         Object.assign(baseEnv, openCodeHookEnv)

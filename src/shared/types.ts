@@ -659,6 +659,12 @@ export type GlobalSettings = {
   defaultTaskViewPreset: TaskViewPresetId
   /** Per-agent CLI command overrides. A missing key means use the catalog default binary name. */
   agentCmdOverrides: Partial<Record<TuiAgent, string>>
+  /** Whether to show the agent activity dashboard docked at the bottom of the
+   *  right sidebar. The dashboard surfaces live agent status (working, blocked,
+   *  done) aggregated across all open worktrees — useful when juggling many
+   *  concurrent agents, but some users prefer a quieter sidebar. Default true
+   *  so existing users keep the feature visible after upgrade. */
+  showAgentDashboard: boolean
   /** Why: macOS terminals must choose between letting Option compose layout
    *  characters (@ on German, € on French) or treating Option as Meta/Esc for
    *  readline shortcuts. Mirrors Ghostty's macos-option-as-alt setting.
@@ -693,14 +699,6 @@ export type NotificationDispatchResult = {
   delivered: boolean
   /** Present when delivered is false. Tells the caller why delivery was skipped. */
   reason?: 'disabled' | 'source-disabled' | 'suppressed-focus' | 'cooldown' | 'not-supported'
-}
-
-export type OpenCodeStatusEvent = {
-  ptyId: string
-  /** Compatibility shim for OpenCode: Orca's activity surfaces already depend
-   *  on this normalized state machine, so hook payloads collapse into the same
-   *  working/idle/permission categories instead of inventing a parallel model. */
-  status: 'working' | 'idle' | 'permission'
 }
 
 export type WorktreeCardProperty = 'status' | 'unread' | 'ci' | 'issue' | 'pr' | 'comment'

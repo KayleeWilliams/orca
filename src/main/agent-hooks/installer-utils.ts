@@ -45,6 +45,24 @@ export function readHooksJson(configPath: string): HooksConfig | null {
   }
 }
 
+// Why: callers in install/remove need to match not just the exact current
+// managed command, but also stale entries pointing at old script paths — e.g.
+// from a previous dev build with a different Electron userData dir, or a
+// parallel dev/prod install. Matching by the managed script's file name
+// (under any `agent-hooks/` directory) lets a fresh install sweep those
+// without touching unrelated user-authored hooks.
+export function createManagedCommandMatcher(
+  scriptFileName: string
+): (command: string | undefined) => boolean {
+  const needle = `agent-hooks/${scriptFileName}`
+  return (command) => {
+    if (!command) {
+      return false
+    }
+    return command.replaceAll('\\', '/').includes(needle)
+  }
+}
+
 export function removeManagedCommands(
   definitions: HookDefinition[],
   isManagedCommand: (command: string | undefined) => boolean
@@ -75,12 +93,30 @@ export function writeHooksJson(configPath: string, config: HooksConfig): void {
   const dir = dirname(configPath)
   mkdirSync(dir, { recursive: true })
 
+  const serialized = `${JSON.stringify(config, null, 2)}\n`
+
+  // Why: skip the write (and therefore the .bak rotation) when the on-disk
+  // content is already identical. Without this, every install() rewrites the
+  // file and rolls the backup forward, which can silently destroy the last
+  // recoverable copy if install() is called repeatedly (e.g. on app start).
+  if (existsSync(configPath)) {
+    try {
+      if (readFileSync(configPath, 'utf-8') === serialized) {
+        return
+      }
+    } catch {
+      // Fall through to the normal write path — a read error here is not
+      // worth failing the install for; the atomic write below will either
+      // succeed or throw loudly.
+    }
+  }
+
   // Why: write to a temp file then rename so a crash or disk-full mid-write
   // leaves the original untouched. This is the only safe way to update a
   // config file the user may have hand-edited.
   const tmpPath = join(dir, `.${Date.now()}.tmp`)
   try {
-    writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
+    writeFileSync(tmpPath, serialized, 'utf-8')
     // Why: single rolling backup — one file, no accumulation in ~/.claude.
     // Protects against a merge-logic bug producing bad JSON; the original is
     // always recoverable from <configPath>.bak until the next write.

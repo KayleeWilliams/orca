@@ -120,6 +120,14 @@ export function clearWorkingIndicators(title: string): string {
  * Fires `onBecameIdle` when an agent transitions from working to idle/permission,
  * like haunt's attention flag — the key trigger for unread notifications.
  */
+// Why: when a working title flips straight to a shell prompt we can't tell
+// immediately whether the agent process actually exited or is just shelling
+// out internally. Agents without an interrupt hook (Codex, Gemini, OpenCode)
+// leave live state as 'working' when Ctrl+C quits them mid-turn, so we need
+// to notice the working→shell transition as an exit signal — but we have to
+// defer it long enough that a transient flash is filtered out.
+const WORKING_TO_SHELL_EXIT_GRACE_MS = 1500
+
 export function createAgentStatusTracker(
   onBecameIdle: (title: string) => void,
   onBecameWorking?: () => void,
@@ -131,31 +139,62 @@ export function createAgentStatusTracker(
   reset: () => void
 } {
   let lastStatus: AgentStatus | null = null
+  let pendingExitTimer: ReturnType<typeof setTimeout> | null = null
+
+  const cancelPendingExit = (): void => {
+    if (pendingExitTimer !== null) {
+      clearTimeout(pendingExitTimer)
+      pendingExitTimer = null
+    }
+  }
 
   return {
     handleTitle(title: string): void {
       const newStatus = detectAgentStatusFromTitle(title)
+
       if (lastStatus === 'working' && newStatus !== null && newStatus !== 'working') {
         onBecameIdle(title)
       }
       if (lastStatus !== 'working' && newStatus === 'working') {
         onBecameWorking?.()
       }
+
+      // Any agent-shaped title means the pending working→shell grace window
+      // was a false alarm (agent was just shelling out), so cancel it.
+      if (newStatus !== null) {
+        cancelPendingExit()
+      }
+
       // Why: when the title reverts to a plain shell prompt (e.g., "bash", "zsh"),
       // detectAgentStatusFromTitle returns null. If we were idle or in a permission
       // prompt, this means the user exited the agent — clear session-tied state
-      // (like the prompt-cache countdown). We intentionally do NOT fire this when
-      // lastStatus is 'working', because active agents can briefly flash shell
-      // titles during internal operations without actually exiting.
+      // (like the prompt-cache countdown). Fire immediately for idle→shell because
+      // an idle agent doesn't flash shell titles mid-operation the way a working
+      // one can, so this is a confident signal.
       if (lastStatus !== null && lastStatus !== 'working' && newStatus === null) {
         lastStatus = null
         onAgentExited?.()
       }
+
+      // Why: working→shell is ambiguous — could be a transient flash while the
+      // agent shells out, or a real session death (Ctrl+C on Codex/Gemini/
+      // OpenCode has no interrupt hook, so the row stays in 'working' until
+      // the process actually exits). Defer the exit fire; if an agent title
+      // reappears inside the grace window, the cancel above discards it.
+      if (lastStatus === 'working' && newStatus === null && pendingExitTimer === null) {
+        pendingExitTimer = setTimeout(() => {
+          pendingExitTimer = null
+          lastStatus = null
+          onAgentExited?.()
+        }, WORKING_TO_SHELL_EXIT_GRACE_MS)
+      }
+
       if (newStatus !== null) {
         lastStatus = newStatus
       }
     },
     reset(): void {
+      cancelPendingExit()
       lastStatus = null
     }
   }

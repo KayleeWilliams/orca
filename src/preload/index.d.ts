@@ -7,8 +7,7 @@ import type {
   GitHubWorkItem,
   GitHubWorkItemDetails,
   GitHubViewer,
-  CreateWorktreeArgs,
-  OpenCodeStatusEvent
+  CreateWorktreeArgs
 } from '../../shared/types'
 import type { SshTarget, SshConnectionState } from '../../shared/ssh-types'
 import type { PreloadApi } from './api-types'
@@ -82,7 +81,6 @@ type PtyApi = {
   listSessions: () => Promise<{ id: string; cwd: string; title: string }[]>
   onData: (callback: (data: { id: string; data: string }) => void) => () => void
   onExit: (callback: (data: { id: string; code: number }) => void) => () => void
-  onOpenCodeStatus: (callback: (event: OpenCodeStatusEvent) => void) => () => void
 }
 
 type GhApi = {

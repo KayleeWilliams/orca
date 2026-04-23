@@ -231,6 +231,11 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
 
   const defaultAgent = settings.defaultTuiAgent
   const cmdOverrides = settings.agentCmdOverrides ?? {}
+  // Why: treat an absent value as the default (on). Settings written by an
+  // older build or snapshotted by a long-lived main process may not yet carry
+  // this field — rendering it as "off" would look like the user had disabled
+  // the dashboard when they never touched the toggle.
+  const showAgentDashboard = settings.showAgentDashboard ?? true
 
   const setDefault = (id: TuiAgent | null): void => {
     updateSettings({ defaultTuiAgent: id })
@@ -255,6 +260,36 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
 
   return (
     <div className="space-y-8">
+      {/* Dashboard visibility */}
+      <section>
+        <div className="flex items-center justify-between gap-4 px-1 py-2">
+          <div className="space-y-0.5">
+            <span className="text-sm font-medium">Show Agent Dashboard</span>
+            <p className="text-xs text-muted-foreground">
+              Show the live agent activity panel docked at the bottom of the right sidebar —
+              surfaces working, blocked, and done agents across all open worktrees.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={showAgentDashboard}
+            aria-label="Show Agent Dashboard"
+            onClick={() => updateSettings({ showAgentDashboard: !showAgentDashboard })}
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors',
+              showAgentDashboard ? 'bg-foreground' : 'bg-muted-foreground/30'
+            )}
+          >
+            <span
+              className={cn(
+                'pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform',
+                showAgentDashboard ? 'translate-x-4' : 'translate-x-0.5'
+              )}
+            />
+          </button>
+        </div>
+      </section>
+
       {/* Default agent picker */}
       <section className="space-y-4">
         <div className="space-y-1">

@@ -95,3 +95,73 @@ describe('agent status tool + assistant fields', () => {
     expect(entry.lastAssistantMessage).toBeUndefined()
   })
 })
+
+describe('agent status teardown suppression', () => {
+  it('drops live and retained rows and suppresses re-retention for that pane', () => {
+    const store = createTestStore()
+    store.getState().setAgentStatus('tab-1:1', { state: 'done', prompt: 'Ship it' }, 'claude')
+    store.getState().retainAgent({
+      entry: store.getState().agentStatusByPaneKey['tab-1:1'],
+      worktreeId: 'wt-1',
+      tab: {
+        id: 'tab-1',
+        worktreeId: 'wt-1',
+        title: 'Terminal',
+        ptyId: null,
+        customTitle: null,
+        color: null,
+        sortOrder: 0,
+        createdAt: 1
+      },
+      agentType: 'claude',
+      startedAt: 1
+    })
+
+    store.getState().dropAgentStatus('tab-1:1')
+
+    expect(store.getState().agentStatusByPaneKey['tab-1:1']).toBeUndefined()
+    expect(store.getState().retainedAgentsByPaneKey['tab-1:1']).toBeUndefined()
+    expect(store.getState().retentionSuppressedPaneKeys['tab-1:1']).toBe(true)
+  })
+
+  it('clears the teardown suppressor when the pane reports status again', () => {
+    const store = createTestStore()
+    store.getState().dropAgentStatus('tab-1:1')
+
+    store.getState().setAgentStatus('tab-1:1', { state: 'working', prompt: 'Retry' }, 'claude')
+
+    expect(store.getState().retentionSuppressedPaneKeys['tab-1:1']).toBeUndefined()
+    expect(store.getState().agentStatusByPaneKey['tab-1:1']?.state).toBe('working')
+  })
+
+  it('drops all rows for a closed tab and suppresses re-retention for each pane', () => {
+    const store = createTestStore()
+    store.getState().setAgentStatus('tab-1:1', { state: 'done', prompt: 'First' }, 'claude')
+    store.getState().setAgentStatus('tab-1:2', { state: 'working', prompt: 'Second' }, 'claude')
+
+    store.getState().retainAgent({
+      entry: store.getState().agentStatusByPaneKey['tab-1:1'],
+      worktreeId: 'wt-1',
+      tab: {
+        id: 'tab-1',
+        worktreeId: 'wt-1',
+        title: 'Terminal',
+        ptyId: null,
+        customTitle: null,
+        color: null,
+        sortOrder: 0,
+        createdAt: 1
+      },
+      agentType: 'claude',
+      startedAt: 1
+    })
+
+    store.getState().dropAgentStatusByTabPrefix('tab-1')
+
+    expect(store.getState().agentStatusByPaneKey['tab-1:1']).toBeUndefined()
+    expect(store.getState().agentStatusByPaneKey['tab-1:2']).toBeUndefined()
+    expect(store.getState().retainedAgentsByPaneKey['tab-1:1']).toBeUndefined()
+    expect(store.getState().retentionSuppressedPaneKeys['tab-1:1']).toBe(true)
+    expect(store.getState().retentionSuppressedPaneKeys['tab-1:2']).toBe(true)
+  })
+})

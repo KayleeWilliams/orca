@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { X, Wrench, ChevronRight } from 'lucide-react'
+import { X, Wrench, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { AgentStateDot, agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
@@ -149,20 +149,6 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     tsParts.push(`done ${formatTimeAgo(doneAt, now)}`)
   }
 
-  // Why: any state the user still needs to act on gets a full-height left
-  // accent bar — blocked/waiting (red, needs input) and done (sky, needs
-  // review). The bar is the list-view convention (Linear, Jira, GitHub) for
-  // "this row wants attention"; color communicates *what kind* of attention.
-  // Red matches the workspace sidebar's permission dot so the two surfaces
-  // agree on what "needs input" looks like. Working/idle rows get no bar so
-  // the list scans cleanly to the things that actually need the user.
-  const accentColor =
-    agent.state === 'blocked' || agent.state === 'waiting'
-      ? 'bg-red-500'
-      : agent.state === 'done'
-        ? 'bg-sky-500/80'
-        : null
-
   return (
     <div
       role="button"
@@ -182,37 +168,40 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
       )}
       title={tsParts.length > 0 ? tsParts.join(' • ') : undefined}
     >
-      {accentColor && (
-        <span
-          className={cn('absolute inset-y-0 left-0 w-0.5 rounded-full', accentColor)}
-          aria-hidden
-        />
-      )}
       <div className="flex items-center gap-1.5">
-        {/* Why: chevron on the far left mirrors the disclosure-row pattern
-            (Mantine Collapse, Playwright's test tree, etc.) — users reach
-            for the left edge to expand/collapse. An invisible placeholder
-            fills the slot when nothing's expandable so the prompt text
-            stays vertically aligned across rows. */}
-        {canExpand ? (
-          <button
-            type="button"
-            onClick={handleToggleExpand}
-            onMouseDown={stopMouseDown}
-            className="inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground"
-            aria-label={expanded ? 'Collapse details' : 'Expand details'}
-            aria-expanded={expanded}
-          >
-            {/* Why: rotating a single chevron animates smoothly; swapping
-                between two separate glyphs (ChevronRight/ChevronDown) would
-                snap instantly because the old node unmounts. */}
-            <ChevronRight
-              className={cn('size-3.5 transition-transform duration-150', expanded && 'rotate-90')}
-            />
-          </button>
-        ) : (
-          <span className="inline-block size-3.5 shrink-0" aria-hidden />
-        )}
+        {/* Why: state indicator lives in the leading gutter so the user's
+            eye can sweep one column and know which rows are working,
+            waiting, or done at a glance — the list-view convention (Linear,
+            GitHub issues, JetBrains TODO). Replaces the earlier left accent
+            bar + right-side dot combo, which double-encoded state. Size md
+            gives the glyph enough presence for the leading slot without
+            overpowering the prompt text. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0 items-center justify-center">
+              <AgentStateDot state={asDotState(agent.state)} size="md" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" sideOffset={4}>
+            {agent.entry.interrupted ? 'Interrupted' : agentStateLabel(asDotState(agent.state))}
+          </TooltipContent>
+        </Tooltip>
+        {/* Why: identity (Claude/Codex/Gemini/…) sits inline with the prompt
+            so the reader gets "state → who → what they said" left-to-right
+            on the top row. The sub-rows (tool step, assistant response) are
+            about the same agent and do not need the icon repeated next to
+            them — keeping the icon only on the prompt row lets the sub-rows
+            indent under the prompt text cleanly. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0">
+              <AgentIcon agent={agentTypeToIconAgent(agent.agentType)} size={14} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" sideOffset={4}>
+            {formatAgentTypeLabel(agent.agentType)}
+          </TooltipContent>
+        </Tooltip>
         {prompt && (
           // Why: animate between a 1-line clipped height and the content's
           // natural height using Chromium's `interpolate-size: allow-keywords`
@@ -221,11 +210,21 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           // swap in engines that don't support it. The inner span keeps
           // overflow-hidden so the truncate→wrap class flip stays clipped
           // during the interpolation.
+          //
+          // Done and waiting rows get "unread" weight (semibold + full
+          // foreground) so the user can tell at a glance which rows need
+          // their attention. Working/idle stay at the quieter baseline
+          // since the state dot (spinner or neutral) is already doing the
+          // work. Mirrors the convention in Slack/Gmail/Linear where the
+          // row text thickens to signal "you haven't dealt with this yet."
           <span
             className={cn(
-              'block min-w-0 flex-1 overflow-hidden text-[11px] font-medium leading-snug text-foreground/90',
+              'block min-w-0 flex-1 overflow-hidden text-[11px] leading-snug',
               'transition-[height] duration-200 ease-out [interpolate-size:allow-keywords]',
-              expanded ? 'h-auto whitespace-pre-wrap break-words' : 'h-[1lh] truncate'
+              expanded ? 'h-auto whitespace-pre-wrap break-words' : 'h-[1lh] truncate',
+              agent.state === 'done' || agent.state === 'waiting' || agent.state === 'blocked'
+                ? 'font-semibold text-foreground'
+                : 'font-medium text-foreground/90'
             )}
             title={expanded ? undefined : prompt}
           >
@@ -247,60 +246,108 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
               interrupted
             </span>
           )}
+          {/* Why: timestamp and dismiss-X share a single slot so passive
+              rows show "time ago" and hovered rows swap in the X — no
+              reserved-space gap, no competing columns. Grid stacks both
+              children in cell 1,1 so the slot width is the larger of the
+              two (usually the timestamp, e.g. "just now" / "12m ago"),
+              which keeps the chevron's column stable whether or not the
+              row is hovered. Using opacity (not display:none) lets us
+              fade the crossfade instead of snapping, and keyboard focus
+              on the hidden X still activates it because `opacity-0`
+              doesn't remove it from the tab order. */}
           {(startedAt !== null || doneAt !== null) && (
-            <span className="text-[10px] leading-none text-muted-foreground/60">
-              {doneAt !== null
-                ? formatTimeAgo(doneAt, now)
-                : startedAt !== null
-                  ? formatTimeAgo(startedAt, now)
-                  : null}
+            <span className="relative grid grid-cols-1 grid-rows-1 shrink-0 items-center justify-items-end">
+              <span
+                className={cn(
+                  '[grid-area:1/1] pointer-events-none text-[10px] leading-none text-muted-foreground/60',
+                  'transition-opacity duration-150',
+                  'group-hover:opacity-0 group-focus-within:opacity-0'
+                )}
+                aria-hidden
+              >
+                {doneAt !== null
+                  ? formatTimeAgo(doneAt, now)
+                  : startedAt !== null
+                    ? formatTimeAgo(startedAt, now)
+                    : null}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleDismiss}
+                    onMouseDown={stopMouseDown}
+                    className={cn(
+                      '[grid-area:1/1] inline-flex items-center justify-center text-muted-foreground/70 hover:text-foreground',
+                      'opacity-0 transition-opacity duration-150',
+                      'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
+                    )}
+                    aria-label="Dismiss agent"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={4}>
+                  Dismiss
+                </TooltipContent>
+              </Tooltip>
             </span>
           )}
-          {/* Why: two separate glyphs — the state dot shows *what* (working /
-              blocked / done / idle) and the agent icon shows *who* (Claude /
-              Codex / etc.). Keeping them distinct keeps each scannable at a
-              glance, instead of fusing them into a single decorated icon. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <AgentStateDot state={asDotState(agent.state)} />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>
-              {agent.entry.interrupted ? 'Interrupted' : agentStateLabel(asDotState(agent.state))}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <AgentIcon agent={agentTypeToIconAgent(agent.agentType)} size={14} />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>
-              {formatAgentTypeLabel(agent.agentType)}
-            </TooltipContent>
-          </Tooltip>
-          {/* Why: dismiss applies to any agent — for a live agent it clears
-              the status entry (the dashboard re-populates on the next hook
-              report); for a retained 'done' row it evicts it from the
-              retained map. Same control for every state keeps the UI
-              uniform. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={handleDismiss}
-                onMouseDown={stopMouseDown}
-                className="inline-flex shrink-0 items-center justify-center text-muted-foreground/70 hover:text-foreground"
-                aria-label="Dismiss agent"
-              >
-                <X className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>
-              Dismiss
-            </TooltipContent>
-          </Tooltip>
+          {/* Why: when there is no timestamp yet (fresh agent, never
+              reported), the grid slot above does not render — show the X
+              as a standalone hover-only control so dismiss is still
+              reachable. Rare path; most rows have a timestamp the moment
+              they start. */}
+          {startedAt === null && doneAt === null && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleDismiss}
+                  onMouseDown={stopMouseDown}
+                  className={cn(
+                    'inline-flex shrink-0 items-center justify-center text-muted-foreground/70 hover:text-foreground',
+                    'opacity-0 transition-opacity duration-150',
+                    'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
+                  )}
+                  aria-label="Dismiss agent"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={4}>
+                Dismiss
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {/* Why: chevron points down when collapsed (content below is
+              available) and rotates 180° to point up when expanded
+              (content is showing above the fold line). Single glyph
+              with a transform animates smoothly; swapping between two
+              glyphs (ChevronDown / ChevronUp) would snap because the
+              old node unmounts. Invisible placeholder keeps vertical
+              alignment stable across rows when nothing is expandable
+              so the row-trailing edge stays stable. */}
+          {canExpand ? (
+            <button
+              type="button"
+              onClick={handleToggleExpand}
+              onMouseDown={stopMouseDown}
+              className="inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground"
+              aria-label={expanded ? 'Collapse details' : 'Expand details'}
+              aria-expanded={expanded}
+            >
+              <ChevronDown
+                className={cn(
+                  'size-3.5 transition-transform duration-150',
+                  expanded && 'rotate-180'
+                )}
+              />
+            </button>
+          ) : (
+            <span className="inline-block size-3.5 shrink-0" aria-hidden />
+          )}
         </span>
       </div>
       {/* Why: tool row and message row both carry different info — tool shows

@@ -19,7 +19,7 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   // that the agent finished. Retained rows are dismissed when the user clicks
   // through to the worktree.
   const { enrichedGroups: groups, dismissAgent } = useRetainedAgents(liveGroups)
-  const removeAgentStatus = useAppStore((s) => s.removeAgentStatus)
+  const dropAgentStatus = useAppStore((s) => s.dropAgentStatus)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const setActiveView = useAppStore((s) => s.setActiveView)
@@ -36,10 +36,10 @@ const AgentDashboard = React.memo(function AgentDashboard() {
   // so done agents don't pile up indefinitely in the dashboard.
   const handleDismissAgent = useCallback(
     (paneKey: string) => {
-      removeAgentStatus(paneKey)
+      dropAgentStatus(paneKey)
       dismissAgent(paneKey)
     },
-    [removeAgentStatus, dismissAgent]
+    [dropAgentStatus, dismissAgent]
   )
 
   const [searchQuery, setSearchQuery] = useState('')

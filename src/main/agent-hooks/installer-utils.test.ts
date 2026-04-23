@@ -10,7 +10,7 @@ import {
 } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { writeHooksJson, type HooksConfig } from './installer-utils'
+import { createManagedCommandMatcher, writeHooksJson, type HooksConfig } from './installer-utils'
 
 let tmpDir: string
 let configPath: string
@@ -77,6 +77,28 @@ describe('writeHooksJson', () => {
     expect(current).toEqual(v3)
   })
 
+  it('is a no-op (does not rotate .bak) when the serialized content is unchanged', () => {
+    const config: HooksConfig = {
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'foo' }] }] }
+    }
+    writeHooksJson(configPath, config)
+    // First write had no prior file, so no .bak should exist.
+    expect(existsSync(`${configPath}.bak`)).toBe(false)
+
+    // Writing identical content must not create or rotate the .bak file.
+    writeHooksJson(configPath, config)
+    expect(existsSync(`${configPath}.bak`)).toBe(false)
+
+    // A second distinct write must still produce a .bak from the prior content,
+    // proving the no-op only triggers on byte-identical content.
+    const updated: HooksConfig = {
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bar' }] }] }
+    }
+    writeHooksJson(configPath, updated)
+    const bak = JSON.parse(readFileSync(`${configPath}.bak`, 'utf-8'))
+    expect(bak).toEqual(config)
+  })
+
   it('leaves no temp file behind if the rename fails', () => {
     // Why: verifies the atomic cleanup — if the rename cannot complete (here,
     // because the target is a directory that cannot be overwritten), the finally
@@ -88,5 +110,35 @@ describe('writeHooksJson', () => {
 
     const entries = readdirSync(tmpDir)
     expect(entries.filter((e) => e.endsWith('.tmp'))).toHaveLength(0)
+  })
+})
+
+describe('createManagedCommandMatcher', () => {
+  const match = createManagedCommandMatcher('claude-hook.sh')
+
+  it('matches commands containing the agent-hooks/<scriptFileName> path', () => {
+    expect(
+      match('/bin/sh "/Users/alice/Library/Application Support/Orca/agent-hooks/claude-hook.sh"')
+    ).toBe(true)
+    expect(match('/bin/sh "/some/other/location/agent-hooks/claude-hook.sh"')).toBe(true)
+  })
+
+  it('normalizes Windows backslashes so cmd-style paths still match', () => {
+    expect(match('C:\\Users\\alice\\AppData\\Roaming\\Orca\\agent-hooks\\claude-hook.sh')).toBe(
+      true
+    )
+  })
+
+  it('returns false for unrelated commands', () => {
+    expect(match(undefined)).toBe(false)
+    expect(match('')).toBe(false)
+    expect(match('echo "user-authored hook"')).toBe(false)
+    // Same filename but not under an agent-hooks/ directory — treat as
+    // user-authored to avoid stomping on someone else's hook.
+    expect(match('/bin/sh "/home/alice/scripts/claude-hook.sh"')).toBe(false)
+  })
+
+  it('does not match hooks for a different agent', () => {
+    expect(match('/bin/sh "/path/agent-hooks/gemini-hook.sh"')).toBe(false)
   })
 })

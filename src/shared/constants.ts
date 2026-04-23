@@ -142,6 +142,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
     agentCmdOverrides: {},
+    showAgentDashboard: true,
     terminalMacOptionAsAlt: 'true',
     experimentalTerminalDaemon: false,
     experimentalTerminalDaemonNoticeShown: false

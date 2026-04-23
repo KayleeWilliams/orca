@@ -5,16 +5,16 @@
  * co-locating the global handler maps that both the transport factory
  * and the eager-buffer reconnection logic share.
  */
-import type { OpenCodeStatusEvent } from '../../../../shared/types'
 
 // ── Singleton PTY event dispatcher ───────────────────────────────────
 // One global IPC listener per channel, routes events to transports by
 // PTY ID. Eliminates the N-listener problem that triggers
 // MaxListenersExceededWarning with many panes/tabs.
 
+import type { ParsedAgentStatusPayload } from '../../../../shared/agent-status-types'
+
 export const ptyDataHandlers = new Map<string, (data: string) => void>()
 export const ptyExitHandlers = new Map<string, (code: number) => void>()
-export const openCodeStatusHandlers = new Map<string, (event: OpenCodeStatusEvent) => void>()
 /** Per-PTY teardown callbacks registered by each transport to clear closure
  *  state (stale-title timer, agent tracker) that would otherwise fire after
  *  the data handler is removed. */
@@ -34,7 +34,6 @@ let ptyDispatcherAttached = false
 export function unregisterPtyDataHandlers(ptyIds: string[]): void {
   for (const id of ptyIds) {
     ptyDataHandlers.delete(id)
-    openCodeStatusHandlers.delete(id)
     ptyTeardownHandlers.get(id)?.()
     ptyTeardownHandlers.delete(id)
   }
@@ -50,9 +49,6 @@ export function ensurePtyDispatcher(): void {
   })
   window.api.pty.onExit((payload) => {
     ptyExitHandlers.get(payload.id)?.(payload.code)
-  })
-  window.api.pty.onOpenCodeStatus((payload) => {
-    openCodeStatusHandlers.get(payload.ptyId)?.(payload)
   })
 }
 
@@ -205,5 +201,5 @@ export type IpcPtyTransportOptions = {
   onAgentBecameWorking?: () => void
   onAgentExited?: () => void
   /** Callback for OSC 9999 agent status payloads parsed from PTY output. */
-  onAgentStatus?: (payload: import('../../../../shared/agent-status-types').ParsedAgentStatusPayload) => void
+  onAgentStatus?: (payload: ParsedAgentStatusPayload) => void
 }

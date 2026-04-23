@@ -35,7 +35,11 @@ export const AGENTS_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
       'command',
       'override',
       'install',
-      'detected'
+      'detected',
+      'dashboard',
+      'activity',
+      'sidebar',
+      'show'
     ]
   }
 ]

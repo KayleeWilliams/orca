@@ -33,7 +33,6 @@ import { attachMainWindowServices } from './window/attach-main-window-services'
 import { createMainWindow } from './window/createMainWindow'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
-import { openCodeHookService } from './opencode/hook-service'
 import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
 import { claudeHookService } from './claude/hook-service'
@@ -261,12 +260,10 @@ app.whenReady().then(async () => {
   // Parallelizing them with the window open shaves ~100-200ms off cold start.
   const [win] = await Promise.all([
     Promise.resolve(openMainWindow()),
-    openCodeHookService.start().catch((error) => {
-      console.error('[opencode] Failed to start local hook server:', error)
-    }),
     agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' }).catch((error) => {
-      // Why: Claude/Codex hook callbacks are sidebar enrichment only. Orca must
-      // still boot even if the local loopback receiver cannot bind on this launch.
+      // Why: Claude/Codex/Gemini/OpenCode hook callbacks are sidebar enrichment
+      // only. Orca must still boot even if the local loopback receiver cannot
+      // bind on this launch.
       console.error('[agent-hooks] Failed to start local hook server:', error)
     }),
     runtimeRpc.start().catch((error) => {
@@ -308,7 +305,6 @@ app.on('will-quit', () => {
   // are still running. killAllPty() does not call runtime.onPtyExit(),
   // so without this ordering, running agents would produce orphaned
   // agent_start events with no matching stops.
-  openCodeHookService.stop()
   starNag?.stop()
   agentHookServer.stop()
   stats?.flush()

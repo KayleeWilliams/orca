@@ -453,4 +453,104 @@ describe('Gemini hook normalization', () => {
     expect(result?.payload.state).toBe('done')
     expect(result?.payload.toolName).toBeUndefined()
   })
+
+  it('AfterAgent carries prompt_response into lastAssistantMessage', () => {
+    const result = _internals.normalizeHookPayload(
+      'gemini',
+      buildBody({
+        hook_event_name: 'AfterAgent',
+        prompt: 'what did you do',
+        prompt_response: 'I ran the tests and they passed.',
+        stop_hook_active: false
+      }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('done')
+    expect(result?.payload.lastAssistantMessage).toBe('I ran the tests and they passed.')
+  })
+})
+
+describe('OpenCode hook normalization', () => {
+  it('SessionBusy maps to working', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'SessionBusy' }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('working')
+    expect(result?.payload.agentType).toBe('opencode')
+  })
+
+  it('SessionIdle maps to done', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'SessionIdle' }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('done')
+    expect(result?.payload.agentType).toBe('opencode')
+  })
+
+  it('PermissionRequest maps to waiting', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'PermissionRequest' }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('waiting')
+  })
+
+  it('unknown event name returns null', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'SomeOtherEvent' }),
+      'production'
+    )
+    expect(result).toBeNull()
+  })
+
+  it('MessagePart with role=user surfaces text as the prompt and stays working', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'MessagePart', role: 'user', text: 'hi there' }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('working')
+    expect(result?.payload.prompt).toBe('hi there')
+  })
+
+  it('MessagePart with role=assistant populates lastAssistantMessage', () => {
+    const result = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({
+        hook_event_name: 'MessagePart',
+        role: 'assistant',
+        text: 'Hello! How can I help?'
+      }),
+      'production'
+    )
+    expect(result?.payload.state).toBe('working')
+    expect(result?.payload.lastAssistantMessage).toBe('Hello! How can I help?')
+  })
+
+  it('subsequent SessionIdle preserves cached prompt + assistant message', () => {
+    _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'MessagePart', role: 'user', text: 'hi' }),
+      'production'
+    )
+    _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'MessagePart', role: 'assistant', text: 'hello back' }),
+      'production'
+    )
+    const done = _internals.normalizeHookPayload(
+      'opencode',
+      buildBody({ hook_event_name: 'SessionIdle' }),
+      'production'
+    )
+    expect(done?.payload.state).toBe('done')
+    expect(done?.payload.prompt).toBe('hi')
+    expect(done?.payload.lastAssistantMessage).toBe('hello back')
+  })
 })

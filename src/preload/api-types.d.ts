@@ -23,7 +23,6 @@ import type {
   IssueInfo,
   NotificationDispatchRequest,
   NotificationDispatchResult,
-  OpenCodeStatusEvent,
   OrcaHooks,
   PersistedUIState,
   PRCheckDetail,
@@ -342,7 +341,6 @@ export type PreloadApi = {
     listSessions: () => Promise<{ id: string; cwd: string; title: string }[]>
     onData: (callback: (data: { id: string; data: string }) => void) => () => void
     onExit: (callback: (data: { id: string; code: number }) => void) => () => void
-    onOpenCodeStatus: (callback: (event: OpenCodeStatusEvent) => void) => () => void
   }
   feedback: {
     submit: (args: {

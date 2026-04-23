@@ -17,6 +17,7 @@ import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
   const retainAgent = useAppStore((s) => s.retainAgent)
   const pruneRetainedAgents = useAppStore((s) => s.pruneRetainedAgents)
+  const clearRetentionSuppressedPaneKeys = useAppStore((s) => s.clearRetentionSuppressedPaneKeys)
   const prevAgentsRef = useRef<Map<string, { row: DashboardAgentRow; worktreeId: string }>>(
     new Map()
   )
@@ -33,23 +34,24 @@ export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
       }
     }
 
-    const retainedNow = useAppStore.getState().retainedAgentsByPaneKey
-    for (const [paneKey, prev] of prevAgentsRef.current) {
-      if (current.has(paneKey) || retainedNow[paneKey]) {
-        continue
-      }
-      retainAgent({
-        entry: prev.row.entry,
-        worktreeId: prev.worktreeId,
-        tab: prev.row.tab,
-        agentType: prev.row.agentType,
-        startedAt: prev.row.startedAt
-      })
+    const { retainedAgentsByPaneKey: retainedNow, retentionSuppressedPaneKeys } =
+      useAppStore.getState()
+    const { toRetain, consumedSuppressedPaneKeys } = collectRetainedAgentsOnDisappear({
+      previousAgents: prevAgentsRef.current,
+      currentAgents: current,
+      retainedAgentsByPaneKey: retainedNow,
+      retentionSuppressedPaneKeys
+    })
+    for (const retained of toRetain) {
+      retainAgent(retained)
     }
 
     prevAgentsRef.current = current
     pruneRetainedAgents(existingWorktreeIds)
-  }, [liveGroups, retainAgent, pruneRetainedAgents])
+    if (consumedSuppressedPaneKeys.length > 0) {
+      clearRetentionSuppressedPaneKeys(consumedSuppressedPaneKeys)
+    }
+  }, [liveGroups, retainAgent, pruneRetainedAgents, clearRetentionSuppressedPaneKeys])
 }
 
 export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {
@@ -158,6 +160,47 @@ function retainedToRow(ra: RetainedAgentEntry): DashboardAgentRow {
     state: 'done',
     startedAt: ra.startedAt
   }
+}
+
+export function collectRetainedAgentsOnDisappear(args: {
+  previousAgents: Map<string, { row: DashboardAgentRow; worktreeId: string }>
+  currentAgents: Map<string, { row: DashboardAgentRow; worktreeId: string }>
+  retainedAgentsByPaneKey: Record<string, RetainedAgentEntry>
+  retentionSuppressedPaneKeys: Record<string, true>
+}): {
+  toRetain: RetainedAgentEntry[]
+  consumedSuppressedPaneKeys: string[]
+} {
+  const toRetain: RetainedAgentEntry[] = []
+  const consumedSuppressedPaneKeys: string[] = []
+
+  for (const [paneKey, prev] of args.previousAgents) {
+    if (args.currentAgents.has(paneKey) || args.retainedAgentsByPaneKey[paneKey]) {
+      continue
+    }
+    if (args.retentionSuppressedPaneKeys[paneKey]) {
+      consumedSuppressedPaneKeys.push(paneKey)
+      continue
+    }
+    // Why: only keep a sticky snapshot when the agent finished cleanly
+    // (state === 'done' and not interrupted). Explicit teardown paths mark
+    // pane keys as suppression candidates, so a close/quit/crash cannot
+    // resurrect a stale `done` row on the next sync.
+    const lastState = prev.row.state
+    const wasInterrupted = prev.row.entry.interrupted === true
+    if (lastState !== 'done' || wasInterrupted) {
+      continue
+    }
+    toRetain.push({
+      entry: prev.row.entry,
+      worktreeId: prev.worktreeId,
+      tab: prev.row.tab,
+      agentType: prev.row.agentType,
+      startedAt: prev.row.startedAt
+    })
+  }
+
+  return { toRetain, consumedSuppressedPaneKeys }
 }
 
 function computeDominant(agents: DashboardAgentRow[]): DashboardWorktreeCard['dominantState'] {

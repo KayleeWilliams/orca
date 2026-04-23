@@ -8,7 +8,21 @@ import {
 } from '../../shared/agent-status-types'
 import { ORCA_HOOK_PROTOCOL_VERSION } from '../../shared/agent-hook-types'
 
-type AgentHookSource = 'claude' | 'codex' | 'gemini'
+// Why: Pi is intentionally absent. Pi has no shell-command hook surface —
+// its extensibility is an in-process TypeScript extension API (pi.on(...)
+// with events like turn_start/turn_end/tool_execution_start), not a
+// settings.json hook block that we could install alongside the Claude/Codex/
+// Gemini ones. Wiring Pi would require shipping a bundled Pi extension
+// that POSTs to this server; until we do that, Pi panes fall back to
+// terminal-title heuristics like any uninstrumented CLI.
+//
+// OpenCode rides this server via a bundled plugin (see opencode/hook-service)
+// that fetch()es /hook/opencode from inside the OpenCode process. Unlike
+// Claude/Codex/Gemini, OpenCode's event names are in-process plugin events
+// (session.status, session.idle, permission.asked) rather than settings.json
+// hook names, so the plugin pre-maps them to our hook_event_name vocabulary
+// before POSTing. See normalizeOpenCodeEvent below for the mapping.
+type AgentHookSource = 'claude' | 'codex' | 'gemini' | 'opencode'
 
 type AgentHookEventPayload = {
   paneKey: string
@@ -31,6 +45,16 @@ function extractPromptText(hookPayload: Record<string, unknown>): string {
     const value = hookPayload[key]
     if (typeof value === 'string' && value.trim().length > 0) {
       return value
+    }
+  }
+  // Why: OpenCode's plugin sends MessagePart events with { role, text }. When
+  // role === 'user', the text *is* the prompt — surface it so the dashboard
+  // shows the user's most recent input even though OpenCode has no dedicated
+  // UserPromptSubmit event we can hook into.
+  if (hookPayload.role === 'user' && typeof hookPayload.text === 'string') {
+    const trimmed = hookPayload.text.trim()
+    if (trimmed.length > 0) {
+      return hookPayload.text
     }
   }
   return ''
@@ -401,6 +425,35 @@ function extractGeminiToolFields(
       deriveToolInputPreview(toolName, hookPayload.input)
     return { toolName, toolInput }
   }
+  if (eventName === 'AfterAgent') {
+    // Why: Gemini's AfterAgent payload carries the final reply under
+    // `prompt_response` (per geminicli.com/docs/hooks/reference). This is
+    // Gemini's analogue of Claude/Codex's `last_assistant_message` on Stop;
+    // surfacing it lets the dashboard show the agent's response on done.
+    const message = readString(hookPayload, 'prompt_response')
+    if (message) {
+      return { lastAssistantMessage: message }
+    }
+  }
+  return {}
+}
+
+function extractOpenCodeToolFields(
+  eventName: unknown,
+  hookPayload: Record<string, unknown>
+): ToolSnapshot {
+  if (eventName === 'MessagePart' && hookPayload.role === 'assistant') {
+    // Why: OpenCode streams the assistant's reply via repeated MessagePart
+    // events (one per text delta flush). Each event carries the cumulative
+    // text-so-far for that TextPart, so the latest one we see is the most
+    // complete snapshot to surface on `done`. We do NOT gate on SessionIdle
+    // because the plugin emits parts *before* session.idle fires, and gating
+    // would lose them.
+    const text = readString(hookPayload, 'text')
+    if (text) {
+      return { lastAssistantMessage: text }
+    }
+  }
   return {}
 }
 
@@ -414,7 +467,13 @@ function isNewTurnEvent(source: AgentHookSource, eventName: unknown): boolean {
     // clear the tool cache on either one.
     return eventName === 'SessionStart' || eventName === 'UserPromptSubmit'
   }
-  return eventName === 'BeforeAgent'
+  if (source === 'gemini') {
+    return eventName === 'BeforeAgent'
+  }
+  // Why: OpenCode's plugin emits SessionBusy when the session transitions
+  // idle→busy (i.e. a new turn is starting). That's the only boundary the
+  // plugin observes; there's no separate UserPromptSubmit analogue.
+  return eventName === 'SessionBusy'
 }
 
 function extractToolFields(
@@ -428,7 +487,10 @@ function extractToolFields(
   if (source === 'codex') {
     return extractCodexToolFields(eventName, hookPayload)
   }
-  return extractGeminiToolFields(eventName, hookPayload)
+  if (source === 'gemini') {
+    return extractGeminiToolFields(eventName, hookPayload)
+  }
+  return extractOpenCodeToolFields(eventName, hookPayload)
 }
 
 function normalizeClaudeEvent(
@@ -461,6 +523,19 @@ function normalizeClaudeEvent(
   // ended because the user hit ESC / Ctrl+C rather than completing normally.
   // This is the authoritative signal (the agent itself reports it), so we
   // forward it through only on Stop — other hook events don't carry it.
+  //
+  // Known gap (affects all agents, not just Claude): when a user Ctrl+Cs
+  // to CANCEL a turn while keeping the CLI alive, the agent usually does
+  // NOT fire its turn-end hook (Claude `Stop`, Gemini `AfterAgent`, Codex
+  // `Stop`, OpenCode `SessionIdle`). The live state stays stuck at
+  // `working` and the dashboard keeps spinning until the next hook event
+  // or until the session actually ends (at which point the title-tracker
+  // grace window in agent-detection.ts:createAgentStatusTracker fires
+  // `onAgentExited` and teardown suppression drops the row).
+  //
+  // Not worth papering over in this layer — a timeout-based soft reset
+  // would misfire for genuinely long-running turns. Tracked as a display-
+  // quality issue; the right fix is upstream in each CLI's hook coverage.
   const interrupted =
     eventName === 'Stop' && hookPayload['is_interrupt'] === true ? true : undefined
 
@@ -560,6 +635,52 @@ function normalizeCodexEvent(
   )
 }
 
+// Why: OpenCode has no declarative hook surface — it exposes in-process plugin
+// events (session.status busy/idle, session.idle, permission.asked,
+// message.updated, message.part.updated). The bundled plugin (see
+// opencode/hook-service) pre-maps those to our stable hook_event_name
+// vocabulary before POSTing so this normalizer can share the same switch
+// shape as Claude/Codex/Gemini. SessionBusy = turn started, SessionIdle =
+// turn finished, PermissionRequest = blocked on user approval, MessagePart =
+// incremental text from user prompt or assistant reply (stays in `working`
+// because streaming chunks must not flip the row to done mid-turn).
+function normalizeOpenCodeEvent(
+  eventName: unknown,
+  promptText: string,
+  paneKey: string,
+  hookPayload: Record<string, unknown>
+): ParsedAgentStatusPayload | null {
+  const state =
+    eventName === 'SessionBusy' || eventName === 'MessagePart'
+      ? 'working'
+      : eventName === 'SessionIdle'
+        ? 'done'
+        : eventName === 'PermissionRequest'
+          ? 'waiting'
+          : null
+
+  if (!state) {
+    return null
+  }
+
+  const snapshot = resolveToolState(
+    paneKey,
+    extractToolFields('opencode', eventName, hookPayload),
+    { resetOnNewTurn: isNewTurnEvent('opencode', eventName) }
+  )
+
+  return parseAgentStatusPayload(
+    JSON.stringify({
+      state,
+      prompt: resolvePrompt(paneKey, promptText),
+      agentType: 'opencode',
+      toolName: snapshot.toolName,
+      toolInput: snapshot.toolInput,
+      lastAssistantMessage: snapshot.lastAssistantMessage
+    })
+  )
+}
+
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   if (typeof value !== 'string') {
@@ -636,7 +757,9 @@ function normalizeHookPayload(
       ? normalizeClaudeEvent(eventName, promptText, paneKey, hookPayloadRecord)
       : source === 'codex'
         ? normalizeCodexEvent(eventName, promptText, paneKey, hookPayloadRecord)
-        : normalizeGeminiEvent(eventName, promptText, paneKey, hookPayloadRecord)
+        : source === 'gemini'
+          ? normalizeGeminiEvent(eventName, promptText, paneKey, hookPayloadRecord)
+          : normalizeOpenCodeEvent(eventName, promptText, paneKey, hookPayloadRecord)
 
   console.log('[agent-hooks:server] normalized', {
     paneKey,
@@ -706,7 +829,9 @@ export class AgentHookServer {
               ? 'codex'
               : req.url === '/hook/gemini'
                 ? 'gemini'
-                : null
+                : req.url === '/hook/opencode'
+                  ? 'opencode'
+                  : null
         if (!source) {
           res.writeHead(404)
           res.end()
