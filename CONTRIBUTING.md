@@ -70,19 +70,21 @@ All releases are cut from the **Cut Release** GitHub Actions workflow. There is 
 
 1. Open [Actions → Cut Release](../../actions/workflows/release-cut.yml).
 2. Click **Run workflow** and pick:
-   - **kind**: `rc` for a release candidate, `stable` for a public release.
+   - **kind**: one of `rc`, `patch`, `minor`, `major`.
    - **ref**: the branch, tag, or SHA to build from. Defaults to `main`.
-   - **version** *(optional)*: an explicit base version like `1.4.0`. Leave blank to auto-compute.
 3. Run it.
 
 The workflow resolves the next version from GitHub Releases, bumps `package.json`, tags, pushes, and kicks off the multi-platform build via `release.yml`.
 
-**Version auto-compute rules (when `version` is blank):**
+**How the next version is chosen:**
 
-- `kind=rc` on top of a stable (e.g. last tag was `v1.3.14`) → `v1.3.15-rc.0`.
-- `kind=rc` on top of an existing RC series (e.g. last tag was `v1.3.15-rc.2`) → `v1.3.15-rc.3`.
-- `kind=stable` on top of an RC series (e.g. last tag was `v1.3.15-rc.3`) → `v1.3.15` (promotes the RC base to stable).
-- `kind=stable` on top of a stable → the next patch (e.g. `v1.3.14` → `v1.3.15`). Use the explicit `version` input for minor/major bumps.
+All stable kinds (`patch`, `minor`, `major`) are computed off the latest *stable* release, ignoring any RCs in between.
+
+- `kind=rc` + last tag was stable (e.g. `v1.3.14`) → `v1.3.15-rc.0`.
+- `kind=rc` + active RC series (e.g. `v1.3.15-rc.2`) → `v1.3.15-rc.3`.
+- `kind=patch` + latest stable `v1.3.14` → `v1.3.15` (regardless of any intermediate RCs).
+- `kind=minor` + latest stable `v1.3.14` → `v1.4.0`.
+- `kind=major` + latest stable `v1.3.14` → `v2.0.0`.
 
 **Safety guarantees:**
 
@@ -92,9 +94,9 @@ The workflow resolves the next version from GitHub Releases, bumps `package.json
 
 **Common scenarios:**
 
-- **Normal release:** `kind=stable`, `ref=main`, `version=` blank.
-- **"A bad commit just landed on main, release the commit before it":** `kind=stable`, `ref=<good-sha>`, `version=` blank. `main` is left alone; the tag points at the good SHA. Fix forward on `main` afterward.
+- **Normal release:** `kind=patch`, `ref=main`.
+- **"A bad commit just landed on main, release the commit before it":** `kind=patch`, `ref=<good-sha>`. `main` is left alone; the tag points at the good SHA. Fix forward on `main` afterward.
 - **One-off RC for a feature branch:** `kind=rc`, `ref=<branch-or-sha>`. Produces an RC tag that does not touch `main`.
-- **Minor or major bump:** `kind=stable`, `version=1.4.0` (or `2.0.0`).
+- **Minor or major bump:** `kind=minor` or `kind=major`.
 
 The scheduled 2x/day RC cron in [`release-rc.yml`](../../actions/workflows/release-rc.yml) is independent and continues to run automatically from `main`.

@@ -1,18 +1,18 @@
 name: Cut Release
 
-# Why: single entry point for manually cutting a release (RC or stable) from
-# any ref. Replaces the old local `pnpm release:*` scripts so releases are
-# always reproducible from CI and can never be accidentally tagged against
-# an uncommitted or non-main working tree.
+# Why: single entry point for manually cutting a release from any ref.
+# Replaces the old local `pnpm release:*` scripts so releases are always
+# reproducible from CI and can never be accidentally tagged against an
+# uncommitted or non-main working tree.
 #
 # Flow:
 #   1. Resolve `ref` to a SHA.
 #   2. Read the latest stable release from GitHub.
-#   3. Compute the next version (auto or from `version` input).
-#   4. For stable releases, REFUSE if the new version is <= the latest
-#      stable. This is the only guard electron-updater actually needs — it
-#      compares semver within a channel, so a regressing "latest" is the
-#      one thing that breaks auto-update for fresh installs.
+#   3. Compute the next version from `kind` (rc | patch | minor | major).
+#   4. For stable kinds, REFUSE if the new version is <= the latest stable.
+#      This is the only guard electron-updater actually needs — it compares
+#      semver within a channel, so a regressing "latest" is the one thing
+#      that breaks auto-update for fresh installs.
 #   5. Write package.json, commit (detached), tag, push tag.
 #   6. If ref was the tip of origin/main, fast-forward main to include the
 #      version-bump commit so developers see the right version locally.
@@ -28,17 +28,14 @@ on:
         default: rc
         options:
           - rc
-          - stable
+          - patch
+          - minor
+          - major
       ref:
         description: Branch, tag, or SHA to release from (default main)
         required: false
         type: string
         default: main
-      version:
-        description: Explicit base version, e.g. 1.4.0. Leave blank to auto-compute.
-        required: false
-        type: string
-        default: ''
 
 permissions:
   contents: write
@@ -92,7 +89,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KIND: ${{ inputs.kind }}
-          EXPLICIT: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
@@ -107,7 +103,8 @@ jobs:
           latest_stable="${latest_stable#v}"
           echo "Latest stable: ${latest_stable:-<none>}"
 
-          # Latest tag of any kind on the repo (including RCs).
+          # Latest tag of any kind on the repo (including RCs). Used only
+          # when kind=rc to figure out the current RC series base.
           latest_tag="$(git tag --sort=-v:refname | head -n 1 || true)"
           latest_tag="${latest_tag#v}"
           echo "Latest tag:    ${latest_tag:-<none>}"
@@ -128,11 +125,15 @@ jobs:
             ' "$1" "$2"
           }
 
-          bump_patch() {
+          bump() {
+            # $1=version, $2=level (patch|minor|major)
             node -e '
               const v = process.argv[1].split(".").map(Number);
-              console.log(`${v[0]}.${v[1]}.${(v[2]||0)+1}`);
-            ' "$1"
+              const level = process.argv[2];
+              if (level === "major") console.log(`${(v[0]||0)+1}.0.0`);
+              else if (level === "minor") console.log(`${v[0]||0}.${(v[1]||0)+1}.0`);
+              else console.log(`${v[0]||0}.${v[1]||0}.${(v[2]||0)+1}`);
+            ' "$1" "$2"
           }
 
           next_rc_in_series() {
@@ -151,33 +152,36 @@ jobs:
             fi
           }
 
-          if [[ -n "$EXPLICIT" ]]; then
-            base="${EXPLICIT#v}"
-            base="$(base_of "$base")"
-          else
-            # Auto-compute base version.
-            if [[ -z "$latest_tag" ]]; then
-              # Fresh repo — start at 0.1.0.
-              base="0.1.0"
-            elif [[ "$latest_tag" == *"-rc."* ]]; then
-              # Already in an RC series; reuse its base version.
-              base="$(base_of "$latest_tag")"
-            else
-              # Latest is stable; new release is a patch bump.
-              base="$(bump_patch "$latest_tag")"
-            fi
+          # Fresh repo fallback so the math below never divides by zero.
+          if [[ -z "$latest_stable" ]]; then
+            latest_stable="0.0.0"
           fi
 
-          if [[ "$KIND" == "rc" ]]; then
-            new="$(next_rc_in_series "$base")"
-          else
-            new="$base"
-            # Refuse stable regressions — this is the updater-safety gate.
-            if [[ -n "$latest_stable" ]] && ! semver_gt "$new" "$latest_stable"; then
-              echo "::error::Refusing to cut stable $new: not greater than latest stable $latest_stable." >&2
+          case "$KIND" in
+            rc)
+              # Why: an RC continues the current series if there is one,
+              # otherwise starts a new series on the next patch version.
+              # This keeps the "I just want another RC" case one click.
+              if [[ -n "$latest_tag" && "$latest_tag" == *"-rc."* ]]; then
+                base="$(base_of "$latest_tag")"
+              else
+                base="$(bump "$latest_stable" patch)"
+              fi
+              new="$(next_rc_in_series "$base")"
+              ;;
+            patch|minor|major)
+              new="$(bump "$latest_stable" "$KIND")"
+              # Updater-safety gate: stable must strictly increase.
+              if ! semver_gt "$new" "$latest_stable"; then
+                echo "::error::Refusing to cut $KIND $new: not greater than latest stable $latest_stable." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown kind: $KIND" >&2
               exit 1
-            fi
-          fi
+              ;;
+          esac
 
           # Refuse tag collisions (possible if someone already tagged manually).
           if git rev-parse "v$new" >/dev/null 2>&1; then
