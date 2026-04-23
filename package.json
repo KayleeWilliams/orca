@@ -36,11 +36,7 @@
     "build:mac:release": "node config/scripts/verify-macos-release-env.mjs && ORCA_MAC_RELEASE=1 pnpm run build && ORCA_MAC_RELEASE=1 electron-builder --config config/electron-builder.config.cjs --mac",
     "build:linux": "pnpm run build && electron-builder --config config/electron-builder.config.cjs --linux",
     "test:e2e": "npx playwright test --config tests/playwright.config.ts --project electron-headless",
-    "test:e2e:headful": "npx playwright test --config tests/playwright.config.ts --project electron-headful",
-    "release:rc": "npm version prerelease --preid=rc && git push --follow-tags",
-    "release:patch": "npm version patch && git push --follow-tags",
-    "release:minor": "npm version minor && git push --follow-tags",
-    "release:major": "npm version major && git push --follow-tags"
+    "test:e2e:headful": "npx playwright test --config tests/playwright.config.ts --project electron-headful"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

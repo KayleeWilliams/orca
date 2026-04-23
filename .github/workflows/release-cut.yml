@@ -1,0 +1,227 @@
+name: Cut Release
+
+# Why: single entry point for manually cutting a release (RC or stable) from
+# any ref. Replaces the old local `pnpm release:*` scripts so releases are
+# always reproducible from CI and can never be accidentally tagged against
+# an uncommitted or non-main working tree.
+#
+# Flow:
+#   1. Resolve `ref` to a SHA.
+#   2. Read the latest stable release from GitHub.
+#   3. Compute the next version (auto or from `version` input).
+#   4. For stable releases, REFUSE if the new version is <= the latest
+#      stable. This is the only guard electron-updater actually needs — it
+#      compares semver within a channel, so a regressing "latest" is the
+#      one thing that breaks auto-update for fresh installs.
+#   5. Write package.json, commit (detached), tag, push tag.
+#   6. If ref was the tip of origin/main, fast-forward main to include the
+#      version-bump commit so developers see the right version locally.
+#   7. Invoke release.yml to build and publish artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Release kind
+        required: true
+        type: choice
+        default: rc
+        options:
+          - rc
+          - stable
+      ref:
+        description: Branch, tag, or SHA to release from (default main)
+        required: false
+        type: string
+        default: main
+      version:
+        description: Explicit base version, e.g. 1.4.0. Leave blank to auto-compute.
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve ref SHA
+        id: resolve
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+
+          # Why: only push the version-bump commit back to main when the
+          # caller is releasing the exact tip of main. For any older or
+          # off-main ref we leave main alone and only publish the tag.
+          git fetch origin main --quiet
+          main_sha="$(git rev-parse origin/main)"
+          if [[ "$sha" == "$main_sha" ]]; then
+            echo "push_main=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "push_main=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIND: ${{ inputs.kind }}
+          EXPLICIT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Latest published stable release (excludes drafts + prereleases).
+          latest_stable="$(gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts \
+              --exclude-pre-releases \
+              --limit 1 \
+              --json tagName \
+              --jq '.[0].tagName // ""')"
+          latest_stable="${latest_stable#v}"
+          echo "Latest stable: ${latest_stable:-<none>}"
+
+          # Latest tag of any kind on the repo (including RCs).
+          latest_tag="$(git tag --sort=-v:refname | head -n 1 || true)"
+          latest_tag="${latest_tag#v}"
+          echo "Latest tag:    ${latest_tag:-<none>}"
+
+          # Strip any existing -rc.N suffix for base-version math.
+          base_of() { echo "${1%%-rc.*}"; }
+
+          semver_gt() {
+            # returns 0 if $1 > $2 by semver rules (ignoring prerelease)
+            node -e '
+              const a = process.argv[1].split(".").map(Number);
+              const b = process.argv[2].split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if ((a[i]||0) > (b[i]||0)) process.exit(0);
+                if ((a[i]||0) < (b[i]||0)) process.exit(1);
+              }
+              process.exit(1);
+            ' "$1" "$2"
+          }
+
+          bump_patch() {
+            node -e '
+              const v = process.argv[1].split(".").map(Number);
+              console.log(`${v[0]}.${v[1]}.${(v[2]||0)+1}`);
+            ' "$1"
+          }
+
+          next_rc_in_series() {
+            # Given a base version, find the highest existing -rc.N for it
+            # and return base-rc.(N+1). If none exists, base-rc.0.
+            local base="$1"
+            local highest
+            highest="$(git tag --list "v${base}-rc.*" \
+                | sed -E "s/^v${base//./\\.}-rc\.//" \
+                | sort -n \
+                | tail -n 1 || true)"
+            if [[ -z "$highest" ]]; then
+              echo "${base}-rc.0"
+            else
+              echo "${base}-rc.$((highest + 1))"
+            fi
+          }
+
+          if [[ -n "$EXPLICIT" ]]; then
+            base="${EXPLICIT#v}"
+            base="$(base_of "$base")"
+          else
+            # Auto-compute base version.
+            if [[ -z "$latest_tag" ]]; then
+              # Fresh repo — start at 0.1.0.
+              base="0.1.0"
+            elif [[ "$latest_tag" == *"-rc."* ]]; then
+              # Already in an RC series; reuse its base version.
+              base="$(base_of "$latest_tag")"
+            else
+              # Latest is stable; new release is a patch bump.
+              base="$(bump_patch "$latest_tag")"
+            fi
+          fi
+
+          if [[ "$KIND" == "rc" ]]; then
+            new="$(next_rc_in_series "$base")"
+          else
+            new="$base"
+            # Refuse stable regressions — this is the updater-safety gate.
+            if [[ -n "$latest_stable" ]] && ! semver_gt "$new" "$latest_stable"; then
+              echo "::error::Refusing to cut stable $new: not greater than latest stable $latest_stable." >&2
+              exit 1
+            fi
+          fi
+
+          # Refuse tag collisions (possible if someone already tagged manually).
+          if git rev-parse "v$new" >/dev/null 2>&1; then
+            echo "::error::Tag v$new already exists." >&2
+            exit 1
+          fi
+
+          echo "version=$new" >>"$GITHUB_OUTPUT"
+          echo "Next version: $new"
+
+      - name: Bump package.json and tag
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Why: use npm version --no-git-tag-version so we control the commit
+          # message and tag name explicitly (avoids npm's `v1.2.3` prefix
+          # assumptions and any lifecycle scripts that would run on bump).
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          git add package.json
+          git commit -m "release: v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          echo "tag=v$VERSION" >>"$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Push tag
+        env:
+          PUSH_MAIN: ${{ steps.resolve.outputs.push_main }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$PUSH_MAIN" == "true" ]]; then
+            # Fast-forward main to include the version-bump commit.
+            git push origin "HEAD:refs/heads/main"
+            git push origin "$TAG"
+          else
+            # Off-main release — only the tag is published; main is untouched.
+            git push origin "$TAG"
+          fi
+
+  release:
+    needs: cut
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.cut.outputs.tag }}
+    secrets: inherit
