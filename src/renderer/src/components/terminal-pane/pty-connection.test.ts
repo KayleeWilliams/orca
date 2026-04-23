@@ -94,6 +94,7 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
 function createPane(paneId: number) {
   return {
     id: paneId,
+    pendingDragScrollState: null,
     terminal: {
       cols: 120,
       rows: 40,
@@ -551,5 +552,67 @@ describe('connectPanePty', () => {
     expect(remountTransport.attach).not.toHaveBeenCalled()
     await Promise.resolve()
     expect(remountDeps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'pty-restarted')
+  })
+
+  it('coalesces drag-time terminal resizes into one final PTY resize', async () => {
+    const queuedFrames: FrameRequestCallback[] = []
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      queuedFrames.push(callback)
+      return queuedFrames.length
+    })
+    globalThis.cancelAnimationFrame = vi.fn()
+
+    try {
+      const { connectPanePty } = await import('./pty-connection')
+
+      const transport = createMockTransport('pty-live')
+      transportFactoryQueue.push(transport)
+      const pane = createPane(1)
+      pane.pendingDragScrollState = {
+        wasAtBottom: true,
+        firstVisibleLineContent: '',
+        viewportY: 0,
+        totalLines: 40
+      }
+      let onResizeHandler: ((size: { cols: number; rows: number }) => void) | null = null
+      pane.terminal.onResize = vi.fn(((handler: (size: { cols: number; rows: number }) => void) => {
+        onResizeHandler = handler
+        return { dispose: vi.fn() }
+      }) as typeof pane.terminal.onResize)
+      const manager = createManager(1)
+      const deps = createDeps()
+
+      connectPanePty(pane as never, manager as never, deps as never)
+      const connectFrame = queuedFrames.shift()
+      connectFrame?.(0)
+
+      expect(onResizeHandler).toBeDefined()
+      if (!onResizeHandler) {
+        throw new Error('expected onResize handler to be registered')
+      }
+
+      onResizeHandler({ cols: 100, rows: 30 })
+      onResizeHandler({ cols: 101, rows: 31 })
+
+      expect(transport.resize).not.toHaveBeenCalled()
+
+      const dragFrame = queuedFrames.shift()
+      dragFrame?.(16)
+
+      expect(transport.resize).not.toHaveBeenCalled()
+      expect(queuedFrames).toHaveLength(1)
+
+      pane.pendingDragScrollState = null
+      const flushFrame = queuedFrames.shift()
+      flushFrame?.(32)
+
+      expect(transport.resize).toHaveBeenCalledTimes(1)
+      expect(transport.resize).toHaveBeenCalledWith(101, 31)
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+    }
   })
 })
