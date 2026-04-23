@@ -177,8 +177,7 @@ export class LocalPtyProvider implements IPtyProvider {
       // autodetection, bat/delta paging hints). Sourced from ORCA_APP_VERSION
       // which main/index.ts seeds from app.getVersion() at startup; the
       // fallback keeps tests and non-Electron runs working.
-      TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev',
-      FORCE_HYPERLINK: '1'
+      TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev'
     } as Record<string, string>
 
     spawnEnv.LANG ??= 'en_US.UTF-8'
