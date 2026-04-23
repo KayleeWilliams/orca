@@ -5,7 +5,6 @@ import { useAppStore } from '@/store'
 import { dirname } from '@/lib/path'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { FileDeleteDialog } from './FileDeleteDialog'
 import { FileExplorerBackgroundMenu } from './FileExplorerBackgroundMenu'
 import { FileExplorerVirtualRows } from './FileExplorerVirtualRows'
 import { splitPathSegments } from './path-tree'
@@ -85,16 +84,7 @@ function FileExplorerInner(): React.JSX.Element {
   const statusByRelativePath = useMemo(() => buildStatusMap(entries), [entries])
   const folderStatusByRelativePath = useMemo(() => buildFolderStatusMap(entries), [entries])
 
-  const {
-    pendingDelete,
-    isDeleting,
-    deleteShortcutLabel,
-    deleteActionLabel,
-    deleteDescription,
-    requestDelete,
-    closeDeleteDialog,
-    confirmDelete
-  } = useFileDeletion({
+  const { deleteShortcutLabel, requestDelete } = useFileDeletion({
     activeWorktreeId,
     openFiles,
     closeFile,
@@ -398,15 +388,6 @@ function FileExplorerInner(): React.JSX.Element {
         point={bgMenuPoint}
         worktreePath={worktreePath}
         onStartNew={startNew}
-      />
-
-      <FileDeleteDialog
-        pendingDelete={pendingDelete}
-        isDeleting={isDeleting}
-        deleteDescription={deleteDescription}
-        deleteActionLabel={deleteActionLabel}
-        onClose={closeDeleteDialog}
-        onConfirm={() => void confirmDelete()}
       />
     </>
   )
