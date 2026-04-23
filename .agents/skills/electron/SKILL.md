@@ -42,54 +42,31 @@ command playwright-cli click e5
 command playwright-cli screenshot
 ```
 
-## Invoking `playwright-cli` — prefer `command` prefix
+## Always prefix with `command`
 
-Some developers alias `playwright-cli` in their shell (e.g. `alias playwright-cli='playwright-cli --persistent'`). Interactive aliases don't always fire under non-interactive shells like the Bash tool, and when they do, flags can leak into subcommands and cause `Unknown option: --persistent`.
+Use `command playwright-cli …` to bypass shell aliases (e.g. `alias playwright-cli='playwright-cli --persistent'`) that leak flags into subcommands. Behaves identically when no alias is set. All examples below use this form.
 
-To avoid both problems, **prefer `command playwright-cli …`** — it bypasses any alias and behaves identically when no alias is set. If you see `Unknown option: --persistent` or similar, the alias is leaking; switch to `command playwright-cli`. All examples below use this form.
+## Pick a free CDP port
 
-```bash
-command playwright-cli attach --cdp="http://localhost:9333"
-command playwright-cli snapshot
-command playwright-cli eval "document.title"
-```
-
-## Picking a CDP port — never trust 9333 blindly
-
-Another Orca worktree (or a stale dev server) may already hold port 9333. If you launch a new dev build and the port is taken, electron-vite will happily start *without* a debugger, and `curl http://localhost:9333/json` will return the OLD app — you'll attach to the wrong process and see an empty DOM or stale state.
-
-**Before launching, pick a free port:**
+Port 9333 is a convention, not a guarantee — another worktree may hold it, and electron-vite will start without a debugger, letting you silently attach to the old app.
 
 ```bash
-# Find a free port in the 9333–9350 range
 for p in 9333 9334 9335 9336 9337 9338 9339 9340; do
   if ! lsof -i :$p >/dev/null 2>&1; then PORT=$p; break; fi
 done
-echo "Using port $PORT"
+# After attach, verify you hit the right worktree:
+command playwright-cli eval "window.__store.getState().worktreesByRepo"
 ```
-
-**After attaching, verify you're talking to the right worktree** (not an old one on the same port):
-
-```bash
-command playwright-cli eval "(() => { const s = window.__store?.getState(); const wts = Object.values(s.worktreesByRepo || {}).flat(); const match = wts.find(w => w.path.includes('YOUR-WORKTREE-NAME')); return match ? 'correct worktree' : 'WRONG WORKTREE — detach'; })()"
-```
-
-If it's the wrong worktree, `command playwright-cli close` and relaunch on a different port.
 
 ## Launching Orca Dev Build with CDP
 
 Orca uses electron-vite for dev builds. The correct way to launch with CDP:
 
 ```bash
-# Pick a free port first (see section above)
-# Launch Orca dev with remote debugging (run in background)
+# Launch with remote debugging (PORT picked above)
 node config/scripts/run-electron-vite-dev.mjs --remote-debugging-port=$PORT 2>&1 &
 
-# Poll until CDP is listening, then attach
-for i in $(seq 1 10); do
-  sleep 3
-  if curl -s http://localhost:$PORT/json | grep -q '"type"'; then break; fi
-done
+# Wait for "DevTools listening on ws://..." in output, then attach
 command playwright-cli attach --cdp="http://localhost:$PORT"
 ```
 
@@ -97,7 +74,7 @@ command playwright-cli attach --cdp="http://localhost:$PORT"
 - Pass `--remote-debugging-port=NNNN` directly to the script — do NOT use `pnpm run dev -- --` (the double `--` breaks Chromium flag parsing)
 - electron-vite also supports `REMOTE_DEBUGGING_PORT` env var: `REMOTE_DEBUGGING_PORT=$PORT pnpm run dev`
 - The Zustand store is exposed at `window.__store` — use `window.__store.getState()` and `window.__store.getState().someAction()` to read/mutate state
-- Port 9333 is a convention, NOT a guarantee. Always probe before binding (see "Picking a CDP port" above).
+- Use port 9333 (not 9222) to avoid conflicts with other Electron apps
 
 ### Accessing Orca State via eval
 
