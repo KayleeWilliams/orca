@@ -103,6 +103,46 @@ describe('safeFit', () => {
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
   })
 
+  it('skips drag-time refits while a drag scroll lock is active', () => {
+    const pane = createPane({
+      proposedCols: 100,
+      proposedRows: 32,
+      terminalCols: 120,
+      terminalRows: 32
+    })
+    pane.pendingDragScrollState = {
+      wasAtBottom: true,
+      firstVisibleLineContent: '',
+      viewportY: 0,
+      totalLines: 32
+    } satisfies ScrollState
+
+    safeFit(pane)
+
+    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+    expect(pane.terminal.refresh).not.toHaveBeenCalled()
+  })
+
+  it('still performs the final refit when drag-time fits are explicitly allowed', () => {
+    const pane = createPane({
+      proposedCols: 100,
+      proposedRows: 32,
+      terminalCols: 120,
+      terminalRows: 32
+    })
+    pane.pendingDragScrollState = {
+      wasAtBottom: true,
+      firstVisibleLineContent: '',
+      viewportY: 0,
+      totalLines: 32
+    } satisfies ScrollState
+
+    safeFit(pane, { allowWhileDragLocked: true })
+
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, pane.terminal.rows - 1)
+  })
+
   it('does not refresh when the pane grid dimensions did not change', () => {
     const pane = createPane({
       proposedCols: 120,

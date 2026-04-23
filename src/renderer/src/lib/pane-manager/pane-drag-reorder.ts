@@ -1,6 +1,7 @@
 import type { DropZone, ManagedPaneInternal } from './pane-manager-types'
 import type { PaneStyleOptions } from './pane-manager-types'
 import { detachPaneFromTree, insertPaneNextTo } from './pane-tree-ops'
+import type { RefitOptions } from './pane-tree-ops'
 
 // ---------------------------------------------------------------------------
 // Drag-to-reorder panes
@@ -20,7 +21,7 @@ export type DragReorderCallbacks = {
   safeFit: (pane: ManagedPaneInternal) => void
   applyPaneOpacity: () => void
   applyDividerStyles: () => void
-  refitPanesUnder: (el: HTMLElement) => void
+  refitPanesUnder: (el: HTMLElement, opts?: RefitOptions) => void
   lockDragScroll: (el: HTMLElement) => void
   unlockDragScroll: (el: HTMLElement) => void
   onLayoutChanged?: () => void

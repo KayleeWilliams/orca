@@ -123,4 +123,21 @@ describe('attachPaneFitResizeObserver', () => {
     expect(pane.fitAddon.fit).not.toHaveBeenCalled()
     expect(pane.pendingObservedFitRafId).toBeNull()
   })
+
+  it('skips drag-time fits while a divider drag lock is active', () => {
+    const pane = createPane()
+    pane.pendingSplitScrollState = null
+    pane.pendingDragScrollState = {
+      wasAtBottom: true,
+      firstVisibleLineContent: '',
+      viewportY: 0,
+      totalLines: 24
+    } satisfies ScrollState
+
+    attachPaneFitResizeObserver(pane)
+    mockResizeObservers[0]?.trigger()
+    flushAnimationFrames()
+
+    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+  })
 })

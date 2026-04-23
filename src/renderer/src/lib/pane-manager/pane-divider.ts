@@ -1,4 +1,5 @@
 import type { PaneStyleOptions, ManagedPaneInternal } from './pane-manager-types'
+import type { RefitOptions } from './pane-tree-ops'
 
 // ---------------------------------------------------------------------------
 // Divider creation & drag-to-resize
@@ -15,7 +16,7 @@ export function createDivider(
   isVertical: boolean,
   styleOptions: PaneStyleOptions,
   callbacks: {
-    refitPanesUnder: (el: HTMLElement) => void
+    refitPanesUnder: (el: HTMLElement, opts?: RefitOptions) => void
     lockDragScroll: (el: HTMLElement) => void
     unlockDragScroll: (el: HTMLElement) => void
     onLayoutChanged?: () => void
@@ -46,7 +47,7 @@ function attachDividerDrag(
   divider: HTMLElement,
   isVertical: boolean,
   callbacks: {
-    refitPanesUnder: (el: HTMLElement) => void
+    refitPanesUnder: (el: HTMLElement, opts?: RefitOptions) => void
     lockDragScroll: (el: HTMLElement) => void
     unlockDragScroll: (el: HTMLElement) => void
     onLayoutChanged?: () => void
@@ -133,11 +134,11 @@ function attachDividerDrag(
     // Final refit at the exact drop position, then unlock drag scroll state
     // so the authoritative restore uses the original pre-drag scroll position
     if (prevEl) {
-      callbacks.refitPanesUnder(prevEl)
+      callbacks.refitPanesUnder(prevEl, { allowWhileDragLocked: true })
       callbacks.unlockDragScroll(prevEl)
     }
     if (nextEl) {
-      callbacks.refitPanesUnder(nextEl)
+      callbacks.refitPanesUnder(nextEl, { allowWhileDragLocked: true })
       callbacks.unlockDragScroll(nextEl)
     }
     prevEl = null
@@ -163,9 +164,9 @@ function attachDividerDrag(
     prev.style.flex = '1 1 0%'
     next.style.flex = '1 1 0%'
 
-    callbacks.refitPanesUnder(prev)
+    callbacks.refitPanesUnder(prev, { allowWhileDragLocked: true })
     callbacks.unlockDragScroll(prev)
-    callbacks.refitPanesUnder(next)
+    callbacks.refitPanesUnder(next, { allowWhileDragLocked: true })
     callbacks.unlockDragScroll(next)
     callbacks.onLayoutChanged?.()
   }

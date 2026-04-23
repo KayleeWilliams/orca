@@ -12,10 +12,14 @@ type TreeOpsCallbacks = {
   getRoot: () => HTMLElement
   getStyleOptions: () => PaneStyleOptions
   safeFit: (pane: ManagedPaneInternal) => void
-  refitPanesUnder: (el: HTMLElement) => void
+  refitPanesUnder: (el: HTMLElement, opts?: RefitOptions) => void
   lockDragScroll: (el: HTMLElement) => void
   unlockDragScroll: (el: HTMLElement) => void
   onLayoutChanged?: () => void
+}
+
+export type RefitOptions = {
+  allowWhileDragLocked?: boolean
 }
 
 function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows: number } | null {
@@ -38,13 +42,19 @@ function refreshViewport(pane: ManagedPaneInternal): void {
   }
 }
 
-export function safeFit(pane: ManagedPaneInternal): void {
+export function safeFit(pane: ManagedPaneInternal, opts: RefitOptions = {}): void {
   try {
     const dims = getProposedDimensions(pane)
     if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
       // Why: divider drags fire refits every frame, but most frames do not
       // cross a cell boundary. Skipping those avoids FitAddon.clear()+refresh()
       // churn, which was causing visible terminal blinking while resizing.
+      return
+    }
+    // Why: repeated xterm fits while a divider is actively being dragged can
+    // corrupt browser-side rendering for Codex/Ink TUIs. Keep the pane flexing
+    // live, but defer the terminal grid resize until the drag settles.
+    if (pane.pendingDragScrollState && !opts.allowWhileDragLocked) {
       return
     }
     if (pane.pendingSplitScrollState) {
@@ -74,6 +84,9 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
         continue
       }
+      if (pane.pendingDragScrollState) {
+        continue
+      }
       if (pane.pendingSplitScrollState) {
         pane.fitAddon.fit()
         refreshViewport(pane)
@@ -95,13 +108,17 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
   }
 }
 
-export function refitPanesUnder(el: HTMLElement, panes: Map<number, ManagedPaneInternal>): void {
+export function refitPanesUnder(
+  el: HTMLElement,
+  panes: Map<number, ManagedPaneInternal>,
+  opts?: RefitOptions
+): void {
   // If the element is a pane, refit it
   if (el.classList.contains('pane')) {
     const paneId = Number(el.dataset.paneId)
     const pane = panes.get(paneId)
     if (pane) {
-      safeFit(pane)
+      safeFit(pane, opts)
     }
     return
   }
@@ -113,7 +130,7 @@ export function refitPanesUnder(el: HTMLElement, panes: Map<number, ManagedPaneI
       const paneId = Number((paneEl as HTMLElement).dataset.paneId)
       const pane = panes.get(paneId)
       if (pane) {
-        safeFit(pane)
+        safeFit(pane, opts)
       }
     }
   }
