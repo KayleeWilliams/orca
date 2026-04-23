@@ -1,10 +1,21 @@
 // Why: Electron `<webview>` guests render in a separate Chromium process and
-// capture pointer events off the host renderer's event loop. During a dnd-kit
-// tab drag, that means `pointerup` lands in the guest instead of document, so
-// onDragEnd never fires and dropping an editor/terminal tab onto a split over a
-// browser tab silently fails (the blue drop overlay shows, then nothing
-// happens). Flipping `pointer-events: none` on every registered webview for the
-// duration of a drag lets dnd-kit's PointerSensor see the release on the host.
+// paint in their own GPU compositor layer ABOVE normal DOM regardless of CSS
+// z-index. That causes two tab-drag failures that must both be solved together:
+//
+//   1. Pointer events (pointermove, pointerup) for the drag overlay surface
+//      are captured by the guest instead of the host's document, so dnd-kit's
+//      PointerSensor never sees the release — onDragEnd does not fire and a
+//      drop onto a split over a browser tab silently does nothing.
+//   2. The host's `.tab-drop-overlay` element (the blue hitbox rectangle) is
+//      painted behind the webview's compositor layer even though its CSS
+//      z-index is 9999, so the user sees no drop affordance at all while the
+//      cursor is over a browser pane.
+//
+// Fix both at once while a tab drag is active:
+//   - `pointer-events: none` lets the host renderer receive pointermove/up.
+//   - `visibility: hidden` takes the guest out of the GPU composite so the
+//     DOM overlay paints on top. `visibility` (not `display: none`) preserves
+//     layout so the overlay's computed rect still matches the pane body.
 //
 // Kept in its own module (not inside BrowserPane.tsx) so the drag system in
 // useTabDragSplit can call this without pulling in the entire BrowserPane
@@ -44,5 +55,9 @@ export function unregisterBrowserWebviewForDragPassthrough(webview: HTMLElement)
 export function setBrowserWebviewsDragPassthrough(passthrough: boolean): void {
   for (const webview of registry) {
     webview.style.pointerEvents = passthrough ? 'none' : ''
+    // Why: the webview's GPU layer paints over CSS z-index; hiding visibility
+    // during the drag lets the blue drop overlay become visible. Restored on
+    // drag end. See module-level comment for full rationale.
+    webview.style.visibility = passthrough ? 'hidden' : ''
   }
 }
