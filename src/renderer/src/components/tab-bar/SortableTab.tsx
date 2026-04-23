@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import type { TerminalTab } from '../../../../shared/types'
 import type { TabDragItemData } from '../tab-group/useTabDragSplit'
+import { getDropIndicatorClasses, type DropIndicator } from './drop-indicator'
 
 type SortableTabProps = {
   tab: TerminalTab
@@ -28,6 +29,7 @@ type SortableTabProps = {
   onToggleExpand: (tabId: string) => void
   onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
   dragData: TabDragItemData
+  dropIndicator?: DropIndicator
 }
 
 export const TAB_COLORS = [
@@ -59,7 +61,8 @@ export default function SortableTab({
   onSetTabColor,
   onToggleExpand,
   onSplitGroup,
-  dragData
+  dragData,
+  dropIndicator
 }: SortableTabProps): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
@@ -155,7 +158,7 @@ export default function SortableTab({
           data-tab-title={tab.customTitle ?? tab.title}
           {...attributes}
           {...dragListeners}
-          className={`group relative flex items-center h-full px-3 text-sm cursor-pointer select-none shrink-0 border-r border-border ${
+          className={`group relative flex items-center h-full px-3 text-sm cursor-pointer select-none shrink-0 border-r border-border ${getDropIndicatorClasses(dropIndicator ?? null)} ${
             isActive
               ? 'bg-accent text-foreground border-b-transparent'
               : 'bg-card text-muted-foreground hover:text-foreground hover:bg-accent/50'

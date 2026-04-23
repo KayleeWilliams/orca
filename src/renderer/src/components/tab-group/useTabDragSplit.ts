@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   closestCenter,
   pointerWithin,
@@ -16,6 +16,9 @@ import { arrayMove } from '@dnd-kit/sortable'
 import type { TabGroup } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import type { TabSplitDirection } from '../../store/slices/tabs'
+import { useHoveredTabInsertion, type HoveredTabInsertion } from './tab-insertion'
+
+export type { HoveredTabInsertion }
 
 export type TabDropZone = 'center' | TabSplitDirection
 
@@ -155,6 +158,7 @@ export function useTabDragSplit({
   activeDrag: TabDragItemData | null
   collisionDetection: CollisionDetection
   hoveredDropTarget: HoveredTabDropTarget | null
+  hoveredTabInsertion: HoveredTabInsertion | null
   onDragCancel: () => void
   onDragEnd: (event: DragEndEvent) => void
   onDragMove: (event: DragMoveEvent) => void
@@ -166,6 +170,7 @@ export function useTabDragSplit({
   const dropUnifiedTab = useAppStore((state) => state.dropUnifiedTab)
   const [activeDrag, setActiveDrag] = useState<TabDragItemData | null>(null)
   const [hoveredDropTarget, setHoveredDropTarget] = useState<HoveredTabDropTarget | null>(null)
+  const tabInsertion = useHoveredTabInsertion(isTabDragData, getDragCenter)
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
@@ -181,7 +186,8 @@ export function useTabDragSplit({
   const clearDragState = useCallback(() => {
     setActiveDrag(null)
     setHoveredDropTarget(null)
-  }, [])
+    tabInsertion.clear()
+  }, [tabInsertion])
 
   const updateHoveredPane = useCallback(
     (event: DragMoveEvent | DragOverEvent) => {
@@ -247,15 +253,17 @@ export function useTabDragSplit({
   const onDragMove = useCallback(
     (event: DragMoveEvent) => {
       updateHoveredPane(event)
+      tabInsertion.update(event)
     },
-    [updateHoveredPane]
+    [updateHoveredPane, tabInsertion]
   )
 
   const onDragOver = useCallback(
     (event: DragOverEvent) => {
       updateHoveredPane(event)
+      tabInsertion.update(event)
     },
-    [updateHoveredPane]
+    [updateHoveredPane, tabInsertion]
   )
 
   const onDragEnd = useCallback(
@@ -347,27 +355,16 @@ export function useTabDragSplit({
     clearDragState()
   }, [clearDragState])
 
-  return useMemo(
-    () => ({
-      activeDrag,
-      collisionDetection,
-      hoveredDropTarget,
-      onDragCancel,
-      onDragEnd,
-      onDragMove,
-      onDragOver,
-      onDragStart,
-      sensors
-    }),
-    [
-      activeDrag,
-      hoveredDropTarget,
-      onDragCancel,
-      onDragEnd,
-      onDragMove,
-      onDragOver,
-      onDragStart,
-      sensors
-    ]
-  )
+  return {
+    activeDrag,
+    collisionDetection,
+    hoveredDropTarget,
+    hoveredTabInsertion: tabInsertion.hoveredTabInsertion,
+    onDragCancel,
+    onDragEnd,
+    onDragMove,
+    onDragOver,
+    onDragStart,
+    sensors
+  }
 }

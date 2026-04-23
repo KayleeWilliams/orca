@@ -3,7 +3,7 @@ import { DndContext } from '@dnd-kit/core'
 import type { TabGroupLayoutNode } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import TabGroupPanel from './TabGroupPanel'
-import { type TabDropZone, useTabDragSplit } from './useTabDragSplit'
+import { type HoveredTabInsertion, type TabDropZone, useTabDragSplit } from './useTabDragSplit'
 
 const MIN_RATIO = 0.15
 const MAX_RATIO = 0.85
@@ -93,7 +93,8 @@ function SplitNode({
   touchesLeftEdge,
   isTabDragActive,
   activeDropGroupId,
-  activeDropZone
+  activeDropZone,
+  hoveredTabInsertion
 }: {
   node: TabGroupLayoutNode
   nodePath: string
@@ -107,6 +108,7 @@ function SplitNode({
   isTabDragActive: boolean
   activeDropGroupId: string | null
   activeDropZone: TabDropZone | null
+  hoveredTabInsertion: HoveredTabInsertion | null
 }): React.JSX.Element {
   const setTabGroupSplitRatio = useAppStore((state) => state.setTabGroupSplitRatio)
 
@@ -126,6 +128,9 @@ function SplitNode({
         reserveCollapsedSidebarHeaderSpace={touchesTopEdge && touchesLeftEdge}
         isTabDragActive={isTabDragActive}
         activeDropZone={activeDropGroupId === node.groupId ? activeDropZone : null}
+        hoveredTabInsertion={
+          hoveredTabInsertion?.groupId === node.groupId ? hoveredTabInsertion : null
+        }
       />
     )
   }
@@ -152,6 +157,7 @@ function SplitNode({
           isTabDragActive={isTabDragActive}
           activeDropGroupId={activeDropGroupId}
           activeDropZone={activeDropZone}
+          hoveredTabInsertion={hoveredTabInsertion}
         />
       </div>
       <ResizeHandle
@@ -172,6 +178,7 @@ function SplitNode({
           isTabDragActive={isTabDragActive}
           activeDropGroupId={activeDropGroupId}
           activeDropZone={activeDropZone}
+          hoveredTabInsertion={hoveredTabInsertion}
         />
       </div>
     </div>
@@ -215,6 +222,7 @@ export default function TabGroupSplitLayout({
           isTabDragActive={dragSplit.activeDrag !== null}
           activeDropGroupId={dragSplit.hoveredDropTarget?.groupId ?? null}
           activeDropZone={dragSplit.hoveredDropTarget?.zone ?? null}
+          hoveredTabInsertion={dragSplit.hoveredTabInsertion}
         />
       </div>
     </DndContext>

@@ -14,7 +14,11 @@ import TerminalPane from '../terminal-pane/TerminalPane'
 import BrowserPane from '../browser-pane/BrowserPane'
 import { useTabGroupWorkspaceModel } from './useTabGroupWorkspaceModel'
 import TabGroupDropOverlay from './TabGroupDropOverlay'
-import { getTabPaneBodyDroppableId, type TabDropZone } from './useTabDragSplit'
+import {
+  getTabPaneBodyDroppableId,
+  type HoveredTabInsertion,
+  type TabDropZone
+} from './useTabDragSplit'
 
 const EditorPanel = lazy(() => import('../editor/EditorPanel'))
 
@@ -27,7 +31,8 @@ export default function TabGroupPanel({
   reserveClosedExplorerToggleSpace,
   reserveCollapsedSidebarHeaderSpace,
   isTabDragActive = false,
-  activeDropZone = null
+  activeDropZone = null,
+  hoveredTabInsertion = null
 }: {
   groupId: string
   worktreeId: string
@@ -38,6 +43,7 @@ export default function TabGroupPanel({
   reserveCollapsedSidebarHeaderSpace: boolean
   isTabDragActive?: boolean
   activeDropZone?: TabDropZone | null
+  hoveredTabInsertion?: HoveredTabInsertion | null
 }): React.JSX.Element {
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen)
   const sidebarOpen = useAppStore((state) => state.sidebarOpen)
@@ -142,6 +148,7 @@ export default function TabGroupPanel({
       }}
       tabBarOrder={tabBarOrder}
       onCreateSplitGroup={commands.createSplitGroup}
+      hoveredTabInsertion={hoveredTabInsertion}
     />
   )
 

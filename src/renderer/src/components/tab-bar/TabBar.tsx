@@ -1,3 +1,8 @@
+/* oxlint-disable max-lines -- Why: rendering the drop-indicator prop on each
+ * of three distinct tab components (terminal, browser, editor) adds 3 lines
+ * to a file that was already ~398 code lines on main. The per-type render
+ * branches share little beyond drag data, so consolidating them would cost
+ * more clarity than the ~5 lines of bloat is worth. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { FilePlus, Globe, Plus, TerminalSquare } from 'lucide-react'
@@ -14,7 +19,7 @@ import EditorFileTab from './EditorFileTab'
 import BrowserTab from './BrowserTab'
 import { QuickLaunchAgentMenuItems } from './QuickLaunchButton'
 import { reconcileTabOrder } from './reconcile-order'
-import type { TabDragItemData } from '../tab-group/useTabDragSplit'
+import type { HoveredTabInsertion, TabDragItemData } from '../tab-group/useTabDragSplit'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +66,7 @@ type TabBarProps = {
     direction: 'left' | 'right' | 'up' | 'down',
     sourceVisibleTabId?: string
   ) => void
+  hoveredTabInsertion?: HoveredTabInsertion | null
 }
 
 type TabItem =
@@ -107,7 +113,8 @@ function TabBarInner({
   onCloseAllFiles,
   onPinFile,
   tabBarOrder,
-  onCreateSplitGroup
+  onCreateSplitGroup,
+  hoveredTabInsertion
 }: TabBarProps): React.JSX.Element {
   const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
   const resolvedGroupId = groupId ?? worktreeId
@@ -164,6 +171,13 @@ function TabBarInner({
   }, [tabBarOrder, terminalIds, editorFileIds, browserTabIds, terminalMap, editorMap, browserMap])
 
   const sortableIds = useMemo(() => orderedItems.map((item) => item.id), [orderedItems])
+
+  // Why: VS Code shows a single blue insertion bar at the edge of the hovered
+  // tab during a drag. dnd-kit already animates sibling tabs sliding apart, so
+  // one bar on the over-tab's correct side tells the user where it will land.
+  // Scoped to this group's resolvedGroupId so sibling groups don't flash too.
+  const activeIndicator =
+    hoveredTabInsertion?.groupId === resolvedGroupId ? hoveredTabInsertion : null
 
   const focusTerminalTabSurface = useCallback((tabId: string) => {
     // Why: creating a terminal from the "+" menu is a two-step focus race:
@@ -312,7 +326,6 @@ function TabBarInner({
               visibleTabId: item.id,
               tabType: item.type
             }
-
             if (item.type === 'terminal') {
               return (
                 <SortableTab
@@ -333,6 +346,9 @@ function TabBarInner({
                     onCreateSplitGroup?.(direction, sourceVisibleTabId)
                   }
                   dragData={dragData}
+                  dropIndicator={
+                    activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
+                  }
                 />
               )
             }
@@ -351,6 +367,9 @@ function TabBarInner({
                   }
                   onDuplicate={() => onDuplicateBrowserTab?.(item.id)}
                   dragData={dragData}
+                  dropIndicator={
+                    activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
+                  }
                 />
               )
             }
@@ -370,6 +389,9 @@ function TabBarInner({
                   onCreateSplitGroup?.(direction, sourceVisibleTabId)
                 }
                 dragData={dragData}
+                dropIndicator={
+                  activeIndicator?.visibleTabId === item.id ? activeIndicator.side : null
+                }
               />
             )
           })}

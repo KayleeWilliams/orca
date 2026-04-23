@@ -27,6 +27,7 @@ import type { GitFileStatus } from '../../../../shared/types'
 import type { OpenFile } from '../../store/slices/editor'
 import { CLOSE_ALL_CONTEXT_MENUS_EVENT } from './SortableTab'
 import type { TabDragItemData } from '../tab-group/useTabDragSplit'
+import { getDropIndicatorClasses, type DropIndicator } from './drop-indicator'
 
 const isMac = navigator.userAgent.includes('Mac')
 const isLinux = navigator.userAgent.includes('Linux')
@@ -49,7 +50,8 @@ export default function EditorFileTab({
   onCloseAll,
   onPin,
   onSplitGroup,
-  dragData
+  dragData,
+  dropIndicator
 }: {
   file: OpenFile & { tabId?: string }
   isActive: boolean
@@ -62,6 +64,7 @@ export default function EditorFileTab({
   onPin?: () => void
   onSplitGroup: (direction: 'left' | 'right' | 'up' | 'down', sourceVisibleTabId: string) => void
   dragData: TabDragItemData
+  dropIndicator?: DropIndicator
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     // Why: split groups can duplicate the same open file into multiple visible
@@ -183,7 +186,7 @@ export default function EditorFileTab({
           style={style}
           {...attributes}
           {...listeners}
-          className={`group relative flex items-center h-full px-3 text-sm cursor-pointer select-none shrink-0 border-r border-border ${
+          className={`group relative flex items-center h-full px-3 text-sm cursor-pointer select-none shrink-0 border-r border-border ${getDropIndicatorClasses(dropIndicator ?? null)} ${
             isActive
               ? 'bg-accent text-foreground border-b-transparent'
               : 'bg-card text-muted-foreground hover:text-foreground hover:bg-accent/50'
