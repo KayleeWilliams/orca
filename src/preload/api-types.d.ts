@@ -524,7 +524,11 @@ export type PreloadApi = {
     createFile: (args: { filePath: string; connectionId?: string }) => Promise<void>
     createDir: (args: { dirPath: string; connectionId?: string }) => Promise<void>
     rename: (args: { oldPath: string; newPath: string; connectionId?: string }) => Promise<void>
-    deletePath: (args: { targetPath: string; connectionId?: string }) => Promise<void>
+    deletePath: (args: {
+      targetPath: string
+      connectionId?: string
+      recursive?: boolean
+    }) => Promise<void>
     authorizeExternalPath: (args: { targetPath: string }) => Promise<void>
     stat: (args: {
       filePath: string
