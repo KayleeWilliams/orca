@@ -18,6 +18,10 @@ type CreateBrowserTabOptions = {
   activate?: boolean
   title?: string
   sessionProfileId?: string | null
+  // Why: callers like "Open Preview to the Side" need to place the new browser
+  // tab in a specific (sibling or newly-split) group rather than the ambient
+  // active group. Defaults to the worktree's current active group.
+  targetGroupId?: string
 }
 
 type CreateBrowserPageOptions = {
@@ -395,7 +399,8 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     if (!alreadyHasUnifiedTab) {
       state.createUnifiedTab(worktreeId, 'browser', {
         entityId: workspaceId,
-        label: browserTab.title
+        label: browserTab.title,
+        targetGroupId: options?.targetGroupId
       })
     }
     return browserTab

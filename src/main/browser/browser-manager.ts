@@ -449,6 +449,15 @@ export class BrowserManager {
       if (url.startsWith('blob:https://') || url.startsWith('blob:http://')) {
         return
       }
+      // Why: file:// is permitted at `will-attach-webview` so the preview pane
+      // can render local HTML the user explicitly opened. After that initial
+      // load, a page must not be able to redirect the guest to file:// — that
+      // would let a remote page probe the local filesystem. Keep the in-guest
+      // navigation guard strict even though initial attach is permissive.
+      if (url.startsWith('file:')) {
+        event.preventDefault()
+        return
+      }
       if (!normalizeBrowserNavigationUrl(url)) {
         // Why: `will-attach-webview` only validates the initial src. Main must
         // keep enforcing the same allowlist for later guest navigations too.

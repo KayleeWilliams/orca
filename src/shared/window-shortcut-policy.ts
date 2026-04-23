@@ -15,13 +15,57 @@ export type WindowShortcutAction =
   | { type: 'openQuickOpen' }
   | { type: 'openNewWorkspace' }
   | { type: 'jumpToWorktreeIndex'; index: number }
+  | { type: 'worktreeHistoryNavigate'; direction: 'back' | 'forward' }
+
+function platformPrimaryModifier(
+  input: Pick<WindowShortcutInput, 'meta' | 'control'>,
+  platform: NodeJS.Platform
+): boolean {
+  return platform === 'darwin' ? Boolean(input.meta) : Boolean(input.control)
+}
+
+function platformOppositeModifier(
+  input: Pick<WindowShortcutInput, 'meta' | 'control'>,
+  platform: NodeJS.Platform
+): boolean {
+  return platform === 'darwin' ? Boolean(input.control) : Boolean(input.meta)
+}
 
 export function isWindowShortcutModifierChord(
   input: Pick<WindowShortcutInput, 'meta' | 'control' | 'alt'>,
   platform: NodeJS.Platform
 ): boolean {
-  const modifierPressed = platform === 'darwin' ? input.meta : input.control
-  return Boolean(modifierPressed) && !input.alt
+  return platformPrimaryModifier(input, platform) && !input.alt
+}
+
+// Why: worktree history navigation is the first allowlisted chord that
+// intentionally carries Alt, so it needs its own predicate. The shared
+// isWindowShortcutModifierChord helper deliberately rejects Alt because its
+// callers (zoom, sidebar toggles, palette, jump indices) must not steal
+// Alt-combinations used by shells and readline.
+//
+// Why: this predicate also narrows to ArrowLeft/ArrowRight (not just
+// "primary+alt") so a future alt-carrying chord added as its own branch in
+// resolveWindowShortcutAction is not silently swallowed by the early
+// return-null below. Any non-arrow alt combo falls through to the rest of
+// the policy, where Alt is rejected by isWindowShortcutModifierChord as
+// before.
+function isHistoryNavigateChord(input: WindowShortcutInput, platform: NodeJS.Platform): boolean {
+  // Why: excluding Shift reserves Cmd/Ctrl+Alt+Shift+Arrow for future chords
+  // (e.g. "close back/forward entry" or cross-stack selection) without
+  // taking a breaking-change hit on the v1 chord binding. Excluding the
+  // opposite primary modifier (Ctrl on darwin, Meta on non-darwin) prevents
+  // Cmd+Ctrl+Alt+Arrow / Win+Ctrl+Alt+Arrow from being mis-classified as
+  // history navigation — those combinations collide with OS chords
+  // (macOS Mission Control spaces, GNOME workspace switching) and must
+  // continue to flow to the OS.
+  return (
+    platformPrimaryModifier(input, platform) &&
+    !platformOppositeModifier(input, platform) &&
+    Boolean(input.alt) &&
+    !input.shift &&
+    (input.code === 'ArrowLeft' || input.code === 'ArrowRight')
+  )
 }
 
 function isZoomInShortcut(input: WindowShortcutInput): boolean {
@@ -49,6 +93,16 @@ export function resolveWindowShortcutAction(
   input: WindowShortcutInput,
   platform: NodeJS.Platform
 ): WindowShortcutAction | null {
+  // Why: evaluate the history-navigate chord BEFORE the standard modifier-chord
+  // gate because that gate rejects Alt. The predicate already narrows to
+  // ArrowLeft/ArrowRight so only those two codes reach here.
+  if (isHistoryNavigateChord(input, platform)) {
+    return {
+      type: 'worktreeHistoryNavigate',
+      direction: input.code === 'ArrowLeft' ? 'back' : 'forward'
+    }
+  }
+
   if (!isWindowShortcutModifierChord(input, platform)) {
     return null
   }

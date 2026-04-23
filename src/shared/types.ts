@@ -40,6 +40,7 @@ export type Worktree = {
   comment: string
   linkedIssue: number | null
   linkedPR: number | null
+  linkedLinearIssue: string | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -54,6 +55,7 @@ export type WorktreeMeta = {
   comment: string
   linkedIssue: number | null
   linkedPR: number | null
+  linkedLinearIssue: string | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -399,6 +401,11 @@ export type GitHubWorkItem = {
   author: string | null
   branchName?: string
   baseRefName?: string
+  /** Why: required because the cross-repo view merges items from every selected
+   *  repo — the table row's repo pill and the "open in browser" fallback need
+   *  to know which repo an item came from. Stamped by the renderer fetcher
+   *  (`fetchWorkItems`) and by optimistic stubs on the new-issue path. */
+  repoId: string
 }
 
 export type GitHubPRFile = {
@@ -419,7 +426,9 @@ export type GitHubPRFileContents = {
 }
 
 export type GitHubWorkItemDetails = {
-  item: GitHubWorkItem
+  // Why: main-process doesn't know Orca's Repo.id, so this inner item omits
+  // repoId. The renderer stamps it when routing the details through the store.
+  item: Omit<GitHubWorkItem, 'repoId'>
   body: string
   comments: PRComment[]
   /** Only set for PRs. Head/base SHAs used by the Files tab to fetch per-file content. */
@@ -427,6 +436,42 @@ export type GitHubWorkItemDetails = {
   baseSha?: string
   checks?: PRCheckDetail[]
   files?: GitHubPRFile[]
+}
+
+// ─── Linear ─────────────────────────────────────────────────────────
+export type LinearViewer = {
+  displayName: string
+  email: string | null
+  organizationName: string
+}
+
+export type LinearConnectionStatus = {
+  connected: boolean
+  viewer: LinearViewer | null
+}
+
+export type LinearIssue = {
+  id: string
+  identifier: string
+  title: string
+  description?: string
+  url: string
+  state: {
+    name: string
+    type: string
+    color: string
+  }
+  team: {
+    name: string
+    key: string
+  }
+  labels: string[]
+  assignee?: {
+    displayName: string
+    avatarUrl?: string
+  }
+  priority: number
+  updatedAt: string
 }
 
 // ─── Hooks (orca.yaml) ──────────────────────────────────────────────
@@ -615,6 +660,14 @@ export type GlobalSettings = {
    *  paste with Cmd/Ctrl+V without an intervening Cmd/Ctrl+Shift+C. Defaults
    *  to false so existing users keep the explicit-copy behavior. */
   terminalClipboardOnSelect: boolean
+  /** Why: lets TUIs like tmux, nvim, and fzf copy to the system clipboard via
+   *  the OSC 52 escape sequence — essential for SSH-hosted workflows where
+   *  the terminal is the only bridge to the local clipboard. Defaults to
+   *  false because OSC 52 is a classic data-exfiltration vector (any
+   *  process piping untrusted output into the terminal — `cat attacker.log`
+   *  — can silently rewrite the user's clipboard). Opt-in preserves the
+   *  conservative default while making the capability one toggle away. */
+  terminalAllowOsc52Clipboard: boolean
   /** Where the repo setup script runs on workspace create. Defaults to a
    *  background "Setup" tab so the user's main terminal stays immediately
    *  usable without the setup output crowding the initial pane. */
@@ -647,8 +700,11 @@ export type GlobalSettings = {
    *  does not surface commands from other worktrees. Defaults to true.
    *  Disable to revert to shared global shell history. */
   terminalScopeHistoryByWorktree: boolean
-  /** Which agent to pre-select in the new-workspace composer. null = auto (first detected). */
-  defaultTuiAgent: TuiAgent | null
+  /** Which agent to pre-select in the new-workspace composer.
+   *  - null: auto (first detected agent)
+   *  - 'blank': blank terminal (no agent launched)
+   *  - TuiAgent: a specific agent id */
+  defaultTuiAgent: TuiAgent | 'blank' | null
   /** Why: worktree deletion is destructive (git worktree remove + rm -rf of the
    *  working directory), so Orca shows a confirmation dialog by default. Users
    *  who delete frequently can opt into skipping the dialog via a "Don't ask
@@ -657,6 +713,13 @@ export type GlobalSettings = {
   skipDeleteWorktreeConfirm: boolean
   /** Default preset in the new-workspace GitHub task view. */
   defaultTaskViewPreset: TaskViewPresetId
+  /** Why: persists the user's repo selection in the cross-repo tasks view.
+   *  `null` means sticky-all — every eligible repo is selected, including
+   *  repos added in future sessions, so the "All repos" label stays
+   *  truthful. An explicit array freezes the curated subset; ids no longer
+   *  eligible are silently dropped on load. An empty array after that drop
+   *  is treated as `null`. */
+  defaultRepoSelection: string[] | null
   /** Per-agent CLI command overrides. A missing key means use the catalog default binary name. */
   agentCmdOverrides: Partial<Record<TuiAgent, string>>
   /** Whether to show the agent activity dashboard docked at the bottom of the
@@ -667,11 +730,24 @@ export type GlobalSettings = {
   showAgentDashboard: boolean
   /** Why: macOS terminals must choose between letting Option compose layout
    *  characters (@ on German, € on French) or treating Option as Meta/Esc for
-   *  readline shortcuts. Mirrors Ghostty's macos-option-as-alt setting.
-   *  'false' = compose (default, for non-US keyboards);
-   *  'true' = full Meta on both Option keys;
+   *  readline shortcuts. Mirrors Ghostty's macos-option-as-alt setting — and
+   *  like Ghostty, defaults to 'auto', which fingerprints the active keyboard
+   *  layout via navigator.keyboard.getLayoutMap() at runtime and picks
+   *  'true' for US / US-International and 'false' for everything else.
+   *  'auto'  = layout-aware (default). See docs/terminal-option-key-layout-aware-default.md.
+   *  'false' = compose (for non-US keyboards);
+   *  'true'  = full Meta on both Option keys;
    *  'left' / 'right' = only that Option key acts as Meta, the other composes. */
-  terminalMacOptionAsAlt: 'true' | 'false' | 'left' | 'right'
+  terminalMacOptionAsAlt: 'auto' | 'true' | 'false' | 'left' | 'right'
+  /** One-shot migration guard for the 'auto' rollout. Before this field landed,
+   *  the field defaulted to 'true' for everyone, meaning a persisted 'true'
+   *  could either be an explicit user choice or just the old default. On first
+   *  launch after upgrade, if this flag is false and the persisted value is
+   *  'true', we reset to 'auto' so non-US users stop getting their keyboard
+   *  broken by the stale global default. US users land on 'true' anyway via
+   *  detection, so no visible behavior change. Then we flip this flag to true
+   *  and never migrate again. */
+  terminalMacOptionAsAltMigrated: boolean
   /** Experimental: persist terminal sessions across app restarts via an
    *  out-of-process daemon (src/main/daemon/**). Opt-in because the daemon
    *  protocol is still stabilizing — some sessions have been observed to go
@@ -682,6 +758,15 @@ export type GlobalSettings = {
    *  toast shown to users upgrading from v1.3.0 (where the daemon was on by
    *  default). Set to true the first time the toast fires so it never repeats. */
   experimentalTerminalDaemonNoticeShown: boolean
+  /** When true, Orca sets FORCE_HYPERLINK=1 in every spawned PTY's env. That
+   *  makes modern CLIs (oh-my-zsh's supports_hyperlinks(), coreutils, the Rust
+   *  supports-hyperlinks crate, etc.) emit OSC-8 hyperlink escapes even when
+   *  they would otherwise skip them. Defaults to true to preserve prior
+   *  behavior, but users with heavy shell init (large oh-my-zsh / p10k / nvm /
+   *  pyenv / conda setups) can measurably speed up terminal start by turning
+   *  this off — the extra branching and escape emission across the many
+   *  subshells fired during rc init can multiply startup time. */
+  terminalForceHyperlink: boolean
 }
 
 export type NotificationEventSource = 'agent-task-complete' | 'terminal-bell' | 'test'

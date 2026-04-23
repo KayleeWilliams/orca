@@ -7,6 +7,7 @@ import { createTabsSlice } from './slices/tabs'
 import { createUISlice } from './slices/ui'
 import { createSettingsSlice } from './slices/settings'
 import { createGitHubSlice } from './slices/github'
+import { createLinearSlice } from './slices/linear'
 import { createEditorSlice } from './slices/editor'
 import { createStatsSlice } from './slices/stats'
 import { createClaudeUsageSlice } from './slices/claude-usage'
@@ -16,7 +17,10 @@ import { createRateLimitSlice } from './slices/rate-limits'
 import { createSshSlice } from './slices/ssh'
 import { createAgentStatusSlice } from './slices/agent-status'
 import { createDiffCommentsSlice } from './slices/diffComments'
+import { createDetectedAgentsSlice } from './slices/detected-agents'
+import { createWorktreeNavHistorySlice } from './slices/worktree-nav-history'
 import { e2eConfig } from '@/lib/e2e-config'
+import { registerHttpLinkStoreAccessor } from '@/lib/http-link-routing'
 
 export const useAppStore = create<AppState>()((...a) => ({
   ...createRepoSlice(...a),
@@ -26,6 +30,7 @@ export const useAppStore = create<AppState>()((...a) => ({
   ...createUISlice(...a),
   ...createSettingsSlice(...a),
   ...createGitHubSlice(...a),
+  ...createLinearSlice(...a),
   ...createEditorSlice(...a),
   ...createStatsSlice(...a),
   ...createClaudeUsageSlice(...a),
@@ -34,8 +39,12 @@ export const useAppStore = create<AppState>()((...a) => ({
   ...createRateLimitSlice(...a),
   ...createSshSlice(...a),
   ...createAgentStatusSlice(...a),
-  ...createDiffCommentsSlice(...a)
+  ...createDiffCommentsSlice(...a),
+  ...createDetectedAgentsSlice(...a),
+  ...createWorktreeNavHistorySlice(...a)
 }))
+
+registerHttpLinkStoreAccessor(() => useAppStore.getState())
 
 export type { AppState } from './types'
 

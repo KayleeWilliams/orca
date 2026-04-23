@@ -126,6 +126,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // focus-follows-mouse never happens unexpectedly.
     terminalFocusFollowsMouse: false,
     terminalClipboardOnSelect: false,
+    terminalAllowOsc52Clipboard: false,
     setupScriptLaunchMode: 'new-tab',
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: true,
@@ -141,11 +142,24 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     defaultTuiAgent: null,
     skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
+    defaultRepoSelection: null,
     agentCmdOverrides: {},
     showAgentDashboard: true,
-    terminalMacOptionAsAlt: 'true',
+    // Why: 'auto' runs a layout-aware probe at boot (see
+    // src/renderer/src/lib/keyboard-layout/*) that picks 'true' for US and
+    // US-International and 'false' for every other layout. This mirrors
+    // Ghostty's detectOptionAsAlt() and ensures users on Turkish, German,
+    // French, etc. can type Option+Q/L/E characters like @, €, [, ] out of
+    // the box (issue #903) while US users keep Option-as-Alt readline chords.
+    terminalMacOptionAsAlt: 'auto',
+    terminalMacOptionAsAltMigrated: false,
     experimentalTerminalDaemon: false,
-    experimentalTerminalDaemonNoticeShown: false
+    experimentalTerminalDaemonNoticeShown: false,
+    // Why: keep the historical default (on) so no existing user's terminal
+    // loses clickable-link emission on upgrade. Users with heavy zshrc setups
+    // can disable it from Settings → Terminal → Advanced to reclaim startup
+    // time.
+    terminalForceHyperlink: true
   }
 }
 

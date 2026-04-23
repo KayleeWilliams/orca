@@ -25,6 +25,7 @@ const {
   setTrustedBrowserRendererWebContentsIdMock,
   registerFilesystemWatcherHandlersMock,
   registerAppHandlersMock,
+  registerLinearHandlersMock,
   registerExportHandlersMock
 } = vi.hoisted(() => ({
   registerCliHandlersMock: vi.fn(),
@@ -51,6 +52,7 @@ const {
   setTrustedBrowserRendererWebContentsIdMock: vi.fn(),
   registerFilesystemWatcherHandlersMock: vi.fn(),
   registerAppHandlersMock: vi.fn(),
+  registerLinearHandlersMock: vi.fn(),
   registerExportHandlersMock: vi.fn()
 }))
 
@@ -145,6 +147,10 @@ vi.mock('./app', () => ({
   registerAppHandlers: registerAppHandlersMock
 }))
 
+vi.mock('./linear', () => ({
+  registerLinearHandlers: registerLinearHandlersMock
+}))
+
 import { registerCoreHandlers } from './register-core-handlers'
 
 describe('registerCoreHandlers', () => {
@@ -173,6 +179,7 @@ describe('registerCoreHandlers', () => {
     setTrustedBrowserRendererWebContentsIdMock.mockReset()
     registerFilesystemWatcherHandlersMock.mockReset()
     registerAppHandlersMock.mockReset()
+    registerLinearHandlersMock.mockReset()
     registerExportHandlersMock.mockReset()
   })
 
@@ -201,6 +208,7 @@ describe('registerCoreHandlers', () => {
     expect(registerAgentHookHandlersMock).toHaveBeenCalled()
     expect(registerRateLimitHandlersMock).toHaveBeenCalledWith(rateLimits)
     expect(registerGitHubHandlersMock).toHaveBeenCalledWith(store, stats)
+    expect(registerLinearHandlersMock).toHaveBeenCalled()
     expect(registerFeedbackHandlersMock).toHaveBeenCalled()
     expect(registerStatsHandlersMock).toHaveBeenCalledWith(stats)
     expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store)

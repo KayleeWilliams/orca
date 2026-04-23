@@ -275,6 +275,16 @@ describe('registerPtyHandlers', () => {
       expect(env.TERM_PROGRAM).toBe('Orca')
     })
 
+    it('surfaces ORCA_APP_VERSION as TERM_PROGRAM_VERSION for TUI feature gating', async () => {
+      const env = await spawnAndGetEnv(undefined, { ORCA_APP_VERSION: '1.2.3-test' })
+      expect(env.TERM_PROGRAM_VERSION).toBe('1.2.3-test')
+    })
+
+    it('falls back to a placeholder version when ORCA_APP_VERSION is unset', async () => {
+      const env = await spawnAndGetEnv(undefined, { ORCA_APP_VERSION: undefined })
+      expect(env.TERM_PROGRAM_VERSION).toBe('0.0.0-dev')
+    })
+
     it('injects the selected Codex home into Orca terminal PTYs', async () => {
       const env = await spawnAndGetEnv(undefined, undefined, () => '/tmp/orca-codex-home')
       expect(env.CODEX_HOME).toBe('/tmp/orca-codex-home')

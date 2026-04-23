@@ -38,17 +38,14 @@ export function registerAppMenu({
         { role: 'about' },
         {
           label: 'Check for Updates...',
-          // Why: holding Cmd+Shift (or Ctrl+Shift on win/linux) while clicking
-          // opts this check into the release-candidate channel. The event
-          // carries the modifier keys down from the native menu — we only act
-          // on the mouse chord, not accelerator-triggered invocations (there
-          // is no accelerator on this item, so triggeredByAccelerator should
-          // always be false here, but guarding makes the intent explicit).
+          // Why: holding Shift while clicking opts this check into the
+          // release-candidate channel. The event carries the modifier keys
+          // down from the native menu — we only act on the mouse chord, not
+          // accelerator-triggered invocations (there is no accelerator on
+          // this item, so triggeredByAccelerator should always be false here,
+          // but guarding makes the intent explicit).
           click: (_menuItem, _window, event) => {
-            const includePrerelease =
-              !event.triggeredByAccelerator &&
-              (event.metaKey === true || event.ctrlKey === true) &&
-              event.shiftKey === true
+            const includePrerelease = !event.triggeredByAccelerator && event.shiftKey === true
             onCheckForUpdates({ includePrerelease })
           }
         },

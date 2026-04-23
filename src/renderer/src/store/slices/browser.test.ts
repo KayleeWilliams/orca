@@ -2,6 +2,69 @@ import { describe, expect, it } from 'vitest'
 import { createTestStore, makeTabGroup, makeWorktree, seedStore } from './store-test-helpers'
 
 describe('browser slice', () => {
+  it('places a new tab in the target group when targetGroupId is provided', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/tmp/wt-1'
+    seedStore(store, {
+      activeRepoId: 'repo1',
+      activeWorktreeId: worktreeId,
+      activeTabType: 'terminal',
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/tmp/wt-1' })]
+      },
+      groupsByWorktree: {
+        [worktreeId]: [
+          makeTabGroup({ id: 'terminal-group', worktreeId, activeTabId: null, tabOrder: [] }),
+          makeTabGroup({ id: 'browser-group', worktreeId, activeTabId: null, tabOrder: [] })
+        ]
+      },
+      activeGroupIdByWorktree: { [worktreeId]: 'terminal-group' },
+      browserTabsByWorktree: {},
+      unifiedTabsByWorktree: {}
+    })
+
+    const created = store.getState().createBrowserTab(worktreeId, 'https://example.com', {
+      title: 'Example',
+      targetGroupId: 'browser-group'
+    })
+
+    const unifiedTab = (store.getState().unifiedTabsByWorktree[worktreeId] ?? []).find(
+      (t) => t.contentType === 'browser' && t.entityId === created.id
+    )
+    expect(unifiedTab?.groupId).toBe('browser-group')
+  })
+
+  it('falls back to active group when targetGroupId is not provided', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/tmp/wt-1'
+    seedStore(store, {
+      activeRepoId: 'repo1',
+      activeWorktreeId: worktreeId,
+      activeTabType: 'terminal',
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/tmp/wt-1' })]
+      },
+      groupsByWorktree: {
+        [worktreeId]: [
+          makeTabGroup({ id: 'terminal-group', worktreeId, activeTabId: null, tabOrder: [] }),
+          makeTabGroup({ id: 'browser-group', worktreeId, activeTabId: null, tabOrder: [] })
+        ]
+      },
+      activeGroupIdByWorktree: { [worktreeId]: 'terminal-group' },
+      browserTabsByWorktree: {},
+      unifiedTabsByWorktree: {}
+    })
+
+    const created = store.getState().createBrowserTab(worktreeId, 'https://example.com', {
+      title: 'Example'
+    })
+
+    const unifiedTab = (store.getState().unifiedTabsByWorktree[worktreeId] ?? []).find(
+      (t) => t.contentType === 'browser' && t.entityId === created.id
+    )
+    expect(unifiedTab?.groupId).toBe('terminal-group')
+  })
+
   it('reopens the most recently closed browser tab in the same worktree', () => {
     const store = createTestStore()
     const worktreeId = 'repo1::/tmp/wt-1'

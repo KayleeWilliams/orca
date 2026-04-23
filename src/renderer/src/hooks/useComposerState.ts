@@ -46,8 +46,8 @@ export type UseComposerStateOptions = {
   /** Invoked after a successful createWorktree. The caller usually closes its
    *  surface here (palette modal, full page, etc.). */
   onCreated?: () => void
-  /** Optional external repoId override — used by NewWorkspacePage's task list
-   *  which wants to drive repo selection from the page header, not the card. */
+  /** Optional external repoId override — used by TaskPage's work-item list
+   *  which drives repo selection from the page header, not the card. */
   repoIdOverride?: string
   onRepoIdOverrideChange?: (value: string) => void
 }
@@ -108,40 +108,19 @@ export type UseComposerStateResult = {
   promptTextareaRef: React.RefObject<HTMLTextAreaElement | null>
   nameInputRef: React.RefObject<HTMLInputElement | null>
   submit: () => Promise<void>
+  submitQuick: (agent: TuiAgent | null) => Promise<void>
   /** Invoked by the Enter handler to re-check whether submission should fire. */
   createDisabled: boolean
 }
 
-// Why: both the full-page NewWorkspacePage composer and the Cmd+J modal can
-// be mounted simultaneously. Without instance scoping, a single native file
+// Why: both the full-page TaskPage composer and the Cmd+J modal can be
+// mounted simultaneously. Without instance scoping, a single native file
 // drop fires every subscriber and duplicates attachments/prompt edits across
 // the background draft and the visible modal. Route drops to the
 // most-recently-mounted composer only — the modal stacks on top, so the
 // modal wins when both are present, and the page takes over once the modal
 // closes.
 const composerDropStack: symbol[] = []
-
-// Why: agent detection runs `which` for every agent binary on PATH — an IPC
-// round-trip that takes 50–200ms. The set of installed agents doesn't change
-// within a session, so cache the promise at module scope to collapse all
-// mounts (page + modal, reopen, etc.) onto a single resolve.
-let detectAgentsPromise: Promise<TuiAgent[]> | null = null
-function detectAgentsCached(): Promise<TuiAgent[]> {
-  if (detectAgentsPromise) {
-    return detectAgentsPromise
-  }
-  const pending = window.api.preflight
-    .detectAgents()
-    .then((ids) => ids as TuiAgent[])
-    .catch(() => {
-      // Allow a retry on the next mount if detection blew up (e.g. IPC
-      // timeout during cold start).
-      detectAgentsPromise = null
-      return [] as TuiAgent[]
-    })
-  detectAgentsPromise = pending
-  return pending
-}
 
 export function useComposerState(options: UseComposerStateOptions): UseComposerStateResult {
   const {
@@ -168,6 +147,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setSidebarOpen: s.setSidebarOpen,
       setRightSidebarOpen: s.setRightSidebarOpen,
       setRightSidebarTab: s.setRightSidebarTab,
+      closeModal: s.closeModal,
       openSettingsPage: s.openSettingsPage,
       openSettingsTarget: s.openSettingsTarget
     }))
@@ -180,6 +160,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     setSidebarOpen,
     setRightSidebarOpen,
     setRightSidebarTab,
+    closeModal,
     openSettingsPage,
     openSettingsTarget
   } = actions
@@ -244,12 +225,23 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
     return initialLinkedWorkItem?.type === 'pr' ? initialLinkedWorkItem.number : null
   })
+  // Why: the long-form composer's agent selection is a required TuiAgent (not
+  // null/blank), so 'blank' preferences from global settings must collapse to
+  // the Claude default here — the blank-terminal affordance only lives in the
+  // quick-create flow.
+  const fallbackDefaultAgent: TuiAgent =
+    settings?.defaultTuiAgent && settings.defaultTuiAgent !== 'blank'
+      ? settings.defaultTuiAgent
+      : 'claude'
   const [tuiAgent, setTuiAgent] = useState<TuiAgent>(
-    persistDraft
-      ? (newWorkspaceDraft?.agent ?? settings?.defaultTuiAgent ?? 'claude')
-      : (settings?.defaultTuiAgent ?? 'claude')
+    persistDraft ? (newWorkspaceDraft?.agent ?? fallbackDefaultAgent) : fallbackDefaultAgent
   )
-  const [detectedAgentIds, setDetectedAgentIds] = useState<Set<TuiAgent> | null>(null)
+  const detectedAgentList = useAppStore((s) => s.detectedAgentIds)
+  const ensureDetectedAgents = useAppStore((s) => s.ensureDetectedAgents)
+  const detectedAgentIds = useMemo<Set<TuiAgent> | null>(
+    () => (detectedAgentList ? new Set(detectedAgentList) : null),
+    [detectedAgentList]
+  )
 
   const [yamlHooks, setYamlHooks] = useState<OrcaHooks | null>(null)
   const [checkedHooksRepoId, setCheckedHooksRepoId] = useState<string | null>(null)
@@ -427,15 +419,15 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
   }, [eligibleRepos, repoId, setRepoId])
 
-  // Detect installed agents once on mount (cached at module scope so the
-  // page composer and quick-composer modal share a single IPC round-trip).
+  // Detect installed agents once on mount via the shared store slice so the
+  // page composer, quick-composer modal, settings pane, and tab-bar quick-launch
+  // share a single IPC round-trip and stay in sync on refresh.
   useEffect(() => {
     let cancelled = false
-    void detectAgentsCached().then((ids) => {
+    void ensureDetectedAgents().then((ids) => {
       if (cancelled) {
         return
       }
-      setDetectedAgentIds(new Set(ids))
       if (!newWorkspaceDraft?.agent && !settings?.defaultTuiAgent && ids.length > 0) {
         const firstInCatalogOrder = AGENT_CATALOG.find((a) => ids.includes(a.id))
         if (firstInCatalogOrder) {
@@ -555,11 +547,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     let cancelled = false
     setLinkItemsLoading(true)
 
+    const lookupRepoId = selectedRepo.id
     void window.api.gh
       .listWorkItems({ repoPath: selectedRepo.path, limit: 100 })
       .then((items) => {
         if (!cancelled) {
-          setLinkItems(items)
+          // Why: IPC payload omits repoId — stamp it here from the repo we
+          // queried so downstream consumers typed against GitHubWorkItem work.
+          // Cast through unknown: spreading a discriminated union loses the
+          // discriminant, so the union-preserving shape must be asserted.
+          setLinkItems(
+            items.map((it) => ({ ...it, repoId: lookupRepoId })) as unknown as GitHubWorkItem[]
+          )
         }
       })
       .catch(() => {
@@ -591,11 +590,14 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     // number and still get a concrete selectable result. Orca mirrors that by
     // resolving direct lookups against the selected repo instead of requiring a
     // text match in the recent-items list.
+    const lookupRepoId = selectedRepo.id
     void window.api.gh
       .workItem({ repoPath: selectedRepo.path, number: normalizedLinkQuery.directNumber })
       .then((item) => {
         if (!cancelled) {
-          setLinkDirectItem(item)
+          setLinkDirectItem(
+            item ? ({ ...item, repoId: lookupRepoId } as unknown as GitHubWorkItem) : null
+          )
         }
       })
       .catch(() => {
@@ -841,7 +843,29 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const handleOpenAgentSettings = useCallback((): void => {
     openSettingsTarget({ pane: 'agents', repoId: null })
     openSettingsPage()
-  }, [openSettingsPage, openSettingsTarget])
+    closeModal()
+  }, [closeModal, openSettingsPage, openSettingsTarget])
+
+  const applyWorktreeMeta = useCallback(
+    async (
+      worktreeId: string,
+      meta: {
+        linkedIssue?: number
+        linkedPR?: number
+        comment?: string
+      }
+    ): Promise<void> => {
+      if (Object.keys(meta).length === 0) {
+        return
+      }
+      try {
+        await updateWorktreeMeta(worktreeId, meta)
+      } catch {
+        console.error('Failed to update worktree meta after creation')
+      }
+    },
+    [updateWorktreeMeta]
+  )
 
   const submit = useCallback(async (): Promise<void> => {
     const workspaceName = workspaceSeedName
@@ -867,27 +891,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       )
       const worktree = result.worktree
 
-      try {
-        const metaUpdates: {
-          linkedIssue?: number
-          linkedPR?: number
-          comment?: string
-        } = {}
-        if (parsedLinkedIssueNumber !== null) {
-          metaUpdates.linkedIssue = parsedLinkedIssueNumber
-        }
-        if (linkedPR !== null) {
-          metaUpdates.linkedPR = linkedPR
-        }
-        if (note.trim()) {
-          metaUpdates.comment = note.trim()
-        }
-        if (Object.keys(metaUpdates).length > 0) {
-          await updateWorktreeMeta(worktree.id, metaUpdates)
-        }
-      } catch {
-        console.error('Failed to update worktree meta after creation')
-      }
+      await applyWorktreeMeta(worktree.id, {
+        ...(parsedLinkedIssueNumber !== null ? { linkedIssue: parsedLinkedIssueNumber } : {}),
+        ...(linkedPR !== null ? { linkedPR } : {}),
+        ...(note.trim() ? { comment: note.trim() } : {})
+      })
 
       const issueCommand = shouldRunIssueAutomation
         ? {
@@ -934,6 +942,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   }, [
     clearNewWorkspaceDraft,
     createWorktree,
+    applyWorktreeMeta,
     issueCommandTemplate,
     linkedPR,
     linkedWorkItem?.url,
@@ -956,9 +965,100 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     shouldWaitForIssueAutomationCheck,
     shouldWaitForSetupCheck,
     startupPrompt,
-    updateWorktreeMeta,
     workspaceSeedName
   ])
+
+  const submitQuick = useCallback(
+    async (agent: TuiAgent | null): Promise<void> => {
+      const workspaceName = getWorkspaceSeedName({
+        explicitName: name,
+        prompt: '',
+        linkedIssueNumber: null,
+        linkedPR: null
+      })
+      if (
+        !repoId ||
+        !workspaceName ||
+        !selectedRepo ||
+        shouldWaitForSetupCheck ||
+        (requiresExplicitSetupChoice && !setupDecision)
+      ) {
+        return
+      }
+
+      setCreateError(null)
+      setCreating(true)
+      try {
+        const result = await createWorktree(
+          repoId,
+          workspaceName,
+          undefined,
+          (resolvedSetupDecision ?? 'inherit') as SetupDecision
+        )
+        const worktree = result.worktree
+
+        const trimmedNote = note.trim()
+        await applyWorktreeMeta(worktree.id, trimmedNote ? { comment: trimmedNote } : {})
+
+        const startupPlan =
+          agent === null
+            ? null
+            : buildAgentStartupPlan({
+                agent,
+                prompt: '',
+                cmdOverrides: settings?.agentCmdOverrides ?? {},
+                platform: CLIENT_PLATFORM,
+                allowEmptyPromptLaunch: true
+              })
+
+        activateAndRevealWorktree(worktree.id, {
+          setup: result.setup,
+          ...(startupPlan ? { startup: { command: startupPlan.launchCommand } } : {})
+        })
+        if (startupPlan) {
+          void ensureAgentStartupInTerminal({
+            worktreeId: worktree.id,
+            startup: startupPlan
+          })
+        }
+        setSidebarOpen(true)
+        if (settings?.rightSidebarOpenByDefault) {
+          setRightSidebarTab('explorer')
+          setRightSidebarOpen(true)
+        }
+        if (persistDraft) {
+          clearNewWorkspaceDraft()
+        }
+        onCreated?.()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to create worktree.'
+        setCreateError(message)
+        toast.error(message)
+      } finally {
+        setCreating(false)
+      }
+    },
+    [
+      applyWorktreeMeta,
+      clearNewWorkspaceDraft,
+      createWorktree,
+      name,
+      note,
+      onCreated,
+      persistDraft,
+      repoId,
+      requiresExplicitSetupChoice,
+      resolvedSetupDecision,
+      selectedRepo,
+      settings?.agentCmdOverrides,
+      settings?.rightSidebarOpenByDefault,
+      setRightSidebarOpen,
+      setRightSidebarTab,
+      setSidebarOpen,
+      setupDecision,
+      shouldWaitForSetupCheck
+    ]
+  )
 
   const createDisabled =
     !repoId ||
@@ -1021,6 +1121,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     promptTextareaRef,
     nameInputRef,
     submit,
+    submitQuick,
     createDisabled
   }
 }

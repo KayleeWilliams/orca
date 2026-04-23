@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { Columns2, Ellipsis, Rows2, X } from 'lucide-react'
 import { useAppStore } from '../../store'
@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import TabBar from '../tab-bar/TabBar'
 import TerminalPane from '../terminal-pane/TerminalPane'
-import BrowserPane from '../browser-pane/BrowserPane'
+import { browserSlotAnchorName } from '../browser-pane/browser-pane-slots'
 import { useTabGroupWorkspaceModel } from './useTabGroupWorkspaceModel'
 import TabGroupDropOverlay from './TabGroupDropOverlay'
 import { getTabPaneBodyDroppableId, type TabDropZone } from './useTabDragSplit'
@@ -44,7 +44,6 @@ export default function TabGroupPanel({
 
   const model = useTabGroupWorkspaceModel({ groupId, worktreeId })
   const {
-    activeBrowserTab,
     activeTab,
     browserItems,
     commands,
@@ -63,6 +62,21 @@ export default function TabGroupPanel({
     },
     disabled: !isTabDragActive
   })
+  // Why: browser panes for this worktree are rendered once at the worktree
+  // level (BrowserPaneOverlayLayer) and positioned over the owning group's
+  // body via CSS anchor positioning. Tagging this body with a per-group
+  // `anchor-name` lets the overlay reference it via `position-anchor`;
+  // moving a tab between groups only swaps which anchor-name the overlay
+  // targets, never reparenting the `<webview>` (which would reload it).
+  const bodyAnchorName = browserSlotAnchorName(groupId)
+  // Why: memoize the style object so the literal isn't recreated on every
+  // render. A fresh object every render would make the body `<div>` appear
+  // to have a new `style` prop on every parent re-render, which defeats any
+  // downstream memoization keyed on referential equality.
+  const bodyAnchorStyle = useMemo(
+    () => ({ anchorName: bodyAnchorName }) as React.CSSProperties,
+    [bodyAnchorName]
+  )
 
   const tabBar = (
     <TabBar
@@ -268,7 +282,11 @@ export default function TabGroupPanel({
         </div>
       </div>
 
-      <div ref={setBodyDropRef} className="relative flex-1 min-h-0 overflow-hidden">
+      <div
+        ref={setBodyDropRef}
+        className="relative flex-1 min-h-0 overflow-hidden"
+        style={bodyAnchorStyle}
+      >
         {activeDropZone ? <TabGroupDropOverlay zone={activeDropZone} /> : null}
         {model.groupTabs
           .filter((item) => item.contentType === 'terminal')
@@ -325,20 +343,12 @@ export default function TabGroupPanel({
             </div>
           )}
 
-        {browserItems.map((bt) => (
-          <div
-            key={bt.id}
-            className="absolute inset-0 flex min-h-0 min-w-0"
-            style={{
-              display: isWorktreeActive && activeBrowserTab?.id === bt.id ? undefined : 'none'
-            }}
-          >
-            <BrowserPane
-              browserTab={bt}
-              isActive={isWorktreeActive && activeBrowserTab?.id === bt.id}
-            />
-          </div>
-        ))}
+        {/* Why: browser panes are rendered at the worktree level by
+            BrowserPaneOverlayLayer and absolutely positioned over this body
+            element via the slot registered above. Rendering them per-group
+            here caused moving a browser tab between groups to unmount and
+            remount the pane, reparenting the Electron `<webview>` — which
+            destroys its guest contents and reloads the page. */}
       </div>
     </div>
   )

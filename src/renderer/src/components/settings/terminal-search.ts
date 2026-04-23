@@ -108,6 +108,27 @@ export const TERMINAL_ADVANCED_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Scrollback Size',
     description: 'Maximum terminal scrollback buffer size.',
     keywords: ['terminal', 'scrollback', 'buffer', 'memory']
+  },
+  {
+    title: 'Force Hyperlink Escapes',
+    description:
+      'Set FORCE_HYPERLINK=1 in every terminal so tools emit OSC-8 clickable links. Turn off if your shell startup is slow.',
+    keywords: [
+      'terminal',
+      'hyperlink',
+      'link',
+      'osc',
+      'osc8',
+      'osc-8',
+      'force_hyperlink',
+      'slow',
+      'startup',
+      'zsh',
+      'zshrc',
+      'oh-my-zsh',
+      'p10k',
+      'powerlevel10k'
+    ]
   }
 ]
 

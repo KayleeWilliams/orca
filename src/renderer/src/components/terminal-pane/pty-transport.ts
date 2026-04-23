@@ -209,12 +209,20 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     agentTracker?.handleTitle(title)
   }
 
+  // Why: true while we're replaying buffered/attach-time bytes into the
+  // terminal. Routes those bytes through onReplayData so the renderer can
+  // engage the replay guard — otherwise xterm auto-replies to embedded
+  // query sequences leak into the shell as stray input.
+  let replayingBufferedData = false
+
   // Why: shared by connect() and attach() to avoid duplicating title/bell/exit logic.
   function registerPtyDataHandler(id: string): void {
     ptyDataHandlers.set(id, (data) => {
       // Why: OSC 9999 is a renderer-only control protocol. Parse it before
       // xterm sees the bytes, and keep parser state across chunks so partial
       // PTY reads do not drop valid status updates or print escape garbage.
+      // Strip unconditionally (regardless of live vs replay path) so xterm
+      // never renders the raw escape sequence on either route.
       const processed = processAgentStatusChunk(data)
       data = processed.cleanData
       if (onAgentStatus) {
@@ -222,7 +230,15 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           onAgentStatus(payload)
         }
       }
-      storedCallbacks.onData?.(data)
+
+      // Route cleaned bytes to replay or live callback. Replay path engages
+      // the renderer's replay guard so xterm auto-replies to buffered DA/DSR
+      // query sequences do not leak into the shell as stray input.
+      if (replayingBufferedData && storedCallbacks.onReplayData) {
+        storedCallbacks.onReplayData(data)
+      } else {
+        storedCallbacks.onData?.(data)
+      }
       if (onTitleChange) {
         const title = extractLastOscTitle(data)
         if (title !== null) {
@@ -375,10 +391,16 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           // data so titles and scrollback restore correctly, but it must not
           // generate fresh unread badges or notifications for unrelated
           // worktrees just because Orca is reconnecting background terminals.
+          // Why replayingBufferedData: those buffered bytes are raw PTY output
+          // that may contain query sequences from the previous session; route
+          // them through onReplayData so the renderer engages the replay guard
+          // and xterm's auto-replies do not leak into the shell.
           suppressAttentionEvents = true
+          replayingBufferedData = true
           try {
             ptyDataHandlers.get(id)?.(buffered)
           } finally {
+            replayingBufferedData = false
             suppressAttentionEvents = false
           }
         }
@@ -389,8 +411,15 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       // content doesn't layer on top of stale output. Skip the clear for
       // alternate-screen sessions — the snapshot already fills the screen
       // and clearing would erase it.
+      // Why onReplayData: treat this clear as replay-path too so any data
+      // that immediately follows from the renderer sits under the same guard.
       if (!options.isAlternateScreen) {
-        storedCallbacks.onData?.('\x1b[2J\x1b[3J\x1b[H')
+        const clear = '\x1b[2J\x1b[3J\x1b[H'
+        if (storedCallbacks.onReplayData) {
+          storedCallbacks.onReplayData(clear)
+        } else {
+          storedCallbacks.onData?.(clear)
+        }
       }
 
       if (options.cols && options.rows) {

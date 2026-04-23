@@ -10,6 +10,7 @@ import WorktreeContextMenu from './WorktreeContextMenu'
 import { SshDisconnectedDialog } from './SshDisconnectedDialog'
 import AgentStatusHover from './AgentStatusHover'
 import { cn } from '@/lib/utils'
+import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { type WorktreeStatus } from '@/lib/worktree-status'
 import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
@@ -41,8 +42,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
   hideRepoBadge,
   hintNumber
 }: WorktreeCardProps) {
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const setActiveView = useAppStore((s) => s.setActiveView)
   const openModal = useAppStore((s) => s.openModal)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
@@ -209,8 +208,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
   }, [repo, isFolder, worktree.linkedIssue, fetchIssue, issueCacheKey, showIssue])
 
   // Stable click handler – ignore clicks that are really text selections.
-  // Why: if the SSH connection is down, show a reconnect dialog instead of
-  // activating the worktree — all remote operations would fail anyway.
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const selection = window.getSelection()
@@ -231,21 +228,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
           return
         }
       }
-      if (useAppStore.getState().activeView !== 'terminal') {
-        // Why: the sidebar remains visible during the new-workspace flow, so
-        // clicking a real worktree should switch the main pane back to that
-        // worktree instead of leaving the create surface visible.
-        setActiveView('terminal')
-      }
-      // Why: always activate the worktree so the user can see terminal history,
-      // editor state, etc. even when SSH is disconnected. Show the reconnect
-      // dialog as a non-blocking overlay rather than a gate.
-      setActiveWorktree(worktree.id)
+      // Why: route sidebar clicks through the shared activation path so the
+      // back/forward stack stays complete for the primary worktree navigation
+      // surface instead of only recording palette-driven switches.
+      activateAndRevealWorktree(worktree.id)
       if (isSshDisconnected) {
         setShowDisconnectedDialog(true)
       }
     },
-    [worktree.id, setActiveView, setActiveWorktree, isSshDisconnected]
+    [worktree.id, isSshDisconnected]
   )
 
   const handleDoubleClick = useCallback(() => {

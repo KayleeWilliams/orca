@@ -5,11 +5,12 @@ across multiple components. Autosave now lives in a smaller headless controller
 so hidden editor UI no longer participates in shutdown. */
 import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import * as monaco from 'monaco-editor'
-import { Columns2, Copy, ExternalLink, FileText, MoreHorizontal, Rows2 } from 'lucide-react'
+import { Columns2, Copy, Eye, ExternalLink, FileText, MoreHorizontal, Rows2 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getConnectionId } from '@/lib/connection-context'
 import { detectLanguage } from '@/lib/language-detect'
+import { canPreviewLanguage, openFilePreviewToSide } from '@/lib/file-preview'
 import { getEditorHeaderCopyState, getEditorHeaderOpenFileState } from './editor-header'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -705,6 +706,28 @@ function EditorPanelInner({
 
   const isMarkdown = resolvedLanguage === 'markdown'
   const isMermaid = resolvedLanguage === 'mermaid'
+  // Why: "Open Preview to the Side" only applies to edit-mode tabs whose
+  // language has a registered renderer. Diff tabs already have their own
+  // toggle set and there is no clear semantic for previewing a diff.
+  const canOpenPreviewToSide = activeFile.mode === 'edit' && canPreviewLanguage(resolvedLanguage)
+  const handleOpenPreviewToSide = (): void => {
+    // Split-pane layouts mount one EditorPanel per pane, each with its own
+    // activeViewStateId (the unified-tab id). Resolve the owning group from
+    // that tab so the preview lands beside *this* pane rather than whichever
+    // group happens to be the ambient active one.
+    const state = useAppStore.getState()
+    const sourceGroupId = activeViewStateId
+      ? ((state.unifiedTabsByWorktree[activeFile.worktreeId] ?? []).find(
+          (t) => t.id === activeViewStateId
+        )?.groupId ?? null)
+      : null
+    openFilePreviewToSide({
+      language: resolvedLanguage,
+      filePath: activeFile.filePath,
+      worktreeId: activeFile.worktreeId,
+      sourceGroupId
+    })
+  }
   // Why: mermaid files reuse the same per-file view mode store as markdown.
   // Both default to 'rich' (rendered view) and fall back to 'source' (Monaco).
   const hasViewModeToggle = (isMarkdown || isMermaid) && activeFile.mode === 'edit'
@@ -818,6 +841,25 @@ function EditorPanelInner({
                       ? 'Open file tab to use rich markdown editing'
                       : 'Open file tab'
                     : 'This diff has no modified-side file to open'}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {canOpenPreviewToSide && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                    onClick={handleOpenPreviewToSide}
+                    aria-label="Open Preview to the Side"
+                  >
+                    <Eye size={14} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  Open Preview to the Side
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

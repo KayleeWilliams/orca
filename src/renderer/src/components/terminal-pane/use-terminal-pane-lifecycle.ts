@@ -23,12 +23,22 @@ import {
   restoreScrollbackBuffers
 } from './layout-serialization'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
-import { applyTerminalAppearance } from './terminal-appearance'
+import { applyTerminalAppearance, mode2031SequenceFor } from './terminal-appearance'
+import { parseOsc52 } from './osc52-clipboard'
+import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-option-as-alt'
+import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
 import type { PtyTransport } from './pty-transport'
+import type { ReplayingPanesRef } from './replay-guard'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { e2eConfig } from '@/lib/e2e-config'
+import {
+  SPLIT_TERMINAL_PANE_EVENT,
+  CLOSE_TERMINAL_PANE_EVENT,
+  type SplitTerminalPaneDetail,
+  type CloseTerminalPaneDetail
+} from '@/constants/terminal'
 
 type UseTerminalPaneLifecycleDeps = {
   tabId: string
@@ -50,6 +60,11 @@ type UseTerminalPaneLifecycleDeps = {
   systemPrefersDark: boolean
   settings: GlobalSettings | null | undefined
   settingsRef: React.RefObject<GlobalSettings | null | undefined>
+  /** Resolved Option-as-Alt value: `'auto'` has already been mapped to
+   *  `'true' | 'false'` via the keyboard-layout probe. Passed separately
+   *  from `settings` because the probe lives outside the settings store. */
+  effectiveMacOptionAsAlt: EffectiveMacOptionAsAlt
+  effectiveMacOptionAsAltRef: React.RefObject<EffectiveMacOptionAsAlt>
   initialLayoutRef: React.RefObject<TerminalLayoutSnapshot>
   managerRef: React.RefObject<PaneManager | null>
   containerRef: React.RefObject<HTMLDivElement | null>
@@ -58,8 +73,11 @@ type UseTerminalPaneLifecycleDeps = {
   >
   paneFontSizesRef: React.RefObject<Map<number, number>>
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
+  paneMode2031Ref: React.RefObject<Map<number, boolean>>
+  paneLastThemeModeRef: React.RefObject<Map<number, 'dark' | 'light'>>
   panePtyBindingsRef: React.RefObject<Map<number, IDisposable>>
   pendingWritesRef: React.RefObject<Map<number, string>>
+  replayingPanesRef: ReplayingPanesRef
   isActiveRef: React.RefObject<boolean>
   isVisibleRef: React.RefObject<boolean>
   onPtyExitRef: React.RefObject<(ptyId: string) => void>
@@ -126,14 +144,19 @@ export function useTerminalPaneLifecycle({
   systemPrefersDark,
   settings,
   settingsRef,
+  effectiveMacOptionAsAlt,
+  effectiveMacOptionAsAltRef,
   initialLayoutRef,
   managerRef,
   containerRef,
   expandedStyleSnapshotRef,
   paneFontSizesRef,
   paneTransportsRef,
+  paneMode2031Ref,
+  paneLastThemeModeRef,
   panePtyBindingsRef,
   pendingWritesRef,
+  replayingPanesRef,
   isActiveRef,
   isVisibleRef,
   onPtyExitRef,
@@ -163,6 +186,8 @@ export function useTerminalPaneLifecycle({
   // Why: read settingsRef at fire time so toggling "copy on select" takes
   // effect without recreating panes.
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
+  const mode2031DisposablesRef = useRef(new Map<number, IDisposable[]>())
+  const osc52DisposablesRef = useRef(new Map<number, IDisposable>())
 
   const applyAppearance = (manager: PaneManager): void => {
     const currentSettings = settingsRef.current
@@ -174,8 +199,29 @@ export function useTerminalPaneLifecycle({
       currentSettings,
       systemPrefersDarkRef.current,
       paneFontSizesRef.current,
-      paneTransportsRef.current
+      paneTransportsRef.current,
+      effectiveMacOptionAsAltRef.current,
+      paneMode2031Ref.current,
+      paneLastThemeModeRef.current
     )
+  }
+
+  const pushMode2031ForPane = (paneId: number): void => {
+    const transport = paneTransportsRef.current.get(paneId)
+    if (!transport?.isConnected()) {
+      return
+    }
+    const currentSettings = settingsRef.current
+    if (!currentSettings) {
+      return
+    }
+    const { mode } = resolveEffectiveTerminalAppearance(
+      currentSettings,
+      systemPrefersDarkRef.current
+    )
+    if (transport.sendInput(mode2031SequenceFor(mode))) {
+      paneLastThemeModeRef.current.set(paneId, mode)
+    }
   }
 
   // Initialize PaneManager instance once
@@ -243,6 +289,7 @@ export function useTerminalPaneLifecycle({
       startup,
       paneTransportsRef,
       pendingWritesRef,
+      replayingPanesRef,
       isActiveRef,
       isVisibleRef,
       onPtyExitRef,
@@ -273,6 +320,58 @@ export function useTerminalPaneLifecycle({
 
     const manager = new PaneManager(container, {
       onPaneCreated: (pane) => {
+        // Install mode 2031 parser handlers before PTY attach so the child's
+        // initial CSI ?2031h (sent at startup) is captured.
+        const parser = pane.terminal.parser
+        const hasMode2031 = (params: (number | number[])[]): boolean =>
+          params.some((p) => (Array.isArray(p) ? p.includes(2031) : p === 2031))
+        // Why return false from both handlers: we only observe mode 2031.
+        // Returning false lets xterm's built-in DEC private mode handler
+        // continue processing the same sequence, so compound sequences like
+        // `CSI ?25;2031h` still update cursor visibility correctly.
+        const mode2031Disposables: IDisposable[] = [
+          parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+            if (hasMode2031(params)) {
+              paneMode2031Ref.current.set(pane.id, true)
+              pushMode2031ForPane(pane.id)
+            }
+            return false
+          }),
+          parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
+            if (hasMode2031(params)) {
+              paneMode2031Ref.current.delete(pane.id)
+              paneLastThemeModeRef.current.delete(pane.id)
+            }
+            return false
+          })
+        ]
+        mode2031DisposablesRef.current.set(pane.id, mode2031Disposables)
+
+        // OSC 52 — TUI-initiated clipboard writes (tmux/nvim/fzf/ssh).
+        // Why read settingsRef at fire time (not capture): the user may
+        // toggle the gate mid-session and we want that to take effect
+        // immediately without recreating panes. Return true ("handled") in
+        // both the enabled and disabled paths so xterm doesn't fall
+        // through to any other OSC 52 handler and so our intentional drop
+        // in the disabled path is explicit.
+        const osc52Disposable = pane.terminal.parser.registerOscHandler(52, (data) => {
+          if (!settingsRef.current?.terminalAllowOsc52Clipboard) {
+            return true
+          }
+          const parsed = parseOsc52(data)
+          if (parsed.kind !== 'write') {
+            // Queries and malformed payloads are intentionally dropped —
+            // answering a query would leak the user's clipboard to any
+            // process writing to the PTY.
+            return true
+          }
+          void window.api.ui.writeClipboardText(parsed.text).catch(() => {
+            /* ignore clipboard write failures */
+          })
+          return true
+        })
+        osc52DisposablesRef.current.set(pane.id, osc52Disposable)
+
         const linkProviderDisposable = pane.terminal.registerLinkProvider(
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
@@ -294,7 +393,18 @@ export function useTerminalPaneLifecycle({
         selectionDisposablesRef.current.set(pane.id, selectionDisposable)
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
-          activate: (event, text) => handleOscLink(text, event as MouseEvent | undefined, linkDeps),
+          activate: (event, text) => {
+            handleOscLink(text, event as MouseEvent | undefined, linkDeps)
+            // Why: Cmd/Ctrl+clicking a link activates Orca handling (open file,
+            // new browser tab, system browser) which can steal focus from the
+            // terminal before the click's mouseup reaches ownerDocument. Without
+            // that mouseup, xterm's SelectionService leaves its drag-select
+            // mousemove listener attached, so returning to the terminal and
+            // moving the mouse extends a selection until the next click/Esc.
+            // clearSelection() explicitly detaches those listeners (see
+            // SelectionService._removeMouseDownListeners).
+            pane.terminal.clearSelection()
+          },
           // Show bottom-left tooltip on hover for OSC 8 hyperlinks (e.g.
           // GitHub owner/repo#issue references emitted by CLI tools) — same
           // behaviour as the WebLinksAddon provides for plain-text URLs.
@@ -340,6 +450,20 @@ export function useTerminalPaneLifecycle({
           selectionDisposable.dispose()
           selectionDisposablesRef.current.delete(paneId)
         }
+        const mode2031Disposables = mode2031DisposablesRef.current.get(paneId)
+        if (mode2031Disposables) {
+          for (const d of mode2031Disposables) {
+            d.dispose()
+          }
+          mode2031DisposablesRef.current.delete(paneId)
+        }
+        paneMode2031Ref.current.delete(paneId)
+        paneLastThemeModeRef.current.delete(paneId)
+        const osc52Disposable = osc52DisposablesRef.current.get(paneId)
+        if (osc52Disposable) {
+          osc52Disposable.dispose()
+          osc52DisposablesRef.current.delete(paneId)
+        }
         const transport = paneTransportsRef.current.get(paneId)
         const panePtyBinding = panePtyBindings.get(paneId)
         if (panePtyBinding) {
@@ -362,6 +486,7 @@ export function useTerminalPaneLifecycle({
         clearRuntimePaneTitle(tabId, paneId)
         paneFontSizesRef.current.delete(paneId)
         pendingWritesRef.current.delete(paneId)
+        replayingPanesRef.current.delete(paneId)
         // Clean up pane title state so closed panes don't leave stale entries.
         setPaneTitles((prev) => {
           if (!(paneId in prev)) {
@@ -437,7 +562,7 @@ export function useTerminalPaneLifecycle({
           ),
           cursorStyle: currentSettings?.terminalCursorStyle ?? 'bar',
           cursorBlink: currentSettings?.terminalCursorBlink ?? true,
-          macOptionIsMeta: currentSettings?.terminalMacOptionAsAlt === 'true',
+          macOptionIsMeta: effectiveMacOptionAsAltRef.current === 'true',
           lineHeight: currentSettings?.terminalLineHeight ?? 1
         }
       },
@@ -446,6 +571,14 @@ export function useTerminalPaneLifecycle({
           return
         }
         void handleOscLink(url, event, linkDeps)
+        // Why: Cmd/Ctrl+click on a plain-text URL (WebLinksAddon) takes focus
+        // away from the terminal before the click's mouseup reaches
+        // ownerDocument. That leaves xterm's SelectionService drag-select
+        // mousemove listener attached, so subsequent mouse motion extends a
+        // phantom selection until the next click/Esc. Explicitly clearing the
+        // selection also detaches those listeners (see
+        // SelectionService._removeMouseDownListeners).
+        managerRef.current?.getActivePane()?.terminal.clearSelection()
       }
     })
 
@@ -462,7 +595,8 @@ export function useTerminalPaneLifecycle({
     restoreScrollbackBuffers(
       manager,
       initialLayoutRef.current.buffersByLeafId,
-      restoredPaneByLeafId
+      restoredPaneByLeafId,
+      replayingPanesRef
     )
 
     // Seed pane titles from the persisted snapshot using the same
@@ -569,7 +703,56 @@ export function useTerminalPaneLifecycle({
     persistLayoutSnapshot()
     scheduleRuntimeGraphSync()
 
+    // Why: CLI-driven splits go through splitPaneWithOneShotStartup so the
+    // startup command is delivered via the PTY connection path (which waits
+    // for shell readiness) instead of terminal.paste() which can lose input
+    // if the shell hasn't started reading stdin yet.
+    function onCliSplitPane(event: Event): void {
+      const detail = (event as CustomEvent<SplitTerminalPaneDetail>).detail
+      if (!detail?.tabId || detail.tabId !== tabId) {
+        return
+      }
+      const mgr = managerRef.current
+      if (!mgr) {
+        return
+      }
+      if (detail.command) {
+        splitPaneWithOneShotStartup(ptyDeps, { command: detail.command }, () =>
+          mgr.splitPane(detail.paneRuntimeId, detail.direction)
+        )
+      } else {
+        mgr.splitPane(detail.paneRuntimeId, detail.direction)
+      }
+    }
+    window.addEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
+
+    // Why: CLI-driven pane close dispatches a CustomEvent so PaneManager handles
+    // sibling promotion in split layouts. Falls back to closing the whole tab
+    // when the target pane is the only one remaining.
+    function onCliClosePane(event: Event): void {
+      const detail = (event as CustomEvent<CloseTerminalPaneDetail>).detail
+      if (!detail?.tabId || detail.tabId !== tabId) {
+        return
+      }
+      const mgr = managerRef.current
+      if (!mgr) {
+        return
+      }
+      if (mgr.getPanes().length <= 1) {
+        useAppStore.getState().closeTab(tabId)
+      } else {
+        mgr.closePane(detail.paneRuntimeId)
+        scheduleRuntimeGraphSync()
+        syncCanExpandState()
+        queueResizeAll(isActive)
+        persistLayoutSnapshot()
+      }
+    }
+    window.addEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
+
     return () => {
+      window.removeEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
+      window.removeEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
       const tabStillExists = Boolean(
         useAppStore
           .getState()
@@ -625,6 +808,11 @@ export function useTerminalPaneLifecycle({
       return
     }
     applyAppearance(manager)
+    // Why: effectiveMacOptionAsAlt changes when the OS keyboard layout
+    // switches mid-session (focus-in probe re-runs) or when the user flips
+    // the explicit override. Either triggers a live re-apply of
+    // macOptionIsMeta on every pane, matching Ghostty's "change takes effect
+    // immediately" behavior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, systemPrefersDark])
+  }, [settings, systemPrefersDark, effectiveMacOptionAsAlt])
 }

@@ -144,6 +144,40 @@ function registerRuntimeWindowLifecycle(
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId, setup })
       }
+    },
+    createTerminal: (worktreeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:createTerminal', {
+          worktreeId,
+          command: opts.command,
+          title: opts.title
+        })
+      }
+    },
+    splitTerminal: (tabId, paneRuntimeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:splitTerminal', {
+          tabId,
+          paneRuntimeId,
+          direction: opts.direction,
+          command: opts.command
+        })
+      }
+    },
+    renameTerminal: (tabId, title) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:renameTerminal', { tabId, title })
+      }
+    },
+    focusTerminal: (tabId, worktreeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:focusTerminal', { tabId, worktreeId })
+      }
+    },
+    closeTerminal: (tabId, paneRuntimeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:closeTerminal', { tabId, paneRuntimeId })
+      }
     }
   })
   // Why: the runtime must fail closed while the renderer graph is being torn
