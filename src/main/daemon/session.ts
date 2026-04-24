@@ -1,3 +1,7 @@
+/* eslint-disable max-lines -- Why: post-ready flush gating (see POST_READY_FLUSH_DELAY_MS)
+adds ~25 lines of timer/state wiring across handleSubprocessData, transitionToReady,
+and cleanup paths. Splitting it out of Session would scatter tightly coupled shell
+lifecycle logic across files without a cleaner ownership seam. */
 import { HeadlessEmulator } from './headless-emulator'
 import { isValidPtySize, normalizePtySize } from './daemon-pty-size'
 import type { SessionState, ShellReadyState, TerminalSnapshot } from './types'
@@ -5,6 +9,17 @@ import type { SessionState, ShellReadyState, TerminalSnapshot } from './types'
 const SHELL_READY_TIMEOUT_MS = 15_000
 const KILL_TIMEOUT_MS = 5_000
 const SHELL_READY_MARKER = '\x1b]777;orca-shell-ready\x07'
+// Why: the OSC 777 marker fires from precmd/PROMPT_COMMAND, before the shell
+// draws its prompt and before zle/readline flips the PTY into raw mode.
+// Flushing the pre-ready queue then lets the kernel (ECHO still on) echo the
+// command once, and the line editor redraws it under the prompt — producing a
+// visible duplicate (e.g. "claude" twice when launching an agent). Wait for
+// the next data chunk (the prompt draw) plus a short delay for the
+// tcsetattr() that enables raw mode, with a wall-clock fallback for cases
+// where the prompt arrived in the same chunk as the marker. Matches the gate
+// in local-pty-shell-ready.ts::writeStartupCommandWhenShellReady.
+const POST_READY_FLUSH_DELAY_MS = 30
+const POST_READY_FLUSH_FALLBACK_MS = 50
 
 export type SubprocessHandle = {
   pid: number
@@ -46,6 +61,10 @@ export class Session {
   private markerBuffer = ''
   private shellReadyTimer: ReturnType<typeof setTimeout> | null = null
   private killTimer: ReturnType<typeof setTimeout> | null = null
+  // See POST_READY_FLUSH_DELAY_MS for why the flush is deferred.
+  private postReadyFlushPending = false
+  private postReadyFlushTimer: ReturnType<typeof setTimeout> | null = null
+  private postReadyFallbackTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: SessionOptions) {
     this.sessionId = opts.sessionId
@@ -209,6 +228,7 @@ export class Session {
       clearTimeout(this.killTimer)
       this.killTimer = null
     }
+    this.clearPostReadyTimers()
 
     this.attachedClients = []
     this.preReadyStdinQueue = []
@@ -229,6 +249,20 @@ export class Session {
 
     if (this._shellState === 'pending') {
       this.scanForShellMarker(data)
+    } else if (this.postReadyFlushPending) {
+      // Why: prompt draw arrived. Swap the wall-clock fallback for the short
+      // post-data delay so readline has time to enable raw mode first.
+      this.postReadyFlushPending = false
+      if (this.postReadyFallbackTimer) {
+        clearTimeout(this.postReadyFallbackTimer)
+        this.postReadyFallbackTimer = null
+      }
+      if (this.postReadyFlushTimer === null) {
+        this.postReadyFlushTimer = setTimeout(() => {
+          this.postReadyFlushTimer = null
+          this.flushPreReadyQueue()
+        }, POST_READY_FLUSH_DELAY_MS)
+      }
     }
 
     // Broadcast to attached clients
@@ -253,6 +287,7 @@ export class Session {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
     }
+    this.clearPostReadyTimers()
 
     for (const client of this.attachedClients) {
       client.onExit(code)
@@ -282,7 +317,16 @@ export class Session {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
     }
-    this.flushPreReadyQueue()
+    if (this.preReadyStdinQueue.length === 0) {
+      return
+    }
+    // See POST_READY_FLUSH_DELAY_MS.
+    this.postReadyFlushPending = true
+    this.postReadyFallbackTimer = setTimeout(() => {
+      this.postReadyFallbackTimer = null
+      this.postReadyFlushPending = false
+      this.flushPreReadyQueue()
+    }, POST_READY_FLUSH_FALLBACK_MS)
   }
 
   private onShellReadyTimeout(): void {
@@ -295,10 +339,23 @@ export class Session {
   }
 
   private flushPreReadyQueue(): void {
+    this.postReadyFlushPending = false
     const queued = this.preReadyStdinQueue
     this.preReadyStdinQueue = []
     for (const data of queued) {
       this.subprocess.write(data)
+    }
+  }
+
+  private clearPostReadyTimers(): void {
+    this.postReadyFlushPending = false
+    if (this.postReadyFlushTimer) {
+      clearTimeout(this.postReadyFlushTimer)
+      this.postReadyFlushTimer = null
+    }
+    if (this.postReadyFallbackTimer) {
+      clearTimeout(this.postReadyFallbackTimer)
+      this.postReadyFallbackTimer = null
     }
   }
 
@@ -320,6 +377,7 @@ export class Session {
       clearTimeout(this.killTimer)
       this.killTimer = null
     }
+    this.clearPostReadyTimers()
 
     const clients = this.attachedClients
     this.attachedClients = []

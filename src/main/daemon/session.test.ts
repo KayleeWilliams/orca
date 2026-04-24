@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import type { SessionState, ShellReadyState } from './types'
@@ -186,16 +187,30 @@ describe('Session', () => {
       expect(subprocess.written).toEqual([])
     })
 
-    it('flushes buffered writes when shell marker is detected', () => {
+    // Why: the shell-ready marker fires from precmd/PROMPT_COMMAND, before
+    // the shell draws its prompt and before readline flips the PTY into raw
+    // mode. Flushing then causes the kernel (ECHO on) to echo the command
+    // once, and readline redraws it under the prompt — producing "claude
+    // claude" on agent launch. The flush must defer until after prompt draw.
+    it('defers flush until after prompt draw + short delay', () => {
       createSession({ shellReadySupported: true })
-
       session.write('pre-ready input')
-      expect(subprocess.written).toEqual([])
-
-      // Simulate the shell marker arriving in PTY output
       subprocess.simulateData('\x1b]777;orca-shell-ready\x07')
       expect(session.shellState).toBe('ready' satisfies ShellReadyState)
+      expect(subprocess.written).toEqual([])
+
+      subprocess.simulateData('\r\nuser@host $ ')
+      vi.advanceTimersByTime(30)
       expect(subprocess.written).toEqual(['pre-ready input'])
+    })
+
+    it('flushes via fallback timer if the prompt arrived in the marker chunk', () => {
+      createSession({ shellReadySupported: true })
+      session.write('claude\n')
+      subprocess.simulateData('\x1b]777;orca-shell-ready\x07user@host $ ')
+      expect(subprocess.written).toEqual([])
+      vi.advanceTimersByTime(50)
+      expect(subprocess.written).toEqual(['claude\n'])
     })
 
     it('transitions to timed_out after 15 seconds', () => {
