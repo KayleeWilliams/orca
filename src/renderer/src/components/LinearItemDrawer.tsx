@@ -439,7 +439,6 @@ function CommentFooter({
       const typed = result as { ok: boolean; id?: string; error?: string }
       if (typed.ok) {
         setBody('')
-        toast.success('Comment added')
         onCommentAdded({
           id: typed.id ?? crypto.randomUUID(),
           body: trimmed,
@@ -477,7 +476,7 @@ function CommentFooter({
         onKeyDown={handleKeyDown}
         placeholder="Add a comment…"
         rows={1}
-        className="min-h-[32px] max-h-[96px] flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="scrollbar-sleek min-h-[32px] max-h-[96px] flex-1 resize-none overflow-y-auto rounded-md border border-input bg-transparent px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
       <Button
         size="icon"
@@ -595,7 +594,7 @@ export default function LinearItemDrawer({
   // pointer-events: none on body when overlays transition.
   // oxlint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!issue) {
+    if (!issue?.id) {
       return
     }
     let cancelled = false

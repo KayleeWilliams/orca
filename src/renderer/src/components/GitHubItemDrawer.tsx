@@ -816,18 +816,21 @@ function GHCommentFooter({
         number: issueNumber,
         body: trimmed
       })
-      const typed = result as { ok: boolean; id?: number; error?: string }
+      const typed = result as { ok: boolean; id?: number; comment?: PRComment; error?: string }
       if (typed.ok) {
         setBody('')
-        toast.success('Comment added')
-        onCommentAdded({
-          id: typeof typed.id === 'number' ? typed.id : Date.now(),
-          author: 'You',
-          authorAvatarUrl: '',
-          body: trimmed,
-          createdAt: new Date().toISOString(),
-          url: ''
-        })
+        // Why: use the comment returned by GitHub so the optimistic row shows
+        // the real login/avatar immediately instead of waiting for a reopen.
+        onCommentAdded(
+          typed.comment ?? {
+            id: typeof typed.id === 'number' ? typed.id : Date.now(),
+            author: 'You',
+            authorAvatarUrl: '',
+            body: trimmed,
+            createdAt: new Date().toISOString(),
+            url: ''
+          }
+        )
       } else {
         toast.error(typed.error ?? 'Failed to add comment')
       }
@@ -860,7 +863,7 @@ function GHCommentFooter({
         onKeyDown={handleKeyDown}
         placeholder="Add a comment…"
         rows={1}
-        className="min-h-[32px] max-h-[96px] flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="scrollbar-sleek min-h-[32px] max-h-[96px] flex-1 resize-none overflow-y-auto rounded-md border border-input bg-transparent px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
       <Button
         size="icon"
@@ -891,21 +894,28 @@ export default function GitHubItemDrawer({
   const [error, setError] = useState<string | null>(null)
   const [localState, setLocalState] = useState<GitHubWorkItem['state']>(workItem?.state ?? 'open')
   const [localLabels, setLocalLabels] = useState<string[]>(workItem?.labels ?? [])
+  const workItemId = workItem?.id
+  const workItemState = workItem?.state
+  const workItemLabels = workItem?.labels
 
-  // Why: reset lifted edit state when the drawer switches to a different item.
-  // We key on identity (id) but need the fresh values from the new item.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  // Why: reset lifted edit state when the drawer switches items or when the
+  // same item receives an optimistic cache patch from the surrounding table.
   useEffect(() => {
-    if (workItem) {
-      setLocalState(workItem.state)
-      setLocalLabels(workItem.labels)
+    if (workItemState && workItemLabels) {
+      setLocalState(workItemState)
+      setLocalLabels(workItemLabels)
     }
-  }, [workItem?.id])
+  }, [workItemId, workItemState, workItemLabels])
 
   const requestIdRef = useRef(0)
   // Why: track comments added optimistically before the detail fetch resolves
   // so they can be merged into the fetch result instead of being overwritten.
   const optimisticCommentsRef = useRef<PRComment[]>([])
+  // Why: track the last item we fetched so we can distinguish "reopen same
+  // item" from "switch to a different item". Reopening the same item must
+  // preserve optimistic comments because gh's 60s response cache will return
+  // stale data that doesn't include the just-posted comment.
+  const prevItemIdRef = useRef<string | null>(null)
 
   // Why: when this drawer opens immediately after another Radix overlay
   // (e.g. the New Issue dialog) closed, Radix may leave `pointer-events: none`
@@ -946,7 +956,15 @@ export default function GitHubItemDrawer({
     // results whose id matches the latest one.
     requestIdRef.current += 1
     const requestId = requestIdRef.current
-    optimisticCommentsRef.current = []
+    // Why: only clear optimistic comments when switching to a genuinely
+    // different item. When reopening the same item (close → reopen), the
+    // gh API's 60s response cache will return stale data that omits the
+    // just-posted comment — preserving the optimistic ref lets the merge
+    // logic below re-attach it to the stale response.
+    if (workItem.id !== prevItemIdRef.current) {
+      optimisticCommentsRef.current = []
+    }
+    prevItemIdRef.current = workItem.id
     setLoading(true)
     setError(null)
     setDetails(null)
