@@ -282,6 +282,20 @@
 
 /* ── Titlebar ────────────────────────────────────────── */
 
+/* Why: Radix portals (dropdowns, popovers, dialogs, sheets) render at the
+   document root. Electron's OS-level drag hit-test ignores z-index — portaled
+   content that visually overlaps a -webkit-app-region: drag element is
+   unclickable without an explicit no-drag. These rules cover every Radix
+   portal variant: popper wrappers (dropdowns, popovers), dialog/sheet
+   overlays, and their content panels. */
+[data-radix-popper-content-wrapper],
+[data-slot='sheet-overlay'],
+[data-slot='sheet-content'],
+[data-slot='dialog-overlay'],
+[data-slot='dialog-content'] {
+  -webkit-app-region: no-drag;
+}
+
 .titlebar {
   height: 42px;
   min-height: 42px;

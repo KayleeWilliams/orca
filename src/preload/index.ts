@@ -421,6 +421,26 @@ const api = {
     }): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('gh:mergePR', args),
 
+    updateIssue: (args: {
+      repoPath: string
+      number: number
+      updates: unknown
+    }): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('gh:updateIssue', args),
+
+    addIssueComment: (args: {
+      repoPath: string
+      number: number
+      body: string
+    }): Promise<{ ok: true; id: number } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('gh:addIssueComment', args),
+
+    listLabels: (args: { repoPath: string }): Promise<string[]> =>
+      ipcRenderer.invoke('gh:listLabels', args),
+
+    listAssignableUsers: (args: { repoPath: string }): Promise<string[]> =>
+      ipcRenderer.invoke('gh:listAssignableUsers', args),
+
     checkOrcaStarred: (): Promise<boolean | null> => ipcRenderer.invoke('gh:checkOrcaStarred'),
     starOrca: (): Promise<boolean> => ipcRenderer.invoke('gh:starOrca')
   },
@@ -444,7 +464,31 @@ const api = {
     }): Promise<unknown[]> => ipcRenderer.invoke('linear:listIssues', args),
 
     getIssue: (args: { id: string }): Promise<unknown> =>
-      ipcRenderer.invoke('linear:getIssue', args)
+      ipcRenderer.invoke('linear:getIssue', args),
+
+    updateIssue: (args: {
+      id: string
+      updates: unknown
+    }): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('linear:updateIssue', args),
+
+    addIssueComment: (args: {
+      issueId: string
+      body: string
+    }): Promise<{ ok: true; id: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('linear:addIssueComment', args),
+
+    issueComments: (args: { issueId: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('linear:issueComments', args),
+
+    teamStates: (args: { teamId: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('linear:teamStates', args),
+
+    teamLabels: (args: { teamId: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('linear:teamLabels', args),
+
+    teamMembers: (args: { teamId: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('linear:teamMembers', args)
   },
 
   starNag: {

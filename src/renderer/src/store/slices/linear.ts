@@ -52,6 +52,7 @@ export type LinearSlice = {
     filter?: 'assigned' | 'created' | 'all' | 'completed',
     limit?: number
   ) => Promise<LinearIssue[]>
+  patchLinearIssue: (issueId: string, patch: Partial<LinearIssue>) => void
 }
 
 export const createLinearSlice: StateCreator<AppState, [], [], LinearSlice> = (set, get) => ({
@@ -222,5 +223,39 @@ export const createLinearSlice: StateCreator<AppState, [], [], LinearSlice> = (s
 
     inflightListRequests.set(cacheKey, promise)
     return promise
+  },
+
+  patchLinearIssue: (issueId, patch) => {
+    set((s) => {
+      let changed = false
+
+      const nextIssueCache = { ...s.linearIssueCache }
+      const issueEntry = nextIssueCache[issueId]
+      if (issueEntry?.data) {
+        nextIssueCache[issueId] = {
+          ...issueEntry,
+          data: { ...issueEntry.data, ...patch }
+        }
+        changed = true
+      }
+
+      const nextSearchCache = { ...s.linearSearchCache }
+      for (const key of Object.keys(nextSearchCache)) {
+        const entry = nextSearchCache[key]
+        if (!entry?.data) {
+          continue
+        }
+        const idx = entry.data.findIndex((item) => item.id === issueId)
+        if (idx === -1) {
+          continue
+        }
+        const updatedItems = [...entry.data]
+        updatedItems[idx] = { ...updatedItems[idx], ...patch }
+        nextSearchCache[key] = { ...entry, data: updatedItems }
+        changed = true
+      }
+
+      return changed ? { linearIssueCache: nextIssueCache, linearSearchCache: nextSearchCache } : {}
+    })
   }
 })

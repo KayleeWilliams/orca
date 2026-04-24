@@ -24,6 +24,12 @@ import type {
   LinearViewer,
   LinearConnectionStatus,
   LinearIssue,
+  LinearIssueUpdate,
+  LinearComment,
+  LinearWorkflowState,
+  LinearLabel,
+  LinearMember,
+  GitHubIssueUpdate,
   NotificationDispatchRequest,
   NotificationDispatchResult,
   OpenCodeStatusEvent,
@@ -410,6 +416,18 @@ export type PreloadApi = {
       prNumber: number
       method?: 'merge' | 'squash' | 'rebase'
     }) => Promise<{ ok: true } | { ok: false; error: string }>
+    updateIssue: (args: {
+      repoPath: string
+      number: number
+      updates: GitHubIssueUpdate
+    }) => Promise<{ ok: true } | { ok: false; error: string }>
+    addIssueComment: (args: {
+      repoPath: string
+      number: number
+      body: string
+    }) => Promise<{ ok: true; id: number } | { ok: false; error: string }>
+    listLabels: (args: { repoPath: string }) => Promise<string[]>
+    listAssignableUsers: (args: { repoPath: string }) => Promise<string[]>
     checkOrcaStarred: () => Promise<boolean | null>
     starOrca: () => Promise<boolean>
   }
@@ -425,6 +443,18 @@ export type PreloadApi = {
       limit?: number
     }) => Promise<LinearIssue[]>
     getIssue: (args: { id: string }) => Promise<LinearIssue | null>
+    updateIssue: (args: {
+      id: string
+      updates: LinearIssueUpdate
+    }) => Promise<{ ok: true } | { ok: false; error: string }>
+    addIssueComment: (args: {
+      issueId: string
+      body: string
+    }) => Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    issueComments: (args: { issueId: string }) => Promise<LinearComment[]>
+    teamStates: (args: { teamId: string }) => Promise<LinearWorkflowState[]>
+    teamLabels: (args: { teamId: string }) => Promise<LinearLabel[]>
+    teamMembers: (args: { teamId: string }) => Promise<LinearMember[]>
   }
   starNag: {
     onShow: (callback: () => void) => () => void

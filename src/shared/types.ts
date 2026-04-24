@@ -436,6 +436,8 @@ export type GitHubWorkItemDetails = {
   baseSha?: string
   checks?: PRCheckDetail[]
   files?: GitHubPRFile[]
+  /** Logins of current assignees. Only set for issues. */
+  assignees?: string[]
 }
 
 // ─── Linear ─────────────────────────────────────────────────────────
@@ -462,16 +464,79 @@ export type LinearIssue = {
     color: string
   }
   team: {
+    id: string
     name: string
     key: string
   }
   labels: string[]
+  labelIds: string[]
   assignee?: {
+    id: string
     displayName: string
     avatarUrl?: string
   }
   priority: number
   updatedAt: string
+}
+
+export type LinearComment = {
+  id: string
+  body: string
+  createdAt: string
+  user?: {
+    displayName: string
+    avatarUrl?: string
+  }
+}
+
+// ─── Issue Mutations ────────────────────────────────────────────────
+
+export type GitHubIssueUpdate = {
+  state?: 'open' | 'closed'
+  title?: string
+  addLabels?: string[]
+  removeLabels?: string[]
+  addAssignees?: string[]
+  removeAssignees?: string[]
+}
+
+export type LinearIssueUpdate = {
+  stateId?: string
+  title?: string
+  assigneeId?: string | null
+  priority?: number
+  labelIds?: string[]
+}
+
+export type ClassifiedError = {
+  type:
+    | 'permission_denied'
+    | 'not_found'
+    | 'validation_error'
+    | 'rate_limited'
+    | 'network_error'
+    | 'unknown'
+  message: string
+}
+
+export type LinearWorkflowState = {
+  id: string
+  name: string
+  type: string
+  color: string
+  position: number
+}
+
+export type LinearLabel = {
+  id: string
+  name: string
+  color: string
+}
+
+export type LinearMember = {
+  id: string
+  displayName: string
+  avatarUrl?: string
 }
 
 // ─── Hooks (orca.yaml) ──────────────────────────────────────────────
