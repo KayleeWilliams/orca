@@ -23,13 +23,17 @@ import {
   restoreScrollbackBuffers
 } from './layout-serialization'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
-import { applyTerminalAppearance, mode2031SequenceFor } from './terminal-appearance'
+import {
+  applyTerminalAppearance,
+  installMode2031Handlers,
+  mode2031SequenceFor
+} from './terminal-appearance'
 import { parseOsc52 } from './osc52-clipboard'
 import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-option-as-alt'
 import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
 import type { PtyTransport } from './pty-transport'
-import type { ReplayingPanesRef } from './replay-guard'
+import { isPaneReplaying, type ReplayingPanesRef } from './replay-guard'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { e2eConfig } from '@/lib/e2e-config'
@@ -336,29 +340,14 @@ export function useTerminalPaneLifecycle({
       onPaneCreated: (pane) => {
         // Install mode 2031 parser handlers before PTY attach so the child's
         // initial CSI ?2031h (sent at startup) is captured.
-        const parser = pane.terminal.parser
-        const hasMode2031 = (params: (number | number[])[]): boolean =>
-          params.some((p) => (Array.isArray(p) ? p.includes(2031) : p === 2031))
-        // Why return false from both handlers: we only observe mode 2031.
-        // Returning false lets xterm's built-in DEC private mode handler
-        // continue processing the same sequence, so compound sequences like
-        // `CSI ?25;2031h` still update cursor visibility correctly.
-        const mode2031Disposables: IDisposable[] = [
-          parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
-            if (hasMode2031(params)) {
-              paneMode2031Ref.current.set(pane.id, true)
-              pushMode2031ForPane(pane.id)
-            }
-            return false
-          }),
-          parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
-            if (hasMode2031(params)) {
-              paneMode2031Ref.current.delete(pane.id)
-              paneLastThemeModeRef.current.delete(pane.id)
-            }
-            return false
-          })
-        ]
+        const mode2031Disposables = installMode2031Handlers({
+          paneId: pane.id,
+          parser: pane.terminal.parser,
+          onSubscribe: () => pushMode2031ForPane(pane.id),
+          isReplaying: () => isPaneReplaying(replayingPanesRef, pane.id),
+          paneMode2031: paneMode2031Ref.current,
+          paneLastThemeMode: paneLastThemeModeRef.current
+        })
         mode2031DisposablesRef.current.set(pane.id, mode2031Disposables)
 
         // OSC 52 — TUI-initiated clipboard writes (tmux/nvim/fzf/ssh).

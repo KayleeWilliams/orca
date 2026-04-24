@@ -1,4 +1,4 @@
-import type { ITheme } from '@xterm/xterm'
+import type { IDisposable, ITheme } from '@xterm/xterm'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { GlobalSettings } from '../../../../shared/types'
 import { resolveTerminalFontWeights } from '../../../../shared/terminal-fonts'
@@ -19,6 +19,70 @@ import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-optio
 // lifecycle hook cannot drift.
 export function mode2031SequenceFor(mode: 'dark' | 'light'): string {
   return mode === 'dark' ? '\x1b[?997;1n' : '\x1b[?997;2n'
+}
+
+type Mode2031Parser = {
+  registerCsiHandler(
+    id: { prefix?: string; final: string },
+    callback: (params: (number | number[])[]) => boolean | Promise<boolean>
+  ): IDisposable
+}
+
+type Mode2031HandlerDeps = {
+  paneId: number
+  parser: Mode2031Parser
+  /** Called when a real (non-replayed) `CSI ?2031h` arrives, after the
+   *  subscribe flag has been set. Kept as a callback so the lifecycle hook
+   *  can keep its transport-aware `pushMode2031ForPane` closure intact. */
+  onSubscribe: () => void
+  isReplaying: () => boolean
+  paneMode2031: Map<number, boolean>
+  paneLastThemeMode: Map<number, 'dark' | 'light'>
+}
+
+// Why split out from the lifecycle hook: the CSI handlers are the defense
+// against a restored xterm buffer pushing `\x1b[?997;1n` into the fresh zsh
+// on cold restore (the "random characters on restart" bug). Keeping them in
+// a pure function lets the tests drive a real xterm parser end-to-end so we
+// catch regressions in the parser-path guard, not just a mock.
+export function installMode2031Handlers(deps: Mode2031HandlerDeps): IDisposable[] {
+  const hasMode2031 = (params: (number | number[])[]): boolean =>
+    params.some((p) => (Array.isArray(p) ? p.includes(2031) : p === 2031))
+
+  // Why return false from both handlers: we only observe mode 2031.
+  // Returning false lets xterm's built-in DEC private mode handler
+  // continue processing the same sequence, so compound sequences like
+  // `CSI ?25;2031h` still update cursor visibility correctly.
+  return [
+    deps.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+      if (hasMode2031(params)) {
+        // Why: a restored xterm buffer may contain `CSI ?2031h` emitted by
+        // the previous session's TUI (e.g. Claude Code). Replaying that
+        // buffer runs this handler, and without the guard we'd push
+        // `CSI ?997;1n` via transport.sendInput into a fresh shell that has
+        // no TUI consuming it — zsh then echoes the literal escape sequence
+        // onto the prompt. The replay guard in pty-connection.ts only covers
+        // xterm's own onData auto-replies, not handler-triggered sends, so
+        // gate explicitly here. We also skip recording the subscribe bit:
+        // the fresh shell is not actually subscribed, so a later theme flip
+        // must not push either. A real TUI that starts up after restore will
+        // re-emit `?2031h` itself and register normally.
+        if (deps.isReplaying()) {
+          return false
+        }
+        deps.paneMode2031.set(deps.paneId, true)
+        deps.onSubscribe()
+      }
+      return false
+    }),
+    deps.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
+      if (hasMode2031(params)) {
+        deps.paneMode2031.delete(deps.paneId)
+        deps.paneLastThemeMode.delete(deps.paneId)
+      }
+      return false
+    })
+  ]
 }
 
 // Gate on actual mode flip so font/size/opacity tweaks — which also re-run
