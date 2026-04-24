@@ -1178,6 +1178,12 @@ const api = {
       ipcRenderer.on('ui:closeActiveTab', listener)
       return () => ipcRenderer.removeListener('ui:closeActiveTab', listener)
     },
+    onCloseBrowserTab: (callback: (browserTabId: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, browserTabId: string) =>
+        callback(browserTabId)
+      ipcRenderer.on('ui:closeBrowserTab', listener)
+      return () => ipcRenderer.removeListener('ui:closeBrowserTab', listener)
+    },
     onSwitchTab: (callback: (direction: 1 | -1) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, direction: 1 | -1) => callback(direction)
       ipcRenderer.on('ui:switchTab', listener)

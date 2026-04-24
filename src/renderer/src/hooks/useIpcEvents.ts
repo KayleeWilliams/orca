@@ -479,13 +479,20 @@ export function useIpcEvents(): void {
       window.api.ui.onCloseActiveTab(() => {
         const store = useAppStore.getState()
         if (store.activeTabType === 'browser' && store.activeBrowserTabId) {
-          // Why: destroy the webview DOM element before the store update so
-          // the BrowserPane cleanup effect does not re-park it in the hidden
-          // container — re-parking resumes paused media and leaves an
-          // unkillable background video.
           destroyPersistentWebview(store.activeBrowserTabId)
           store.closeBrowserTab(store.activeBrowserTabId)
         }
+      })
+    )
+
+    // Why: Cmd+W pressed inside a webview guest is forwarded by the main
+    // process with the exact browserTabId. This avoids relying on
+    // activeTabType which can be 'terminal' in split layouts even when
+    // the browser pane has focus.
+    unsubs.push(
+      window.api.ui.onCloseBrowserTab((browserTabId: string) => {
+        destroyPersistentWebview(browserTabId)
+        useAppStore.getState().closeBrowserTab(browserTabId)
       })
     )
 

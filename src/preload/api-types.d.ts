@@ -651,6 +651,7 @@ export type PreloadApi = {
     onReloadBrowserPage: (callback: () => void) => () => void
     onHardReloadBrowserPage: (callback: () => void) => () => void
     onCloseActiveTab: (callback: () => void) => () => void
+    onCloseBrowserTab: (callback: (browserTabId: string) => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
     onToggleStatusBar: (callback: () => void) => () => void
     onExportPdfRequested: (callback: () => void) => () => void

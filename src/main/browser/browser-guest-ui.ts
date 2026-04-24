@@ -274,7 +274,7 @@ export function setupGuestShortcutForwarding(args: {
       // the guest frame, which is invisible behind Orca's chrome.
       renderer.send('ui:findInBrowserPage')
     } else if (input.code === 'KeyW' && !input.shift) {
-      renderer.send('ui:closeActiveTab')
+      renderer.send('ui:closeBrowserTab', browserTabId)
     } else if (input.shift && (input.code === 'BracketRight' || input.code === 'BracketLeft')) {
       renderer.send('ui:switchTab', input.code === 'BracketRight' ? 1 : -1)
     } else if (action?.type === 'toggleWorktreePalette') {
