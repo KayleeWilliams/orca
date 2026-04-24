@@ -92,9 +92,16 @@ export default function QuickOpen(): React.JSX.Element | null {
     () => getConnectionId(activeWorktreeId ?? null) ?? undefined,
     [activeWorktreeId]
   )
+
+  // Why: when quick-open opens before the SSH connection is established,
+  // fs:listFiles returns [] (no provider yet). Watching sshConnectedGeneration
+  // lets the file-load effect re-fire automatically once the connection comes
+  // up, so the user doesn't have to close and reopen the dialog.
+  const sshConnectedGeneration = useAppStore((s) => s.sshConnectedGeneration)
   const filesRequestKey = useMemo(
-    () => `${worktreePath ?? ''}\n${connectionId ?? ''}\n${excludePathsKey}`,
-    [connectionId, excludePathsKey, worktreePath]
+    () =>
+      `${worktreePath ?? ''}\n${connectionId ?? ''}\n${excludePathsKey}\n${connectionId ? sshConnectedGeneration : 0}`,
+    [connectionId, excludePathsKey, worktreePath, sshConnectedGeneration]
   )
 
   // Why: reset input only on open. Keeping this out of the file-load effect
