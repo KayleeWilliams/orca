@@ -7,7 +7,8 @@ const { handleMock, mockStore, mockGitProvider } = vi.hoisted(() => ({
     addRepo: vi.fn(),
     removeRepo: vi.fn(),
     getRepo: vi.fn(),
-    updateRepo: vi.fn()
+    updateRepo: vi.fn(),
+    getSshTarget: vi.fn()
   },
   mockGitProvider: {
     isGitRepo: vi.fn().mockReturnValue(true),
@@ -61,6 +62,7 @@ describe('repos:addRemote', () => {
     })
     mockStore.getRepos.mockReset().mockReturnValue([])
     mockStore.addRepo.mockReset()
+    mockStore.getSshTarget.mockReset()
     mockWindow.webContents.send.mockReset()
 
     registerRepoHandlers(mockWindow as never, mockStore as never)
@@ -88,7 +90,7 @@ describe('repos:addRemote', () => {
     expect(result).toHaveProperty('repo.connectionId', 'conn-1')
   })
 
-    it('uses custom displayName when provided', async () => {
+  it('uses custom displayName when provided', async () => {
     const result = await handlers.get('repos:addRemote')!(null, {
       connectionId: 'conn-1',
       remotePath: '/home/user/project',
@@ -187,5 +189,52 @@ describe('repos:addRemote', () => {
     })
 
     expect(mockWindow.webContents.send).toHaveBeenCalledWith('repos:changed')
+  })
+
+  it('uses SSH target label when adding home directory (~)', async () => {
+    mockStore.getSshTarget.mockReturnValueOnce({
+      id: 'conn-1',
+      label: 'ubuntu-box',
+      host: '192.168.1.100',
+      port: 22,
+      username: 'user'
+    })
+
+    const result = await handlers.get('repos:addRemote')!(null, {
+      connectionId: 'conn-1',
+      remotePath: '~'
+    })
+
+    expect(mockStore.addRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: 'ubuntu-box',
+        path: '~'
+      })
+    )
+    expect(result).toHaveProperty('repo.displayName', 'ubuntu-box')
+  })
+
+  it('ignores SSH target label when custom displayName is provided', async () => {
+    mockStore.getSshTarget.mockReturnValueOnce({
+      id: 'conn-1',
+      label: 'ubuntu-box',
+      host: '192.168.1.100',
+      port: 22,
+      username: 'user'
+    })
+
+    const result = await handlers.get('repos:addRemote')!(null, {
+      connectionId: 'conn-1',
+      remotePath: '~',
+      displayName: 'My Home'
+    })
+
+    expect(mockStore.addRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: 'My Home',
+        path: '~'
+      })
+    )
+    expect(result).toHaveProperty('repo.displayName', 'My Home')
   })
 })

@@ -106,7 +106,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       }
 
       const pathSegments = args.remotePath.replace(/\/+$/, '').split('/')
-      const folderName = pathSegments.at(-1) || args.remotePath
+      let folderName = pathSegments.at(-1) || args.remotePath
 
       let repoKind: 'git' | 'folder' = args.kind ?? 'git'
       let resolvedPath = args.remotePath
@@ -134,10 +134,19 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         }
       }
 
+      // When folderName is '~' (home directory), use SSH target label for clarity
+      let displayName = args.displayName || folderName
+      if (folderName === '~' && !args.displayName) {
+        const sshTarget = store.getSshTarget(args.connectionId)
+        if (sshTarget) {
+          displayName = sshTarget.label
+        }
+      }
+
       const repo: Repo = {
         id: randomUUID(),
         path: resolvedPath,
-        displayName: args.displayName || folderName,
+        displayName,
         badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
         addedAt: Date.now(),
         kind: repoKind,
