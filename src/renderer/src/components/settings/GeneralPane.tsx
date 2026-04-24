@@ -713,29 +713,31 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
                   ) : null}
                 </div>
                 <span className="truncate text-[11px] text-muted-foreground">
-                  Restore the system Claude login Orca captured before managed switching.
+                  Use your current system Claude login.
                 </span>
               </div>
             </button>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-accent/5 px-3 py-2">
-              <p className="text-[11px] text-muted-foreground">
-                Logged into Claude outside Orca? Refresh the system-default snapshot before
-                switching back.
-              </p>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() =>
-                  void runClaudeAccountAction('select:system', () =>
-                    window.api.claudeAccounts.refreshSystemDefaultFromCurrentLogin()
-                  )
-                }
-                disabled={claudeAction !== 'idle'}
-                className="h-6 shrink-0 px-2"
-              >
-                Refresh Default
-              </Button>
-            </div>
+            {claudeAccounts.accounts.length > 0 ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-accent/5 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">
+                  Signed into Claude outside Orca? Update the system default so Orca knows about
+                  your latest login.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() =>
+                    void runClaudeAccountAction('select:system', () =>
+                      window.api.claudeAccounts.refreshSystemDefaultFromCurrentLogin()
+                    )
+                  }
+                  disabled={claudeAction !== 'idle'}
+                  className="h-6 shrink-0 px-2"
+                >
+                  Update Default
+                </Button>
+              </div>
+            ) : null}
 
             {claudeAccounts.accounts.length === 0 ? (
               <div className="rounded-md border border-dashed border-border/70 px-3 py-4 text-xs text-muted-foreground">
