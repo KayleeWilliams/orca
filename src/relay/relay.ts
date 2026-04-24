@@ -61,7 +61,7 @@ function main(): void {
   // shell expansion — Node's fs APIs don't understand it. This handler lets
   // the client resolve tilde paths to absolute paths on the remote host
   // before persisting them, so all downstream fs operations work correctly.
-  dispatcher.onRequest('session.resolveHome', (params) => {
+  dispatcher.onRequest('session.resolveHome', async (params) => {
     const inputPath = params.path as string
     if (inputPath === '~' || inputPath === '~/') {
       return { resolvedPath: homedir() }
