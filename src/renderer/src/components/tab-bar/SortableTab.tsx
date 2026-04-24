@@ -11,7 +11,11 @@ import {
 import { Input } from '@/components/ui/input'
 import type { TerminalTab } from '../../../../shared/types'
 import type { TabDragItemData } from '../tab-group/useTabDragSplit'
-import { getDropIndicatorClasses, type DropIndicator } from './drop-indicator'
+import {
+  ACTIVE_TAB_INDICATOR_CLASSES,
+  getDropIndicatorClasses,
+  type DropIndicator
+} from './drop-indicator'
 
 type SortableTabProps = {
   tab: TerminalTab
@@ -193,6 +197,7 @@ export default function SortableTab({
             }
           }}
         >
+          {isActive && <span className={ACTIVE_TAB_INDICATOR_CLASSES} aria-hidden />}
           <TerminalIcon
             className={`w-3.5 h-3.5 mr-1.5 shrink-0 ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}
           />
