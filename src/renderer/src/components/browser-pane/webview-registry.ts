@@ -12,6 +12,17 @@ export function destroyPersistentWebview(browserTabId: string): void {
     clearLiveBrowserUrl(browserTabId)
     return
   }
+  // Why: webview.remove() does not synchronously destroy the guest web
+  // contents — Chromium keeps the media session alive until GC, so media
+  // keys (F8 play/pause) can still control a "dead" tab. Loading
+  // about:blank tears down the page's media session immediately and
+  // synchronously before the element is removed from the DOM.
+  try {
+    webview.stop()
+    webview.loadURL('about:blank')
+  } catch {
+    // Webview may already be in a torn-down state — safe to ignore.
+  }
   void window.api.browser.unregisterGuest({ browserPageId: browserTabId })
   webview.remove()
   webviewRegistry.delete(browserTabId)
