@@ -33,6 +33,11 @@ export class ClaudeRuntimeAuthService {
   private readonly pathResolver = new ClaudeRuntimePathResolver()
   private mutationQueue: Promise<unknown> = Promise.resolve()
   private lastSyncedAccountId: string | null = null
+  // Why: tracks the credentials Orca last wrote to the shared credentials file.
+  // On managed→system-default transition, if the file differs from this value,
+  // an external login (e.g. `claude auth login`) overwrote it — so Orca adopts
+  // the file as the new system default instead of restoring a stale snapshot.
+  private lastWrittenCredentialsJson: string | null = null
 
   constructor(private readonly store: Store) {
     this.initializeLastSyncedState()
@@ -63,15 +68,6 @@ export class ClaudeRuntimeAuthService {
       }
       await this.doSyncForCurrentSelection()
     })
-  }
-
-  clearSystemDefaultSnapshot(): void {
-    rmSync(this.getSystemDefaultSnapshotPath(), { force: true })
-  }
-
-  async refreshSystemDefaultSnapshotFromCurrentLogin(): Promise<void> {
-    this.clearSystemDefaultSnapshot()
-    await this.captureSystemDefaultSnapshotIfNeeded()
   }
 
   getRuntimeConfigDir(): string {
@@ -199,6 +195,10 @@ export class ClaudeRuntimeAuthService {
   }
 
   private async restoreSystemDefaultSnapshot(): Promise<void> {
+    if (this.detectExternalLoginAndUpdateSnapshot()) {
+      return
+    }
+
     const snapshotPath = this.getSystemDefaultSnapshotPath()
     if (!existsSync(snapshotPath)) {
       return
@@ -215,6 +215,29 @@ export class ClaudeRuntimeAuthService {
         ? writeActiveClaudeKeychainCredentials(snapshot.keychainCredentialsJson)
         : deleteActiveClaudeKeychainCredentials())
     }
+  }
+
+  // Why: detects whether an external tool (e.g. `claude auth login`) overwrote
+  // the credentials file while a managed account was active. If the file
+  // differs from what Orca last wrote, that external login becomes the new
+  // system default — no manual "refresh" button needed.
+  private detectExternalLoginAndUpdateSnapshot(): boolean {
+    if (this.lastWrittenCredentialsJson === null) {
+      return false
+    }
+    const paths = this.pathResolver.getRuntimePaths()
+    if (!existsSync(paths.credentialsPath)) {
+      return false
+    }
+    const currentCredentials = readFileSync(paths.credentialsPath, 'utf-8')
+    if (currentCredentials === this.lastWrittenCredentialsJson) {
+      return false
+    }
+    // External login detected — adopt current state as the new system default
+    const snapshotPath = this.getSystemDefaultSnapshotPath()
+    rmSync(snapshotPath, { force: true })
+    this.lastWrittenCredentialsJson = null
+    return true
   }
 
   private readRuntimeOauthAccount(): unknown {
@@ -245,6 +268,7 @@ export class ClaudeRuntimeAuthService {
     const credentialsPath = this.pathResolver.getRuntimePaths().credentialsPath
     mkdirSync(dirname(credentialsPath), { recursive: true })
     writeFileAtomically(credentialsPath, contents, { mode: 0o600 })
+    this.lastWrittenCredentialsJson = contents
   }
 
   private writeJson(targetPath: string, value: unknown): void {

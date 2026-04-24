@@ -13,7 +13,4 @@ export function registerClaudeAccountHandlers(claudeAccounts: ClaudeAccountServi
   ipcMain.handle('claudeAccounts:select', (_event, args: { accountId: string | null }) =>
     claudeAccounts.selectAccount(args.accountId)
   )
-  ipcMain.handle('claudeAccounts:refreshSystemDefaultFromCurrentLogin', () =>
-    claudeAccounts.refreshSystemDefaultFromCurrentLogin()
-  )
 }

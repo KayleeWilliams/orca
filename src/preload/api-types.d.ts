@@ -451,7 +451,6 @@ export type PreloadApi = {
     reauthenticate: (args: { accountId: string }) => Promise<ClaudeRateLimitAccountsState>
     remove: (args: { accountId: string }) => Promise<ClaudeRateLimitAccountsState>
     select: (args: { accountId: string | null }) => Promise<ClaudeRateLimitAccountsState>
-    refreshSystemDefaultFromCurrentLogin: () => Promise<ClaudeRateLimitAccountsState>
   }
   cli: {
     getInstallStatus: () => Promise<CliInstallStatus>

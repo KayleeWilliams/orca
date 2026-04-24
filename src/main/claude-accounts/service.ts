@@ -79,24 +79,6 @@ export class ClaudeAccountService {
     return this.serializeMutation(() => this.doSelectAccount(accountId))
   }
 
-  async refreshSystemDefaultFromCurrentLogin(): Promise<ClaudeRateLimitAccountsState> {
-    return this.serializeMutation(async () => {
-      const previousSettings = this.store.getSettings()
-      this.store.updateSettings({ activeClaudeManagedAccountId: null })
-      try {
-        await this.syncRuntimeAuthWithLivePtyGate(() =>
-          this.runtimeAuth.refreshSystemDefaultSnapshotFromCurrentLogin()
-        )
-        await this.rateLimits.refreshForClaudeAccountChange()
-        return this.getSnapshot()
-      } catch (error) {
-        this.restoreClaudeSettings(previousSettings)
-        await this.runtimeAuth.forceMaterializeCurrentSelectionForRollback()
-        throw error
-      }
-    })
-  }
-
   private serializeMutation<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.mutationQueue.then(fn, fn)
     this.mutationQueue = next.catch(() => {})
