@@ -18,6 +18,7 @@ import {
   AGENT_STATUS_STALE_AFTER_MS,
   type AgentStatusEntry
 } from '../../../../shared/agent-status-types'
+import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
 import {
@@ -206,7 +207,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
     let hasDone = false
     for (const tab of liveTabs) {
       const fresh = freshByTabId.get(tab.id)
-      if (fresh && fresh.length > 0) {
+      // Why: AGENT_DASHBOARD_ENABLED gates the explicit-status path so the
+      // sidebar falls back to pure heuristic detection when the feature is off.
+      if (AGENT_DASHBOARD_ENABLED && fresh && fresh.length > 0) {
         if (fresh.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
           hasPermission = true
         } else if (fresh.some((e) => e.state === 'working')) {
@@ -373,13 +376,16 @@ const WorktreeCard = React.memo(function WorktreeCard({
           {/* Status indicator on the left */}
           {(cardProps.includes('status') || cardProps.includes('unread')) && (
             <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
-              {cardProps.includes('status') && (
-                <AgentStatusHover worktreeId={worktree.id}>
-                  <span>
-                    <StatusIndicator status={status} />
-                  </span>
-                </AgentStatusHover>
-              )}
+              {cardProps.includes('status') &&
+                (AGENT_DASHBOARD_ENABLED ? (
+                  <AgentStatusHover worktreeId={worktree.id}>
+                    <span>
+                      <StatusIndicator status={status} />
+                    </span>
+                  </AgentStatusHover>
+                ) : (
+                  <StatusIndicator status={status} />
+                ))}
 
               {cardProps.includes('unread') && (
                 <Tooltip>

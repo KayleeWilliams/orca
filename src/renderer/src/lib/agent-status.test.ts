@@ -560,8 +560,8 @@ describe('mapAgentStatusStateToVisualStatus', () => {
     expect(mapAgentStatusStateToVisualStatus('waiting')).toBe('permission')
   })
 
-  it("maps 'done' to 'active'", () => {
-    expect(mapAgentStatusStateToVisualStatus('done')).toBe('active')
+  it("maps 'done' to 'done'", () => {
+    expect(mapAgentStatusStateToVisualStatus('done')).toBe('done')
   })
 
   it('returns a non-empty string for every valid state', () => {

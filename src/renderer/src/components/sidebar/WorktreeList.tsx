@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
+import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { buildWorktreeComparator, computeSmartScore } from './smart-sort'
 import {
   type GroupHeaderRow,
@@ -528,19 +529,13 @@ const WorktreeList = React.memo(function WorktreeList() {
     // per worktree (decorate-sort-undecorate) collapses that to O(N×E + N log N)
     // so hot worktrees with many running agents don't spike CPU on every
     // sortEpoch bump. Only smart mode uses the score map; other modes ignore it.
+    const agentStatusForSort = AGENT_DASHBOARD_ENABLED ? state.agentStatusByPaneKey : undefined
     const precomputedScores =
       sortBy === 'smart'
         ? new Map<string, number>(
             nonArchivedWorktrees.map((w) => [
               w.id,
-              computeSmartScore(
-                w,
-                currentTabs,
-                repoMap,
-                state.prCache,
-                now,
-                state.agentStatusByPaneKey
-              )
+              computeSmartScore(w, currentTabs, repoMap, state.prCache, now, agentStatusForSort)
             ])
           )
         : undefined
@@ -552,7 +547,7 @@ const WorktreeList = React.memo(function WorktreeList() {
         state.prCache,
         now,
         null,
-        state.agentStatusByPaneKey,
+        agentStatusForSort,
         precomputedScores
       )
     )
@@ -561,7 +556,7 @@ const WorktreeList = React.memo(function WorktreeList() {
     // memo, but its change signals that the sort order should be recomputed.
     // The debounce prevents jarring mid-interaction position shifts.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSortEpoch, repoMap, sortBy, agentStatusEpoch])
+  }, [debouncedSortEpoch, repoMap, sortBy])
 
   // Persist the computed sort order so the sidebar can be restored after
   // restart. Only persist during live sessions (sessionHasHadPty latched) —
