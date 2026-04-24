@@ -517,6 +517,7 @@ export default function LinearItemDrawer({
   const [editState, setEditState] = useState<LinearEditState | null>(null)
   const requestIdRef = useRef(0)
   const hasEditedRef = useRef(false)
+  const optimisticCommentsRef = useRef<LinearComment[]>([])
 
   const handleEditStateChange = useCallback((patch: Partial<LinearEditState>) => {
     hasEditedRef.current = true
@@ -534,6 +535,7 @@ export default function LinearItemDrawer({
       return
     }
     hasEditedRef.current = false
+    optimisticCommentsRef.current = []
     setComments([])
     setCommentsLoading(true)
     setEditState(initEditState(issue))
@@ -567,7 +569,18 @@ export default function LinearItemDrawer({
         if (requestId !== requestIdRef.current) {
           return
         }
-        setComments(commentsResult as LinearComment[])
+        // Why: merge any comments the user posted optimistically while the
+        // fetch was in-flight, using id to avoid duplicates.
+        let fetched = commentsResult as LinearComment[]
+        const opt = optimisticCommentsRef.current
+        if (opt.length > 0) {
+          const fetchedIds = new Set(fetched.map((c) => c.id))
+          const missing = opt.filter((c) => !fetchedIds.has(c.id))
+          if (missing.length > 0) {
+            fetched = [...fetched, ...missing]
+          }
+        }
+        setComments(fetched)
       })
       .catch(() => {})
       .finally(() => {
@@ -605,15 +618,14 @@ export default function LinearItemDrawer({
   }, [issue?.id])
 
   const handleCommentAdded = useCallback((comment: LocalComment) => {
-    setComments((prev) => [
-      ...prev,
-      {
-        id: comment.id,
-        body: comment.body,
-        createdAt: comment.createdAt,
-        user: { displayName: 'You' }
-      }
-    ])
+    const newComment: LinearComment = {
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      user: { displayName: 'You' }
+    }
+    optimisticCommentsRef.current.push(newComment)
+    setComments((prev) => [...prev, newComment])
   }, [])
 
   const displayed = fullIssue ?? issue

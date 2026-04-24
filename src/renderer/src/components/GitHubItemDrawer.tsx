@@ -903,6 +903,9 @@ export default function GitHubItemDrawer({
   }, [workItem?.id])
 
   const requestIdRef = useRef(0)
+  // Why: track comments added optimistically before the detail fetch resolves
+  // so they can be merged into the fetch result instead of being overwritten.
+  const optimisticCommentsRef = useRef<PRComment[]>([])
 
   // Why: when this drawer opens immediately after another Radix overlay
   // (e.g. the New Issue dialog) closed, Radix may leave `pointer-events: none`
@@ -943,6 +946,7 @@ export default function GitHubItemDrawer({
     // results whose id matches the latest one.
     requestIdRef.current += 1
     const requestId = requestIdRef.current
+    optimisticCommentsRef.current = []
     setLoading(true)
     setError(null)
     setDetails(null)
@@ -953,6 +957,16 @@ export default function GitHubItemDrawer({
       .then((result) => {
         if (requestId !== requestIdRef.current) {
           return
+        }
+        // Why: merge any comments the user posted optimistically while the
+        // detail fetch was in-flight, using id to avoid duplicates.
+        const opt = optimisticCommentsRef.current
+        if (opt.length > 0 && result) {
+          const fetchedIds = new Set(result.comments.map((c: PRComment) => c.id))
+          const missing = opt.filter((c) => !fetchedIds.has(c.id))
+          if (missing.length > 0) {
+            result = { ...result, comments: [...result.comments, ...missing] }
+          }
         }
         setDetails(result)
       })
@@ -1178,6 +1192,7 @@ export default function GitHubItemDrawer({
                   // Why: skip refreshDetails() — gh api --cache 60s returns stale data
                   // that overwrites the optimistic comment. The next drawer open (after
                   // cache expiry) will pick up the server-confirmed version.
+                  optimisticCommentsRef.current.push(comment)
                   setDetails((prev) => {
                     if (prev) {
                       return { ...prev, comments: [...prev.comments, comment] }
