@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, nativeTheme, systemPreferences } from 'electron'
+import { app, BrowserWindow, nativeImage, nativeTheme } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 import devIcon from '../../resources/icon-dev.png?asset'
 import { Store, initDataPath } from './persistence'
@@ -57,26 +57,6 @@ let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
 let starNag: StarNagService | null = null
-
-function triggerStartupMicrophoneRegistration(): void {
-  if (process.platform !== 'darwin') {
-    return
-  }
-  try {
-    const status = systemPreferences.getMediaAccessStatus('microphone')
-    if (status !== 'not-determined') {
-      return
-    }
-    // Why: terminal child processes (sox/ffmpeg/voice CLIs) cannot reliably
-    // surface the TCC dialog themselves. Prompt once from the app process after
-    // the window is visible so mic capture in embedded terminals can work.
-    void systemPreferences.askForMediaAccess('microphone').catch((error: unknown) => {
-      console.error('[permissions] Failed to request microphone access:', error)
-    })
-  } catch (error) {
-    console.error('[permissions] Failed to check microphone access status:', error)
-  }
-}
 
 installUncaughtPipeErrorGuard()
 // Why: propagate the Orca app version into `process.env` so PTY-env
@@ -284,7 +264,6 @@ app.whenReady().then(async () => {
   // window, making it impossible for the user to click "Allow".
   win.once('show', () => {
     triggerStartupNotificationRegistration(store!)
-    triggerStartupMicrophoneRegistration()
   })
 
   app.on('activate', () => {
