@@ -178,29 +178,25 @@ describe('Session', () => {
   })
 
   describe('shell readiness gating', () => {
-    it('buffers writes during pending state', () => {
-      createSession({ shellReadySupported: true })
-      expect(session.shellState).toBe('pending')
-
-      session.write('buffered input')
-      expect(subprocess.written).toEqual([])
-    })
-
     // Why: regression guard for "claude claude" double-echo. The marker fires
     // from precmd before readline switches the PTY into raw mode; flushing
     // then lets the kernel re-echo the command under the prompt. Detailed
-    // timing behavior is covered by post-ready-flush-gate.test.ts; here we
-    // just verify Session wires the gate in (no write on the raw marker).
-    it('defers flush past the shell-ready marker to avoid kernel ECHO duplication', () => {
+    // timing behavior is covered by post-ready-flush-gate.test.ts.
+    // Also checks writes that arrive during the gate window keep their order
+    // — the gate continues to queue even though shellState is already 'ready'.
+    it('defers flush past the shell-ready marker and preserves write order', () => {
       createSession({ shellReadySupported: true })
-      session.write('claude\n')
+      expect(session.shellState).toBe('pending')
+
+      session.write('first\n')
       subprocess.simulateData('\x1b]777;orca-shell-ready\x07')
       expect(session.shellState).toBe('ready' satisfies ShellReadyState)
+      session.write('second\n')
       expect(subprocess.written).toEqual([])
 
       subprocess.simulateData('\r\nuser@host $ ')
       vi.advanceTimersByTime(30)
-      expect(subprocess.written).toEqual(['claude\n'])
+      expect(subprocess.written).toEqual(['first\n', 'second\n'])
     })
 
     it('transitions to timed_out after 15 seconds', () => {

@@ -28,6 +28,12 @@ export class PostReadyFlushGate {
 
   constructor(private readonly onFlush: () => void) {}
 
+  /** True between arm() and the actual flush firing. Callers should treat
+   *  input as still-queued during this window to preserve ordering. */
+  get isPending(): boolean {
+    return this.awaitingPromptDraw || this.postDataTimer !== null || this.fallbackTimer !== null
+  }
+
   /** Arm the gate after observing the shell-ready marker. Starts the
    *  wall-clock fallback; the flush fires when the fallback elapses or when
    *  notifyData() observes a subsequent PTY data chunk. */

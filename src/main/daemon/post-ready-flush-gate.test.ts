@@ -83,4 +83,15 @@ describe('PostReadyFlushGate', () => {
     vi.advanceTimersByTime(POST_READY_FLUSH_DELAY_MS * 2)
     expect(onFlush).not.toHaveBeenCalled()
   })
+
+  it('isPending is true throughout the gate window and false once flush fires', () => {
+    expect(gate.isPending).toBe(false)
+    gate.arm()
+    expect(gate.isPending).toBe(true)
+    gate.notifyData()
+    expect(gate.isPending).toBe(true)
+    vi.advanceTimersByTime(POST_READY_FLUSH_DELAY_MS)
+    expect(gate.isPending).toBe(false)
+    expect(onFlush).toHaveBeenCalledTimes(1)
+  })
 })

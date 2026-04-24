@@ -106,7 +106,11 @@ export class Session {
       return
     }
 
-    if (this._shellState === 'pending') {
+    // Why: during the post-ready flush gate window (shellState is already
+    // 'ready' but the queue hasn't flushed yet) we must keep queuing. Writing
+    // directly would let fresh input race ahead of the buffered startup
+    // command, changing execution order.
+    if (this._shellState === 'pending' || this.postReadyFlushGate.isPending) {
       this.preReadyStdinQueue.push(data)
       return
     }
