@@ -8,9 +8,10 @@ import {
   rename,
   cp,
   rm,
-  realpath
+  realpath,
+  access
 } from 'fs/promises'
-import { extname } from 'path'
+import { extname, join } from 'path'
 import type { RelayDispatcher } from './dispatcher'
 import type { RelayContext } from './context'
 import { expandTilde } from './context'
@@ -232,13 +233,15 @@ export class FsHandler {
     if (rgAvailable) {
       return listFilesWithRg(rootPath)
     }
-    // Why: git ls-files only works inside git repos. For non-git directories
-    // (e.g. a plain folder added over SSH), the command exits with an error
-    // and returns nothing. Fall back to a recursive readdir walk so quick-open
-    // still populates for non-git folders without ripgrep.
-    const gitFiles = await listFilesWithGit(rootPath)
-    if (gitFiles.length > 0) {
-      return gitFiles
+    // Why: git ls-files only works inside git repos. Check for .git first so
+    // we don't misclassify a git repo with only ignored files as a non-git
+    // folder — that would surface .gitignore'd files via the readdir fallback.
+    const isGitRepo = await access(join(rootPath, '.git')).then(
+      () => true,
+      () => false
+    )
+    if (isGitRepo) {
+      return listFilesWithGit(rootPath)
     }
     return listFilesWithReaddir(rootPath)
   }

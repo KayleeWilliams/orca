@@ -12,8 +12,26 @@ import { join, relative } from 'path'
 const MAX_FILES = 10_000
 const TIMEOUT_MS = 10_000
 
+// Why: mirrors the HIDDEN_DIR_BLOCKLIST in fs-handler-git-fallback.ts —
+// tool-generated dirs that clutter quick-open. User-authored dotdirs like
+// .github/ and .devcontainer/ are intentionally kept discoverable.
+const HIDDEN_DIR_BLOCKLIST = new Set([
+  '.git',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '.stably',
+  '.vscode',
+  '.idea',
+  '.yarn',
+  '.pnpm-store',
+  '.terraform',
+  '.docker',
+  '.husky'
+])
+
 function shouldDescend(name: string): boolean {
-  if (name === 'node_modules' || name.startsWith('.')) {
+  if (name === 'node_modules' || HIDDEN_DIR_BLOCKLIST.has(name)) {
     return false
   }
   return true
@@ -51,7 +69,9 @@ export async function listFilesWithReaddir(rootPath: string): Promise<string[]> 
           await walk(join(dir, name))
         }
       } else if (entry.isFile()) {
-        const relPath = relative(rootPath, join(dir, name))
+        // Why: path.relative() returns backslashes on Windows. The quick-open
+        // UI assumes POSIX separators for display and fuzzy matching.
+        const relPath = relative(rootPath, join(dir, name)).replace(/\\/g, '/')
         files.push(relPath)
       }
     }
