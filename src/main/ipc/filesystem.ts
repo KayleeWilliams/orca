@@ -440,8 +440,12 @@ export function registerFilesystemHandlers(store: Store): void {
     ): Promise<string[]> => {
       if (args.connectionId) {
         const provider = getSshFilesystemProvider(args.connectionId)
+        // Why: when the SSH connection is not yet established (cold start) or
+        // temporarily disconnected, return [] so quick-open shows "No matching
+        // files" instead of an error banner. The file list will repopulate when
+        // the user re-opens quick-open after the connection is restored.
         if (!provider) {
-          throw new Error(`No filesystem provider for connection "${args.connectionId}"`)
+          return []
         }
         return provider.listFiles(args.rootPath)
       }

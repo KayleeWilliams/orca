@@ -24,6 +24,7 @@ import {
   checkRgAvailable
 } from './fs-handler-utils'
 import { listFilesWithGit, searchWithGitGrep } from './fs-handler-git-fallback'
+import { listFilesWithReaddir } from './fs-handler-readdir-fallback'
 
 type WatchState = {
   rootPath: string
@@ -228,10 +229,18 @@ export class FsHandler {
     const rootPath = expandTilde(params.rootPath as string)
     await this.context.validatePathResolved(rootPath)
     const rgAvailable = await checkRgAvailable()
-    if (!rgAvailable) {
-      return listFilesWithGit(rootPath)
+    if (rgAvailable) {
+      return listFilesWithRg(rootPath)
     }
-    return listFilesWithRg(rootPath)
+    // Why: git ls-files only works inside git repos. For non-git directories
+    // (e.g. a plain folder added over SSH), the command exits with an error
+    // and returns nothing. Fall back to a recursive readdir walk so quick-open
+    // still populates for non-git folders without ripgrep.
+    const gitFiles = await listFilesWithGit(rootPath)
+    if (gitFiles.length > 0) {
+      return gitFiles
+    }
+    return listFilesWithReaddir(rootPath)
   }
 
   private async watch(params: Record<string, unknown>) {
