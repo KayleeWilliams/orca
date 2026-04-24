@@ -1,4 +1,3 @@
-/* oxlint-disable max-lines */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import type { SessionState, ShellReadyState } from './types'
@@ -187,29 +186,20 @@ describe('Session', () => {
       expect(subprocess.written).toEqual([])
     })
 
-    // Why: the shell-ready marker fires from precmd/PROMPT_COMMAND, before
-    // the shell draws its prompt and before readline flips the PTY into raw
-    // mode. Flushing then causes the kernel (ECHO on) to echo the command
-    // once, and readline redraws it under the prompt — producing "claude
-    // claude" on agent launch. The flush must defer until after prompt draw.
-    it('defers flush until after prompt draw + short delay', () => {
+    // Why: regression guard for "claude claude" double-echo. The marker fires
+    // from precmd before readline switches the PTY into raw mode; flushing
+    // then lets the kernel re-echo the command under the prompt. Detailed
+    // timing behavior is covered by post-ready-flush-gate.test.ts; here we
+    // just verify Session wires the gate in (no write on the raw marker).
+    it('defers flush past the shell-ready marker to avoid kernel ECHO duplication', () => {
       createSession({ shellReadySupported: true })
-      session.write('pre-ready input')
+      session.write('claude\n')
       subprocess.simulateData('\x1b]777;orca-shell-ready\x07')
       expect(session.shellState).toBe('ready' satisfies ShellReadyState)
       expect(subprocess.written).toEqual([])
 
       subprocess.simulateData('\r\nuser@host $ ')
       vi.advanceTimersByTime(30)
-      expect(subprocess.written).toEqual(['pre-ready input'])
-    })
-
-    it('flushes via fallback timer if the prompt arrived in the marker chunk', () => {
-      createSession({ shellReadySupported: true })
-      session.write('claude\n')
-      subprocess.simulateData('\x1b]777;orca-shell-ready\x07user@host $ ')
-      expect(subprocess.written).toEqual([])
-      vi.advanceTimersByTime(50)
       expect(subprocess.written).toEqual(['claude\n'])
     })
 
