@@ -337,7 +337,12 @@ function TabBarInner({
             "+" button remains window-draggable. */}
         <div
           ref={tabStripRef}
-          className="terminal-tab-strip flex items-stretch overflow-x-auto overflow-y-hidden"
+          // Why: `border-r` on the strip itself guarantees a visible vertical
+          // separator between the last tab and the "+" button even when the
+          // strip is scrolled. Each tab's own right border is clipped by
+          // overflow-x-auto once tabs overflow, so relying on the per-tab
+          // border alone leaves no boundary on the trailing edge.
+          className="terminal-tab-strip flex items-stretch overflow-x-auto overflow-y-hidden border-r border-border"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           {orderedItems.map((item, index) => {

@@ -215,22 +215,33 @@ export default function TabGroupSplitLayout({
       // so disabling it is the simplest fix.
       autoScroll={false}
     >
-      <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
-        <SplitNode
-          node={layout}
-          nodePath=""
-          worktreeId={worktreeId}
-          focusedGroupId={focusedGroupId}
-          isWorktreeActive={isWorktreeActive}
-          hasSplitGroups={layout.type === 'split'}
-          touchesTopEdge={true}
-          touchesRightEdge={true}
-          touchesLeftEdge={true}
-          isTabDragActive={dragSplit.activeDrag !== null}
-          activeDropGroupId={dragSplit.hoveredDropTarget?.groupId ?? null}
-          activeDropZone={dragSplit.hoveredDropTarget?.zone ?? null}
-          hoveredTabInsertion={dragSplit.hoveredTabInsertion}
+      {/* Why: the 8px drag strip sits ABOVE the split layout — lifted out of
+          each pane — so vertical split resize handles don't extend into the
+          window-drag region at the top. Only the split layout's own panes
+          own the resize handles, while this strip keeps the whole top of the
+          center column draggable regardless of how the splits are arranged. */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+        <div
+          className="h-2 shrink-0 bg-card"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
+        <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
+          <SplitNode
+            node={layout}
+            nodePath=""
+            worktreeId={worktreeId}
+            focusedGroupId={focusedGroupId}
+            isWorktreeActive={isWorktreeActive}
+            hasSplitGroups={layout.type === 'split'}
+            touchesTopEdge={true}
+            touchesRightEdge={true}
+            touchesLeftEdge={true}
+            isTabDragActive={dragSplit.activeDrag !== null}
+            activeDropGroupId={dragSplit.hoveredDropTarget?.groupId ?? null}
+            activeDropZone={dragSplit.hoveredDropTarget?.zone ?? null}
+            hoveredTabInsertion={dragSplit.hoveredTabInsertion}
+          />
+        </div>
       </div>
       {/* Why: the sortable tab is anchored inside its source tab strip (no
           transform while dragging), and that strip uses overflow-hidden so

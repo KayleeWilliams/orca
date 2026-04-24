@@ -928,11 +928,12 @@ function App(): React.JSX.Element {
           <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
             {/* Why: right sidebar toggle floats at the top-right of the center
                 column so it's always accessible whether the right sidebar is
-                open or closed. Its height matches the 42px workspace strip
-                used by the sidebar and tab rows. */}
+                open or closed. Offset by the 8px drag strip so it aligns with
+                the tab row's 34px band instead of overlapping the draggable
+                window surface above. */}
             {workspaceActive && !rightSidebarOpen && (
               <div
-                className="absolute top-0 right-0 z-10 flex items-center h-[42px]"
+                className="absolute top-2 right-0 z-10 flex items-center h-[34px]"
                 style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               >
                 {rightSidebarToggle}
@@ -960,7 +961,26 @@ function App(): React.JSX.Element {
               filesystem watchers + cached directory trees survive across
               open/close toggles. Unmount on the tasks view since that
               surface is intentionally distraction-free. */}
-          {showRightSidebarControls ? <RightSidebar /> : null}
+          {showRightSidebarControls ? (
+            workspaceActive ? (
+              /* Why: in workspace view the right sidebar must start at the
+                 tab row, not the window edge, so the 8px drag strip that
+                 runs across the top of the center column continues uninterrupted
+                 over the right sidebar. Wrapping adds a matching 8px drag
+                 surface above and shrinks the sidebar to fill the remainder. */
+              <div className="flex min-h-0 flex-col shrink-0">
+                <div
+                  className="h-2 shrink-0 bg-card"
+                  style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+                />
+                <div className="flex min-h-0 flex-1">
+                  <RightSidebar />
+                </div>
+              </div>
+            ) : (
+              <RightSidebar />
+            )
+          ) : null}
         </div>
         <StatusBar />
         {/* Why: NewWorkspaceComposerCard renders Radix <Tooltip>s that crash
