@@ -23,3 +23,9 @@ export type CloseTerminalPaneDetail = {
   tabId: string
   paneRuntimeId: number
 }
+
+export const CLOSE_BROWSER_TAB_EVENT = 'orca-close-browser-tab'
+
+export type CloseBrowserTabDetail = {
+  browserTabId: string
+}

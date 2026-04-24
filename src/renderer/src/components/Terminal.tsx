@@ -3,7 +3,8 @@
 import React, { useEffect, useCallback, useMemo, useRef, useState, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
+import { TOGGLE_TERMINAL_PANE_EXPAND_EVENT, CLOSE_BROWSER_TAB_EVENT } from '@/constants/terminal'
+import type { CloseBrowserTabDetail } from '@/constants/terminal'
 import { useAppStore } from '../store'
 import { useAllWorktrees } from '../store/selectors'
 import { findWorktreeById } from '../store/slices/worktree-helpers'
@@ -879,6 +880,18 @@ function Terminal(): React.JSX.Element | null {
       prevBrowserTabIdsRef.current = currentIds
     })
   }, [])
+
+  // Why: Cmd+W inside a webview guest dispatches this event (via IPC →
+  // useIpcEvents). Routed through handleCloseBrowserTab so the same
+  // destroy → close → fallback logic runs regardless of close trigger.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const { browserTabId } = (e as CustomEvent<CloseBrowserTabDetail>).detail
+      handleCloseBrowserTab(browserTabId)
+    }
+    window.addEventListener(CLOSE_BROWSER_TAB_EVENT, handler)
+    return () => window.removeEventListener(CLOSE_BROWSER_TAB_EVENT, handler)
+  }, [handleCloseBrowserTab])
 
   // Why: defensive guard against state inconsistency. If activeTabType is
   // 'browser' but no browser tab can be rendered (e.g. activeBrowserTabId is

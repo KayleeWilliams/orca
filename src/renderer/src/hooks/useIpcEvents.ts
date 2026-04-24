@@ -6,8 +6,16 @@ import {
   activateAndRevealWorktree,
   ensureWorktreeHasInitialTerminal
 } from '@/lib/worktree-activation'
-import { SPLIT_TERMINAL_PANE_EVENT, CLOSE_TERMINAL_PANE_EVENT } from '@/constants/terminal'
-import type { SplitTerminalPaneDetail, CloseTerminalPaneDetail } from '@/constants/terminal'
+import {
+  SPLIT_TERMINAL_PANE_EVENT,
+  CLOSE_TERMINAL_PANE_EVENT,
+  CLOSE_BROWSER_TAB_EVENT
+} from '@/constants/terminal'
+import type {
+  SplitTerminalPaneDetail,
+  CloseTerminalPaneDetail,
+  CloseBrowserTabDetail
+} from '@/constants/terminal'
 import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
 import { nextEditorFontZoomLevel, computeEditorFontSize } from '@/lib/editor-font-zoom'
 import type { UpdateStatus } from '../../../shared/types'
@@ -486,13 +494,17 @@ export function useIpcEvents(): void {
     )
 
     // Why: Cmd+W pressed inside a webview guest is forwarded by the main
-    // process with the exact browserTabId. This avoids relying on
-    // activeTabType which can be 'terminal' in split layouts even when
-    // the browser pane has focus.
+    // process with the exact browserTabId. Dispatched as a DOM event so
+    // Terminal.tsx's handleCloseBrowserTab handles it — that path correctly
+    // destroys the webview, removes the unified tab, and collapses empty
+    // split groups in a single synchronous pass.
     unsubs.push(
       window.api.ui.onCloseBrowserTab((browserTabId: string) => {
-        destroyPersistentWebview(browserTabId)
-        useAppStore.getState().closeBrowserTab(browserTabId)
+        window.dispatchEvent(
+          new CustomEvent<CloseBrowserTabDetail>(CLOSE_BROWSER_TAB_EVENT, {
+            detail: { browserTabId }
+          })
+        )
       })
     )
 
