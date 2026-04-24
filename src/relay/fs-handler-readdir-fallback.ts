@@ -12,28 +12,8 @@ import { join, relative } from 'path'
 const MAX_FILES = 10_000
 const TIMEOUT_MS = 10_000
 
-const HIDDEN_DIR_BLOCKLIST = new Set([
-  '.git',
-  '.next',
-  '.nuxt',
-  '.cache',
-  '.stably',
-  '.vscode',
-  '.idea',
-  '.yarn',
-  '.pnpm-store',
-  '.terraform',
-  '.docker',
-  '.husky'
-])
-
 function shouldDescend(name: string): boolean {
-  if (name === 'node_modules' || HIDDEN_DIR_BLOCKLIST.has(name)) {
-    return false
-  }
-  // Skip hidden directories (dotfiles other than those in the blocklist
-  // are already covered, but be explicit for any remaining)
-  if (name.startsWith('.') && HIDDEN_DIR_BLOCKLIST.has(name)) {
+  if (name === 'node_modules' || name.startsWith('.')) {
     return false
   }
   return true
