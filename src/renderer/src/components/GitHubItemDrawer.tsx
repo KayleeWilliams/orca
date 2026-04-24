@@ -959,24 +959,6 @@ export default function GitHubItemDrawer({
       })
   }, [repoPath, workItem])
 
-  // Why: re-fetches details without clearing existing data, so comments
-  // appear immediately after posting without a loading flash.
-  const refreshDetails = useCallback(() => {
-    if (!workItem || !repoPath) {
-      return
-    }
-    requestIdRef.current += 1
-    const requestId = requestIdRef.current
-    window.api.gh
-      .workItemDetails({ repoPath, number: workItem.number })
-      .then((result) => {
-        if (requestId === requestIdRef.current) {
-          setDetails(result)
-        }
-      })
-      .catch(() => {})
-  }, [workItem, repoPath])
-
   const Icon = workItem?.type === 'pr' ? GitPullRequest : CircleDot
   const body = details?.body ?? ''
   const comments = details?.comments ?? []
@@ -1182,10 +1164,12 @@ export default function GitHubItemDrawer({
                 repoPath={repoPath}
                 issueNumber={workItem.number}
                 onCommentAdded={(comment) => {
+                  // Why: skip refreshDetails() — gh api --cache 60s returns stale data
+                  // that overwrites the optimistic comment. The next drawer open (after
+                  // cache expiry) will pick up the server-confirmed version.
                   setDetails((prev) =>
                     prev ? { ...prev, comments: [...prev.comments, comment] } : prev
                   )
-                  refreshDetails()
                 }}
               />
             )}

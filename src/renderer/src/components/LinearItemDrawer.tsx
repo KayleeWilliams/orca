@@ -94,7 +94,6 @@ type EditSectionProps = {
 function EditSection({ issue, editState, onEditStateChange }: EditSectionProps): React.JSX.Element {
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false)
   const patchLinearIssue = useAppStore((s) => s.patchLinearIssue)
-  const fetchLinearIssue = useAppStore((s) => s.fetchLinearIssue)
   const { isPending, run } = useImmediateMutation()
 
   const {
@@ -126,9 +125,6 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
           onEditStateChange({ state: stateValue })
           patchLinearIssue(issue.id, { state: stateValue })
         },
-        onSuccess: () => {
-          fetchLinearIssue(issue.id)
-        },
         onRevert: () => {
           onEditStateChange({ state: prevState })
           patchLinearIssue(issue.id, { state: prevState })
@@ -136,7 +132,7 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
         onError: (err) => toast.error(err)
       })
     },
-    [issue.id, localState, states.data, patchLinearIssue, fetchLinearIssue, run, onEditStateChange]
+    [issue.id, localState, states.data, patchLinearIssue, run, onEditStateChange]
   )
 
   const handlePriorityChange = useCallback(
@@ -149,9 +145,6 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
           onEditStateChange({ priority })
           patchLinearIssue(issue.id, { priority })
         },
-        onSuccess: () => {
-          fetchLinearIssue(issue.id)
-        },
         onRevert: () => {
           onEditStateChange({ priority: prevPriority })
           patchLinearIssue(issue.id, { priority: prevPriority })
@@ -159,7 +152,7 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
         onError: (err) => toast.error(err)
       })
     },
-    [issue.id, localPriority, patchLinearIssue, fetchLinearIssue, run, onEditStateChange]
+    [issue.id, localPriority, patchLinearIssue, run, onEditStateChange]
   )
 
   const handleAssigneeChange = useCallback(
@@ -176,9 +169,6 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
           onEditStateChange({ assignee: newAssignee })
           patchLinearIssue(issue.id, { assignee: newAssignee })
         },
-        onSuccess: () => {
-          fetchLinearIssue(issue.id)
-        },
         onRevert: () => {
           onEditStateChange({ assignee: prevAssignee })
           patchLinearIssue(issue.id, { assignee: prevAssignee })
@@ -186,15 +176,7 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
         onError: (err) => toast.error(err)
       })
     },
-    [
-      issue.id,
-      localAssignee,
-      members.data,
-      patchLinearIssue,
-      fetchLinearIssue,
-      run,
-      onEditStateChange
-    ]
+    [issue.id, localAssignee, members.data, patchLinearIssue, run, onEditStateChange]
   )
 
   const handleLabelToggle = useCallback(
@@ -216,9 +198,6 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
           onEditStateChange({ labelIds: newLabelIds, labels: newLabels })
           patchLinearIssue(issue.id, { labelIds: newLabelIds, labels: newLabels })
         },
-        onSuccess: () => {
-          fetchLinearIssue(issue.id)
-        },
         onRevert: () => {
           onEditStateChange({ labelIds: prevLabelIds, labels: prevLabels })
           patchLinearIssue(issue.id, { labelIds: prevLabelIds, labels: prevLabels })
@@ -226,16 +205,7 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
         onError: (err) => toast.error(err)
       })
     },
-    [
-      issue.id,
-      localLabelIds,
-      localLabels,
-      labels.data,
-      patchLinearIssue,
-      fetchLinearIssue,
-      run,
-      onEditStateChange
-    ]
+    [issue.id, localLabelIds, localLabels, labels.data, patchLinearIssue, run, onEditStateChange]
   )
 
   const currentStateId = states.data.find(
