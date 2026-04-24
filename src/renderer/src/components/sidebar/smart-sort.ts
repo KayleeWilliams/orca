@@ -15,6 +15,38 @@ export type SmartSortOverride = {
   hasRecentPRSignal: boolean
 }
 
+// Why: building this index once at the sort call site reduces the smart-
+// score computation from O(N × E × T) to O(E) build + O(T) lookups per
+// worktree. Before, each worktree's score computation scanned the full
+// agentStatusByPaneKey map, which made the decorate-sort-undecorate
+// precompute pay the scan N times even though the map is global. Entries are
+// keyed by the `tabId` prefix of their paneKey (paneKey format: `${tabId}:…`).
+export function buildExplicitEntriesByTabId(
+  agentStatusByPaneKey: Record<string, AgentStatusEntry> | undefined
+): Map<string, AgentStatusEntry[]> {
+  const byTab = new Map<string, AgentStatusEntry[]>()
+  if (!agentStatusByPaneKey) {
+    return byTab
+  }
+  for (const entry of Object.values(agentStatusByPaneKey)) {
+    const colon = entry.paneKey.indexOf(':')
+    // Why: paneKey must be `${tabId}:${paneId}`. Skip malformed entries (no
+    // colon or leading colon) rather than bucketing them under an empty tabId,
+    // where they would never match a real tab and just waste memory.
+    if (colon <= 0) {
+      continue
+    }
+    const tabId = entry.paneKey.slice(0, colon)
+    const bucket = byTab.get(tabId)
+    if (bucket) {
+      bucket.push(entry)
+    } else {
+      byTab.set(tabId, [entry])
+    }
+  }
+  return byTab
+}
+
 export function hasRecentPRSignal(
   worktree: Worktree,
   repoMap: Map<string, Repo>,
@@ -40,7 +72,8 @@ function computeSmartScoreFromSignals(
   tabs: TerminalTab[],
   hasRecentPR: boolean,
   now: number,
-  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>,
+  explicitByTabId?: Map<string, AgentStatusEntry[]>
 ): number {
   const liveTabs = tabs.filter((t) => t.ptyId)
 
@@ -49,22 +82,17 @@ function computeSmartScoreFromSignals(
   // Why: explicit agent status (OSC 9999) is authoritative over heuristic title
   // parsing. Check explicit status first; fall through to heuristics for tabs
   // that have no explicit status entry.
-  const explicitEntries = agentStatusByPaneKey
-    ? Object.values(agentStatusByPaneKey).filter((e) =>
-        tabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
-      )
-    : []
-  const explicitByTabId = new Map<string, AgentStatusEntry[]>()
-  for (const entry of explicitEntries) {
-    const colonIndex = entry.paneKey.indexOf(':')
-    const tabId = colonIndex === -1 ? entry.paneKey : entry.paneKey.slice(0, colonIndex)
-    const existing = explicitByTabId.get(tabId)
-    if (existing) {
-      existing.push(entry)
-    } else {
-      explicitByTabId.set(tabId, [entry])
-    }
-  }
+  //
+  // Why the index parameter: when the caller precomputes the tabId → entries
+  // index once (via buildExplicitEntriesByTabId) and threads it through, each
+  // worktree does O(T) lookups instead of scanning the full map O(E) times.
+  // This matters because `sortWorktreesSmart` calls this function N times in a
+  // decorate-sort-undecorate pass; without the shared index we'd pay O(N×E×T)
+  // overall. When the index is absent and `agentStatusByPaneKey` is provided
+  // we build it inline to preserve backward compatibility for callers (tests,
+  // palette) that haven't adopted the optimization.
+  const resolvedExplicitByTabId =
+    explicitByTabId ?? buildExplicitEntriesByTabId(agentStatusByPaneKey)
 
   let hasExplicitWorking = false
   let hasExplicitBlocked = false
@@ -72,7 +100,7 @@ function computeSmartScoreFromSignals(
   let hasHeuristicBlocked = false
 
   for (const tab of liveTabs) {
-    const tabExplicitEntries = explicitByTabId.get(tab.id) ?? []
+    const tabExplicitEntries = resolvedExplicitByTabId.get(tab.id) ?? []
     // Why: compute freshness once per entry instead of recomputing inside each
     // of the three `.some(...)` passes below. Freshness is a pure function of
     // (entry, now) so filtering up front is equivalent and cheaper.
@@ -162,6 +190,13 @@ function getSmartSortCandidate(
  * `agentStatusByPaneKey` map O(N log N × E) times. When omitted, the
  * comparator falls back to computing scores per-comparison so existing call
  * sites that haven't adopted the optimization keep working.
+ *
+ * `explicitByTabId` is a secondary optimization: when `precomputedScores` is
+ * absent (fallback path), the comparator still has to call
+ * `computeSmartScoreFromSignals` per comparison. Passing the prebuilt tabId
+ * index avoids rescanning the full `agentStatusByPaneKey` map on every call.
+ * When this index is also absent, the inner function builds one inline per
+ * invocation to preserve backward compatibility.
  */
 export function buildWorktreeComparator(
   sortBy: SortBy,
@@ -171,7 +206,8 @@ export function buildWorktreeComparator(
   now: number = Date.now(),
   smartSortOverrides: Record<string, SmartSortOverride> | null = null,
   agentStatusByPaneKey?: Record<string, AgentStatusEntry>,
-  precomputedScores?: Map<string, number>
+  precomputedScores?: Map<string, number>,
+  explicitByTabId?: Map<string, AgentStatusEntry[]>
 ): (a: Worktree, b: Worktree) => number {
   return (a, b) => {
     switch (sortBy) {
@@ -193,13 +229,17 @@ export function buildWorktreeComparator(
           smartSortOverrides
         )
         // Why precomputedScores: the smart-score computation iterates
-        // `agentStatusByPaneKey` (O(E) per call). The comparator is invoked
-        // O(N log N) times by Array.sort, so without memoization we pay
-        // O(N log N × E). When the caller supplies a precomputed score map
-        // we get O(1) lookups; when it doesn't we preserve the old behavior
-        // to stay backward-compatible. Overrides bypass the precomputed map
-        // because the override intentionally freezes the candidate's inputs
-        // (tabs, hasRecentPRSignal) which may differ from the live score.
+        // `agentStatusByPaneKey` (O(E) per call) when no tabId index is
+        // threaded in, and still does O(T) lookups per worktree when one is.
+        // The comparator is invoked O(N log N) times by Array.sort, so without
+        // memoization we pay O(N log N × E) (or O(N log N × T) with the
+        // index). When the caller supplies a precomputed score map we get
+        // O(1) lookups; when it doesn't we preserve the old behavior and pass
+        // the optional `explicitByTabId` index to the inner function so the
+        // fallback path avoids the full-map scan as well. Overrides bypass the
+        // precomputed map because the override intentionally freezes the
+        // candidate's inputs (tabs, hasRecentPRSignal) which may differ from
+        // the live score.
         const scoreA =
           precomputedScores && !smartSortOverrides?.[a.id]
             ? (precomputedScores.get(a.id) ?? 0)
@@ -208,7 +248,8 @@ export function buildWorktreeComparator(
                 smartA.tabs,
                 smartA.hasRecentPRSignal,
                 now,
-                agentStatusByPaneKey
+                agentStatusByPaneKey,
+                explicitByTabId
               )
         const scoreB =
           precomputedScores && !smartSortOverrides?.[b.id]
@@ -218,7 +259,8 @@ export function buildWorktreeComparator(
                 smartB.tabs,
                 smartB.hasRecentPRSignal,
                 now,
-                agentStatusByPaneKey
+                agentStatusByPaneKey,
+                explicitByTabId
               )
         return (
           scoreB - scoreA ||
@@ -276,19 +318,39 @@ export function sortWorktreesSmart(
   }
 
   // Why precompute: Array.sort calls the comparator O(N log N) times and the
-  // smart-score computation iterates `agentStatusByPaneKey` each time. Compute
-  // each worktree's score once up front (decorate-sort-undecorate) so the
-  // comparator does O(1) map lookups instead of O(E) scans per comparison.
+  // smart-score computation needs to look up explicit-status entries per tab.
+  // We apply two layered optimizations:
+  //   1. Build the `explicitByTabId` index ONCE up front (O(E) work). Without
+  //      it, each per-worktree score would scan the full `agentStatusByPaneKey`
+  //      map to find matching entries, which is O(N × E × T) across all
+  //      worktrees — the same cost the decorate-sort-undecorate pass was
+  //      supposed to avoid.
+  //   2. Precompute each worktree's score once (decorate-sort-undecorate) so
+  //      the comparator does O(1) map lookups instead of re-scoring per
+  //      comparison.
+  // Combined cost: O(E) index build + O(N × T) scoring + O(N log N) sort,
+  // instead of the prior O(N × E × T + N log N).
   const now = Date.now()
+  const explicitByTabId = buildExplicitEntriesByTabId(agentStatusByPaneKey)
   const precomputedScores = new Map<string, number>(
     worktrees.map((w) => [
       w.id,
-      computeSmartScore(w, tabsByWorktree, repoMap, prCache, now, agentStatusByPaneKey)
+      computeSmartScore(
+        w,
+        tabsByWorktree,
+        repoMap,
+        prCache,
+        now,
+        agentStatusByPaneKey,
+        explicitByTabId
+      )
     ])
   )
 
   // Why: agentStatusByPaneKey is forwarded so the smart-score comparator can
   // use explicit agent status (OSC 9999) when ranking worktrees by recency.
+  // `explicitByTabId` is forwarded too so the comparator's fallback path (used
+  // for worktrees covered by smartSortOverrides) avoids rebuilding the index.
   return [...worktrees].sort(
     buildWorktreeComparator(
       'smart',
@@ -298,7 +360,8 @@ export function sortWorktreesSmart(
       now,
       null,
       agentStatusByPaneKey,
-      precomputedScores
+      precomputedScores,
+      explicitByTabId
     )
   )
 }
@@ -322,7 +385,8 @@ export function computeSmartScore(
   repoMap: Map<string, Repo> | null,
   prCache: Record<string, PRCacheEntry> | null,
   now: number = Date.now(),
-  agentStatusByPaneKey?: Record<string, AgentStatusEntry>
+  agentStatusByPaneKey?: Record<string, AgentStatusEntry>,
+  explicitByTabId?: Map<string, AgentStatusEntry[]>
 ): number {
   return computeSmartScoreFromSignals(
     worktree,
@@ -333,6 +397,7 @@ export function computeSmartScore(
     // stable on launch without reviving stale PRs after a cache miss resolves.
     repoMap ? hasRecentPRSignal(worktree, repoMap, prCache) : worktree.linkedPR !== null,
     now,
-    agentStatusByPaneKey
+    agentStatusByPaneKey,
+    explicitByTabId
   )
 }

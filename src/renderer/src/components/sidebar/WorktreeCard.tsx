@@ -122,6 +122,14 @@ const WorktreeCard = React.memo(function WorktreeCard({
   // so the downstream `status` memo doesn't invalidate on unrelated updates.
   const worktreeAgentEntries = useAppStore(
     useShallow((s) => {
+      // Why: short-circuit when the dashboard flag is off — the status memo
+      // below gates the explicit-status branch on AGENT_DASHBOARD_ENABLED, so
+      // scanning agentStatusByPaneKey for every worktree on every store change
+      // is pure overhead while the flag is false. Keeping the flag check inside
+      // the selector body preserves reactivity if the flag ever becomes dynamic.
+      if (!AGENT_DASHBOARD_ENABLED) {
+        return EMPTY_AGENT_ENTRIES
+      }
       const wtTabs = s.tabsByWorktree[worktree.id]
       if (!wtTabs || wtTabs.length === 0) {
         return EMPTY_AGENT_ENTRIES
@@ -379,7 +387,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
               {cardProps.includes('status') &&
                 (AGENT_DASHBOARD_ENABLED ? (
                   <AgentStatusHover worktreeId={worktree.id}>
-                    <span>
+                    {/* Why: make the hover trigger keyboard-focusable so
+                        keyboard-only users can open the hover panel (Radix
+                        HoverCardTrigger asChild does not promote a
+                        non-interactive child to focusable). */}
+                    <span
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Worktree status: ${status}. Show running agents.`}
+                    >
                       <StatusIndicator status={status} />
                     </span>
                   </AgentStatusHover>
