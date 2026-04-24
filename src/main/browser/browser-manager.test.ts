@@ -527,7 +527,8 @@ describe('browserManager', () => {
       setWindowOpenHandler: guestSetWindowOpenHandlerMock,
       on: guestOnMock,
       off: guestOffMock,
-      openDevTools: guestOpenDevToolsMock
+      openDevTools: guestOpenDevToolsMock,
+      close: vi.fn()
     }
     webContentsFromIdMock.mockReturnValue(guest)
 

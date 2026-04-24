@@ -55,7 +55,8 @@ function makeGuest(id: number) {
     executeJavaScript: guestExecuteJavaScriptMock,
     getZoomFactor: guestGetZoomFactorMock,
     capturePage: guestCapturePageMock,
-    getURL: vi.fn(() => 'https://example.com/')
+    getURL: vi.fn(() => 'https://example.com/'),
+    close: vi.fn()
   } as unknown as Electron.WebContents
 }
 

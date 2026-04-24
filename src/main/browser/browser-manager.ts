@@ -631,6 +631,14 @@ export class BrowserManager {
     const wcId = this.webContentsIdByTabId.get(browserTabId)
     if (wcId !== undefined) {
       this.tabIdByWebContentsId.delete(wcId)
+      // Why: webview.remove() in the renderer does not synchronously destroy
+      // the guest web contents — Chromium keeps its media session alive until
+      // GC, so media keys (F8 play/pause) still control a "dead" tab.
+      // Explicitly closing the web contents here tears it down immediately.
+      const wc = webContents.fromId(wcId)
+      if (wc && !wc.isDestroyed()) {
+        wc.close()
+      }
     }
     this.webContentsIdByTabId.delete(browserTabId)
     this.rendererWebContentsIdByTabId.delete(browserTabId)
