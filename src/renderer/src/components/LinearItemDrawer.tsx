@@ -516,8 +516,10 @@ export default function LinearItemDrawer({
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [editState, setEditState] = useState<LinearEditState | null>(null)
   const requestIdRef = useRef(0)
+  const hasEditedRef = useRef(false)
 
   const handleEditStateChange = useCallback((patch: Partial<LinearEditState>) => {
+    hasEditedRef.current = true
     setEditState((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
@@ -528,8 +530,10 @@ export default function LinearItemDrawer({
       setFullIssue(null)
       setComments([])
       setEditState(null)
+      hasEditedRef.current = false
       return
     }
+    hasEditedRef.current = false
     setComments([])
     setCommentsLoading(true)
     setEditState(initEditState(issue))
@@ -548,7 +552,11 @@ export default function LinearItemDrawer({
         if (issueResult) {
           const fetched = issueResult as LinearIssue
           setFullIssue(fetched)
-          setEditState(initEditState(fetched))
+          // Why: skip if the user already made optimistic edits — the fetch
+          // carries pre-edit data that would clobber in-flight changes.
+          if (!hasEditedRef.current) {
+            setEditState(initEditState(fetched))
+          }
         }
         setComments(commentsResult as LinearComment[])
       })

@@ -465,11 +465,12 @@ function GHEditSection({
   const repoLabels = useRepoLabels(repoPath)
   const repoAssignees = useRepoAssignees(repoPath)
 
-  // Why: sync local assignees when the detail fetch completes with real data,
-  // or reset when the drawer switches to a different item.
+  // Why: only reset on item change — omitting `assignees` prevents the
+  // detail fetch from clobbering in-flight optimistic assignee edits.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     setLocalAssignees(assignees)
-  }, [item.id, assignees])
+  }, [item.id])
 
   const handleStateChange = useCallback(
     (newState: 'open' | 'closed') => {
