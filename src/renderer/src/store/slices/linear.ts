@@ -234,9 +234,12 @@ export const createLinearSlice: StateCreator<AppState, [], [], LinearSlice> = (s
       const nextIssueCache = { ...s.linearIssueCache }
       const issueEntry = nextIssueCache[issueId]
       if (issueEntry?.data) {
+        // Why: set fetchedAt to 0 so the next fetchLinearIssue call
+        // actually hits IPC instead of returning the stale optimistic data.
         nextIssueCache[issueId] = {
           ...issueEntry,
-          data: { ...issueEntry.data, ...patch }
+          data: { ...issueEntry.data, ...patch },
+          fetchedAt: 0
         }
         changed = true
       }

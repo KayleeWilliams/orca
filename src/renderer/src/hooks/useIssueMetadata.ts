@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LinearWorkflowState, LinearLabel, LinearMember } from '../../../shared/types'
 
 type MetadataState<T> = {
@@ -45,7 +45,12 @@ export function useRepoLabels(repoPath: string | null): MetadataState<string[]> 
 
     activeKeyRef.current = repoPath
     const requestKey = repoPath
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({
+      ...s,
+      data: s.data.length ? ([] as typeof s.data) : s.data,
+      loading: true,
+      error: null
+    }))
     window.api.gh
       .listLabels({ repoPath })
       .then((labels) => {
@@ -96,7 +101,12 @@ export function useRepoAssignees(repoPath: string | null): MetadataState<string[
 
     activeKeyRef.current = repoPath
     const requestKey = repoPath
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({
+      ...s,
+      data: s.data.length ? ([] as typeof s.data) : s.data,
+      loading: true,
+      error: null
+    }))
     window.api.gh
       .listAssignableUsers({ repoPath })
       .then((users) => {
@@ -164,7 +174,12 @@ export function useTeamStates(teamId: string | null): MetadataState<LinearWorkfl
 
     activeKeyRef.current = teamId
     const requestKey = teamId
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({
+      ...s,
+      data: s.data.length ? ([] as typeof s.data) : s.data,
+      loading: true,
+      error: null
+    }))
     window.api.linear
       .teamStates({ teamId })
       .then((states) => {
@@ -215,7 +230,12 @@ export function useTeamLabels(teamId: string | null): MetadataState<LinearLabel[
 
     activeKeyRef.current = teamId
     const requestKey = teamId
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({
+      ...s,
+      data: s.data.length ? ([] as typeof s.data) : s.data,
+      loading: true,
+      error: null
+    }))
     window.api.linear
       .teamLabels({ teamId })
       .then((labels) => {
@@ -266,7 +286,12 @@ export function useTeamMembers(teamId: string | null): MetadataState<LinearMembe
 
     activeKeyRef.current = teamId
     const requestKey = teamId
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({
+      ...s,
+      data: s.data.length ? ([] as typeof s.data) : s.data,
+      loading: true,
+      error: null
+    }))
     window.api.linear
       .teamMembers({ teamId })
       .then((members) => {
@@ -293,57 +318,4 @@ export function useTeamMembers(teamId: string | null): MetadataState<LinearMembe
   return state
 }
 
-// ─── Helpers ───────────────────────────────────────────────
-
-/**
- * Wraps an immediate mutation (no undo delay) with loading/error state
- * and optimistic patching. Skips if the same key is already in-flight.
- */
-export function useImmediateMutation() {
-  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
-  const pendingRef = useRef(pendingKeys)
-  pendingRef.current = pendingKeys
-
-  const isPending = useCallback((key: string) => pendingKeys.has(key), [pendingKeys])
-
-  const run = useCallback(
-    async <T>(
-      key: string,
-      opts: {
-        mutate: () => Promise<T>
-        onOptimistic?: () => void
-        onSuccess?: (result: T) => void
-        onRevert?: () => void
-        onError?: (error: string) => void
-      }
-    ) => {
-      if (pendingRef.current.has(key)) {
-        return
-      }
-      setPendingKeys((prev) => new Set(prev).add(key))
-      opts.onOptimistic?.()
-      try {
-        const result = await opts.mutate()
-        const asResult = result as { ok?: boolean; error?: string }
-        if (asResult && asResult.ok === false) {
-          opts.onRevert?.()
-          opts.onError?.(asResult.error ?? 'Update failed')
-        } else {
-          opts.onSuccess?.(result)
-        }
-      } catch (err) {
-        opts.onRevert?.()
-        opts.onError?.(err instanceof Error ? err.message : 'Update failed')
-      } finally {
-        setPendingKeys((prev) => {
-          const next = new Set(prev)
-          next.delete(key)
-          return next
-        })
-      }
-    },
-    []
-  )
-
-  return { isPending, run }
-}
+export { useImmediateMutation } from './useImmediateMutation'
