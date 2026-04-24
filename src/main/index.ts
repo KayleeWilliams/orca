@@ -33,6 +33,8 @@ import { attachMainWindowServices } from './window/attach-main-window-services'
 import { createMainWindow } from './window/createMainWindow'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
+import { ClaudeAccountService } from './claude-accounts/service'
+import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service'
 import { openCodeHookService } from './opencode/hook-service'
 import { StarNagService } from './star-nag/service'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
@@ -49,6 +51,8 @@ let claudeUsage: ClaudeUsageStore | null = null
 let codexUsage: CodexUsageStore | null = null
 let codexAccounts: CodexAccountService | null = null
 let codexRuntimeHome: CodexRuntimeHomeService | null = null
+let claudeAccounts: ClaudeAccountService | null = null
+let claudeRuntimeAuth: ClaudeRuntimeAuthService | null = null
 let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
@@ -115,6 +119,14 @@ function openMainWindow(): BrowserWindow {
   if (!codexRuntimeHome) {
     throw new Error('Codex runtime home service must be initialized before opening the main window')
   }
+  if (!claudeAccounts) {
+    throw new Error('Claude account service must be initialized before opening the main window')
+  }
+  if (!claudeRuntimeAuth) {
+    throw new Error(
+      'Claude runtime auth service must be initialized before opening the main window'
+    )
+  }
 
   const window = createMainWindow(store, {
     getIsQuitting: () => isQuitting,
@@ -129,10 +141,17 @@ function openMainWindow(): BrowserWindow {
     claudeUsage,
     codexUsage,
     codexAccounts,
+    claudeAccounts,
     rateLimits,
     window.webContents.id
   )
-  attachMainWindowServices(window, store, runtime, () => codexRuntimeHome!.prepareForCodexLaunch())
+  attachMainWindowServices(
+    window,
+    store,
+    runtime,
+    () => codexRuntimeHome!.prepareForCodexLaunch(),
+    () => claudeRuntimeAuth!.prepareForClaudeLaunch()
+  )
   rateLimits.attach(window)
   rateLimits.start()
   window.on('closed', () => {
@@ -160,7 +179,10 @@ app.whenReady().then(async () => {
   rateLimits = new RateLimitService()
   codexRuntimeHome = new CodexRuntimeHomeService(store)
   codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome)
+  claudeRuntimeAuth = new ClaudeRuntimeAuthService(store)
+  claudeAccounts = new ClaudeAccountService(store, rateLimits, claudeRuntimeAuth)
   rateLimits.setCodexHomePathResolver(() => codexRuntimeHome!.prepareForRateLimitFetch())
+  rateLimits.setClaudeAuthPreparationResolver(() => claudeRuntimeAuth!.prepareForRateLimitFetch())
   runtime = new OrcaRuntimeService(store, stats)
   starNag = new StarNagService(store, stats)
   starNag.start()

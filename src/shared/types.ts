@@ -588,6 +588,34 @@ export type CodexRateLimitAccountsState = {
   activeAccountId: string | null
 }
 
+export type ClaudeManagedAccount = {
+  id: string
+  email: string
+  managedAuthPath: string
+  authMethod: 'subscription-oauth' | 'unknown'
+  organizationUuid?: string | null
+  organizationName?: string | null
+  createdAt: number
+  updatedAt: number
+  lastAuthenticatedAt: number
+}
+
+export type ClaudeManagedAccountSummary = {
+  id: string
+  email: string
+  authMethod: 'subscription-oauth' | 'unknown'
+  organizationUuid?: string | null
+  organizationName?: string | null
+  createdAt: number
+  updatedAt: number
+  lastAuthenticatedAt: number
+}
+
+export type ClaudeRateLimitAccountsState = {
+  accounts: ClaudeManagedAccountSummary[]
+  activeAccountId: string | null
+}
+
 /** All AI coding agents Orca knows how to launch. Used for the agent picker in the new-workspace
  *  flow and for the default-agent setting. Extend this union as new agents are added. */
 export type TuiAgent =
@@ -701,6 +729,11 @@ export type GlobalSettings = {
    *  analytics and external terminal sessions. */
   codexManagedAccounts: CodexManagedAccount[]
   activeCodexManagedAccountId: string | null
+  /** Why: Claude Code keeps conversations under one shared config root. Orca
+   *  persists only per-account auth material here so switching accounts does
+   *  not fork prior chat/session context the way CLAUDE_CONFIG_DIR swapping would. */
+  claudeManagedAccounts: ClaudeManagedAccount[]
+  activeClaudeManagedAccountId: string | null
   /** When true, each worktree gets its own shell history file so ArrowUp
    *  does not surface commands from other worktrees. Defaults to true.
    *  Disable to revert to shared global shell history. */

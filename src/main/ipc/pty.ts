@@ -10,7 +10,14 @@ import type { GlobalSettings } from '../../shared/types'
 import { openCodeHookService } from '../opencode/hook-service'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
-import type { IPtyProvider } from '../providers/types'
+import type { IPtyProvider, PtySpawnOptions } from '../providers/types'
+import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
+import { CLAUDE_AUTH_ENV_VARS, hasClaudeAuthEnvConflict } from '../claude-accounts/environment'
+import {
+  isClaudeAuthSwitchInProgress,
+  markClaudePtyExited,
+  markClaudePtySpawned
+} from '../claude-accounts/live-pty-gate'
 
 // ─── Provider Registry ──────────────────────────────────────────────
 // Routes PTY operations by connectionId. null = local provider.
@@ -41,6 +48,15 @@ function getProviderForPty(ptyId: string): IPtyProvider {
     return localProvider
   }
   return getProvider(connectionId)
+}
+
+function isClaudeLaunchCommand(command: string | undefined): boolean {
+  if (!command) {
+    return false
+  }
+  return /(^|[\s;&|('"`])(?:[^\s;&|('"`]*[\\/])?claude(?:\.cmd|\.exe)?($|[\s;&|)'"`])/i.test(
+    command
+  )
 }
 
 /** Register an SSH PTY provider for a connection. */
@@ -126,7 +142,8 @@ export function registerPtyHandlers(
   mainWindow: BrowserWindow,
   runtime?: OrcaRuntimeService,
   getSelectedCodexHomePath?: () => string | null,
-  getSettings?: () => GlobalSettings
+  getSettings?: () => GlobalSettings,
+  prepareClaudeAuth?: () => Promise<ClaudeRuntimeAuthPreparation>
 ): void {
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
@@ -182,6 +199,7 @@ export function registerPtyHandlers(
       onExit: (id, code) => {
         clearProviderPtyState(id)
         ptyOwnership.delete(id)
+        markClaudePtyExited(id)
         runtime?.onPtyExit(id, code)
       },
       onData: (id, data, timestamp) => runtime?.onPtyData(id, data, timestamp)
@@ -257,6 +275,7 @@ export function registerPtyHandlers(
       for (const { id } of killed) {
         clearProviderPtyState(id)
         ptyOwnership.delete(id)
+        markClaudePtyExited(id)
         runtime?.onPtyExit(id, -1)
       }
     }
@@ -283,6 +302,7 @@ export function registerPtyHandlers(
       // if the remote SSH session is already gone.
       void provider.shutdown(ptyId, false).catch(() => {})
       clearProviderPtyState(ptyId)
+      markClaudePtyExited(ptyId)
       runtime?.onPtyExit(ptyId, -1)
       return true
     }
@@ -306,16 +326,46 @@ export function registerPtyHandlers(
       }
     ) => {
       const provider = getProvider(args.connectionId)
-      const result = await provider.spawn({
+      const isClaudeLaunch = !args.connectionId && isClaudeLaunchCommand(args.command)
+      if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
+        throw new Error('A Claude account switch is in progress. Try again after it finishes.')
+      }
+      const claudeAuth = isClaudeLaunch && prepareClaudeAuth ? await prepareClaudeAuth() : null
+      if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
+        throw new Error('A Claude account switch is in progress. Try again after it finishes.')
+      }
+      if (claudeAuth?.stripAuthEnv && hasClaudeAuthEnvConflict(args.env)) {
+        throw new Error(
+          'This Claude launch defines explicit Anthropic auth environment variables. Remove those overrides before using a managed Claude account.'
+        )
+      }
+      const env = claudeAuth ? { ...args.env, ...claudeAuth.envPatch } : args.env
+      const envToDelete = claudeAuth?.stripAuthEnv
+        ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
+        : undefined
+      const spawnOptions: PtySpawnOptions = {
         cols: args.cols,
         rows: args.rows,
         cwd: args.cwd,
-        env: args.env,
-        command: args.command,
-        worktreeId: args.worktreeId,
-        sessionId: args.sessionId
-      })
+        env
+      }
+      if (envToDelete) {
+        spawnOptions.envToDelete = envToDelete
+      }
+      if (args.command !== undefined) {
+        spawnOptions.command = args.command
+      }
+      if (args.worktreeId !== undefined) {
+        spawnOptions.worktreeId = args.worktreeId
+      }
+      if (args.sessionId !== undefined) {
+        spawnOptions.sessionId = args.sessionId
+      }
+      const result = await provider.spawn(spawnOptions)
       ptyOwnership.set(result.id, args.connectionId ?? null)
+      if (isClaudeLaunch) {
+        markClaudePtySpawned(result.id)
+      }
       return result
     }
   )
@@ -359,6 +409,7 @@ export function registerPtyHandlers(
       /* session already dead — cleanup below handles the rest */
     } finally {
       ptyOwnership.delete(args.id)
+      markClaudePtyExited(args.id)
     }
   })
 

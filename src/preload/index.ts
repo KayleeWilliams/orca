@@ -478,6 +478,19 @@ const api = {
       ipcRenderer.invoke('codexAccounts:select', args)
   },
 
+  claudeAccounts: {
+    list: (): Promise<unknown> => ipcRenderer.invoke('claudeAccounts:list'),
+    add: (): Promise<unknown> => ipcRenderer.invoke('claudeAccounts:add'),
+    reauthenticate: (args: { accountId: string }): Promise<unknown> =>
+      ipcRenderer.invoke('claudeAccounts:reauthenticate', args),
+    remove: (args: { accountId: string }): Promise<unknown> =>
+      ipcRenderer.invoke('claudeAccounts:remove', args),
+    select: (args: { accountId: string | null }): Promise<unknown> =>
+      ipcRenderer.invoke('claudeAccounts:select', args),
+    refreshSystemDefaultFromCurrentLogin: (): Promise<unknown> =>
+      ipcRenderer.invoke('claudeAccounts:refreshSystemDefaultFromCurrentLogin')
+  },
+
   cli: {
     getInstallStatus: (): Promise<CliInstallStatus> => ipcRenderer.invoke('cli:getInstallStatus'),
     install: (): Promise<CliInstallStatus> => ipcRenderer.invoke('cli:install'),
