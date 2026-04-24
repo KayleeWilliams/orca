@@ -173,7 +173,6 @@ export type DetectedBrowserInfo = {
 export type PreflightStatus = {
   git: { installed: boolean }
   gh: { installed: boolean; authenticated: boolean }
-  linear: { connected: boolean }
 }
 
 export type RefreshAgentsResult = {

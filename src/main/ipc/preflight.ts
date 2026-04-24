@@ -4,7 +4,6 @@ import { promisify } from 'util'
 import path from 'path'
 import { TUI_AGENT_CONFIG } from '../../shared/tui-agent-config'
 import { hydrateShellPath, mergePathSegments } from '../startup/hydrate-shell-path'
-import { loadToken } from '../linear/client'
 import { getActiveMultiplexer } from './ssh'
 
 const execFileAsync = promisify(execFile)
@@ -12,7 +11,6 @@ const execFileAsync = promisify(execFile)
 export type PreflightStatus = {
   git: { installed: boolean }
   gh: { installed: boolean; authenticated: boolean }
-  linear: { connected: boolean }
 }
 
 // Why: cache the result so repeated Landing mounts don't re-spawn processes.
@@ -121,16 +119,9 @@ export async function runPreflightCheck(force = false): Promise<PreflightStatus>
 
   const ghAuthenticated = ghInstalled ? await isGhAuthenticated() : false
 
-  // Why: the Linear preflight check reads the encrypted token file rather
-  // than calling the Linear API. Actual API validation happens lazily on
-  // first use or on linear:connect — this avoids a network round-trip on
-  // every preflight check.
-  const linearConnected = loadToken() !== null
-
   cached = {
     git: { installed: gitInstalled },
-    gh: { installed: ghInstalled, authenticated: ghAuthenticated },
-    linear: { connected: linearConnected }
+    gh: { installed: ghInstalled, authenticated: ghAuthenticated }
   }
 
   return cached
