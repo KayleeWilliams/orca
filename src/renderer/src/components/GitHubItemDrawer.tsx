@@ -459,17 +459,26 @@ function GHEditSection({
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false)
   const [assigneePopoverOpen, setAssigneePopoverOpen] = useState(false)
   const [localAssignees, setLocalAssignees] = useState<string[]>(assignees)
+  const hasEditedAssigneesRef = useRef(false)
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
   const { isPending, run } = useImmediateMutation()
 
   const repoLabels = useRepoLabels(repoPath)
   const repoAssignees = useRepoAssignees(repoPath)
 
-  // Why: only reset on item change — omitting `assignees` prevents the
-  // detail fetch from clobbering in-flight optimistic assignee edits.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  // Why: sync local assignees when item changes or when the detail fetch
+  // resolves with real data — but skip if the user already made an
+  // optimistic edit so we don't clobber in-flight changes.
   useEffect(() => {
+    if (hasEditedAssigneesRef.current) {
+      return
+    }
     setLocalAssignees(assignees)
+  }, [item.id, assignees])
+
+  // Reset the dirty flag when we switch to a different item.
+  useEffect(() => {
+    hasEditedAssigneesRef.current = false
   }, [item.id])
 
   const handleStateChange = useCallback(
@@ -559,6 +568,7 @@ function GHEditSection({
         ? prevAssignees.filter((l) => l !== login)
         : [...prevAssignees, login]
 
+      hasEditedAssigneesRef.current = true
       if (isAssigned) {
         run('assignees', {
           mutate: () =>
@@ -1168,9 +1178,18 @@ export default function GitHubItemDrawer({
                   // Why: skip refreshDetails() — gh api --cache 60s returns stale data
                   // that overwrites the optimistic comment. The next drawer open (after
                   // cache expiry) will pick up the server-confirmed version.
-                  setDetails((prev) =>
-                    prev ? { ...prev, comments: [...prev.comments, comment] } : prev
-                  )
+                  setDetails((prev) => {
+                    if (prev) {
+                      return { ...prev, comments: [...prev.comments, comment] }
+                    }
+                    // Why: details may still be loading — create a minimal shell
+                    // so the optimistic comment isn't silently dropped.
+                    return {
+                      item: workItem,
+                      body: '',
+                      comments: [comment]
+                    }
+                  })
                 }}
               />
             )}

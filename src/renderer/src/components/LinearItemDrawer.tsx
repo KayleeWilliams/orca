@@ -541,11 +541,11 @@ export default function LinearItemDrawer({
     const requestId = requestIdRef.current
     setFullIssue(issue)
 
-    Promise.all([
-      window.api.linear.getIssue({ id: issue.id }),
-      window.api.linear.issueComments({ issueId: issue.id })
-    ])
-      .then(([issueResult, commentsResult]) => {
+    // Why: fetch issue and comments independently so a transient comments
+    // failure doesn't discard the successfully-fetched issue data.
+    window.api.linear
+      .getIssue({ id: issue.id })
+      .then((issueResult) => {
         if (requestId !== requestIdRef.current) {
           return
         }
@@ -557,6 +557,15 @@ export default function LinearItemDrawer({
           if (!hasEditedRef.current) {
             setEditState(initEditState(fetched))
           }
+        }
+      })
+      .catch(() => {})
+
+    window.api.linear
+      .issueComments({ issueId: issue.id })
+      .then((commentsResult) => {
+        if (requestId !== requestIdRef.current) {
+          return
         }
         setComments(commentsResult as LinearComment[])
       })
