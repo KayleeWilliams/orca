@@ -355,8 +355,12 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
           <span className="truncate text-xs text-muted-foreground">{localState.name}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-48 p-1" align="start" onClick={(e) => e.stopPropagation()}>
-        <div className="max-h-60 overflow-y-auto">
+      <PopoverContent
+        className="popover-scroll-content scrollbar-sleek w-48 p-1"
+        align="start"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div>
           {states.data.map((s) => (
             <button
               key={s.id}
@@ -636,13 +640,70 @@ export default function TaskPage(): React.JSX.Element {
   // Why: clicking a GitHub row opens this drawer for a read-only preview.
   // Drawer's "Use" button routes through the same direct-launch flow as the
   // row-level "Use" CTA so behavior is consistent regardless of entry point.
-  const [drawerWorkItem, setDrawerWorkItem] = useState<GitHubWorkItem | null>(null)
+  const [drawerWorkItemId, setDrawerWorkItemId] = useState<string | null>(null)
+  const [drawerWorkItemFallback, setDrawerWorkItemFallback] = useState<GitHubWorkItem | null>(null)
+
+  const workItemsCache = useAppStore((s) => s.workItemsCache)
+  const linearIssueCache = useAppStore((s) => s.linearIssueCache)
+  const linearSearchCache = useAppStore((s) => s.linearSearchCache)
+
+  // Why: derive the drawer's work item from the store cache so it reflects
+  // optimistic patches (e.g. table-cell status toggle). Falls back to the
+  // snapshot stored at click time for newly-created stubs not yet in the cache.
+  const drawerWorkItem = useMemo(() => {
+    if (!drawerWorkItemId) {
+      return null
+    }
+    for (const entry of Object.values(workItemsCache)) {
+      const found = entry?.data?.find((wi) => wi.id === drawerWorkItemId)
+      if (found) {
+        return found
+      }
+    }
+    return drawerWorkItemFallback
+  }, [drawerWorkItemId, workItemsCache, drawerWorkItemFallback])
+
+  const setDrawerWorkItem = useCallback((item: GitHubWorkItem | null) => {
+    setDrawerWorkItemId(item?.id ?? null)
+    setDrawerWorkItemFallback(item)
+  }, [])
   const [newIssueOpen, setNewIssueOpen] = useState(false)
   const [newIssueTitle, setNewIssueTitle] = useState('')
   const [newIssueBody, setNewIssueBody] = useState('')
   const [newIssueSubmitting, setNewIssueSubmitting] = useState(false)
 
-  const [drawerLinearIssue, setDrawerLinearIssue] = useState<LinearIssue | null>(null)
+  const [drawerLinearIssueId, setDrawerLinearIssueId] = useState<string | null>(null)
+  const [drawerLinearIssueFallback, setDrawerLinearIssueFallback] = useState<LinearIssue | null>(
+    null
+  )
+
+  // Why: the Linear table keeps its own fetched array, while cell edits patch
+  // the shared caches. Deriving the drawer item from those caches prevents a
+  // stale row snapshot from mounting in the drawer after status/priority edits.
+  const drawerLinearIssue = useMemo(() => {
+    if (!drawerLinearIssueId) {
+      return null
+    }
+
+    const cachedIssue = linearIssueCache[drawerLinearIssueId]?.data
+    if (cachedIssue) {
+      return cachedIssue
+    }
+
+    for (const entry of Object.values(linearSearchCache)) {
+      const found = entry?.data?.find((issue) => issue.id === drawerLinearIssueId)
+      if (found) {
+        return found
+      }
+    }
+
+    return drawerLinearIssueFallback
+  }, [drawerLinearIssueId, linearIssueCache, linearSearchCache, drawerLinearIssueFallback])
+
+  const setDrawerLinearIssue = useCallback((issue: LinearIssue | null) => {
+    setDrawerLinearIssueId(issue?.id ?? null)
+    setDrawerLinearIssueFallback(issue)
+  }, [])
 
   // Linear tab state
   const [linearIssues, setLinearIssues] = useState<LinearIssue[]>([])
@@ -913,7 +974,14 @@ export default function TaskPage(): React.JSX.Element {
     } finally {
       setNewIssueSubmitting(false)
     }
-  }, [isSingleRepo, newIssueBody, newIssueSubmitting, newIssueTitle, primaryRepo])
+  }, [
+    isSingleRepo,
+    newIssueBody,
+    newIssueSubmitting,
+    newIssueTitle,
+    primaryRepo,
+    setDrawerWorkItem
+  ])
 
   useEffect(() => {
     // Why: when a modal is open, let it own Esc dismissal.

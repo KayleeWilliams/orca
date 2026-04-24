@@ -225,6 +225,20 @@
   scrollbar-color: color-mix(in srgb, var(--muted-foreground, #737373) 48%, transparent) transparent;
 }
 
+[data-slot='popover-content'] {
+  max-height: var(--radix-popover-content-available-height);
+}
+
+/* Radix owns the available-height variable on PopoverContent. Make that same
+   node scrollable so Chromium scrollbar hit-testing stays inside the layer. */
+.popover-scroll-content {
+  color-scheme: dark;
+  max-height: min(15rem, var(--radix-popover-content-available-height, 15rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* ── Editor-style scrollbar (matches Monaco) ────────── */
 
 .scrollbar-editor {
@@ -1065,6 +1079,7 @@
   width: 100%;
   min-height: 56px;
   max-height: 240px;
+  overflow-y: auto;
   resize: none;
   padding: 6px 8px;
   border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
@@ -1077,6 +1092,22 @@
   font-size: 12px;
   line-height: 1.4;
   outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground, #737373) 34%, transparent) transparent;
+}
+
+.orca-diff-comment-popover-textarea::-webkit-scrollbar {
+  width: 12px;
+}
+
+.orca-diff-comment-popover-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.orca-diff-comment-popover-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground, #737373) 28%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
 
 .orca-diff-comment-popover-textarea:focus {

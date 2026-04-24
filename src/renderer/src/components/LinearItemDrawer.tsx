@@ -54,20 +54,13 @@ function formatRelativeTime(input: string): string {
   return formatter.format(diffDays, 'day')
 }
 
-function getStateTone(stateType: string): string {
-  switch (stateType) {
-    case 'completed':
-      return 'border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-300'
-    case 'canceled':
-    case 'cancelled':
-      return 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300'
-    case 'started':
-    case 'unstarted':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
-    case 'backlog':
-      return 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300'
-    default:
-      return 'border-border/50 bg-muted/30 text-muted-foreground'
+// Why: derive pill border/background/text from the actual Linear state color
+// so the pill always matches the colored dot, regardless of state type.
+function statePillStyle(color: string): React.CSSProperties {
+  return {
+    borderColor: `color-mix(in srgb, ${color} 30%, transparent)`,
+    backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
+    color
   }
 }
 
@@ -232,10 +225,8 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
           <button
             type="button"
             disabled={isPending('state') || states.loading}
-            className={cn(
-              'flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition hover:opacity-80 disabled:opacity-50',
-              getStateTone(localState.type)
-            )}
+            className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition hover:opacity-80 disabled:opacity-50"
+            style={statePillStyle(localState.color)}
           >
             <span
               className="inline-block size-2 rounded-full"
@@ -245,8 +236,8 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
             {isPending('state') && <LoaderCircle className="size-3 animate-spin" />}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-48 p-1" align="start">
-          <div className="max-h-60 overflow-y-auto">
+        <PopoverContent className="popover-scroll-content scrollbar-sleek w-48 p-1" align="start">
+          <div>
             {states.data.map((s) => (
               <button
                 key={s.id}
@@ -315,8 +306,8 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-48 p-1" align="start">
-          <div className="max-h-60 overflow-y-auto">
+        <PopoverContent className="popover-scroll-content scrollbar-sleek w-48 p-1" align="start">
+          <div>
             <button
               type="button"
               onClick={() => handleAssigneeChange('__unassign__')}
@@ -369,11 +360,11 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-52 p-1" align="start">
+        <PopoverContent className="popover-scroll-content scrollbar-sleek w-52 p-1" align="start">
           {labels.error ? (
             <div className="px-2 py-3 text-center text-[12px] text-destructive">{labels.error}</div>
           ) : (
-            <div className="max-h-60 overflow-y-auto">
+            <div>
               {labels.data.map((label) => (
                 <button
                   key={label.id}

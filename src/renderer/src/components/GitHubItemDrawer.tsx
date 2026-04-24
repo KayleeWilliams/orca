@@ -690,13 +690,13 @@ function GHEditSection({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-52 p-1" align="start">
+        <PopoverContent className="popover-scroll-content scrollbar-sleek w-52 p-1" align="start">
           {repoLabels.error ? (
             <div className="px-2 py-3 text-center text-[12px] text-destructive">
               {repoLabels.error}
             </div>
           ) : (
-            <div className="max-h-60 overflow-y-auto">
+            <div>
               {repoLabels.data.map((label) => (
                 <button
                   key={label}
@@ -747,13 +747,13 @@ function GHEditSection({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-52 p-1" align="start">
+        <PopoverContent className="popover-scroll-content scrollbar-sleek w-52 p-1" align="start">
           {repoAssignees.error ? (
             <div className="px-2 py-3 text-center text-[12px] text-destructive">
               {repoAssignees.error}
             </div>
           ) : (
-            <div className="max-h-60 overflow-y-auto">
+            <div>
               {repoAssignees.data.map((login) => (
                 <button
                   key={login}
