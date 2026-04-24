@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 import { CHECK_COLOR, CHECK_ICON } from '@/components/right-sidebar/checks-helpers'
 import { useAppStore } from '@/store'
 import { useRepoLabels, useRepoAssignees, useImmediateMutation } from '@/hooks/useIssueMetadata'
-import { useDeferredMutation } from '@/hooks/useDeferredMutation'
+
 import type {
   GitHubPRFile,
   GitHubPRFileContents,
@@ -461,7 +461,6 @@ function GHEditSection({
   const [localAssignees, setLocalAssignees] = useState<string[]>(assignees)
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
   const { isPending, run } = useImmediateMutation()
-  const deferMutation = useDeferredMutation()
 
   const repoLabels = useRepoLabels(repoPath)
   const repoAssignees = useRepoAssignees(repoPath)
@@ -478,9 +477,7 @@ function GHEditSection({
         return
       }
       const prevState = localState
-      deferMutation({
-        key: 'state',
-        description: newState === 'closed' ? 'Issue closed' : 'Issue reopened',
+      run('state', {
         mutate: () =>
           window.api.gh.updateIssue({
             repoPath,
@@ -501,7 +498,7 @@ function GHEditSection({
         onError: (err) => toast.error(err)
       })
     },
-    [item.id, item.number, localState, repoPath, patchWorkItem, deferMutation, onStateChange]
+    [item.id, item.number, localState, repoPath, patchWorkItem, run, onStateChange]
   )
 
   const handleLabelToggle = useCallback(
@@ -530,9 +527,7 @@ function GHEditSection({
           onError: (err) => toast.error(err)
         })
       } else {
-        deferMutation({
-          key: 'labels',
-          description: `Label "${label}" removed`,
+        run('labels', {
           mutate: () =>
             window.api.gh.updateIssue({
               repoPath,
@@ -552,7 +547,7 @@ function GHEditSection({
         })
       }
     },
-    [item.id, item.number, localLabels, repoPath, patchWorkItem, run, deferMutation, onLabelsChange]
+    [item.id, item.number, localLabels, repoPath, patchWorkItem, run, onLabelsChange]
   )
 
   const handleAssigneeToggle = useCallback(
@@ -564,9 +559,7 @@ function GHEditSection({
         : [...prevAssignees, login]
 
       if (isAssigned) {
-        deferMutation({
-          key: `assignee-${login}`,
-          description: `${login} unassigned`,
+        run('assignees', {
           mutate: () =>
             window.api.gh.updateIssue({
               repoPath,
@@ -601,7 +594,7 @@ function GHEditSection({
         })
       }
     },
-    [item.number, repoPath, localAssignees, patchWorkItem, run, deferMutation]
+    [item.number, repoPath, localAssignees, run]
   )
 
   if (item.type === 'pr') {
@@ -785,7 +778,7 @@ function GHCommentFooter({
 }: {
   repoPath: string
   issueNumber: number
-  onCommentAdded: () => void
+  onCommentAdded: (comment: PRComment) => void
 }): React.JSX.Element {
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -812,11 +805,18 @@ function GHCommentFooter({
         number: issueNumber,
         body: trimmed
       })
-      const typed = result as { ok: boolean; error?: string }
+      const typed = result as { ok: boolean; id?: number; error?: string }
       if (typed.ok) {
         setBody('')
         toast.success('Comment added')
-        onCommentAdded()
+        onCommentAdded({
+          id: typeof typed.id === 'number' ? typed.id : Date.now(),
+          author: 'You',
+          authorAvatarUrl: '',
+          body: trimmed,
+          createdAt: new Date().toISOString(),
+          url: ''
+        })
       } else {
         toast.error(typed.error ?? 'Failed to add comment')
       }
@@ -1181,7 +1181,12 @@ export default function GitHubItemDrawer({
               <GHCommentFooter
                 repoPath={repoPath}
                 issueNumber={workItem.number}
-                onCommentAdded={refreshDetails}
+                onCommentAdded={(comment) => {
+                  setDetails((prev) =>
+                    prev ? { ...prev, comments: [...prev.comments, comment] } : prev
+                  )
+                  refreshDetails()
+                }}
               />
             )}
 

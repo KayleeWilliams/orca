@@ -11,6 +11,11 @@ const METADATA_TTL = 300_000 // 5 min
 
 type CachedMetadata<T> = { data: T; fetchedAt: number }
 
+function isCacheFresh<T>(cache: Map<string, CachedMetadata<T>>, key: string): boolean {
+  const entry = cache.get(key)
+  return !!entry && Date.now() - entry.fetchedAt < METADATA_TTL
+}
+
 // ─── GitHub ────────────────────────────────────────────────
 
 const ghLabelCache = new Map<string, CachedMetadata<string[]>>()
@@ -22,35 +27,40 @@ export function useRepoLabels(repoPath: string | null): MetadataState<string[]> 
     loading: false,
     error: null
   })
-  const fetchedForRef = useRef<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!repoPath) {
       return
     }
-    if (fetchedForRef.current === repoPath) {
-      return
-    }
-    fetchedForRef.current = repoPath
 
     const cached = ghLabelCache.get(repoPath)
-    if (cached && Date.now() - cached.fetchedAt < METADATA_TTL) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (cached && isCacheFresh(ghLabelCache, repoPath)) {
+      if (activeKeyRef.current !== repoPath) {
+        setState({ data: cached.data, loading: false, error: null })
+        activeKeyRef.current = repoPath
+      }
       return
     }
 
+    activeKeyRef.current = repoPath
+    const requestKey = repoPath
     setState((s) => ({ ...s, loading: true, error: null }))
     window.api.gh
       .listLabels({ repoPath })
       .then((labels) => {
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
         const data = labels as string[]
         ghLabelCache.set(repoPath, { data, fetchedAt: Date.now() })
         setState({ data, loading: false, error: null })
       })
       .catch((err) => {
-        // Why: allow retry on next render by resetting the guard. Without this,
-        // the hook would permanently skip re-fetching after a transient failure.
-        fetchedForRef.current = null
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
+        activeKeyRef.current = null
         setState((s) => ({
           ...s,
           loading: false,
@@ -68,33 +78,40 @@ export function useRepoAssignees(repoPath: string | null): MetadataState<string[
     loading: false,
     error: null
   })
-  const fetchedForRef = useRef<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!repoPath) {
       return
     }
-    if (fetchedForRef.current === repoPath) {
-      return
-    }
-    fetchedForRef.current = repoPath
 
     const cached = ghAssigneeCache.get(repoPath)
-    if (cached && Date.now() - cached.fetchedAt < METADATA_TTL) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (cached && isCacheFresh(ghAssigneeCache, repoPath)) {
+      if (activeKeyRef.current !== repoPath) {
+        setState({ data: cached.data, loading: false, error: null })
+        activeKeyRef.current = repoPath
+      }
       return
     }
 
+    activeKeyRef.current = repoPath
+    const requestKey = repoPath
     setState((s) => ({ ...s, loading: true, error: null }))
     window.api.gh
       .listAssignableUsers({ repoPath })
       .then((users) => {
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
         const data = users as string[]
         ghAssigneeCache.set(repoPath, { data, fetchedAt: Date.now() })
         setState({ data, loading: false, error: null })
       })
       .catch((err) => {
-        fetchedForRef.current = null
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
+        activeKeyRef.current = null
         setState((s) => ({
           ...s,
           loading: false,
@@ -112,39 +129,57 @@ const linearStateCache = new Map<string, CachedMetadata<LinearWorkflowState[]>>(
 const linearLabelCache = new Map<string, CachedMetadata<LinearLabel[]>>()
 const linearMemberCache = new Map<string, CachedMetadata<LinearMember[]>>()
 
+export function clearLinearMetadataCache(): void {
+  linearStateCache.clear()
+  linearLabelCache.clear()
+  linearMemberCache.clear()
+}
+
+export function clearGitHubMetadataCache(): void {
+  ghLabelCache.clear()
+  ghAssigneeCache.clear()
+}
+
 export function useTeamStates(teamId: string | null): MetadataState<LinearWorkflowState[]> {
   const [state, setState] = useState<MetadataState<LinearWorkflowState[]>>({
     data: [],
     loading: false,
     error: null
   })
-  const fetchedForRef = useRef<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!teamId) {
       return
     }
-    if (fetchedForRef.current === teamId) {
-      return
-    }
-    fetchedForRef.current = teamId
 
     const cached = linearStateCache.get(teamId)
-    if (cached && Date.now() - cached.fetchedAt < METADATA_TTL) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (cached && isCacheFresh(linearStateCache, teamId)) {
+      if (activeKeyRef.current !== teamId) {
+        setState({ data: cached.data, loading: false, error: null })
+        activeKeyRef.current = teamId
+      }
       return
     }
 
+    activeKeyRef.current = teamId
+    const requestKey = teamId
     setState((s) => ({ ...s, loading: true, error: null }))
     window.api.linear
       .teamStates({ teamId })
       .then((states) => {
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
         const data = states as LinearWorkflowState[]
         linearStateCache.set(teamId, { data, fetchedAt: Date.now() })
         setState({ data, loading: false, error: null })
       })
       .catch((err) => {
-        fetchedForRef.current = null
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
+        activeKeyRef.current = null
         setState((s) => ({
           ...s,
           loading: false,
@@ -162,33 +197,40 @@ export function useTeamLabels(teamId: string | null): MetadataState<LinearLabel[
     loading: false,
     error: null
   })
-  const fetchedForRef = useRef<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!teamId) {
       return
     }
-    if (fetchedForRef.current === teamId) {
-      return
-    }
-    fetchedForRef.current = teamId
 
     const cached = linearLabelCache.get(teamId)
-    if (cached && Date.now() - cached.fetchedAt < METADATA_TTL) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (cached && isCacheFresh(linearLabelCache, teamId)) {
+      if (activeKeyRef.current !== teamId) {
+        setState({ data: cached.data, loading: false, error: null })
+        activeKeyRef.current = teamId
+      }
       return
     }
 
+    activeKeyRef.current = teamId
+    const requestKey = teamId
     setState((s) => ({ ...s, loading: true, error: null }))
     window.api.linear
       .teamLabels({ teamId })
       .then((labels) => {
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
         const data = labels as LinearLabel[]
         linearLabelCache.set(teamId, { data, fetchedAt: Date.now() })
         setState({ data, loading: false, error: null })
       })
       .catch((err) => {
-        fetchedForRef.current = null
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
+        activeKeyRef.current = null
         setState((s) => ({
           ...s,
           loading: false,
@@ -206,33 +248,40 @@ export function useTeamMembers(teamId: string | null): MetadataState<LinearMembe
     loading: false,
     error: null
   })
-  const fetchedForRef = useRef<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!teamId) {
       return
     }
-    if (fetchedForRef.current === teamId) {
-      return
-    }
-    fetchedForRef.current = teamId
 
     const cached = linearMemberCache.get(teamId)
-    if (cached && Date.now() - cached.fetchedAt < METADATA_TTL) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (cached && isCacheFresh(linearMemberCache, teamId)) {
+      if (activeKeyRef.current !== teamId) {
+        setState({ data: cached.data, loading: false, error: null })
+        activeKeyRef.current = teamId
+      }
       return
     }
 
+    activeKeyRef.current = teamId
+    const requestKey = teamId
     setState((s) => ({ ...s, loading: true, error: null }))
     window.api.linear
       .teamMembers({ teamId })
       .then((members) => {
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
         const data = members as LinearMember[]
         linearMemberCache.set(teamId, { data, fetchedAt: Date.now() })
         setState({ data, loading: false, error: null })
       })
       .catch((err) => {
-        fetchedForRef.current = null
+        if (activeKeyRef.current !== requestKey) {
+          return
+        }
+        activeKeyRef.current = null
         setState((s) => ({
           ...s,
           loading: false,
@@ -247,19 +296,13 @@ export function useTeamMembers(teamId: string | null): MetadataState<LinearMembe
 // ─── Helpers ───────────────────────────────────────────────
 
 /**
- * Simple multi-select toggle helper. Returns a new array with the item
- * toggled in or out.
- */
-export function toggleInArray<T>(arr: T[], item: T): T[] {
-  return arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item]
-}
-
-/**
  * Wraps an immediate mutation (no undo delay) with loading/error state
- * and optimistic patching.
+ * and optimistic patching. Skips if the same key is already in-flight.
  */
 export function useImmediateMutation() {
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
+  const pendingRef = useRef(pendingKeys)
+  pendingRef.current = pendingKeys
 
   const isPending = useCallback((key: string) => pendingKeys.has(key), [pendingKeys])
 
@@ -274,6 +317,9 @@ export function useImmediateMutation() {
         onError?: (error: string) => void
       }
     ) => {
+      if (pendingRef.current.has(key)) {
+        return
+      }
       setPendingKeys((prev) => new Set(prev).add(key))
       opts.onOptimistic?.()
       try {

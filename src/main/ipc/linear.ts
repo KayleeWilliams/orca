@@ -70,11 +70,27 @@ export function registerLinearHandlers(): void {
       if (typeof args?.id !== 'string' || !args.id.trim()) {
         return { ok: false, error: 'Issue ID is required' }
       }
-      // Why: IPC args are untyped at runtime — validate the updates object is
-      // present and is a plain object to prevent the Linear SDK from receiving
-      // unexpected primitives or null values.
+      // Why: IPC args are untyped at runtime — validate the updates object and
+      // individual fields to prevent the Linear SDK from receiving unexpected
+      // primitives that would produce confusing API errors.
       if (!args.updates || typeof args.updates !== 'object') {
         return { ok: false, error: 'Updates object is required' }
+      }
+      const u = args.updates
+      if (u.stateId !== undefined && (typeof u.stateId !== 'string' || !u.stateId.trim())) {
+        return { ok: false, error: 'Invalid state ID' }
+      }
+      if (
+        u.priority !== undefined &&
+        (!Number.isInteger(u.priority) || u.priority < 0 || u.priority > 4)
+      ) {
+        return { ok: false, error: 'Priority must be an integer 0-4' }
+      }
+      if (
+        u.labelIds !== undefined &&
+        (!Array.isArray(u.labelIds) || !u.labelIds.every((id: unknown) => typeof id === 'string'))
+      ) {
+        return { ok: false, error: 'Label IDs must be an array of strings' }
       }
       return updateIssue(args.id.trim(), args.updates)
     }

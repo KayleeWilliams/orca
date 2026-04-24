@@ -181,13 +181,11 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     'gh:updateIssue',
     (_event, args: { repoPath: string; number: number; updates: GitHubIssueUpdate }) => {
       const repo = assertRegisteredRepo(args.repoPath, store)
-      // Why: the renderer sends untyped IPC args — validate the issue number is a
-      // positive integer and the updates object is present to prevent gh CLI misuse.
       if (typeof args.number !== 'number' || !Number.isInteger(args.number) || args.number < 1) {
-        throw new Error('Invalid issue number')
+        return { ok: false, error: 'Invalid issue number' }
       }
       if (!args.updates || typeof args.updates !== 'object') {
-        throw new Error('Updates object is required')
+        return { ok: false, error: 'Updates object is required' }
       }
       return updateIssue(repo.path, args.number, args.updates)
     }
@@ -198,10 +196,10 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     (_event, args: { repoPath: string; number: number; body: string }) => {
       const repo = assertRegisteredRepo(args.repoPath, store)
       if (typeof args.number !== 'number' || !Number.isInteger(args.number) || args.number < 1) {
-        throw new Error('Invalid issue number')
+        return { ok: false, error: 'Invalid issue number' }
       }
       if (!args.body?.trim()) {
-        throw new Error('Comment body required')
+        return { ok: false, error: 'Comment body required' }
       }
       return addIssueComment(repo.path, args.number, args.body.trim())
     }

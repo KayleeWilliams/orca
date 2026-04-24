@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowRight, ExternalLink, LoaderCircle, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
+
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -118,6 +119,7 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
 
       const prevState = localState
       const stateValue = { name: newState.name, type: newState.type, color: newState.color }
+
       run('state', {
         mutate: () => window.api.linear.updateIssue({ id: issue.id, updates: { stateId } }),
         onOptimistic: () => {
@@ -199,7 +201,8 @@ function EditSection({ issue, editState, onEditStateChange }: EditSectionProps):
     (labelId: string) => {
       const prevLabelIds = localLabelIds
       const prevLabels = localLabels
-      const newLabelIds = prevLabelIds.includes(labelId)
+      const isRemoving = prevLabelIds.includes(labelId)
+      const newLabelIds = isRemoving
         ? prevLabelIds.filter((id) => id !== labelId)
         : [...prevLabelIds, labelId]
       const newLabels = newLabelIds
@@ -585,10 +588,12 @@ export default function LinearItemDrawer({
           setCommentsLoading(false)
         }
       })
-  }, [issue])
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id])
 
   // Why: same pointer-events fix as GitHubItemDrawer — Radix may leave
   // pointer-events: none on body when overlays transition.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!issue) {
       return
@@ -610,7 +615,7 @@ export default function LinearItemDrawer({
     return () => {
       cancelled = true
     }
-  }, [issue])
+  }, [issue?.id])
 
   const handleCommentAdded = useCallback((comment: LocalComment) => {
     setComments((prev) => [

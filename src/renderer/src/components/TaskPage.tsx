@@ -18,6 +18,7 @@ import {
   X
 } from 'lucide-react'
 import { toast } from 'sonner'
+
 import { useAppStore } from '@/store'
 import { useRepoMap } from '@/store/selectors'
 import { Button } from '@/components/ui/button'
@@ -175,7 +176,8 @@ function GHStatusCell({
 }): React.JSX.Element {
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
   const [localState, setLocalState] = useState(item.state)
-  const [pending, setPending] = useState(false)
+  const [open, setOpen] = useState(false)
+  const reqRef = useRef(0)
 
   useEffect(() => {
     setLocalState(item.state)
@@ -186,27 +188,30 @@ function GHStatusCell({
       if (newState === localState || !repoPath || item.type !== 'issue') {
         return
       }
-      const prevState = localState
+      reqRef.current += 1
+      const reqId = reqRef.current
       setLocalState(newState)
       patchWorkItem(item.id, { state: newState })
-      setPending(true)
       window.api.gh
         .updateIssue({ repoPath, number: item.number, updates: { state: newState } })
         .then((result) => {
+          if (reqId !== reqRef.current) {
+            return
+          }
           const typed = result as { ok?: boolean; error?: string }
           if (typed && typed.ok === false) {
-            setLocalState(prevState)
-            patchWorkItem(item.id, { state: prevState })
-            toast.error(typed.error ?? 'Failed to update status')
+            setLocalState(newState === 'closed' ? 'open' : 'closed')
+            patchWorkItem(item.id, { state: newState === 'closed' ? 'open' : 'closed' })
+            toast.error(typed.error ?? 'Failed to update state')
           }
         })
         .catch(() => {
-          setLocalState(prevState)
-          patchWorkItem(item.id, { state: prevState })
-          toast.error('Failed to update status')
-        })
-        .finally(() => {
-          setPending(false)
+          if (reqId !== reqRef.current) {
+            return
+          }
+          setLocalState(newState === 'closed' ? 'open' : 'closed')
+          patchWorkItem(item.id, { state: newState === 'closed' ? 'open' : 'closed' })
+          toast.error('Failed to update state')
         })
     },
     [item.id, item.number, item.type, localState, repoPath, patchWorkItem]
@@ -226,27 +231,28 @@ function GHStatusCell({
   }
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           onClick={(e) => e.stopPropagation()}
-          disabled={pending}
           className={cn(
-            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition hover:opacity-80 disabled:opacity-50',
+            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition hover:opacity-80',
             localState === 'closed'
               ? 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300'
               : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
           )}
         >
           {localState === 'closed' ? 'Closed' : 'Open'}
-          {pending && <LoaderCircle className="ml-1 inline size-3 animate-spin" />}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-36 p-1" align="start" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
-          onClick={() => handleStateChange('open')}
+          onClick={() => {
+            handleStateChange('open')
+            setOpen(false)
+          }}
           className={cn(
             'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent',
             localState === 'open' && 'bg-accent/50'
@@ -257,7 +263,10 @@ function GHStatusCell({
         </button>
         <button
           type="button"
-          onClick={() => handleStateChange('closed')}
+          onClick={() => {
+            handleStateChange('closed')
+            setOpen(false)
+          }}
           className={cn(
             'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent',
             localState === 'closed' && 'bg-accent/50'
@@ -275,7 +284,7 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
   const patchLinearIssue = useAppStore((s) => s.patchLinearIssue)
   const fetchLinearIssue = useAppStore((s) => s.fetchLinearIssue)
   const [localState, setLocalState] = useState(issue.state)
-  const [pending, setPending] = useState(false)
+  const reqRef = useRef(0)
 
   useEffect(() => {
     setLocalState(issue.state)
@@ -291,46 +300,52 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
         return
       }
 
-      const prevState = localState
       const stateValue = { name: newState.name, type: newState.type, color: newState.color }
+      reqRef.current += 1
+      const reqId = reqRef.current
+
       setLocalState(stateValue)
       patchLinearIssue(issue.id, { state: stateValue })
-      setPending(true)
       window.api.linear
         .updateIssue({ id: issue.id, updates: { stateId } })
         .then((result) => {
+          if (reqId !== reqRef.current) {
+            return
+          }
           const typed = result as { ok?: boolean; error?: string }
           if (typed && typed.ok === false) {
-            setLocalState(prevState)
-            patchLinearIssue(issue.id, { state: prevState })
+            setLocalState(issue.state)
+            patchLinearIssue(issue.id, { state: issue.state })
             toast.error(typed.error ?? 'Failed to update status')
           } else {
             fetchLinearIssue(issue.id)
           }
         })
         .catch(() => {
-          setLocalState(prevState)
-          patchLinearIssue(issue.id, { state: prevState })
+          if (reqId !== reqRef.current) {
+            return
+          }
+          setLocalState(issue.state)
+          patchLinearIssue(issue.id, { state: issue.state })
           toast.error('Failed to update status')
         })
-        .finally(() => {
-          setPending(false)
-        })
     },
-    [issue.id, localState, states.data, patchLinearIssue, fetchLinearIssue]
+    [issue.id, issue.state, states.data, patchLinearIssue, fetchLinearIssue]
   )
 
   const currentStateId = states.data.find(
     (s) => s.name === localState.name && s.type === localState.type
   )?.id
 
+  const [open, setOpen] = useState(false)
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           onClick={(e) => e.stopPropagation()}
-          disabled={pending || states.loading}
+          disabled={states.loading}
           className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 transition hover:bg-muted/60 disabled:opacity-50"
         >
           <span
@@ -338,7 +353,6 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
             style={{ backgroundColor: localState.color }}
           />
           <span className="truncate text-xs text-muted-foreground">{localState.name}</span>
-          {pending && <LoaderCircle className="size-3 animate-spin text-muted-foreground" />}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-48 p-1" align="start" onClick={(e) => e.stopPropagation()}>
@@ -347,7 +361,10 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
             <button
               key={s.id}
               type="button"
-              onClick={() => handleStateChange(s.id)}
+              onClick={() => {
+                handleStateChange(s.id)
+                setOpen(false)
+              }}
               className={cn(
                 'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent',
                 currentStateId === s.id && 'bg-accent/50'
@@ -371,6 +388,7 @@ function LinearPriorityCell({ issue }: { issue: LinearIssue }): React.JSX.Elemen
   const fetchLinearIssue = useAppStore((s) => s.fetchLinearIssue)
   const [localPriority, setLocalPriority] = useState(issue.priority)
   const [pending, setPending] = useState(false)
+  const reqRef = useRef(0)
 
   useEffect(() => {
     setLocalPriority(issue.priority)
@@ -381,36 +399,48 @@ function LinearPriorityCell({ issue }: { issue: LinearIssue }): React.JSX.Elemen
       if (priority === localPriority) {
         return
       }
-      const prevPriority = localPriority
+      reqRef.current += 1
+      const reqId = reqRef.current
       setLocalPriority(priority)
       patchLinearIssue(issue.id, { priority })
       setPending(true)
       window.api.linear
         .updateIssue({ id: issue.id, updates: { priority } })
         .then((result) => {
+          if (reqId !== reqRef.current) {
+            return
+          }
           const typed = result as { ok?: boolean; error?: string }
           if (typed && typed.ok === false) {
-            setLocalPriority(prevPriority)
-            patchLinearIssue(issue.id, { priority: prevPriority })
+            setLocalPriority(issue.priority)
+            patchLinearIssue(issue.id, { priority: issue.priority })
             toast.error(typed.error ?? 'Failed to update priority')
           } else {
             fetchLinearIssue(issue.id)
           }
         })
         .catch(() => {
-          setLocalPriority(prevPriority)
-          patchLinearIssue(issue.id, { priority: prevPriority })
+          if (reqId !== reqRef.current) {
+            return
+          }
+          setLocalPriority(issue.priority)
+          patchLinearIssue(issue.id, { priority: issue.priority })
           toast.error('Failed to update priority')
         })
         .finally(() => {
+          if (reqId !== reqRef.current) {
+            return
+          }
           setPending(false)
         })
     },
-    [issue.id, localPriority, patchLinearIssue, fetchLinearIssue]
+    [issue.id, issue.priority, localPriority, patchLinearIssue, fetchLinearIssue]
   )
 
+  const [open, setOpen] = useState(false)
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -427,7 +457,10 @@ function LinearPriorityCell({ issue }: { issue: LinearIssue }): React.JSX.Elemen
           <button
             key={p}
             type="button"
-            onClick={() => handlePriorityChange(p)}
+            onClick={() => {
+              handlePriorityChange(p)
+              setOpen(false)
+            }}
             className={cn(
               'flex w-full items-center rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent',
               localPriority === p && 'bg-accent/50'

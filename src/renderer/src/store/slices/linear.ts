@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type { LinearViewer, LinearConnectionStatus, LinearIssue } from '../../../../shared/types'
 import type { CacheEntry } from './github'
+import { clearLinearMetadataCache } from '../../hooks/useIssueMetadata'
 
 const CACHE_TTL = 60_000 // 60s — same as GitHub work-items TTL
 const MAX_CACHE_ENTRIES = 500
@@ -102,6 +103,7 @@ export const createLinearSlice: StateCreator<AppState, [], [], LinearSlice> = (s
     inflightIssueRequests.clear()
     inflightSearchRequests.clear()
     inflightListRequests.clear()
+    clearLinearMetadataCache()
     set({
       linearStatus: { connected: false, viewer: null },
       linearIssueCache: {},

@@ -98,9 +98,9 @@ export async function createIssue(
         '-X',
         'POST',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues`,
-        '-f',
+        '--raw-field',
         `title=${trimmedTitle}`,
-        '-f',
+        '--raw-field',
         `body=${body}`
       ],
       { cwd: repoPath }
@@ -218,7 +218,7 @@ export async function addIssueComment(
         '-X',
         'POST',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${issueNumber}/comments`,
-        '-f',
+        '--raw-field',
         `body=${body}`
       ],
       { cwd: repoPath }

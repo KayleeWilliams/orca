@@ -131,10 +131,10 @@ export async function updateIssue(
 
   await acquire()
   try {
-    // Why: labelIds is a full-replace field. To narrow the TOCTOU race window,
-    // we re-fetch the server's current labels and use the caller's set directly
-    // (the UI already built the set from fetched labelIds). This validates the
-    // caller's intent is based on recent data. Future v2 could use webhooks.
+    // Why: labelIds is a full-replace field — a TOCTOU race exists if another
+    // user changes labels between fetch and write. The caller passes the
+    // complete set built from recently-fetched data. Acceptable for v1;
+    // a future version could re-fetch right before writing or use webhooks.
     const resolvedLabelIds = updates.labelIds
 
     const payload: Record<string, unknown> = {}
