@@ -5,6 +5,8 @@
 // The Electron app (client) deploys this script via SCP and launches
 // it via an SSH exec channel.
 
+import { homedir } from 'os'
+import { resolve } from 'path'
 import { RELAY_SENTINEL } from './protocol'
 import { RelayDispatcher } from './dispatcher'
 import { RelayContext } from './context'
@@ -53,6 +55,21 @@ function main(): void {
     if (rootPath) {
       context.registerRoot(rootPath)
     }
+  })
+
+  // Why: the client stores repo paths as-is from user input, but `~` is a
+  // shell expansion — Node's fs APIs don't understand it. This handler lets
+  // the client resolve tilde paths to absolute paths on the remote host
+  // before persisting them, so all downstream fs operations work correctly.
+  dispatcher.onRequest('session.resolveHome', (params) => {
+    const inputPath = params.path as string
+    if (inputPath === '~' || inputPath === '~/') {
+      return { resolvedPath: homedir() }
+    }
+    if (inputPath.startsWith('~/')) {
+      return { resolvedPath: resolve(homedir(), inputPath.slice(2)) }
+    }
+    return { resolvedPath: inputPath }
   })
 
   const ptyHandler = new PtyHandler(dispatcher, graceTimeMs)
