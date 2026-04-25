@@ -859,15 +859,6 @@ export type GlobalSettings = {
    *  toast shown to users upgrading from v1.3.0 (where the daemon was on by
    *  default). Set to true the first time the toast fires so it never repeats. */
   experimentalTerminalDaemonNoticeShown: boolean
-  /** When true, Orca sets FORCE_HYPERLINK=1 in every spawned PTY's env. That
-   *  makes modern CLIs (oh-my-zsh's supports_hyperlinks(), coreutils, the Rust
-   *  supports-hyperlinks crate, etc.) emit OSC-8 hyperlink escapes even when
-   *  they would otherwise skip them. Defaults to true to preserve prior
-   *  behavior, but users with heavy shell init (large oh-my-zsh / p10k / nvm /
-   *  pyenv / conda setups) can measurably speed up terminal start by turning
-   *  this off — the extra branching and escape emission across the many
-   *  subshells fired during rc init can multiply startup time. */
-  terminalForceHyperlink: boolean
 }
 
 export type NotificationEventSource = 'agent-task-complete' | 'terminal-bell' | 'test'
