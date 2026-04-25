@@ -19,6 +19,7 @@ export type PaneManagerOptions = {
   onLayoutChanged?: () => void
   terminalOptions?: (paneId: number) => Partial<ITerminalOptions>
   onLinkClick?: (event: MouseEvent | undefined, url: string) => void
+  initialRenderingSuspended?: boolean
 }
 
 export type PaneStyleOptions = {
@@ -60,6 +61,8 @@ export type ManagedPaneInternal = {
   xtermContainer: HTMLElement
   linkTooltip: HTMLElement
   gpuRenderingEnabled: boolean
+  webglAttachmentDeferred: boolean
+  webglDisabledAfterContextLoss: boolean
   webglAddon: WebglAddon | null
   // Why nullable: ligatures are opt-in per font and toggleable at runtime,
   // so the addon instance only exists while the feature is active. A null

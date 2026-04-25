@@ -137,6 +137,8 @@ export function createPaneDOM(
     xtermContainer,
     linkTooltip,
     gpuRenderingEnabled: ENABLE_WEBGL_RENDERER,
+    webglAttachmentDeferred: false,
+    webglDisabledAfterContextLoss: false,
     fitAddon,
     fitResizeObserver: null,
     pendingObservedFitRafId: null,
@@ -307,7 +309,12 @@ export function disposeWebgl(pane: ManagedPaneInternal): void {
 }
 
 export function attachWebgl(pane: ManagedPaneInternal): void {
-  if (!ENABLE_WEBGL_RENDERER || !pane.gpuRenderingEnabled) {
+  if (
+    !ENABLE_WEBGL_RENDERER ||
+    !pane.gpuRenderingEnabled ||
+    pane.webglAttachmentDeferred ||
+    pane.webglDisabledAfterContextLoss
+  ) {
     pane.webglAddon = null
     return
   }
@@ -319,6 +326,10 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
         pane.id,
         '— falling back to DOM renderer'
       )
+      // Why: Chromium starts reclaiming terminal contexts under pressure.
+      // Recreating WebGL for this pane can loop context loss and leave xterm
+      // visually blank, so keep the pane on the DOM renderer until remount.
+      pane.webglDisabledAfterContextLoss = true
       webglAddon.dispose()
       pane.webglAddon = null
       // Why: when the WebGL context is lost (GPU memory pressure, Chromium
