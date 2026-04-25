@@ -2143,10 +2143,11 @@ export default function TaskPage(): React.JSX.Element {
             }
           }}
         >
-          <DialogHeader>
-            <DialogTitle>Connect Linear</DialogTitle>
+          <DialogHeader className="gap-3">
+            <DialogTitle className="leading-tight">Connect Linear</DialogTitle>
             <DialogDescription>
-              Paste a Personal API key to browse your assigned issues.
+              Paste a <strong className="font-semibold text-foreground">Personal API key</strong> to
+              browse your assigned issues.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
@@ -2168,7 +2169,7 @@ export default function TaskPage(): React.JSX.Element {
               <p className="text-xs text-destructive">{linearConnectError}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Create a key at{' '}
+              Create one in{' '}
               <button
                 className="text-primary underline-offset-2 hover:underline"
                 onClick={() =>
@@ -2176,7 +2177,9 @@ export default function TaskPage(): React.JSX.Element {
                 }
               >
                 Linear Settings → Security
-              </button>
+              </button>{' '}
+              → <strong className="font-semibold text-foreground">New API key</strong> (not{' '}
+              <span className="text-foreground">New passkey</span>).
             </p>
             <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
               <Lock className="size-3 shrink-0" />
