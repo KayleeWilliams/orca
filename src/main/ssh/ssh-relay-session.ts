@@ -234,8 +234,21 @@ export class SshRelaySession {
           }
           try {
             await ptyProvider.attach(ptyId)
-          } catch {
-            // PTY may have exited during the disconnect — ignore
+          } catch (err) {
+            console.warn(
+              `[ssh-relay-session] Dropping stale PTY ${ptyId} for ${this.targetId} after relay reattach failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            )
+            clearProviderPtyState(ptyId)
+            deletePtyOwnership(ptyId)
+            // Why: if the new relay cannot reattach this id, the remote
+            // backing process is gone. Tell the renderer so it clears stale
+            // pane bindings instead of keeping a cursor-only terminal.
+            const win = this.getMainWindow()
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('pty:exit', { id: ptyId, code: -1 })
+            }
           }
         }
       }
