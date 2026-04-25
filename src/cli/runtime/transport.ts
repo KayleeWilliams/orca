@@ -1,6 +1,7 @@
 import { createConnection } from 'net'
 import { randomUUID } from 'crypto'
 import type { RuntimeMetadata, RuntimeTransportMetadata } from '../../shared/runtime-bootstrap'
+import { RuntimeRpcEnvelopeSchema } from './envelope-schema'
 import { RuntimeClientError, type RuntimeRpcResponse } from './types'
 
 export async function sendRequest<TResult>(
@@ -43,27 +44,25 @@ export async function sendRequest<TResult>(
       const message = buffer.slice(0, newlineIndex)
       socket.end()
       clearTimeout(timeout)
+      let response: RuntimeRpcResponse<TResult>
       try {
-        const response = JSON.parse(message) as RuntimeRpcResponse<TResult>
-        if (response.id !== requestId) {
+        const raw: unknown = JSON.parse(message)
+        // Why: validate the envelope shape (id, ok, result/error, _meta) at
+        // the decode boundary so version skew between the CLI and the Orca
+        // main runtime surfaces as a single invalid_runtime_response instead
+        // of a downstream mis-typed field access. `result` is left as
+        // unknown — the TResult generic is the caller's responsibility.
+        const parsed = RuntimeRpcEnvelopeSchema.safeParse(raw)
+        if (!parsed.success) {
           reject(
             new RuntimeClientError(
               'invalid_runtime_response',
-              'The Orca runtime returned a mismatched response id.'
+              'The Orca runtime returned an invalid response frame.'
             )
           )
           return
         }
-        if (response._meta?.runtimeId && response._meta.runtimeId !== metadata.runtimeId) {
-          reject(
-            new RuntimeClientError(
-              'runtime_unavailable',
-              'The Orca runtime changed while the request was in flight. Retry the command.'
-            )
-          )
-          return
-        }
-        resolve(response)
+        response = parsed.data as RuntimeRpcResponse<TResult>
       } catch {
         reject(
           new RuntimeClientError(
@@ -71,7 +70,27 @@ export async function sendRequest<TResult>(
             'The Orca runtime returned an invalid response frame.'
           )
         )
+        return
       }
+      if (response.id !== requestId) {
+        reject(
+          new RuntimeClientError(
+            'invalid_runtime_response',
+            'The Orca runtime returned a mismatched response id.'
+          )
+        )
+        return
+      }
+      if (response._meta?.runtimeId && response._meta.runtimeId !== metadata.runtimeId) {
+        reject(
+          new RuntimeClientError(
+            'runtime_unavailable',
+            'The Orca runtime changed while the request was in flight. Retry the command.'
+          )
+        )
+        return
+      }
+      resolve(response)
     })
     socket.on('connect', () => {
       socket.write(
