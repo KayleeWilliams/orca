@@ -771,7 +771,16 @@ function Terminal(): React.JSX.Element | null {
         !e.repeat
       ) {
         if (handleSwitchTerminalTab(e.code === 'PageDown' ? 1 : -1)) {
+          // Why: stop propagation in addition to preventDefault. Unlike
+          // Cmd+Shift+]/[ (xterm ignores Meta-modified keys by default),
+          // xterm actively translates plain Ctrl+PageUp/PageDown into the
+          // \e[5~ / \e[6~ escape sequences and writes them to the shell.
+          // preventDefault on the window-capture listener does not stop
+          // xterm's own keydown listener on its textarea, so we must stop
+          // the event before it reaches the focused terminal.
           e.preventDefault()
+          e.stopPropagation()
+          e.stopImmediatePropagation()
         }
       }
     }
