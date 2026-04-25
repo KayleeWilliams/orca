@@ -12,7 +12,7 @@ import { SshDisconnectedDialog } from './SshDisconnectedDialog'
 import AgentStatusHover from './AgentStatusHover'
 import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
-import { type WorktreeStatus } from '@/lib/worktree-status'
+import { getWorktreeStatus, type WorktreeStatus } from '@/lib/worktree-status'
 import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
@@ -162,6 +162,24 @@ const WorktreeCard = React.memo(function WorktreeCard({
     })
   )
   const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
+  // Why: split-pane tabs expose per-pane titles that the aggregate
+  // `tab.title` does not preserve (onActivePaneChange overwrites it with the
+  // focused pane's title). getWorktreeStatus needs those pane titles to keep
+  // the sidebar spinner reflecting *any* working pane, not just the focused
+  // one. Narrow the subscription to this worktree's tabs via useShallow so
+  // unrelated pane-title updates do not re-render every sidebar card.
+  const runtimePaneTitlesForWorktree = useAppStore(
+    useShallow((s) => {
+      const out: Record<string, Record<number, string>> = {}
+      for (const tab of s.tabsByWorktree[worktree.id] ?? []) {
+        const paneTitles = s.runtimePaneTitlesByTabId[tab.id]
+        if (paneTitles) {
+          out[tab.id] = paneTitles
+        }
+      }
+      return out
+    })
+  )
 
   const branch = branchDisplayName(worktree.branch)
   const isFolder = repo ? isFolderRepo(repo) : false
@@ -181,9 +199,16 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
   const isDeleting = deleteState?.isDeleting ?? false
 
-  // Derive status — explicit agent status (OSC 9999) takes precedence over
-  // heuristic title parsing, per the design doc's precedence rule.
+  // Derive status — when the dashboard flag is on, explicit agent status
+  // (OSC 9999) takes precedence over heuristic title parsing per the design
+  // doc's per-tab precedence rule. When it is off, delegate to the canonical
+  // `getWorktreeStatus` so the split-pane-aware heuristic path is the single
+  // source of truth for the sidebar's pre-dashboard behavior.
   const status: WorktreeStatus = useMemo(() => {
+    if (!AGENT_DASHBOARD_ENABLED) {
+      return getWorktreeStatus(tabs, browserTabs, runtimePaneTitlesForWorktree)
+    }
+
     const liveTabs = tabs.filter((tab) => tab.ptyId)
     // Why: browser-only worktrees are still active from the user's point of
     // view even when they have no PTY-backed terminal. The sidebar filter
@@ -228,9 +253,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     let hasDone = false
     for (const tab of liveTabs) {
       const fresh = freshByTabId.get(tab.id)
-      // Why: AGENT_DASHBOARD_ENABLED gates the explicit-status path so the
-      // sidebar falls back to pure heuristic detection when the feature is off.
-      if (AGENT_DASHBOARD_ENABLED && fresh && fresh.length > 0) {
+      if (fresh && fresh.length > 0) {
         if (fresh.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
           hasPermission = true
         } else if (fresh.some((e) => e.state === 'working')) {
@@ -238,11 +261,22 @@ const WorktreeCard = React.memo(function WorktreeCard({
         } else if (fresh.some((e) => e.state === 'done')) {
           hasDone = true
         }
-      } else {
-        const heuristic = detectAgentStatusFromTitle(tab.title)
+        continue
+      }
+      // Why: fall back to the split-pane-aware heuristic for tabs without a
+      // fresh explicit entry. Consult per-pane titles first (matching
+      // `getWorktreeStatus`) so an idle focused pane doesn't mask a working
+      // background pane in the same tab.
+      const paneTitles = runtimePaneTitlesForWorktree[tab.id]
+      const titlesToCheck =
+        paneTitles && Object.keys(paneTitles).length > 0 ? Object.values(paneTitles) : [tab.title]
+      for (const title of titlesToCheck) {
+        const heuristic = detectAgentStatusFromTitle(title)
         if (heuristic === 'permission') {
           hasPermission = true
-        } else if (heuristic === 'working') {
+          break
+        }
+        if (heuristic === 'working') {
           hasWorking = true
         }
       }
@@ -269,7 +303,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     // the memo body. It forces re-derivation when an agent status entry crosses
     // the freshness threshold so the visual status updates without polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabs, browserTabs, worktreeAgentEntries, agentStatusEpoch])
+  }, [tabs, browserTabs, worktreeAgentEntries, runtimePaneTitlesForWorktree, agentStatusEpoch])
 
   const showPR = cardProps.includes('pr')
   const showCI = cardProps.includes('ci')
@@ -449,6 +483,23 @@ const WorktreeCard = React.memo(function WorktreeCard({
             {/* Header row: Title and Checks */}
             <div className="flex items-center justify-between min-w-0 gap-2">
               <div className="flex items-center gap-1.5 min-w-0">
+                {repo?.connectionId && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 inline-flex items-center">
+                        {isSshDisconnected ? (
+                          <WifiOff className="size-3 text-red-400" />
+                        ) : (
+                          <Globe className="size-3 text-muted-foreground" />
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={8}>
+                      {isSshDisconnected ? 'SSH disconnected' : 'Remote repository via SSH'}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
                 <div className="text-[12px] font-semibold text-foreground truncate leading-tight">
                   {worktree.displayName}
                 </div>
@@ -511,23 +562,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
                     {repo.displayName}
                   </span>
                 </div>
-              )}
-
-              {repo?.connectionId && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="shrink-0 inline-flex items-center gap-0.5">
-                      {isSshDisconnected ? (
-                        <WifiOff className="size-3 text-red-400" />
-                      ) : (
-                        <Globe className="size-3 text-muted-foreground" />
-                      )}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8}>
-                    {isSshDisconnected ? 'SSH disconnected' : 'Remote repository via SSH'}
-                  </TooltipContent>
-                </Tooltip>
               )}
 
               {isFolder ? (

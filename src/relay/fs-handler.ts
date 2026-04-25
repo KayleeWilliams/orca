@@ -11,6 +11,7 @@ import {
   realpath
 } from 'fs/promises'
 import { extname } from 'path'
+import { execFile } from 'child_process'
 import type { RelayDispatcher } from './dispatcher'
 import type { RelayContext } from './context'
 import { expandTilde } from './context'
@@ -24,6 +25,7 @@ import {
   checkRgAvailable
 } from './fs-handler-utils'
 import { listFilesWithGit, searchWithGitGrep } from './fs-handler-git-fallback'
+import { listFilesWithReaddir } from './fs-handler-readdir-fallback'
 
 type WatchState = {
   rootPath: string
@@ -228,10 +230,23 @@ export class FsHandler {
     const rootPath = expandTilde(params.rootPath as string)
     await this.context.validatePathResolved(rootPath)
     const rgAvailable = await checkRgAvailable()
-    if (!rgAvailable) {
+    if (rgAvailable) {
+      return listFilesWithRg(rootPath)
+    }
+    // Why: git ls-files only works inside git repos. Use rev-parse to detect
+    // git ancestry — unlike checking for a local .git entry, this works from
+    // subdirectories of a checkout (e.g. /repo/packages/app added as a folder).
+    // Without this, a git subdirectory would fall through to readdir and
+    // surface .gitignore'd build artifacts.
+    const isGitRepo = await new Promise<boolean>((resolve) => {
+      execFile('git', ['rev-parse', '--is-inside-work-tree'], { cwd: rootPath }, (err) =>
+        resolve(!err)
+      )
+    })
+    if (isGitRepo) {
       return listFilesWithGit(rootPath)
     }
-    return listFilesWithRg(rootPath)
+    return listFilesWithReaddir(rootPath)
   }
 
   private async watch(params: Record<string, unknown>) {
