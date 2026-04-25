@@ -39,3 +39,37 @@ export function handleSwitchTab(direction: number): boolean {
   }
   return true
 }
+
+/**
+ * Handle Ctrl+PageUp/PageDown switching across terminal tabs only.
+ * Returns true if a terminal tab switch occurred, false otherwise.
+ */
+export function handleSwitchTerminalTab(direction: number): boolean {
+  const store = useAppStore.getState()
+  const worktreeId = store.activeWorktreeId
+  if (!worktreeId) {
+    return false
+  }
+  // Why: reuse the same visible-order source as handleSwitchTab so drag-reordered
+  // tabs still cycle in the sequence shown in the active tab strip.
+  const terminalTabs = getActiveTabNavOrder(store, worktreeId).filter(
+    (entry) => entry.type === 'terminal'
+  )
+  if (terminalTabs.length <= 1) {
+    return false
+  }
+  const currentId =
+    store.activeTabType === 'editor'
+      ? store.activeFileId
+      : store.activeTabType === 'browser'
+        ? store.activeBrowserTabId
+        : store.activeTabId
+  // Why: when an editor/browser tab is active, jump to the first terminal on
+  // forward navigation instead of skipping to index 1.
+  const idx = terminalTabs.findIndex((t) => t.id === currentId)
+  const currentIndex = idx === -1 && direction > 0 ? -1 : idx === -1 ? 0 : idx
+  const next = terminalTabs[(currentIndex + direction + terminalTabs.length) % terminalTabs.length]
+  store.setActiveTab(next.id)
+  store.setActiveTabType('terminal')
+  return true
+}

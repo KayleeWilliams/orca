@@ -30,7 +30,7 @@ import EditorAutosaveController from './editor/EditorAutosaveController'
 import type { TabGroupLayoutNode } from '../../../shared/types'
 import BrowserPane, { destroyPersistentWebview } from './browser-pane/BrowserPane'
 import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
-import { handleSwitchTab } from '../hooks/ipc-tab-switch'
+import { handleSwitchTab, handleSwitchTerminalTab } from '../hooks/ipc-tab-switch'
 import TabGroupSplitLayout from './tab-group/TabGroupSplitLayout'
 import { shouldAutoCreateInitialTerminal } from './terminal/initial-terminal'
 import {
@@ -751,6 +751,21 @@ function Terminal(): React.JSX.Element | null {
         // true when it switched so we preventDefault only when we actually
         // consumed the key.
         if (handleSwitchTab(e.code === 'BracketRight' ? 1 : -1)) {
+          e.preventDefault()
+        }
+      }
+
+      // Ctrl+PageDown/PageUp - switch terminal tabs only
+      // Why: this chord intentionally uses Ctrl on every platform; on macOS,
+      // Cmd+PageUp/PageDown is an OS desktop-switch shortcut we should not steal.
+      if (
+        e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        (e.code === 'PageDown' || e.code === 'PageUp') &&
+        !e.repeat
+      ) {
+        if (handleSwitchTerminalTab(e.code === 'PageDown' ? 1 : -1)) {
           e.preventDefault()
         }
       }
