@@ -37,6 +37,8 @@ function createPane({
     xtermContainer: {} as never,
     linkTooltip: {} as never,
     gpuRenderingEnabled: true,
+    webglAttachmentDeferred: false,
+    webglDisabledAfterContextLoss: false,
     fitAddon: {
       fit,
       proposeDimensions

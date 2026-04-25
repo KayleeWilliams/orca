@@ -43,6 +43,8 @@ function createPane(): ManagedPaneInternal {
     xtermContainer: {} as never,
     linkTooltip: {} as never,
     gpuRenderingEnabled: true,
+    webglAttachmentDeferred: false,
+    webglDisabledAfterContextLoss: false,
     fitAddon: {
       fit: vi.fn(),
       proposeDimensions: vi.fn(() => ({ cols: 80, rows: 24 }))

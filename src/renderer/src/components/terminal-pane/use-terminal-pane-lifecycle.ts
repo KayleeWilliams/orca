@@ -585,7 +585,11 @@ export function useTerminalPaneLifecycle({
         // selection also detaches those listeners (see
         // SelectionService._removeMouseDownListeners).
         managerRef.current?.getActivePane()?.terminal.clearSelection()
-      }
+      },
+      // Why: TerminalPane instances stay mounted for hidden visited worktrees
+      // so PTYs survive navigation. Creating WebGL for those offscreen panes
+      // still consumes Chromium's context budget and can blank visible panes.
+      initialRenderingSuspended: !isVisibleRef.current
     })
 
     managerRef.current = manager
