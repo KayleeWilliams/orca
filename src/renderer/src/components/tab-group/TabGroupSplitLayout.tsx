@@ -222,15 +222,14 @@ export default function TabGroupSplitLayout({
           window-drag region at the top. Only the split layout's own panes
           own the resize handles, while this strip keeps the whole top of the
           center column draggable regardless of how the splits are arranged.
-          Why conditional `border-l`: when splits exist, the leftmost pane
-          paints its own `border-l` starting at y=8. Mirroring that border
-          on the drag strip extends the seam up to y=0 so the left-sidebar /
-          center-column line reaches the top of the window, matching the
-          full-height right-sidebar seam. Without splits the pane has no
-          `border-l`, so we skip it here too to avoid a dangling 8px stub. */}
-      <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+          Why `border-l` on the wrapper: paint a single full-height divider
+          between the left sidebar and the terminal area, regardless of
+          split state. When splits exist, the leftmost pane also renders its
+          own `border-l` at the same x — both use `border-border` so the
+          overlapping 1px lines read as one clean seam. */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
         <div
-          className={`h-2 shrink-0 bg-card${hasSplits ? ' border-l border-border' : ''}`}
+          className="h-2 shrink-0 bg-card"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
