@@ -449,7 +449,10 @@ export function connectPanePty(
       }
     }
 
-    const handleReattachResult = (result: PtyConnectResult | string | void): void => {
+    const handleReattachResult = (
+      result: PtyConnectResult | string | void,
+      staleSessionId?: string | null
+    ): void => {
       if (disposed) {
         return
       }
@@ -458,10 +461,18 @@ export function connectPanePty(
 
       const ptyId =
         connectResult?.id ?? (typeof result === 'string' ? result : transport.getPtyId())
-      if (ptyId) {
-        deps.syncPanePtyLayoutBinding(pane.id, ptyId)
-        deps.updateTabPtyId(deps.tabId, ptyId)
+      if (!ptyId) {
+        // Why: a stale restored daemon/SSH session can fail reattach after the
+        // pane is mounted. Do not leave xterm alive without a backing PTY.
+        deps.syncPanePtyLayoutBinding(pane.id, null)
+        if (staleSessionId) {
+          deps.clearTabPtyId(deps.tabId, staleSessionId)
+        }
+        startFreshSpawn()
+        return
       }
+      deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+      deps.updateTabPtyId(deps.tabId, ptyId)
 
       if (connectResult?.coldRestore) {
         // Why: restoreScrollbackBuffers() already wrote the saved xterm
@@ -488,13 +499,7 @@ export function connectPanePty(
         // the snapshot branch below: that branch reattaches to a live daemon
         // session where a running TUI may still depend on these modes.
         replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_MODE_RESET)
-        // Why: ptyId can be null if the transport was torn down during the
-        // reattach flight. Only IPC the ack when we have a real ptyId;
-        // the replay-into-xterm calls above remain unconditional because
-        // they write into the terminal buffer regardless.
-        if (ptyId) {
-          window.api.pty.ackColdRestore(ptyId)
-        }
+        window.api.pty.ackColdRestore(ptyId)
       } else if (connectResult?.snapshot) {
         // Why: always clear before writing the daemon/SSH snapshot to prevent
         // duplication with scrollback restored earlier. The replay guard also
@@ -516,13 +521,11 @@ export function connectPanePty(
         })
       }
 
-      if (ptyId) {
-        transport.resize(cols, rows)
-        // Why: POSIX only delivers SIGWINCH when terminal dimensions actually
-        // change. Sending it explicitly guarantees restored TUIs repaint at
-        // the correct cursor position after snapshot replay.
-        window.api.pty.signal(ptyId, 'SIGWINCH')
-      }
+      transport.resize(cols, rows)
+      // Why: POSIX only delivers SIGWINCH when terminal dimensions actually
+      // change. Sending it explicitly guarantees restored TUIs repaint at
+      // the correct cursor position after snapshot replay.
+      window.api.pty.signal(ptyId, 'SIGWINCH')
 
       scheduleRuntimeGraphSync()
     }
@@ -576,7 +579,7 @@ export function connectPanePty(
             })
             void Promise.resolve(reattachPromise)
               .then((result) => {
-                handleReattachResult(result)
+                handleReattachResult(result, pendingSessionId)
               })
               .catch(() => {
                 if (disposed) {
@@ -657,7 +660,7 @@ export function connectPanePty(
 
       void Promise.resolve(reattachPromise)
         .then((result) => {
-          handleReattachResult(result)
+          handleReattachResult(result, deferredReattachSessionId)
         })
         .catch((err) => {
           reportError(err instanceof Error ? err.message : String(err))
