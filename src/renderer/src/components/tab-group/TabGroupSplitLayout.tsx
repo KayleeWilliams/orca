@@ -125,6 +125,7 @@ function SplitNode({
         // "focused", Cmd/Ctrl+W and split shortcuts can hit the wrong worktree.
         isFocused={isWorktreeActive && node.groupId === focusedGroupId}
         hasSplitGroups={hasSplitGroups}
+        touchesRightEdge={touchesRightEdge}
         reserveClosedExplorerToggleSpace={touchesTopEdge && touchesRightEdge}
         reserveCollapsedSidebarHeaderSpace={touchesTopEdge && touchesLeftEdge}
         isTabDragActive={isTabDragActive}
@@ -198,6 +199,7 @@ export default function TabGroupSplitLayout({
   isWorktreeActive: boolean
 }): React.JSX.Element {
   const dragSplit = useTabDragSplit({ worktreeId, enabled: isWorktreeActive })
+  const hasSplits = layout.type === 'split'
 
   return (
     <DndContext
@@ -219,10 +221,16 @@ export default function TabGroupSplitLayout({
           each pane — so vertical split resize handles don't extend into the
           window-drag region at the top. Only the split layout's own panes
           own the resize handles, while this strip keeps the whole top of the
-          center column draggable regardless of how the splits are arranged. */}
+          center column draggable regardless of how the splits are arranged.
+          Why conditional `border-l`: when splits exist, the leftmost pane
+          paints its own `border-l` starting at y=8. Mirroring that border
+          on the drag strip extends the seam up to y=0 so the left-sidebar /
+          center-column line reaches the top of the window, matching the
+          full-height right-sidebar seam. Without splits the pane has no
+          `border-l`, so we skip it here too to avoid a dangling 8px stub. */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
         <div
-          className="h-2 shrink-0 bg-card"
+          className={`h-2 shrink-0 bg-card${hasSplits ? ' border-l border-border' : ''}`}
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
@@ -232,7 +240,7 @@ export default function TabGroupSplitLayout({
             worktreeId={worktreeId}
             focusedGroupId={focusedGroupId}
             isWorktreeActive={isWorktreeActive}
-            hasSplitGroups={layout.type === 'split'}
+            hasSplitGroups={hasSplits}
             touchesTopEdge={true}
             touchesRightEdge={true}
             touchesLeftEdge={true}

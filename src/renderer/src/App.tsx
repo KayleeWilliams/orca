@@ -961,26 +961,7 @@ function App(): React.JSX.Element {
               filesystem watchers + cached directory trees survive across
               open/close toggles. Unmount on the tasks view since that
               surface is intentionally distraction-free. */}
-          {showRightSidebarControls ? (
-            workspaceActive ? (
-              /* Why: in workspace view the right sidebar must start at the
-                 tab row, not the window edge, so the 8px drag strip that
-                 runs across the top of the center column continues uninterrupted
-                 over the right sidebar. Wrapping adds a matching 8px drag
-                 surface above and shrinks the sidebar to fill the remainder. */
-              <div className="flex min-h-0 flex-col shrink-0">
-                <div
-                  className="h-2 shrink-0 bg-card"
-                  style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-                />
-                <div className="flex min-h-0 flex-1">
-                  <RightSidebar />
-                </div>
-              </div>
-            ) : (
-              <RightSidebar />
-            )
-          ) : null}
+          {showRightSidebarControls ? <RightSidebar /> : null}
         </div>
         <StatusBar />
         {/* Why: NewWorkspaceComposerCard renders Radix <Tooltip>s that crash
