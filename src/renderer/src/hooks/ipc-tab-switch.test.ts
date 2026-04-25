@@ -109,4 +109,33 @@ describe('handleSwitchTerminalTab', () => {
     expect(store.setActiveTab).toHaveBeenCalledWith('term-1')
     expect(store.setActiveTabType).toHaveBeenCalledWith('terminal')
   })
+
+  it('jumps from an editor to the only terminal when one terminal exists', () => {
+    const store = makeStore('editor')
+    store.activeFileId = 'editor-1'
+    getStateMock.mockReturnValue(store)
+    getActiveTabNavOrderMock.mockReturnValue([
+      { type: 'editor', id: 'editor-1' },
+      { type: 'terminal', id: 'term-1' },
+      { type: 'browser', id: 'browser-1' }
+    ])
+
+    expect(handleSwitchTerminalTab(1)).toBe(true)
+    expect(store.setActiveTab).toHaveBeenCalledWith('term-1')
+    expect(store.setActiveTabType).toHaveBeenCalledWith('terminal')
+  })
+
+  it('returns false when the only terminal is already active', () => {
+    const store = makeStore('terminal')
+    store.activeTabId = 'term-1'
+    getStateMock.mockReturnValue(store)
+    getActiveTabNavOrderMock.mockReturnValue([
+      { type: 'terminal', id: 'term-1' },
+      { type: 'editor', id: 'editor-1' }
+    ])
+
+    expect(handleSwitchTerminalTab(1)).toBe(false)
+    expect(store.setActiveTab).not.toHaveBeenCalled()
+    expect(store.setActiveTabType).not.toHaveBeenCalled()
+  })
 })

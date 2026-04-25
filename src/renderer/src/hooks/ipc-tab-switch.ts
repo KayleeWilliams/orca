@@ -55,7 +55,7 @@ export function handleSwitchTerminalTab(direction: number): boolean {
   const terminalTabs = getActiveTabNavOrder(store, worktreeId).filter(
     (entry) => entry.type === 'terminal'
   )
-  if (terminalTabs.length <= 1) {
+  if (terminalTabs.length === 0) {
     return false
   }
   const currentId =
@@ -67,6 +67,13 @@ export function handleSwitchTerminalTab(direction: number): boolean {
   // Why: when an editor/browser tab is active, jump to the first terminal on
   // forward navigation instead of skipping to index 1.
   const idx = terminalTabs.findIndex((t) => t.id === currentId)
+  // Why: only no-op when the sole terminal is already focused. With one terminal
+  // and an editor/browser active, the chord must still jump to that terminal -
+  // that is the whole point of the shortcut. The single-terminal-already-active
+  // case is the only true no-op.
+  if (terminalTabs.length === 1 && idx === 0) {
+    return false
+  }
   const currentIndex = idx === -1 && direction > 0 ? -1 : idx === -1 ? 0 : idx
   const next = terminalTabs[(currentIndex + direction + terminalTabs.length) % terminalTabs.length]
   store.setActiveTab(next.id)
