@@ -48,6 +48,7 @@ export class PaneManager {
   private options: PaneManagerOptions
   private styleOptions: PaneStyleOptions = {}
   private destroyed = false
+  private renderingSuspended: boolean
 
   // Drag-to-reorder state
   private dragState = createDragReorderState()
@@ -55,6 +56,7 @@ export class PaneManager {
   constructor(root: HTMLElement, options: PaneManagerOptions) {
     this.root = root
     this.options = options
+    this.renderingSuspended = options.initialRenderingSuspended === true
   }
 
   // -----------------------------------------------------------------------
@@ -229,6 +231,9 @@ export class PaneManager {
       disposeWebgl(pane)
       return
     }
+    if (pane.webglAttachmentDeferred || pane.webglDisabledAfterContextLoss) {
+      return
+    }
     if (!pane.webglAddon) {
       attachWebgl(pane)
       safeFit(pane)
@@ -236,14 +241,18 @@ export class PaneManager {
   }
 
   suspendRendering(): void {
+    this.renderingSuspended = true
     for (const pane of this.panes.values()) {
+      pane.webglAttachmentDeferred = true
       disposeWebgl(pane)
     }
   }
 
   resumeRendering(): void {
+    this.renderingSuspended = false
     for (const pane of this.panes.values()) {
-      if (pane.gpuRenderingEnabled && !pane.webglAddon) {
+      pane.webglAttachmentDeferred = false
+      if (pane.gpuRenderingEnabled && !pane.webglDisabledAfterContextLoss && !pane.webglAddon) {
         attachWebgl(pane)
         // Why: the fitPanes() optimization skips panes whose dimensions are
         // unchanged (common when a worktree goes hidden→visible at the same
@@ -302,6 +311,7 @@ export class PaneManager {
         this.handlePaneMouseEnter(paneId, event)
       }
     )
+    pane.webglAttachmentDeferred = this.renderingSuspended
     this.panes.set(id, pane)
     return pane
   }

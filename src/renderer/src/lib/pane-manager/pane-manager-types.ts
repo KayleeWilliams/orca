@@ -18,6 +18,7 @@ export type PaneManagerOptions = {
   onLayoutChanged?: () => void
   terminalOptions?: (paneId: number) => Partial<ITerminalOptions>
   onLinkClick?: (event: MouseEvent | undefined, url: string) => void
+  initialRenderingSuspended?: boolean
 }
 
 export type PaneStyleOptions = {
@@ -59,6 +60,8 @@ export type ManagedPaneInternal = {
   xtermContainer: HTMLElement
   linkTooltip: HTMLElement
   gpuRenderingEnabled: boolean
+  webglAttachmentDeferred: boolean
+  webglDisabledAfterContextLoss: boolean
   webglAddon: WebglAddon | null
   fitResizeObserver: ResizeObserver | null
   pendingObservedFitRafId: number | null
