@@ -125,7 +125,6 @@ function SplitNode({
         // "focused", Cmd/Ctrl+W and split shortcuts can hit the wrong worktree.
         isFocused={isWorktreeActive && node.groupId === focusedGroupId}
         hasSplitGroups={hasSplitGroups}
-        touchesRightEdge={touchesRightEdge}
         reserveClosedExplorerToggleSpace={touchesTopEdge && touchesRightEdge}
         reserveCollapsedSidebarHeaderSpace={touchesTopEdge && touchesLeftEdge}
         isTabDragActive={isTabDragActive}
@@ -222,15 +221,16 @@ export default function TabGroupSplitLayout({
           window-drag region at the top. Only the split layout's own panes
           own the resize handles, while this strip keeps the whole top of the
           center column draggable regardless of how the splits are arranged.
-          Why conditional `border-l`: when splits exist, the leftmost pane
-          paints its own `border-l` starting at y=8. Mirroring that border
-          on the drag strip extends the seam up to y=0 so the left-sidebar /
-          center-column line reaches the top of the window, matching the
-          full-height right-sidebar seam. Without splits the pane has no
-          `border-l`, so we skip it here too to avoid a dangling 8px stub. */}
+          Why conditional `border-x`: when splits exist, the outer panes
+          paint their own vertical borders starting at y=8 (see
+          TabGroupPanel). Mirroring those borders on the drag strip extends
+          both seams up to y=0 so the lines between the terminal area and
+          the left/right sidebars reach the top of the window. Without
+          splits the panes have no vertical borders, so we skip them here
+          too to avoid dangling 8px stubs. */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
         <div
-          className={`h-2 shrink-0 bg-card${hasSplits ? ' border-l border-border' : ''}`}
+          className={`h-2 shrink-0 bg-card${hasSplits ? ' border-x border-border' : ''}`}
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">

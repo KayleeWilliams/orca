@@ -28,7 +28,6 @@ export default function TabGroupPanel({
   isWorktreeActive,
   isFocused,
   hasSplitGroups,
-  touchesRightEdge,
   reserveClosedExplorerToggleSpace,
   reserveCollapsedSidebarHeaderSpace,
   isTabDragActive = false,
@@ -40,7 +39,6 @@ export default function TabGroupPanel({
   isWorktreeActive: boolean
   isFocused: boolean
   hasSplitGroups: boolean
-  touchesRightEdge: boolean
   reserveClosedExplorerToggleSpace: boolean
   reserveCollapsedSidebarHeaderSpace: boolean
   isTabDragActive?: boolean
@@ -190,14 +188,7 @@ export default function TabGroupPanel({
       // because a lone group has nothing to contrast against.
       className={`group/tab-group flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden${
         hasSplitGroups
-          ? // Why: drop only the RIGHT border on the rightmost group. The right
-            // sidebar paints its own `borderLeft` that already extends full
-            // height, so painting our own border-r in that spot stacks a
-            // second 1px line next to it — reading as a 2px-thick bar below
-            // the 8px drag strip (where the sidebar border continues alone
-            // above). The left edge has no such double-up, so the left
-            // border is always kept.
-            ` border-l ${touchesRightEdge ? '' : 'border-r'} border-border border-b ${isFocused ? 'border-b-accent' : 'opacity-95'}`
+          ? ` border-x border-border border-b ${isFocused ? 'border-b-accent' : 'opacity-95'}`
           : ''
       }`}
       onPointerDown={commands.focusGroup}
