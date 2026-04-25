@@ -245,11 +245,24 @@ describe('installMode2031Handlers', () => {
     // on subscribe, never on unsubscribe.
     const h = setup()
     try {
+      // Non-replay path: subscribe then unsubscribe clears state.
       await writeSync(h.term, '\x1b[?2031h')
       h.paneLastThemeMode.set(1, 'dark')
       expect(h.paneMode2031.get(1)).toBe(true)
 
       await writeSync(h.term, '\x1b[?2031l')
+      expect(h.paneMode2031.has(1)).toBe(false)
+      expect(h.paneLastThemeMode.has(1)).toBe(false)
+
+      // Replay path: resubscribe, then receive `?2031l` during a replay
+      // window. The `l` handler must still clear — this is the invariant
+      // promised by the test name.
+      await writeSync(h.term, '\x1b[?2031h')
+      h.paneLastThemeMode.set(1, 'dark')
+      expect(h.paneMode2031.get(1)).toBe(true)
+
+      replayIntoTerminal(h.pane, h.replayingPanesRef, '\x1b[?2031l')
+      await new Promise<void>((resolve) => h.term.write('', resolve))
       expect(h.paneMode2031.has(1)).toBe(false)
       expect(h.paneLastThemeMode.has(1)).toBe(false)
     } finally {

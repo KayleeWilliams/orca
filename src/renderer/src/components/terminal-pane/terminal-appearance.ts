@@ -86,6 +86,10 @@ export function installMode2031Handlers(deps: Mode2031HandlerDeps): IDisposable[
       }
       return false
     }),
+    // Why no replay guard on the unsubscribe branch: clearing stale bookkeeping
+    // is harmless. We only push CSI 997 on subscribe, never on unsubscribe, so
+    // even if a cold-restore replay carries `?2031l`, this handler just deletes
+    // map entries that a later real `?2031h` will re-populate normally.
     deps.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
       if (hasMode2031(params)) {
         deps.paneMode2031.delete(deps.paneId)
