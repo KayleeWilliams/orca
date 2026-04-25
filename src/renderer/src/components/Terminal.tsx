@@ -758,10 +758,15 @@ function Terminal(): React.JSX.Element | null {
       // Ctrl+PageDown/PageUp - switch terminal tabs only
       // Why: this chord intentionally uses Ctrl on every platform; on macOS,
       // Cmd+PageUp/PageDown is an OS desktop-switch shortcut we should not steal.
+      // Why: also reject Shift so Ctrl+Shift+PageUp/PageDown stays available
+      // for focused terminal / editor consumers and matches the unshifted
+      // predicate in browser-guest-ui.ts and the chord advertised in
+      // ShortcutsPane.
       if (
         e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
+        !e.shiftKey &&
         (e.code === 'PageDown' || e.code === 'PageUp') &&
         !e.repeat
       ) {
