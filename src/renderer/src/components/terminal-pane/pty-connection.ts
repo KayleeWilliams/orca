@@ -479,6 +479,14 @@ export function connectPanePty(
 
           const ptyId =
             connectResult?.id ?? (typeof result === 'string' ? result : transport.getPtyId())
+          if (!ptyId) {
+            // Why: a stale restored daemon session can fail reattach after the
+            // pane is already mounted. Do not leave xterm alive without a PTY.
+            deps.syncPanePtyLayoutBinding(pane.id, null)
+            deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
+            startFreshSpawn()
+            return
+          }
           if (ptyId) {
             deps.syncPanePtyLayoutBinding(pane.id, ptyId)
             deps.updateTabPtyId(deps.tabId, ptyId)

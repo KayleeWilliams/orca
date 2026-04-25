@@ -442,6 +442,52 @@ describe('connectPanePty', () => {
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'leaf-pty-2')
   })
 
+  it('spawns a fresh PTY when a restored daemon split session cannot reattach', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
+      if (opts.sessionId) {
+        return undefined
+      }
+      const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+        | ((ptyId: string) => void)
+        | undefined
+      onPtySpawn?.('fresh-pty')
+      return 'fresh-pty'
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      settings: {
+        ...mockStoreState.settings,
+        experimentalTerminalDaemon: true
+      }
+    } as StoreState
+    const pane = createPane(2)
+    const manager = createManager(2)
+    const deps = createDeps({
+      restoredLeafId: 'pane:2',
+      restoredPtyIdByLeafId: { 'pane:2': 'stale-pty' }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(transport.connect).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ sessionId: 'stale-pty' })
+    )
+    expect(transport.connect).toHaveBeenNthCalledWith(
+      2,
+      expect.not.objectContaining({ sessionId: expect.any(String) })
+    )
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, null)
+    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'stale-pty')
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'fresh-pty')
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'fresh-pty')
+  })
+
   it('resets focus reporting after daemon snapshot replay without applying the full mode reset', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
