@@ -257,18 +257,54 @@ describe('installMode2031Handlers', () => {
     }
   })
 
-  it('leaves unrelated DEC private modes (e.g. `?25h` cursor show) to xterm', async () => {
-    // Why: we return `false` from both handlers so compound sequences and
-    // unrelated modes still go through xterm's built-in handler. If a future
-    // refactor accidentally returned `true`, cursor visibility would desync.
-    const h = setup()
+  it('returns `false` so compound DEC private modes still reach xterm', async () => {
+    // Why: we return `false` from both handlers so compound sequences like
+    // `CSI ?25;2031h` still go through xterm's built-in DEC private mode
+    // handler. If a future refactor accidentally returned `true`, cursor
+    // visibility (and any other unrelated mode sharing the sequence) would
+    // desync. xterm's public API does not expose cursor visibility, so assert
+    // the handler's return value directly via a spy wrapping the real parser.
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+    const paneMode2031 = new Map<number, boolean>()
+    const paneLastThemeMode = new Map<number, 'dark' | 'light'>()
+    const onSubscribe = vi.fn()
+    const returnValues: boolean[] = []
+    // Why the cast: the headless parser's registerCsiHandler callback
+    // returns just `boolean`, but our `Mode2031Parser` type reflects xterm's
+    // canonical `boolean | Promise<boolean>` signature. The spy wraps the
+    // real parser and synchronously records whatever the wrapped handler
+    // returned; in this codebase all mode-2031 handlers are synchronous.
+    const spyParser: Parameters<typeof installMode2031Handlers>[0]['parser'] = {
+      registerCsiHandler: (id, cb) =>
+        term.parser.registerCsiHandler(id, (params) => {
+          const r = cb(params) as boolean
+          returnValues.push(r)
+          return r
+        })
+    }
+    const disposables = installMode2031Handlers({
+      paneId: 1,
+      parser: spyParser,
+      onSubscribe,
+      isReplaying: () => false,
+      paneMode2031,
+      paneLastThemeMode
+    })
     try {
-      await writeSync(h.term, '\x1b[?25l') // hide cursor
-      expect(h.term.options.cursorBlink).toBeDefined() // sanity: xterm responsive
-      expect(h.onSubscribe).not.toHaveBeenCalled()
-      expect(h.paneMode2031.has(1)).toBe(false)
+      // Compound: ?25 (cursor show) + ?2031 (color-scheme subscribe).
+      await writeSync(term, '\x1b[?25;2031h')
+      // Our 2031 recording fired:
+      expect(paneMode2031.get(1)).toBe(true)
+      expect(onSubscribe).toHaveBeenCalledTimes(1)
+      // And every invocation of our handler returned `false`, so xterm's
+      // built-in DEC private mode handler still processes the sequence.
+      expect(returnValues.length).toBeGreaterThan(0)
+      expect(returnValues.every((v) => v === false)).toBe(true)
     } finally {
-      h.dispose()
+      for (const d of disposables) {
+        d.dispose()
+      }
+      term.dispose()
     }
   })
 

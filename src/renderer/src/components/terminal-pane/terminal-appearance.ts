@@ -1,4 +1,4 @@
-import type { IDisposable, ITheme } from '@xterm/xterm'
+import type { IDisposable, IParser, ITheme } from '@xterm/xterm'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { GlobalSettings } from '../../../../shared/types'
 import { resolveTerminalFontWeights } from '../../../../shared/terminal-fonts'
@@ -21,12 +21,11 @@ export function mode2031SequenceFor(mode: 'dark' | 'light'): string {
   return mode === 'dark' ? '\x1b[?997;1n' : '\x1b[?997;2n'
 }
 
-type Mode2031Parser = {
-  registerCsiHandler(
-    id: { prefix?: string; final: string },
-    callback: (params: (number | number[])[]) => boolean | Promise<boolean>
-  ): IDisposable
-}
+// Why Pick<IParser, ...> over a hand-rolled structural type: keeps the helper
+// tied to xterm's canonical signature so any upstream tightening (added
+// fields on IFunctionIdentifier, narrower param type) surfaces here instead
+// of silently accepting a stale shape.
+type Mode2031Parser = Pick<IParser, 'registerCsiHandler'>
 
 type Mode2031HandlerDeps = {
   paneId: number
@@ -67,6 +66,18 @@ export function installMode2031Handlers(deps: Mode2031HandlerDeps): IDisposable[
         // the fresh shell is not actually subscribed, so a later theme flip
         // must not push either. A real TUI that starts up after restore will
         // re-emit `?2031h` itself and register normally.
+        //
+        // Why this broad guard is safe across all replay sources: the only
+        // replay path that can carry raw `?2031h` is cold-restore scrollback
+        // (pty-connection.ts), which is disk-replayed PTY output against a
+        // fresh shell — the case this guard targets. Daemon snapshot payloads
+        // (`rehydrateSequences + SerializeAddon.serialize()`) and persisted
+        // scrollback (`SerializeAddon.serialize()`) never contain `?2031`:
+        // SerializeAddon's _serializeModes whitelists only ?1h/?66h/?2004h/
+        // [4h/?6h/?45h/?1004h/?7l/mouse modes/?25l, and buildRehydrateSequences
+        // emits only ?2004h/?1h/?1049h. If xterm ever adds ?2031 to that
+        // whitelist, this guard would start suppressing legitimate
+        // subscribes during snapshot reattach — revisit then.
         if (deps.isReplaying()) {
           return false
         }
