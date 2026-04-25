@@ -11,7 +11,12 @@ import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
 import type { PtyConnectionDeps } from './pty-connection-types'
 import { isPaneReplaying, replayIntoTerminal } from './replay-guard'
-import { POST_REPLAY_MODE_RESET, POST_REPLAY_FOCUS_REPORTING_RESET } from './layout-serialization'
+import {
+  paneLeafId,
+  POST_REPLAY_MODE_RESET,
+  POST_REPLAY_FOCUS_REPORTING_RESET
+} from './layout-serialization'
+import { warnTerminalLifecycleAnomaly } from './terminal-lifecycle-diagnostics'
 
 const pendingSpawnByTabId = new Map<string, Promise<string | null>>()
 
@@ -466,6 +471,13 @@ export function connectPanePty(
       const ptyId =
         connectResult?.id ?? (typeof result === 'string' ? result : transport.getPtyId())
       if (!ptyId) {
+        warnTerminalLifecycleAnomaly('restored PTY reattach returned no PTY id', {
+          tabId: deps.tabId,
+          worktreeId: deps.worktreeId,
+          leafId: deps.restoredLeafId ?? paneLeafId(pane.id),
+          paneId: pane.id,
+          ptyId: staleSessionId ?? null
+        })
         // Why: a stale restored daemon/SSH session can fail reattach after the
         // pane is mounted. Do not leave xterm alive without a backing PTY.
         deps.syncPanePtyLayoutBinding(pane.id, null)
@@ -693,7 +705,19 @@ export function connectPanePty(
           handleReattachResult(result, deferredReattachSessionId)
         })
         .catch((err) => {
-          reportError(err instanceof Error ? err.message : String(err))
+          const message = err instanceof Error ? err.message : String(err)
+          warnTerminalLifecycleAnomaly('restored PTY reattach threw', {
+            tabId: deps.tabId,
+            worktreeId: deps.worktreeId,
+            leafId: deps.restoredLeafId ?? paneLeafId(pane.id),
+            paneId: pane.id,
+            ptyId: deferredReattachSessionId,
+            reason: message
+          })
+          reportError(message)
+          deps.syncPanePtyLayoutBinding(pane.id, null)
+          deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
+          startFreshSpawn()
         })
     } else if (detachedLivePtyId) {
       allowInitialIdleCacheSeed = false
