@@ -27,7 +27,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { PiTitlebarExtensionService } from './titlebar-extension-service'
+import { PiTitlebarExtensionService, isSafeDescendCandidate } from './titlebar-extension-service'
 
 describe('PiTitlebarExtensionService', () => {
   let piHome: string
@@ -98,21 +98,62 @@ describe('PiTitlebarExtensionService', () => {
     expectPiHomeIntact()
   })
 
-  it('safely handles a pre-existing stale overlay with dangling symlinks', () => {
-    // Why: simulate an overlay that was left behind by a prior Orca session,
-    // where the original Pi home it mirrored has since moved. The teardown
-    // should unlink the dangling symlinks in place without trying to follow them.
-    const overlayDir = join(userDataDir, 'pi-agent-overlays', 'pty-4')
-    mkdirSync(overlayDir, { recursive: true })
-    symlinkSync('/nonexistent-pi-target/skills', join(overlayDir, 'skills'), 'dir')
-    symlinkSync('/nonexistent-pi-target/auth.json', join(overlayDir, 'auth.json'), 'file')
+  // Why: symlinkSync on Windows requires developer mode or admin — skip on
+  // Windows rather than fail for environmental reasons. The isSafeDescendCandidate
+  // unit tests above cover the Windows ordering invariant separately.
+  it.skipIf(process.platform === 'win32')(
+    'safely handles a pre-existing stale overlay with dangling symlinks',
+    () => {
+      // Why: simulate an overlay that was left behind by a prior Orca session,
+      // where the original Pi home it mirrored has since moved. The teardown
+      // should unlink the dangling symlinks in place without trying to follow them.
+      const overlayDir = join(userDataDir, 'pi-agent-overlays', 'pty-4')
+      mkdirSync(overlayDir, { recursive: true })
+      symlinkSync('/nonexistent-pi-target/skills', join(overlayDir, 'skills'), 'dir')
+      symlinkSync('/nonexistent-pi-target/auth.json', join(overlayDir, 'auth.json'), 'file')
 
-    const svc = new PiTitlebarExtensionService()
-    const env = svc.buildPtyEnv('pty-4', piHome)
+      const svc = new PiTitlebarExtensionService()
+      const env = svc.buildPtyEnv('pty-4', piHome)
 
-    expect(env.PI_CODING_AGENT_DIR).toBe(overlayDir)
-    expect(existsSync(join(overlayDir, 'skills', 'my-skill', 'SKILL.md'))).toBe(true)
-    expectPiHomeIntact()
+      expect(env.PI_CODING_AGENT_DIR).toBe(overlayDir)
+      expect(existsSync(join(overlayDir, 'skills', 'my-skill', 'SKILL.md'))).toBe(true)
+      expectPiHomeIntact()
+    }
+  )
+
+  describe('isSafeDescendCandidate (Windows junction regression guard)', () => {
+    // Why: the #1083 regression cannot reproduce on POSIX CI because
+    // fs.rmSync({recursive:true}) handles symlinks correctly on macOS/Linux.
+    // The behavior that DID cause the data loss on Windows was directory
+    // junctions reporting BOTH isSymbolicLink() === true AND isDirectory()
+    // === true from lstat/Dirent. These unit tests pin the predicate's
+    // ordering so a future refactor cannot reverse it without the test suite
+    // failing, regardless of which OS the tests run on.
+    it('rejects a Windows directory junction (symlink + directory both true)', () => {
+      const junctionLike = {
+        isSymbolicLink: () => true,
+        isDirectory: () => true
+      }
+      expect(isSafeDescendCandidate(junctionLike)).toBe(false)
+    })
+
+    it('rejects a plain symlink', () => {
+      expect(isSafeDescendCandidate({ isSymbolicLink: () => true, isDirectory: () => false })).toBe(
+        false
+      )
+    })
+
+    it('rejects a regular file', () => {
+      expect(
+        isSafeDescendCandidate({ isSymbolicLink: () => false, isDirectory: () => false })
+      ).toBe(false)
+    })
+
+    it('accepts a true directory (non-symlink)', () => {
+      expect(isSafeDescendCandidate({ isSymbolicLink: () => false, isDirectory: () => true })).toBe(
+        true
+      )
+    })
   })
 
   it('refuses to remove anything outside the overlay root', () => {

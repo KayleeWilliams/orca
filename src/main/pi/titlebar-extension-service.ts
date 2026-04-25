@@ -6,7 +6,6 @@ import {
   mkdirSync,
   readdirSync,
   rmdirSync,
-  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync
@@ -87,10 +86,17 @@ function getDefaultPiAgentDir(): string {
 }
 
 function mirrorEntry(sourcePath: string, targetPath: string): void {
-  const sourceStats = statSync(sourcePath)
+  // Why: lstatSync (not statSync) so that if the user's Pi dir contains its
+  // OWN symlinks (e.g. skills symlinked from ~/.agents/skills), we mirror the
+  // link itself rather than resolving it to a type and then creating a junction
+  // at an unrelated path. isSymbolicLink() MUST be checked before isDirectory()
+  // on Windows because directory junctions/reparse points report both true.
+  const sourceStats = lstatSync(sourcePath)
+  const isSymlink = sourceStats.isSymbolicLink()
+  const isDirectoryLike = !isSymlink && sourceStats.isDirectory()
 
   if (process.platform === 'win32') {
-    if (sourceStats.isDirectory()) {
+    if (isDirectoryLike) {
       symlinkSync(sourcePath, targetPath, 'junction')
       return
     }
@@ -104,7 +110,22 @@ function mirrorEntry(sourcePath: string, targetPath: string): void {
     }
   }
 
-  symlinkSync(sourcePath, targetPath, sourceStats.isDirectory() ? 'dir' : 'file')
+  symlinkSync(sourcePath, targetPath, isDirectoryLike ? 'dir' : 'file')
+}
+
+// Exported for tests. A "descend candidate" is an entry whose children we
+// should recurse into when tearing down the overlay. Anything that is a
+// symlink (including a Windows directory junction) must NOT be a candidate
+// even if it also reports isDirectory() — following it would walk into the
+// link target and delete user data, which is the bug in #1083.
+export function isSafeDescendCandidate(stats: {
+  isSymbolicLink(): boolean
+  isDirectory(): boolean
+}): boolean {
+  if (stats.isSymbolicLink()) {
+    return false
+  }
+  return stats.isDirectory()
 }
 
 export class PiTitlebarExtensionService {
@@ -134,6 +155,11 @@ export class PiTitlebarExtensionService {
     const rel = relative(resolvedRoot, resolvedTarget)
     if (rel === '' || rel.startsWith('..') || rel.includes(`..${sep}`)) {
       // Target is not strictly inside the overlay root — refuse to touch it.
+      // Log so a misconfigured caller does not silently leak overlays forever
+      // with no signal that this guard is firing.
+      console.warn(
+        `[pi-titlebar] refusing to remove overlay outside root: target=${resolvedTarget} root=${resolvedRoot}`
+      )
       return
     }
     this.safeRemoveTree(resolvedTarget)
@@ -155,7 +181,7 @@ export class PiTitlebarExtensionService {
     // isSymbolicLink() === true AND isDirectory() === true, so we MUST check
     // isSymbolicLink first — otherwise a junction enters the recursive branch
     // and readdirSync enumerates the link's target, the exact bug in #1083.
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    if (!isSafeDescendCandidate(stat)) {
       try {
         unlinkSync(path)
       } catch {
@@ -174,15 +200,7 @@ export class PiTitlebarExtensionService {
 
     for (const entry of entries) {
       const child = join(path, entry.name)
-      if (entry.isSymbolicLink()) {
-        try {
-          unlinkSync(child)
-        } catch {
-          // best-effort, see above
-        }
-        continue
-      }
-      if (entry.isDirectory()) {
+      if (isSafeDescendCandidate(entry)) {
         this.safeRemoveTree(child)
         continue
       }
