@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useCallback, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -102,6 +103,24 @@ const WorktreeCard = React.memo(function WorktreeCard({
   // ── GRANULAR selectors: only subscribe to THIS worktree's data ──
   const tabs = useAppStore((s) => s.tabsByWorktree[worktree.id] ?? EMPTY_TABS)
   const browserTabs = useAppStore((s) => s.browserTabsByWorktree[worktree.id] ?? EMPTY_BROWSER_TABS)
+  // Why: split-pane tabs expose per-pane titles that the aggregate
+  // `tab.title` does not preserve (onActivePaneChange overwrites it with the
+  // focused pane's title). getWorktreeStatus needs those pane titles to keep
+  // the sidebar spinner reflecting *any* working pane, not just the focused
+  // one. Narrow the subscription to this worktree's tabs via useShallow so
+  // unrelated pane-title updates do not re-render every sidebar card.
+  const runtimePaneTitlesForWorktree = useAppStore(
+    useShallow((s) => {
+      const out: Record<string, Record<number, string>> = {}
+      for (const tab of s.tabsByWorktree[worktree.id] ?? []) {
+        const paneTitles = s.runtimePaneTitlesByTabId[tab.id]
+        if (paneTitles) {
+          out[tab.id] = paneTitles
+        }
+      }
+      return out
+    })
+  )
 
   const branch = branchDisplayName(worktree.branch)
   const isFolder = repo ? isFolderRepo(repo) : false
@@ -123,8 +142,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
   // Derive status
   const status: WorktreeStatus = useMemo(
-    () => getWorktreeStatus(tabs, browserTabs),
-    [tabs, browserTabs]
+    () => getWorktreeStatus(tabs, browserTabs, runtimePaneTitlesForWorktree),
+    [tabs, browserTabs, runtimePaneTitlesForWorktree]
   )
 
   const showPR = cardProps.includes('pr')
@@ -288,6 +307,23 @@ const WorktreeCard = React.memo(function WorktreeCard({
             {/* Header row: Title and Checks */}
             <div className="flex items-center justify-between min-w-0 gap-2">
               <div className="flex items-center gap-1.5 min-w-0">
+                {repo?.connectionId && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 inline-flex items-center">
+                        {isSshDisconnected ? (
+                          <WifiOff className="size-3 text-red-400" />
+                        ) : (
+                          <Globe className="size-3 text-muted-foreground" />
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={8}>
+                      {isSshDisconnected ? 'SSH disconnected' : 'Remote repository via SSH'}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
                 <div className="text-[12px] font-semibold text-foreground truncate leading-tight">
                   {worktree.displayName}
                 </div>
@@ -350,23 +386,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
                     {repo.displayName}
                   </span>
                 </div>
-              )}
-
-              {repo?.connectionId && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="shrink-0 inline-flex items-center gap-0.5">
-                      {isSshDisconnected ? (
-                        <WifiOff className="size-3 text-red-400" />
-                      ) : (
-                        <Globe className="size-3 text-muted-foreground" />
-                      )}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8}>
-                    {isSshDisconnected ? 'SSH disconnected' : 'Remote repository via SSH'}
-                  </TooltipContent>
-                </Tooltip>
               )}
 
               {isFolder ? (

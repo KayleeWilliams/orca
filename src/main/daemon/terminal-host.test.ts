@@ -147,7 +147,15 @@ describe('TerminalHost', () => {
 
       expect(lastSubprocess.write).not.toHaveBeenCalled()
 
+      // Why: the marker alone no longer flushes — the kernel can still have
+      // ECHO enabled when it arrives. The flush waits for the prompt draw
+      // plus a short delay so readline has switched the PTY into raw mode
+      // first. Otherwise the command would be visibly double-echoed.
       lastSubprocess._onDataCb?.('\x1b]777;orca-shell-ready\x07')
+      expect(lastSubprocess.write).not.toHaveBeenCalled()
+
+      lastSubprocess._onDataCb?.('\r\nuser@host $ ')
+      await new Promise((r) => setTimeout(r, 40))
       expect(lastSubprocess.write).toHaveBeenCalledWith('echo hello\n')
     })
   })

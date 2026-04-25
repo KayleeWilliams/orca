@@ -1221,34 +1221,33 @@ export default function TaskPage(): React.JSX.Element {
           </div>
         ) : null}
 
-        {/* Why: Close sits in its own row below the titlebar strip so it can
-            never overlap the floating macOS traffic lights. Kept left-aligned
-            to stay out of the app sidebar on the right edge. */}
-        <div className="flex-none flex items-center justify-start px-5 pt-3 pb-1 md:px-8 md:pt-4">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 rounded-full"
-                onClick={closeTaskPage}
-                aria-label="Close tasks"
-              >
-                <X className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              Close · Esc
-            </TooltipContent>
-          </Tooltip>
-        </div>
-
-        <div className="mx-auto flex w-full flex-1 flex-col min-h-0 px-5 pb-5 md:px-8 md:pb-7">
-          <div className="flex-none flex flex-col gap-5">
-            <section className="flex flex-col gap-4">
-              <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
+        <div className="mx-auto flex w-full flex-1 flex-col min-h-0 px-5 pt-3 pb-5 md:px-8 md:pt-3 md:pb-7">
+          <div className="flex-none flex flex-col gap-3">
+            <section className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
+                    {/* Why: Close is anchored left in the same row as the
+                        source icons so the top chrome is one compact band.
+                        Left-aligned keeps it clear of the app sidebar on the
+                        right edge. */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 rounded-full"
+                          onClick={closeTaskPage}
+                          aria-label="Close tasks"
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6}>
+                        Close · Esc
+                      </TooltipContent>
+                    </Tooltip>
+                    <div className="mx-1 h-5 w-px bg-border/50" aria-hidden />
                     {SOURCE_OPTIONS.map((source) => {
                       const active = taskSource === source.id
                       return (
