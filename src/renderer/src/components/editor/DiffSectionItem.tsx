@@ -3,6 +3,7 @@ import { LazySection } from './LazySection'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react'
 import type { editor as monacoEditor } from 'monaco-editor'
+import { monaco } from '@/lib/monaco-setup'
 import { joinPath } from '@/lib/path'
 import { detectLanguage } from '@/lib/language-detect'
 import { useAppStore } from '@/store'
@@ -125,6 +126,10 @@ export function DiffSectionItem({
   )
   const language = detectLanguage(section.path)
   const isEditable = section.area === 'unstaged'
+  const modelPathBase = useMemo(
+    () => `diff-section:${encodeURIComponent(worktreeId)}:${encodeURIComponent(section.key)}`,
+    [section.key, worktreeId]
+  )
   const editorFontSize = computeEditorFontSize(
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
@@ -132,6 +137,31 @@ export function DiffSectionItem({
 
   const [modifiedEditor, setModifiedEditor] = useState<monacoEditor.ICodeEditor | null>(null)
   const [popover, setPopover] = useState<{ lineNumber: number; top: number } | null>(null)
+
+  const disposeDiffModels = React.useCallback(() => {
+    window.setTimeout(() => {
+      const originalModel = monaco.editor.getModel(monaco.Uri.parse(`${modelPathBase}:original`))
+      const modifiedModel = monaco.editor.getModel(monaco.Uri.parse(`${modelPathBase}:modified`))
+      if (!originalModel?.isAttachedToEditor()) {
+        originalModel?.dispose()
+      }
+      if (!modifiedModel?.isAttachedToEditor()) {
+        modifiedModel?.dispose()
+      }
+    }, 0)
+  }, [modelPathBase])
+
+  useEffect(() => {
+    if (section.collapsed) {
+      disposeDiffModels()
+    }
+  }, [disposeDiffModels, section.collapsed])
+
+  useEffect(() => {
+    return () => {
+      disposeDiffModels()
+    }
+  }, [disposeDiffModels])
 
   useDiffCommentDecorator({
     editor: modifiedEditor,
@@ -375,6 +405,13 @@ export function DiffSectionItem({
               modified={section.modifiedContent}
               theme={isDark ? 'vs-dark' : 'vs'}
               onMount={handleMount}
+              // Why: @monaco-editor/react disposes diff models before the diff
+              // widget during unmount, which can throw from Monaco. Keep them
+              // through widget teardown and dispose them on the next tick above.
+              originalModelPath={`${modelPathBase}:original`}
+              modifiedModelPath={`${modelPathBase}:modified`}
+              keepCurrentOriginalModel
+              keepCurrentModifiedModel
               options={{
                 readOnly: !isEditable,
                 originalEditable: false,
