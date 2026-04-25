@@ -9,6 +9,7 @@ import {
   type ParsedAgentStatusPayload
 } from '../../../../shared/agent-status-types'
 import type { TerminalTab } from '../../../../shared/types'
+import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 
 /** Snapshot of a finished (or vanished) agent status entry, kept around so
  *  the dashboard + sidebar hover can continue showing the completion until the
@@ -212,14 +213,25 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         // Why: `agentStatusEpoch` bumps on every update because visual +
         // freshness selectors (WorktreeCard status, hover content) care about
         // tool-name/prompt/assistant-message churn within a turn. `sortEpoch`,
-        // on the other hand, only bumps on actual `state` transitions — sort
-        // order is a function of state, so churning it on every tool/prompt
-        // event would stress the sidebar's smart-sort debounce for no reason.
-        const stateChanged = !existing || existing.state !== payload.state
+        // on the other hand, bumps only when sort-relevant inputs change —
+        // avoiding sidebar re-sorts on every tool/prompt event would stress
+        // the smart-sort debounce for no reason. Sort-relevant inputs are:
+        //   1. `state` transitions — sort score is a function of state.
+        //   2. Freshness transitions (stale → fresh) — `computeSmartScoreFromSignals`
+        //      in smart-sort.ts filters entries through
+        //      `isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)`
+        //      (30-min TTL). A stale entry that refreshes with the SAME state
+        //      goes from "not contributing" to contributing +60 (working) or
+        //      +35 (blocked/waiting) to the score — order must update. The new
+        //      entry below always has `updatedAt = now`, so it is fresh; we
+        //      only need to detect the stale→fresh flip on `existing`.
+        const wasFresh =
+          !!existing && isExplicitAgentStatusFresh(existing, now, AGENT_STATUS_STALE_AFTER_MS)
+        const sortRelevantChange = !existing || existing.state !== payload.state || !wasFresh
         return {
           agentStatusByPaneKey: { ...s.agentStatusByPaneKey, [paneKey]: entry },
           agentStatusEpoch: s.agentStatusEpoch + 1,
-          sortEpoch: stateChanged ? s.sortEpoch + 1 : s.sortEpoch
+          sortEpoch: sortRelevantChange ? s.sortEpoch + 1 : s.sortEpoch
         }
       })
       // Why: schedule after set completes so the timer reads the updated map.

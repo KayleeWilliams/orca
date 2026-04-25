@@ -1,7 +1,12 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
+import type { WorktreeStatus } from '@/lib/worktree-status'
 
-export type Status = 'active' | 'working' | 'permission' | 'done' | 'inactive'
+// Why: re-export WorktreeStatus under the existing `Status` alias so the
+// sidebar component and the canonical lib share one source of truth — the
+// previous local union could silently drift if one side added a new state
+// (e.g., 'error') and the other didn't.
+export type Status = WorktreeStatus
 
 type StatusIndicatorProps = React.ComponentProps<'span'> & {
   status: Status

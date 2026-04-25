@@ -209,6 +209,18 @@ export function buildWorktreeComparator(
   precomputedScores?: Map<string, number>,
   explicitByTabId?: Map<string, AgentStatusEntry[]>
 ): (a: Worktree, b: Worktree) => number {
+  // Why: when the caller does not pre-build the tabId index but does provide
+  // the source map, build it ONCE here and close over it. Array.sort invokes
+  // the comparator O(N log N) times in the fallback path (no precomputed
+  // scores), and `computeSmartScoreFromSignals` would otherwise rebuild the
+  // O(E) index on every comparison — re-introducing the O(N log N × E) cost
+  // the precompute was meant to avoid. Only matters for the smart mode; for
+  // other modes we skip construction.
+  const resolvedExplicitByTabId =
+    sortBy === 'smart' && !explicitByTabId && agentStatusByPaneKey
+      ? buildExplicitEntriesByTabId(agentStatusByPaneKey)
+      : explicitByTabId
+
   return (a, b) => {
     switch (sortBy) {
       case 'name':
@@ -249,7 +261,7 @@ export function buildWorktreeComparator(
                 smartA.hasRecentPRSignal,
                 now,
                 agentStatusByPaneKey,
-                explicitByTabId
+                resolvedExplicitByTabId
               )
         const scoreB =
           precomputedScores && !smartSortOverrides?.[b.id]
@@ -260,7 +272,7 @@ export function buildWorktreeComparator(
                 smartB.hasRecentPRSignal,
                 now,
                 agentStatusByPaneKey,
-                explicitByTabId
+                resolvedExplicitByTabId
               )
         return (
           scoreB - scoreA ||

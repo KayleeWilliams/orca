@@ -134,22 +134,28 @@ const WorktreeCard = React.memo(function WorktreeCard({
       if (!wtTabs || wtTabs.length === 0) {
         return EMPTY_AGENT_ENTRIES
       }
-      const liveTabIds: string[] = []
+      const liveTabIds = new Set<string>()
       for (const t of wtTabs) {
         if (t.ptyId) {
-          liveTabIds.push(t.id)
+          liveTabIds.add(t.id)
         }
       }
-      if (liveTabIds.length === 0) {
+      if (liveTabIds.size === 0) {
         return EMPTY_AGENT_ENTRIES
       }
       const out: AgentStatusEntry[] = []
       for (const entry of Object.values(s.agentStatusByPaneKey)) {
-        for (const id of liveTabIds) {
-          if (entry.paneKey.startsWith(`${id}:`)) {
-            out.push(entry)
-            break
-          }
+        // Why: paneKey must be `${tabId}:${paneId}`. Parse the prefix once via
+        // indexOf+slice and look it up in the Set for O(1) membership — the
+        // previous `startsWith(`${id}:`)` nested loop was O(E × T) per store
+        // event, matching the AgentStatusHover selector's O(E) approach.
+        const colonIdx = entry.paneKey.indexOf(':')
+        if (colonIdx <= 0) {
+          continue
+        }
+        const tabId = entry.paneKey.slice(0, colonIdx)
+        if (liveTabIds.has(tabId)) {
+          out.push(entry)
         }
       }
       return out.length > 0 ? out : EMPTY_AGENT_ENTRIES
@@ -201,7 +207,14 @@ const WorktreeCard = React.memo(function WorktreeCard({
         continue
       }
       const colonIdx = entry.paneKey.indexOf(':')
-      const tabId = colonIdx === -1 ? entry.paneKey : entry.paneKey.slice(0, colonIdx)
+      // Why: paneKey must be `${tabId}:${paneId}`. Skip malformed entries (no
+      // colon or leading colon) rather than bucketing under "" — aligns with
+      // `buildExplicitEntriesByTabId` and the AgentStatusHover selector which
+      // enforce the same invariant.
+      if (colonIdx <= 0) {
+        continue
+      }
+      const tabId = entry.paneKey.slice(0, colonIdx)
       const bucket = freshByTabId.get(tabId)
       if (bucket) {
         bucket.push(entry)
