@@ -157,7 +157,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return { id: sessionId, pid, coldRestore }
     }
 
-    if (this.historyManager && result.isNew) {
+    // Why: openSession must run for both new sessions and warm reattaches.
+    // On reattach after app relaunch, the HistoryManager is a fresh instance
+    // with no in-memory writers. Without openSession, checkpoint() silently
+    // no-ops and the session has no crash-recovery data if the daemon dies.
+    if (this.historyManager) {
       void this.historyManager
         .openSession(sessionId, {
           cwd: effectiveCwd ?? '',
