@@ -367,10 +367,11 @@ async function launchRelay(
     try {
       // Why: node is guaranteed to exist on the remote (we just deployed
       // the relay with it). Using it to probe the socket is more portable
-      // than python3/socat/perl which may not be installed.
+      // than python3/socat/perl which may not be installed. The socket
+      // path is passed as argv[1] to avoid shell quoting issues with -e.
       const result = await execCommand(
         conn,
-        `${escapedNode} -e "var s=require('net').connect(${JSON.stringify(sockFile)});s.on('connect',()=>{s.destroy();process.stdout.write('READY')});s.on('error',()=>{process.stdout.write('WAITING')})" 2>/dev/null || (test -S ${shellEscape(sockFile)} && echo READY || echo WAITING)`
+        `${escapedNode} -e 'var s=require("net").connect(process.argv[1]);s.on("connect",function(){s.destroy();process.stdout.write("READY")});s.on("error",function(){process.stdout.write("WAITING")})' ${shellEscape(sockFile)} 2>/dev/null || (test -S ${shellEscape(sockFile)} && echo READY || echo WAITING)`
       )
       if (result.trim() === 'READY') {
         socketReady = true
