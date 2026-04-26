@@ -134,6 +134,20 @@ function main(): void {
     }
   })
 
+  // Why: worktree creation needs to await root registration before sending
+  // addWorktree, which validates the target directory. While FIFO frame
+  // processing means a notification won't be reordered in steady state,
+  // the request variant makes the ordering guarantee explicit and closes
+  // failure windows during relay reconnect or fresh-host scenarios where
+  // roots may not yet be registered at all. See issue #911.
+  dispatcher.onRequest('session.registerRoot', async (params) => {
+    const rootPath = params.rootPath as string
+    if (rootPath) {
+      context.registerRoot(rootPath)
+    }
+    return { ok: true }
+  })
+
   // Why: the client stores repo paths as-is from user input, but `~` is a
   // shell expansion — Node's fs APIs don't understand it. This handler lets
   // the client resolve tilde paths to absolute paths on the remote host
