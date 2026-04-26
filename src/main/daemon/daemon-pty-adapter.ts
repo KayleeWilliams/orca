@@ -384,11 +384,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // dispose() writes endedAt for all sessions, which would prevent cold
   // restore. disconnectOnly() leaves history files in unclean state so
   // the next launch detects them as crash-recoverable.
+  // We write a final checkpoint before disconnecting so that if the daemon
+  // later crashes while Orca is closed, checkpoint.json has recovery data.
   disconnectOnly(): void {
     if (this.checkpointInterval) {
       clearInterval(this.checkpointInterval)
       this.checkpointInterval = null
     }
+    // Why: without a final checkpoint, sessions opened after the last timer
+    // tick have no checkpoint.json on disk. If the detached daemon later
+    // dies, detectColdRestore finds nothing to restore from.
+    this.checkpointAllSessions()
     this.removeEventListener?.()
     this.removeEventListener = null
     this.client.disconnect()
