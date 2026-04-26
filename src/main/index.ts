@@ -479,7 +479,10 @@ app.on('will-quit', () => {
   // disconnectDaemon only tears down the client transport — it does NOT kill
   // the daemon process or mark its history as cleanly ended, preserving both
   // warm reattach and crash recovery on next launch.
-  disconnectDaemon()
+  // Why void: will-quit is synchronous in Electron, but the internal await
+  // ensures checkpoints complete before socket disconnect. The promise chain
+  // finishes on the event loop before the process actually exits.
+  void disconnectDaemon()
   void closeAllWatchers()
   if (runtimeRpc) {
     void runtimeRpc.stop().catch((error) => {

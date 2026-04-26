@@ -212,8 +212,8 @@ export async function initDaemonPtyProvider(): Promise<void> {
 // separate process and survives app quit — sessions stay alive for warm
 // reattach on next launch. Leave history sessions marked "unclean" here so a
 // later daemon crash while Orca is closed is still recoverable on next launch.
-export function disconnectDaemon(): void {
-  adapter?.disconnectOnly()
+export async function disconnectDaemon(): Promise<void> {
+  await adapter?.disconnectOnly()
   adapter = null
 }
 

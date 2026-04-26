@@ -131,7 +131,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
     // an unclean shutdown → return saved scrollback so the renderer can
     // display the previous terminal content.
     if (result.isNew && restoreInfo) {
-      const scrollback = restoreInfo.rehydrateSequences + restoreInfo.snapshotAnsi
+      // Why: if the checkpoint was captured while an alternate-screen app
+      // (vim, less, htop) was active, rehydrateSequences contains \x1b[?1049h
+      // which would reopen the alternate buffer in a fresh shell. The old
+      // scrollback fallback explicitly truncated alt-screen content; replaying
+      // it here would leave the terminal stuck behind stale TUI content.
+      const prefix = restoreInfo.modes.alternateScreen ? '' : restoreInfo.rehydrateSequences
+      const scrollback = prefix + restoreInfo.snapshotAnsi
       const coldRestore = { scrollback, cwd: restoreInfo.cwd }
       this.coldRestoreCache.set(sessionId, coldRestore)
       if (this.historyManager) {
@@ -386,15 +392,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // the next launch detects them as crash-recoverable.
   // We write a final checkpoint before disconnecting so that if the daemon
   // later crashes while Orca is closed, checkpoint.json has recovery data.
-  disconnectOnly(): void {
+  async disconnectOnly(): Promise<void> {
     if (this.checkpointInterval) {
       clearInterval(this.checkpointInterval)
       this.checkpointInterval = null
     }
     // Why: without a final checkpoint, sessions opened after the last timer
     // tick have no checkpoint.json on disk. If the detached daemon later
-    // dies, detectColdRestore finds nothing to restore from.
-    this.checkpointAllSessions()
+    // dies, detectColdRestore finds nothing to restore from. Must await
+    // before disconnecting — fire-and-forget would race with client.disconnect()
+    // and the pending getSnapshot RPCs would be rejected.
+    await this.checkpointAllSessions()
     this.removeEventListener?.()
     this.removeEventListener = null
     this.client.disconnect()
@@ -411,27 +419,32 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return
     }
     this.checkpointInterval = setInterval(() => {
-      this.checkpointAllSessions()
+      void this.checkpointAllSessions()
     }, DaemonPtyAdapter.CHECKPOINT_INTERVAL_MS)
   }
 
   // Why: the adapter runs in the Electron main process and does not have direct
   // access to daemon Session objects. It calls the getSnapshot RPC over the
-  // daemon socket per session.
-  private checkpointAllSessions(): void {
+  // daemon socket per session. Returns a promise that resolves when all
+  // checkpoint writes complete (callers that don't need to wait can void it).
+  private async checkpointAllSessions(): Promise<void> {
     if (!this.historyManager) {
       return
     }
+    const promises: Promise<void>[] = []
     for (const sessionId of this.activeSessionIds) {
-      void this.client
-        .request<GetSnapshotResult>('getSnapshot', { sessionId })
-        .then((result) => {
-          if (result.snapshot && this.historyManager) {
-            return this.historyManager.checkpoint(sessionId, result.snapshot)
-          }
-        })
-        .catch((err) => console.warn('[history] checkpoint failed:', sessionId, err))
+      promises.push(
+        this.client
+          .request<GetSnapshotResult>('getSnapshot', { sessionId })
+          .then((result) => {
+            if (result.snapshot && this.historyManager) {
+              return this.historyManager.checkpoint(sessionId, result.snapshot)
+            }
+          })
+          .catch((err) => console.warn('[history] checkpoint failed:', sessionId, err))
+      )
     }
+    await Promise.all(promises)
   }
 
   // Why: when the daemon process dies, operations fail with ENOENT (socket
