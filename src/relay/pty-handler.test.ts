@@ -294,9 +294,11 @@ describe('PtyHandler', () => {
     )
   })
 
-  it('grace timer fires immediately when no PTYs exist', () => {
+  it('grace timer waits full period even when no PTYs exist', () => {
     const onExpire = vi.fn()
     handler.startGraceTimer(onExpire)
+    expect(onExpire).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(5 * 60 * 1000)
     expect(onExpire).toHaveBeenCalledTimes(1)
   })
 

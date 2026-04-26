@@ -30,6 +30,7 @@ type WorkspaceSessionSnapshot = Pick<
   | 'sshConnectionStates'
   | 'repos'
   | 'worktreesByRepo'
+  | 'lastKnownRelayPtyIdByTabId'
 >
 
 /** Build the editor-file portion of the workspace session for persistence.
@@ -130,8 +131,14 @@ export function buildBrowserSessionData(
 export function buildWorkspaceSessionPayload(
   snapshot: WorkspaceSessionSnapshot
 ): WorkspaceSessionState {
+  // Why: lastKnownRelayPtyIdByTabId preserves session IDs across relay
+  // disconnect/reconnect cycles. tab.ptyId is cleared on disconnect, but
+  // the relay keeps the PTY alive — using the lastKnown fallback ensures
+  // the session save captures the ID even when the mux is temporarily down.
+  const lastKnown = snapshot.lastKnownRelayPtyIdByTabId
+
   const activeWorktreeIdsOnShutdown = Object.entries(snapshot.tabsByWorktree)
-    .filter(([, tabs]) => tabs.some((tab) => tab.ptyId))
+    .filter(([, tabs]) => tabs.some((tab) => tab.ptyId || lastKnown[tab.id]))
     .map(([worktreeId]) => worktreeId)
 
   // Why: sshConnectionStates is a Map<string, SshConnectionState>, not a plain
@@ -154,8 +161,9 @@ export function buildWorkspaceSessionPayload(
       continue
     }
     for (const tab of tabs) {
-      if (tab.ptyId) {
-        remoteSessionIdsByTabId[tab.id] = tab.ptyId
+      const sessionId = tab.ptyId || lastKnown[tab.id]
+      if (sessionId) {
+        remoteSessionIdsByTabId[tab.id] = sessionId
       }
     }
   }

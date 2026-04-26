@@ -331,10 +331,60 @@ async function launchRelay(
     // Probe failed — fall through to fresh launch
   }
 
-  // Why: both remoteDir and nodePath come from the remote host and could
-  // contain shell metacharacters. Single-quote escaping prevents injection.
+  // Why: the relay must outlive the SSH connection so PTY sessions survive
+  // app restarts.  nohup prevents SIGHUP death, </dev/null detaches stdin,
+  // and & backgrounds the process so it's not a direct child of the exec
+  // channel.  When sshd tears down the session the relay continues as an
+  // orphan adopted by init, listening on its Unix socket for a --connect
+  // bridge from the next app launch.
+  // Why: execCommand waits for the channel to close, but SSH channels stay
+  // open while backgrounded children exist (even with fd redirection).
+  // Fire-and-forget via conn.exec: we don't need the output — the socket
+  // poll below detects readiness.
+  const logFile = `${remoteDir}/relay.log`
+  const launchCmd = `cd ${escapedDir} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  const launchChannel = await conn.exec(launchCmd)
+  launchChannel.on('data', () => {})
+  launchChannel.stderr.on('data', () => {})
+  launchChannel.on('close', () => {})
+
+  // Why: the backgrounded relay needs time to bind its Unix socket.  We
+  // poll rather than sleep a fixed duration because remote host speed
+  // varies widely (CI vs. Raspberry Pi).
+  const POLL_INTERVAL_MS = 200
+  const POLL_TIMEOUT_MS = 10_000
+  const pollStart = Date.now()
+  let socketReady = false
+  while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
+    try {
+      const result = await execCommand(
+        conn,
+        `test -S ${shellEscape(sockFile)} && echo READY || echo WAITING`
+      )
+      if (result.trim() === 'READY') {
+        socketReady = true
+        break
+      }
+    } catch {
+      /* exec failed, retry */
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+  }
+
+  if (!socketReady) {
+    const logOutput = await execCommand(
+      conn,
+      `tail -20 ${shellEscape(logFile)} 2>/dev/null || echo "(no log)"`
+    ).catch(() => '(could not read log)')
+    throw new Error(`Relay failed to start within ${POLL_TIMEOUT_MS / 1000}s. Log:\n${logOutput}`)
+  }
+
+  // Why: the backgrounded relay's stdout goes to a log file, not the exec
+  // channel.  We connect via --connect which bridges this new channel's
+  // stdin/stdout to the relay's Unix socket — same path used for reconnect
+  // after app restart.
   const channel = await conn.exec(
-    `cd ${escapedDir} && ${escapedNode} relay.js --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)}`
+    `cd ${escapedDir} && ${escapedNode} relay.js --connect --sock-path ${shellEscape(sockFile)}`
   )
   return waitForSentinel(channel)
 }

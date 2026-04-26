@@ -190,13 +190,15 @@ describe('Subprocess: Relay entry point', () => {
     expect(relay.proc.exitCode !== null || relay.proc.signalCode !== null).toBe(true)
   }, 10_000)
 
-  it('exits immediately on stdin close when no PTYs exist', async () => {
-    relay = spawn(['--grace-time', '100'])
+  it('exits after grace period on stdin close when no PTYs exist', async () => {
+    // Why: grace timer always waits the full period now (even with zero PTYs)
+    // so a detached relay has time for a --connect client to arrive.
+    relay = spawn(['--grace-time', '1'])
     await relay.sentinelReceived
 
     relay.proc.stdin!.end()
 
-    await relay.waitForExit(3000)
+    await relay.waitForExit(5000)
     expect(relay.proc.exitCode).toBe(0)
   }, 10_000)
 

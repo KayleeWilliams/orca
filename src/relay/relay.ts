@@ -29,10 +29,12 @@ const CONNECT_TIMEOUT_MS = 5_000
 function parseArgs(argv: string[]): {
   graceTimeMs: number
   connectMode: boolean
+  detached: boolean
   sockPath: string
 } {
   let graceTimeMs = DEFAULT_GRACE_MS
   let connectMode = false
+  let detached = false
   let sockPath = ''
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--grace-time' && argv[i + 1]) {
@@ -44,6 +46,8 @@ function parseArgs(argv: string[]): {
       i++
     } else if (argv[i] === '--connect') {
       connectMode = true
+    } else if (argv[i] === '--detached') {
+      detached = true
     } else if (argv[i] === '--sock-path' && argv[i + 1]) {
       sockPath = argv[i + 1]
       i++
@@ -52,7 +56,7 @@ function parseArgs(argv: string[]): {
   if (!sockPath) {
     sockPath = join(process.cwd(), SOCK_NAME)
   }
-  return { graceTimeMs, connectMode, sockPath }
+  return { graceTimeMs, connectMode, detached, sockPath }
 }
 
 // ── Connect mode ─────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ function runConnectMode(sockPath: string): void {
 // ── Normal mode ──────────────────────────────────────────────────────
 
 function main(): void {
-  const { graceTimeMs, connectMode, sockPath } = parseArgs(process.argv)
+  const { graceTimeMs, connectMode, detached, sockPath } = parseArgs(process.argv)
 
   if (connectMode) {
     runConnectMode(sockPath)
@@ -279,34 +283,45 @@ function main(): void {
     stdoutAlive = false
   })
 
-  process.stdin.on('data', (chunk: Buffer) => {
-    ptyHandler.cancelGraceTimer()
-    dispatcher.feed(chunk)
-  })
-
-  process.stdin.on('end', () => {
-    // Why: stdout is piped to the SSH channel — once stdin closes the
-    // channel is gone and stdout writes would hit a dead pipe.  Mark it
-    // dead so the dispatcher's write callback becomes a no-op until a
-    // socket client reconnects and calls setWrite with a live target.
-    stdoutAlive = false
-    if (!activeSocket) {
-      dispatcher.invalidateClient()
-      startGrace()
-    }
-  })
-
-  process.stdin.on('error', () => {
-    stdoutAlive = false
-    if (!activeSocket) {
-      dispatcher.invalidateClient()
-      startGrace()
-    }
-  })
-
   function startGrace(): void {
     ptyHandler.startGraceTimer(() => {
       shutdown()
+    })
+  }
+
+  if (detached) {
+    // Why: in detached mode the relay is backgrounded (nohup ... &) so
+    // stdin is /dev/null and stdout goes to a log file.  Listening on
+    // stdin would trigger an immediate EOF → grace → shutdown before any
+    // --connect client arrives.  Instead we mark stdout dead (no direct
+    // pipe), start the grace timer (socket connect will cancel it), and
+    // rely entirely on the Unix socket for client communication.
+    stdoutAlive = false
+    startGrace()
+  } else {
+    process.stdin.on('data', (chunk: Buffer) => {
+      ptyHandler.cancelGraceTimer()
+      dispatcher.feed(chunk)
+    })
+
+    process.stdin.on('end', () => {
+      // Why: stdout is piped to the SSH channel — once stdin closes the
+      // channel is gone and stdout writes would hit a dead pipe.  Mark it
+      // dead so the dispatcher's write callback becomes a no-op until a
+      // socket client reconnects and calls setWrite with a live target.
+      stdoutAlive = false
+      if (!activeSocket) {
+        dispatcher.invalidateClient()
+        startGrace()
+      }
+    })
+
+    process.stdin.on('error', () => {
+      stdoutAlive = false
+      if (!activeSocket) {
+        dispatcher.invalidateClient()
+        startGrace()
+      }
     })
   }
 
