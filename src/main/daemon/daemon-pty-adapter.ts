@@ -152,11 +152,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return { id: sessionId, coldRestore }
     }
 
-    // Why: openSession must run for both new sessions and warm reattaches.
-    // On reattach after app relaunch, the HistoryManager is a fresh instance
-    // with no in-memory writers. Without openSession, checkpoint() silently
-    // no-ops and the session has no crash-recovery data if the daemon dies.
-    if (this.historyManager) {
+    if (this.historyManager && result.isNew) {
       void this.historyManager
         .openSession(sessionId, {
           cwd: effectiveCwd ?? '',
@@ -164,6 +160,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
           rows: effectiveRows
         })
         .catch((err) => console.warn('[history] openSession failed:', sessionId, err))
+    } else if (this.historyManager) {
+      // Why: on warm reattach after app relaunch, the HistoryManager is a
+      // fresh instance with no writers. registerWriter adds the writer
+      // without overwriting meta.json or deleting the existing checkpoint
+      // (which is the only valid recovery data until the next tick).
+      this.historyManager.registerWriter(sessionId)
     }
 
     const isReattach = !result.isNew
@@ -444,6 +446,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
             if (result.snapshot && this.historyManager) {
               return this.historyManager.checkpoint(sessionId, result.snapshot)
             }
+            return undefined
           })
           .catch((err) => console.warn('[history] checkpoint failed:', sessionId, err))
       )

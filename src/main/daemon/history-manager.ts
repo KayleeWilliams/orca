@@ -82,6 +82,22 @@ export class HistoryManager {
     }
   }
 
+  // Why: on warm reattach after app relaunch, the HistoryManager is a fresh
+  // instance with no in-memory writers. This registers the writer so
+  // checkpoint() calls work, without overwriting meta.json or deleting the
+  // existing checkpoint.json (which is the only valid recovery data until
+  // the next checkpoint tick writes a fresh one).
+  registerWriter(sessionId: string): void {
+    if (this.writers.has(sessionId)) {
+      return
+    }
+    const dir = join(this.basePath, getHistorySessionDirName(sessionId))
+    this.writers.set(sessionId, {
+      dir,
+      checkpointPath: join(dir, 'checkpoint.json')
+    })
+  }
+
   // Why: replaces the old appendData (which wrote every PTY chunk to disk).
   // Checkpoints happen every ~5 seconds from a timer, not on every data event,
   // so disk I/O drops from O(PTY throughput) to O(1 write per interval).
