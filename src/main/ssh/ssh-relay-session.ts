@@ -38,6 +38,11 @@ export class SshRelaySession {
   private _state: RelaySessionState = 'idle'
   private mux: SshChannelMultiplexer | null = null
   private abortController: AbortController | null = null
+  private muxDisposeCleanup: (() => void) | null = null
+  // Why: when the relay exec channel closes but the SSH connection stays
+  // up, the onStateChange reconnect path never fires. This callback lets
+  // ssh.ts wire up relay-level reconnect from outside the session.
+  private _onRelayLost: ((targetId: string) => void) | null = null
 
   constructor(
     readonly targetId: string,
@@ -45,6 +50,10 @@ export class SshRelaySession {
     private store: Store,
     private portForwardManager: SshPortForwardManager
   ) {}
+
+  setOnRelayLost(cb: (targetId: string) => void): void {
+    this._onRelayLost = cb
+  }
 
   getState(): RelaySessionState {
     return this._state
@@ -93,13 +102,31 @@ export class SshRelaySession {
       const mux = new SshChannelMultiplexer(transport)
       this.mux = mux
 
+      // Why: verify the relay is actually responsive before registering
+      // providers. In --connect mode the bridge may have already closed
+      // (e.g. the grace-period relay exited because it had no PTYs), and
+      // registerRelayRoots would silently swallow all mux errors, leaving
+      // the session in 'ready' state with a dead mux. A round-trip request
+      // here fails fast so doConnect() can report the real error.
+      await mux.request('session.resolveHome', { path: '~' })
+
       await this.registerProviders(mux)
+
+      // Why: the mux's transport can close during registerProviders (e.g.
+      // the --connect bridge exits). registerRelayRoots swallows mux errors
+      // (notifications no-op when disposed, git.listWorktrees requests are
+      // try/caught), so establish would otherwise reach 'ready' with a dead
+      // mux. Checking isDisposed catches this silent failure.
+      if (mux.isDisposed()) {
+        throw new Error('Relay connection lost during provider registration')
+      }
 
       if (this.isDisposed()) {
         this.teardownProviders('shutdown')
         throw new Error('Session disposed during establish')
       }
 
+      this.watchMuxForRelayLoss(mux)
       this._state = 'ready'
     } catch (err) {
       // Why: if deployAndLaunchRelay succeeded but registerProviders threw
@@ -161,12 +188,27 @@ export class SshRelaySession {
         !abortController.signal.aborted &&
         !this.isDisposed()
 
+      // Why: same health check as establish() — verify the relay is
+      // responsive before registering providers so a dead --connect bridge
+      // fails fast instead of silently producing a dead mux.
+      await mux.request('session.resolveHome', { path: '~' })
+      if (!ownsAttempt()) {
+        if (!mux.isDisposed()) {
+          mux.dispose()
+        }
+        return
+      }
+
       const registered = await this.registerProviders(mux, ownsAttempt)
       if (!registered) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
         return
+      }
+
+      if (mux.isDisposed()) {
+        throw new Error('Relay connection lost during provider registration')
       }
 
       // Why: dispose() can fire during registerProviders or the attach loop
@@ -202,6 +244,7 @@ export class SshRelaySession {
         return
       }
 
+      this.watchMuxForRelayLoss(mux)
       this._state = 'ready'
     } catch (err) {
       // Why: clean up the mux if it was created but registration failed
@@ -235,6 +278,23 @@ export class SshRelaySession {
 
   // ── Private ───────────────────────────────────────────────────────
 
+  // Why: when the relay exec channel closes (e.g. --connect bridge exits,
+  // relay process crashes) but the SSH connection stays up, there is no
+  // automatic recovery — onStateChange only fires on SSH-level reconnects.
+  // This watcher detects relay-level channel loss and fires onRelayLost
+  // so ssh.ts can trigger session.reconnect() with the still-live SSH conn.
+  private watchMuxForRelayLoss(mux: SshChannelMultiplexer): void {
+    this.muxDisposeCleanup?.()
+    this.muxDisposeCleanup = mux.onDispose((reason) => {
+      if (reason === 'connection_lost' && this.mux === mux && !this.isDisposed()) {
+        console.warn(
+          `[ssh-relay-session] Relay channel lost for ${this.targetId}, triggering reconnect`
+        )
+        this._onRelayLost?.(this.targetId)
+      }
+    })
+  }
+
   // Why: shared by establish() and reconnect() — the exact same provider
   // registration sequence, eliminating the duplication that caused bugs.
   private async registerProviders(
@@ -260,6 +320,8 @@ export class SshRelaySession {
   }
 
   private teardownProviders(reason: 'shutdown' | 'connection_lost'): void {
+    this.muxDisposeCleanup?.()
+    this.muxDisposeCleanup = null
     if (this.mux && !this.mux.isDisposed()) {
       this.mux.dispose(reason)
     }

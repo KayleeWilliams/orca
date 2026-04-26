@@ -40,6 +40,7 @@ export class SshChannelMultiplexer {
   private lastReceivedAt = Date.now()
   private pendingRequests = new Map<number, PendingRequest>()
   private notificationHandlers: NotificationHandler[] = []
+  private disposeHandlers: ((reason: 'shutdown' | 'connection_lost') => void)[] = []
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null
   private timeoutTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
@@ -80,6 +81,21 @@ export class SshChannelMultiplexer {
       const idx = this.notificationHandlers.indexOf(handler)
       if (idx !== -1) {
         this.notificationHandlers.splice(idx, 1)
+      }
+    }
+  }
+
+  // Why: the session needs to know when the relay channel dies so it can
+  // auto-reconnect. Without this, a relay channel close (e.g. --connect
+  // bridge exits) leaves the session in 'ready' state with a dead mux
+  // and no recovery path — the SSH connection stays up so onStateChange
+  // never fires the reconnect logic.
+  onDispose(handler: (reason: 'shutdown' | 'connection_lost') => void): () => void {
+    this.disposeHandlers.push(handler)
+    return () => {
+      const idx = this.disposeHandlers.indexOf(handler)
+      if (idx !== -1) {
+        this.disposeHandlers.splice(idx, 1)
       }
     }
   }
@@ -132,6 +148,10 @@ export class SshChannelMultiplexer {
     if (this.disposed) {
       return
     }
+    console.warn(
+      `[ssh-mux] Disposing multiplexer (reason: ${reason})`,
+      new Error('dispose trace').stack
+    )
     this.disposed = true
 
     if (this.keepaliveTimer) {
@@ -160,6 +180,15 @@ export class SshChannelMultiplexer {
     this.unackedTimestamps.clear()
     this.decoder.reset()
     this.transport.close?.()
+
+    for (const handler of this.disposeHandlers) {
+      try {
+        handler(reason)
+      } catch {
+        // Don't let a handler error prevent other handlers from running
+      }
+    }
+    this.disposeHandlers.length = 0
   }
 
   isDisposed(): boolean {

@@ -1287,6 +1287,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // experimentalTerminalDaemon setting. The existing loop above correctly
       // skips SSH repos (connectionId check), so there is no overlap.
       const remoteSessionIds = session.remoteSessionIdsByTabId ?? {}
+      console.warn(
+        `[terminals-hydration] remoteSessionIdsByTabId:`,
+        JSON.stringify(remoteSessionIds)
+      )
       for (const [tabId, sessionId] of Object.entries(remoteSessionIds)) {
         if (validTabIds.has(tabId)) {
           pendingReconnectPtyIdByTabId[tabId] = sessionId
@@ -1394,10 +1398,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // SSH connection is active. Without the active-connection check, we'd try
       // to reattach to a relay that isn't connected yet (the deferred/passphrase
       // targets), which would fail.
-      const sshConnected =
-        repo?.connectionId != null &&
-        get().sshConnectionStates.get(repo.connectionId)?.status === 'connected'
+      const sshState = repo?.connectionId ? get().sshConnectionStates.get(repo.connectionId) : null
+      const sshConnected = repo?.connectionId != null && sshState?.status === 'connected'
       const supportsDeferredReattach = !repo?.connectionId || sshConnected
+      console.warn(
+        `[reconnect-terminals] worktree=${worktreeId} connectionId=${repo?.connectionId} sshStatus=${sshState?.status} supportsDeferredReattach=${supportsDeferredReattach}`
+      )
       const targetTabIds = pendingReconnectTabByWorktree[worktreeId] ?? []
       const tabsToReconnect: TerminalTab[] =
         targetTabIds.length > 0
@@ -1423,6 +1429,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         // carries per-leaf mappings; connectPanePty reads those via
         // restoredPtyIdByLeafId, but the tab still needs a ptyId for
         // status and orphan detection.
+        console.warn(
+          `[reconnect-terminals] tab=${tabId} tabLevelPtyId=${tabLevelPtyId} supportsDeferredReattach=${supportsDeferredReattach} hasLeafMappings=${hasLeafMappings}`
+        )
         if (supportsDeferredReattach && tabLevelPtyId) {
           set((s) => {
             const next = { ...s.tabsByWorktree }

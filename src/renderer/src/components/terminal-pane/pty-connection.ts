@@ -541,6 +541,9 @@ export function connectPanePty(
       const pendingSessionId =
         restoredLeafSessionId ?? storeState.deferredSshSessionIdsByTabId[deps.tabId]
       const isDeferredTarget = storeState.deferredSshReconnectTargets.includes(connectionId)
+      console.warn(
+        `[pty-connection] SSH tab=${deps.tabId} connectionId=${connectionId} pendingSessionId=${pendingSessionId} isDeferredTarget=${isDeferredTarget}`
+      )
       if (pendingSessionId || isDeferredTarget) {
         void (async () => {
           // Why: ensure the SSH connection is established before attempting
@@ -559,6 +562,9 @@ export function connectPanePty(
             return
           }
           if (pendingSessionId) {
+            console.warn(
+              `[pty-connection] Attempting reattach for tab=${deps.tabId} sessionId=${pendingSessionId}`
+            )
             // Why: the saved remote PTY ID is single-use restore metadata.
             // Clear it before attach/fallback so remounts don't keep retrying
             // an expired session after a fresh shell has been created.
@@ -576,9 +582,19 @@ export function connectPanePty(
             })
             void Promise.resolve(reattachPromise)
               .then((result) => {
+                console.warn(
+                  `[pty-connection] Reattach result for tab=${deps.tabId}:`,
+                  result
+                    ? {
+                        sessionExpired: (result as Record<string, unknown>).sessionExpired,
+                        replay: !!(result as Record<string, unknown>).replay
+                      }
+                    : 'undefined'
+                )
                 handleReattachResult(result)
               })
-              .catch(() => {
+              .catch((err) => {
+                console.warn(`[pty-connection] Reattach FAILED for tab=${deps.tabId}:`, err)
                 if (disposed) {
                   return
                 }

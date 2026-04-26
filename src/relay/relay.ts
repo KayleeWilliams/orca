@@ -108,9 +108,13 @@ function main(): void {
   // would risk silent data corruption or zombie PTYs. We log for diagnostics
   // and then exit so the client can detect the disconnect and reconnect cleanly.
   process.on('uncaughtException', (err) => {
-    process.stderr.write(`[relay] Uncaught exception: ${err.message}\n`)
+    process.stderr.write(`[relay] Uncaught exception: ${err.message}\n${err.stack}\n`)
     cleanupSocket(sockPath)
     process.exit(1)
+  })
+
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`[relay] Unhandled rejection: ${reason}\n`)
   })
 
   // Why: stdoutAlive tracks whether process.stdout is still writable.
@@ -121,7 +125,11 @@ function main(): void {
   let stdoutAlive = true
   const dispatcher = new RelayDispatcher((data) => {
     if (stdoutAlive) {
-      process.stdout.write(data)
+      try {
+        process.stdout.write(data)
+      } catch {
+        stdoutAlive = false
+      }
     }
   })
 
@@ -191,6 +199,7 @@ function main(): void {
       // so the old socket's close handler sees it's been replaced and
       // skips starting the grace timer.
       if (activeSocket) {
+        process.stderr.write('[relay] Replacing existing socket client with new connection\n')
         const replaced = activeSocket
         activeSocket = null
         replaced.destroy()
@@ -262,6 +271,14 @@ function main(): void {
 
   // ── stdin/stdout transport (initial connection) ─────────────────────
 
+  // Why: when the SSH channel closes, writing to stdout can emit an
+  // 'error' event (EPIPE/ERR_STREAM_DESTROYED). Without a handler,
+  // Node treats it as an uncaught exception and the process exits
+  // before the grace period starts.
+  process.stdout.on('error', () => {
+    stdoutAlive = false
+  })
+
   process.stdin.on('data', (chunk: Buffer) => {
     ptyHandler.cancelGraceTimer()
     dispatcher.feed(chunk)
@@ -306,6 +323,18 @@ function main(): void {
 
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
+  // Why: when the SSH session drops, the OS sends SIGHUP to the relay's
+  // process group. Node's default SIGHUP behavior is to exit immediately,
+  // which kills all PTYs before the grace period can start. Ignoring
+  // SIGHUP lets the relay survive the SSH disconnect and enter its grace
+  // window — a reconnecting client can then bridge to the live relay via
+  // --connect and reattach to the still-running PTY sessions.
+  process.on('SIGHUP', () => {
+    process.stderr.write('[relay] Received SIGHUP (SSH session dropped), ignoring\n')
+  })
+  process.on('exit', (code) => {
+    process.stderr.write(`[relay] Process exiting with code ${code}\n`)
+  })
 
   // Signal readiness to the client — the client watches for this exact
   // string before sending framed data.

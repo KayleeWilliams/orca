@@ -252,6 +252,9 @@ function App(): React.JSX.Element {
                 }
                 try {
                   const state = await window.api.ssh.getState({ targetId })
+                  console.warn(
+                    `[ssh-restore] Polled state for ${targetId}: status=${state?.status}`
+                  )
                   if (state?.status === 'connected') {
                     actions.setSshConnectionState(targetId, state)
                   }

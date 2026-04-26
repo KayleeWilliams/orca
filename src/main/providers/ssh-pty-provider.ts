@@ -68,6 +68,9 @@ export class SshPtyProvider implements IPtyProvider {
     // existing relay PTY (persisted across app restart). pty.attach replays
     // the buffered output the relay kept alive during the grace window.
     if (opts.sessionId) {
+      console.warn(
+        `[ssh-pty] spawn() called with sessionId=${opts.sessionId}, attempting pty.attach`
+      )
       try {
         const attachResult = (await this.mux.request('pty.attach', {
           id: opts.sessionId,
@@ -75,6 +78,9 @@ export class SshPtyProvider implements IPtyProvider {
           rows: opts.rows,
           suppressReplayNotification: true
         })) as { replay?: string }
+        console.warn(
+          `[ssh-pty] pty.attach succeeded for ${opts.sessionId}, replay=${!!attachResult.replay}`
+        )
         return {
           id: opts.sessionId,
           isReattach: true,
@@ -85,7 +91,7 @@ export class SshPtyProvider implements IPtyProvider {
         // through to pty.spawn so the user gets a fresh shell; sessionExpired
         // lets the renderer show a brief "Session expired" message.
         console.warn(
-          `[ssh-pty] pty.attach failed for ${opts.sessionId}, falling back to fresh spawn:`,
+          `[ssh-pty] pty.attach FAILED for ${opts.sessionId}, falling back to fresh spawn:`,
           err
         )
       }

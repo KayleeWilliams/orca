@@ -307,6 +307,7 @@ async function launchRelay(
       conn,
       `test -S ${shellEscape(sockFile)} && echo ALIVE || echo DEAD`
     )
+    console.warn(`[ssh-relay] Socket probe result: "${probeOutput.trim()}"`)
     if (probeOutput.trim() === 'ALIVE') {
       console.log('[ssh-relay] Existing relay socket found, attempting reconnect...')
       try {
