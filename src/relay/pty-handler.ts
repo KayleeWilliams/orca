@@ -366,6 +366,17 @@ export class PtyHandler {
     }
   }
 
+  // Why: the replay buffer accumulates ALL output, including data already
+  // delivered to the client via pty.data. On client disconnect, clear every
+  // PTY's buffer so it only captures output generated while no client is
+  // connected. Without this, pty.attach replays data the terminal already
+  // displayed, producing duplicate output after every reconnect.
+  clearAllBuffers(): void {
+    for (const [, managed] of this.ptys) {
+      managed.buffered = ''
+    }
+  }
+
   dispose(): void {
     this.cancelGraceTimer()
     for (const [, managed] of this.ptys) {

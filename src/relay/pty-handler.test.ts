@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 const { mockPtySpawn, mockPtyInstance } = vi.hoisted(() => ({
@@ -334,6 +335,125 @@ describe('PtyHandler', () => {
 
     vi.advanceTimersByTime(5 * 60 * 1000)
     expect(onExpire).not.toHaveBeenCalled()
+  })
+
+  it('clearAllBuffers empties every PTY replay buffer', async () => {
+    let dataCallback1: ((data: string) => void) | undefined
+    let dataCallback2: ((data: string) => void) | undefined
+    let callCount = 0
+    mockPtySpawn.mockImplementation(() => {
+      callCount++
+      const cb = callCount === 1 ? 'cb1' : 'cb2'
+      return {
+        ...mockPtyInstance,
+        onData: vi.fn((fn: (data: string) => void) => {
+          if (cb === 'cb1') {
+            dataCallback1 = fn
+          } else {
+            dataCallback2 = fn
+          }
+        }),
+        onExit: vi.fn()
+      }
+    })
+
+    await dispatcher.callRequest('pty.spawn', {})
+    await dispatcher.callRequest('pty.spawn', {})
+    dataCallback1!('output from pty-1')
+    dataCallback2!('output from pty-2')
+
+    handler.clearAllBuffers()
+
+    const r1 = await dispatcher.callRequest('pty.attach', {
+      id: 'pty-1',
+      suppressReplayNotification: true
+    })
+    const r2 = await dispatcher.callRequest('pty.attach', {
+      id: 'pty-2',
+      suppressReplayNotification: true
+    })
+    expect(r1).toEqual({})
+    expect(r2).toEqual({})
+  })
+
+  it('after clearAllBuffers, only post-disconnect output is replayed', async () => {
+    let dataCallback: ((data: string) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn((cb: (data: string) => void) => {
+        dataCallback = cb
+      }),
+      onExit: vi.fn()
+    })
+
+    await dispatcher.callRequest('pty.spawn', {})
+
+    dataCallback!('pre-disconnect output')
+
+    handler.clearAllBuffers()
+
+    dataCallback!('post-disconnect output')
+
+    const result = await dispatcher.callRequest('pty.attach', {
+      id: 'pty-1',
+      suppressReplayNotification: true
+    })
+    expect(result).toEqual({ replay: 'post-disconnect output' })
+  })
+
+  it('attach clears buffer so a second attach returns nothing', async () => {
+    let dataCallback: ((data: string) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn((cb: (data: string) => void) => {
+        dataCallback = cb
+      }),
+      onExit: vi.fn()
+    })
+
+    await dispatcher.callRequest('pty.spawn', {})
+    dataCallback!('some output')
+
+    await dispatcher.callRequest('pty.attach', {
+      id: 'pty-1',
+      suppressReplayNotification: true
+    })
+
+    const result = await dispatcher.callRequest('pty.attach', {
+      id: 'pty-1',
+      suppressReplayNotification: true
+    })
+    expect(result).toEqual({})
+  })
+
+  it('simulates full disconnect-reconnect cycle without duplicate replay', async () => {
+    let dataCallback: ((data: string) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn((cb: (data: string) => void) => {
+        dataCallback = cb
+      }),
+      onExit: vi.fn()
+    })
+
+    await dispatcher.callRequest('pty.spawn', {})
+
+    dataCallback!('line 1\r\n')
+    dataCallback!('line 2\r\n')
+
+    handler.clearAllBuffers()
+
+    dataCallback!('line 3 (during disconnect)\r\n')
+
+    dispatcher.notify.mockClear()
+    const result = await dispatcher.callRequest('pty.attach', { id: 'pty-1' })
+
+    expect(result).toEqual({})
+    expect(dispatcher.notify).toHaveBeenCalledWith('pty.replay', {
+      id: 'pty-1',
+      data: 'line 3 (during disconnect)\r\n'
+    })
+    expect(dispatcher.notify).toHaveBeenCalledTimes(1)
   })
 
   it('dispose kills all PTYs', async () => {
