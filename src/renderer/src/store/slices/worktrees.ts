@@ -67,13 +67,28 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         return
       }
 
-      set((s) => ({
-        // Why: active worktrees can change branches entirely from a terminal.
-        // We refresh that live git identity into renderer state, but only bump
-        // sortEpoch when git actually reports a different worktree payload.
-        worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
-        sortEpoch: s.sortEpoch + 1
-      }))
+      set((s) => {
+        // Why: when the real worktree list arrives (e.g. after SSH reconnect),
+        // placeholder worktrees from session restore may no longer exist on
+        // the remote. Prune their tabsByWorktree entries so the UI doesn't
+        // show orphaned tabs for deleted worktrees.
+        const liveIds = new Set(worktrees.map((w) => w.id))
+        const prevIds = (s.worktreesByRepo[repoId] ?? []).map((w) => w.id)
+        const removedIds = prevIds.filter((id) => !liveIds.has(id))
+        let nextTabsByWorktree = s.tabsByWorktree
+        if (removedIds.length > 0) {
+          nextTabsByWorktree = { ...s.tabsByWorktree }
+          for (const id of removedIds) {
+            delete nextTabsByWorktree[id]
+          }
+        }
+
+        return {
+          worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
+          tabsByWorktree: nextTabsByWorktree,
+          sortEpoch: s.sortEpoch + 1
+        }
+      })
     } catch (err) {
       console.error(`Failed to fetch worktrees for repo ${repoId}:`, err)
     }
