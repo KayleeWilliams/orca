@@ -1,4 +1,12 @@
-import React, { lazy, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import {
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject
+} from 'react'
 import { LazySection } from './LazySection'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react'
@@ -141,7 +149,7 @@ export function DiffSectionItem({
   const lineNumberOptionsSubRef = useRef<{ dispose: () => void } | null>(null)
   const [popover, setPopover] = useState<{ lineNumber: number; top: number } | null>(null)
 
-  const disposeDiffModels = React.useCallback(() => {
+  const disposeDiffModels = useCallback(() => {
     window.setTimeout(() => {
       const originalModel = monaco.editor.getModel(monaco.Uri.parse(`${modelPathBase}:original`))
       const modifiedModel = monaco.editor.getModel(monaco.Uri.parse(`${modelPathBase}:modified`))
@@ -160,11 +168,7 @@ export function DiffSectionItem({
     }
   }, [disposeDiffModels, section.collapsed])
 
-  useEffect(() => {
-    return () => {
-      disposeDiffModels()
-    }
-  }, [disposeDiffModels])
+  useEffect(() => () => disposeDiffModels(), [disposeDiffModels])
 
   useDiffCommentDecorator({
     editor: modifiedEditor,
@@ -427,9 +431,8 @@ export function DiffSectionItem({
               modified={section.modifiedContent}
               theme={isDark ? 'vs-dark' : 'vs'}
               onMount={handleMount}
-              // Why: @monaco-editor/react disposes diff models before the diff
-              // widget during unmount, which can throw from Monaco. Keep them
-              // through widget teardown and dispose them on the next tick above.
+              // Why: @monaco-editor/react can dispose models before widget teardown.
+              // Keep them through unmount and dispose unattached models next tick.
               originalModelPath={`${modelPathBase}:original`}
               modifiedModelPath={`${modelPathBase}:modified`}
               keepCurrentOriginalModel
