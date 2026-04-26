@@ -1028,12 +1028,13 @@ function App(): React.JSX.Element {
           <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
             {/* Why: right sidebar toggle floats at the top-right of the center
                 column so it's always accessible whether the right sidebar is
-                open or closed. Offset by the 8px drag strip so it aligns with
-                the tab row's 34px band instead of overlapping the draggable
-                window surface above. */}
+                open or closed. Match the RightSidebar header's 42px height and
+                top-0 anchor so the icon's vertical center is identical between
+                open and closed states — otherwise toggling makes the icon jump
+                a few pixels, which reads as layout jitter. */}
             {workspaceActive && !rightSidebarOpen && (
               <div
-                className="absolute top-2 right-0 z-10 flex items-center h-[34px]"
+                className="absolute top-0 right-0 z-10 flex items-center h-[42px]"
                 style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               >
                 {rightSidebarToggle}
