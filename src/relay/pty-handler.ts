@@ -165,17 +165,17 @@ export class PtyHandler {
     // Replay buffered output. During pty.spawn({ sessionId }) the renderer has
     // not registered replay handlers yet, so return the bytes to the caller
     // instead of notifying them too early.
+    // Why: the buffer is NOT cleared after replay. It always holds the last
+    // 100 KB of raw output (capped in onData). The client clears xterm before
+    // writing the replay, so returning the full buffer on every attach does
+    // not cause duplication. Keeping the buffer intact means a second app
+    // restart still replays the full terminal history instead of only output
+    // generated since the previous attach.
     if (managed.buffered) {
-      const replay = managed.buffered
-      // Why: the buffer captures output between disconnects for replay on
-      // reconnect. Once replayed, clear it so the next reconnect only
-      // shows output generated after this attach — otherwise every restart
-      // replays the entire history from the original spawn.
-      managed.buffered = ''
       if (params.suppressReplayNotification) {
-        return { replay }
+        return { replay: managed.buffered }
       }
-      this.dispatcher.notify('pty.replay', { id, data: replay })
+      this.dispatcher.notify('pty.replay', { id, data: managed.buffered })
     }
     return {}
   }
@@ -363,17 +363,6 @@ export class PtyHandler {
     if (this.graceTimer) {
       clearTimeout(this.graceTimer)
       this.graceTimer = null
-    }
-  }
-
-  // Why: the replay buffer accumulates ALL output, including data already
-  // delivered to the client via pty.data. On client disconnect, clear every
-  // PTY's buffer so it only captures output generated while no client is
-  // connected. Without this, pty.attach replays data the terminal already
-  // displayed, producing duplicate output after every reconnect.
-  clearAllBuffers(): void {
-    for (const [, managed] of this.ptys) {
-      managed.buffered = ''
     }
   }
 

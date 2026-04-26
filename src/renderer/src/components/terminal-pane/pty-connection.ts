@@ -408,6 +408,10 @@ export function connectPanePty(
     // stays engaged via the write-completion callback until xterm finishes
     // parsing — so writing directly here is both correct and safe.
     const replayDataCallback = (data: string): void => {
+      // Why: the relay's replay buffer holds the full last 100 KB of output,
+      // including data already rendered in xterm before the disconnect.
+      // Clearing before writing prevents duplication on SSH reconnect.
+      replayIntoTerminal(pane, deps.replayingPanesRef, '\x1b[2J\x1b[3J\x1b[H')
       replayIntoTerminal(pane, deps.replayingPanesRef, data)
     }
 
@@ -507,7 +511,17 @@ export function connectPanePty(
         replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_FOCUS_REPORTING_RESET)
       }
       if (connectResult?.replay) {
+        // Why: the relay's replay buffer is the authoritative terminal state
+        // (last 100 KB of raw output). On SSH reattach the local xterm may
+        // already hold pre-disconnect content that overlaps with the buffer.
+        // Clearing before writing prevents duplication — same approach the
+        // snapshot path uses above. Focus-reporting reset prevents BEL on
+        // pane focus/blur from stale mode bits in the replayed data.
+        if (!connectResult.snapshot && !connectResult.coldRestore) {
+          replayIntoTerminal(pane, deps.replayingPanesRef, '\x1b[2J\x1b[3J\x1b[H')
+        }
         replayIntoTerminal(pane, deps.replayingPanesRef, connectResult.replay)
+        replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_FOCUS_REPORTING_RESET)
       }
       if (connectResult?.sessionExpired) {
         toast.info('Previous SSH session expired.', {

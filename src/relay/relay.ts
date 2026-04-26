@@ -266,7 +266,6 @@ function main(): void {
         if (activeSocket === sock) {
           activeSocket = null
           dispatcher.invalidateClient()
-          ptyHandler.clearAllBuffers()
           startGrace()
         }
       })
@@ -337,7 +336,6 @@ function main(): void {
       stdoutAlive = false
       if (!activeSocket) {
         dispatcher.invalidateClient()
-        ptyHandler.clearAllBuffers()
         startGrace()
       }
     })
@@ -346,7 +344,6 @@ function main(): void {
       stdoutAlive = false
       if (!activeSocket) {
         dispatcher.invalidateClient()
-        ptyHandler.clearAllBuffers()
         startGrace()
       }
     })
