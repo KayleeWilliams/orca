@@ -95,10 +95,20 @@ export class HistoryManager {
     }
 
     try {
+      // Why: shells that haven't emitted OSC-7 have snapshot.cwd = null.
+      // Persisting null would overwrite the usable cwd from meta.json,
+      // breaking cold restore cwd recovery. Fall back to the meta cwd
+      // so the revived shell inherits the original working directory.
+      let effectiveCwd = snapshot.cwd
+      if (effectiveCwd === null) {
+        const meta = this.readMetaFromDir(writer.dir)
+        effectiveCwd = meta?.cwd ?? null
+      }
+
       const data = JSON.stringify({
         snapshotAnsi: snapshot.snapshotAnsi,
         rehydrateSequences: snapshot.rehydrateSequences,
-        cwd: snapshot.cwd,
+        cwd: effectiveCwd,
         cols: snapshot.cols,
         rows: snapshot.rows,
         modes: snapshot.modes,
@@ -177,6 +187,15 @@ export class HistoryManager {
   private handleWriteError(sessionId: string, err: unknown): void {
     this.disabledSessions.add(sessionId)
     this.onWriteError?.(sessionId, err as Error)
+  }
+
+  private readMetaFromDir(dir: string): SessionMeta | null {
+    const metaPath = join(dir, 'meta.json')
+    try {
+      return JSON.parse(readFileSync(metaPath, 'utf-8'))
+    } catch {
+      return null
+    }
   }
 
   private updateMeta(dir: string, updates: Partial<SessionMeta>): void {
