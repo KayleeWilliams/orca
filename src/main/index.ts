@@ -45,6 +45,7 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
+import { getPtyIdForPaneKey } from './ipc/pty'
 import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
@@ -167,29 +168,59 @@ function openMainWindow(): BrowserWindow {
     if (mainWindow === window) {
       mainWindow = null
     }
-    if (AGENT_DASHBOARD_ENABLED) {
-      // Why: detach the agent hook listener on window close so the server
-      // never fires into a destroyed webContents during the gap before
-      // reopen (e.g. macOS dock re-activation). This also ensures the
-      // replay-loop through lastStatusByPaneKey runs only on deliberate
-      // window recreations instead of stacking on top of stale listeners.
-      agentHookServer.setListener(null)
-    }
+    // Why: detach the agent hook listener on window close so the server
+    // never fires into a destroyed webContents during the gap before
+    // reopen (e.g. macOS dock re-activation). This also ensures the
+    // replay-loop through lastStatusByPaneKey runs only on deliberate
+    // window recreations instead of stacking on top of stale listeners.
+    agentHookServer.setListener(null)
   })
   mainWindow = window
-  if (AGENT_DASHBOARD_ENABLED) {
-    agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
-      if (mainWindow?.isDestroyed()) {
-        return
-      }
+  agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
+    if (mainWindow?.isDestroyed()) {
+      return
+    }
+    if (AGENT_DASHBOARD_ENABLED) {
       mainWindow?.webContents.send('agentStatus:set', {
         paneKey,
         tabId,
         worktreeId,
         ...payload
       })
-    })
-  }
+    }
+    // Why: cursor-agent emits no title-based working/idle signal — its OSC
+    // title stays "Cursor Agent" for the whole turn. Synthesize an OSC title
+    // update from the hook state and inject it into the pane's data stream so
+    // the existing renderer-side title tracker (the one that drives the
+    // sidebar spinner, unread badge, and Claude prompt-cache timer for every
+    // other agent) lights up for cursor panes too. Braille prefix ⠋ → working
+    // keyword path; "action required" keyword → permission; bare label → idle.
+    // This runs regardless of AGENT_DASHBOARD_ENABLED because cursor has no
+    // pre-dashboard title heuristic to fall back to.
+    if (payload.agentType === 'cursor') {
+      const ptyId = getPtyIdForPaneKey(paneKey)
+      if (!ptyId) {
+        return
+      }
+      // Why: working uses a braille-spinner prefix so `detectAgentStatusFromTitle`
+      // classifies via `containsBrailleSpinner`. "action required" hits the
+      // permission-keyword path. Idle/done uses a decorated "Cursor ready"
+      // label rather than the bare native "Cursor Agent" — which the detector
+      // deliberately treats as a no-op so cursor's own per-turn re-emissions
+      // cannot clobber our synthesized state. The done/permission frames also
+      // carry a trailing BEL (0x07 outside of any OSC sequence) because
+      // cursor-agent does not emit one on its own — and the tab-level unread
+      // badge + notification dispatch in pty-connection keys off BEL, not the
+      // working→idle title transition.
+      const synthetic =
+        payload.state === 'working'
+          ? '\x1b]0;⠋ Cursor Agent\x07'
+          : payload.state === 'blocked' || payload.state === 'waiting'
+            ? '\x1b]0;Cursor - action required\x07\x07'
+            : '\x1b]0;Cursor ready\x07\x07'
+      mainWindow?.webContents.send('pty:data', { id: ptyId, data: synthetic })
+    }
+  })
   return window
 }
 
@@ -221,12 +252,18 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   // Why: managed hook installation mutates user-global agent config.
   // Startup must fail open so a malformed local config never bricks Orca.
+  // Claude/Codex/Gemini installs are gated behind AGENT_DASHBOARD_ENABLED
+  // because the surface they feed (the in-progress agent dashboard) isn't
+  // shippable yet. Cursor installs unconditionally because cursor-agent
+  // emits no title-based working/idle signal at all (its terminal title
+  // stays literally "Cursor Agent" across a turn), so the hook channel is
+  // the only way to drive the sidebar spinner + unread path for it — there
+  // is no "pre-dashboard" fallback to degrade to the way Claude/Codex have.
   if (AGENT_DASHBOARD_ENABLED) {
     for (const installManagedHooks of [
       () => claudeHookService.install(),
       () => codexHookService.install(),
-      () => geminiHookService.install(),
-      () => cursorHookService.install()
+      () => geminiHookService.install()
     ]) {
       try {
         installManagedHooks()
@@ -234,6 +271,11 @@ app.whenReady().then(async () => {
         console.error('[agent-hooks] Failed to install managed hooks:', error)
       }
     }
+  }
+  try {
+    cursorHookService.install()
+  } catch (error) {
+    console.error('[agent-hooks] Failed to install Cursor managed hooks:', error)
   }
 
   registerAppMenu({
@@ -293,18 +335,19 @@ app.whenReady().then(async () => {
   }
   setAppRuntimeFlags({ daemonEnabledAtStartup: daemonStarted })
 
-  if (AGENT_DASHBOARD_ENABLED) {
-    try {
-      // Why: PTY spawn env reads ORCA_AGENT_HOOK_* from the live server state.
-      // Start the hook server before opening the window so restored/spawned
-      // terminals never race ahead without hook env on first launch.
-      await agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' })
-    } catch (error) {
-      // Why: Claude/Codex/Gemini/OpenCode/Cursor hook callbacks are sidebar
-      // enrichment only. Orca must still boot even if the local loopback
-      // receiver cannot bind on this launch.
-      console.error('[agent-hooks] Failed to start local hook server:', error)
-    }
+  // Why: the hook server also runs unconditionally so cursor-agent panes can
+  // reach it. Claude/Codex/Gemini hook scripts stay uninstalled while
+  // AGENT_DASHBOARD_ENABLED is false, so only cursor events flow in. PTY
+  // spawn env reads ORCA_AGENT_HOOK_* from the live server state, so the
+  // server must start before the window opens — otherwise restored terminals
+  // race ahead without the env on first launch.
+  try {
+    await agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' })
+  } catch (error) {
+    // Why: Claude/Codex/Gemini/OpenCode/Cursor hook callbacks are sidebar
+    // enrichment only. Orca must still boot even if the local loopback
+    // receiver cannot bind on this launch.
+    console.error('[agent-hooks] Failed to start local hook server:', error)
   }
 
   // Why: once the hook server is ready (or has already failed open), window
@@ -351,9 +394,7 @@ app.on('will-quit', () => {
   // so without this ordering, running agents would produce orphaned
   // agent_start events with no matching stops.
   starNag?.stop()
-  if (AGENT_DASHBOARD_ENABLED) {
-    agentHookServer.stop()
-  }
+  agentHookServer.stop()
   stats?.flush()
   // Why: agent-browser daemon processes would otherwise linger after Orca quits,
   // holding ports and leaving stale session state on disk.

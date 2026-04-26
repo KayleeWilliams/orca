@@ -39,6 +39,15 @@ const ptyOwnership = new Map<string, string | null>()
 // teardown — the renderer knows the paneKey but the PTY lifecycle does not
 // without this mapping.
 const ptyPaneKey = new Map<string, string>()
+// Why: reverse of ptyPaneKey — callers that receive a paneKey from outside the
+// PTY lifecycle (e.g. the agent-hook server routing a cursor-agent status event
+// back into the pane's data stream) need to find the ptyId for that paneKey.
+// Kept in lock-step with ptyPaneKey via the same spawn and teardown sites.
+const paneKeyPtyId = new Map<string, string>()
+
+export function getPtyIdForPaneKey(paneKey: string): string | undefined {
+  return paneKeyPtyId.get(paneKey)
+}
 
 function getProvider(connectionId: string | null | undefined): IPtyProvider {
   if (!connectionId) {
@@ -144,6 +153,7 @@ export function clearProviderPtyState(id: string): void {
   if (paneKey) {
     agentHookServer.clearPaneState(paneKey)
     ptyPaneKey.delete(id)
+    paneKeyPtyId.delete(paneKey)
   }
 }
 
@@ -451,6 +461,7 @@ export function registerPtyHandlers(
       const paneKey = args.env?.ORCA_PANE_KEY
       if (typeof paneKey === 'string' && paneKey.length > 0 && paneKey.length <= 256) {
         ptyPaneKey.set(result.id, paneKey)
+        paneKeyPtyId.set(paneKey, result.id)
       }
       return result
     }
