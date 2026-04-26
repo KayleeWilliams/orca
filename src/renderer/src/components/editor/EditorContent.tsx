@@ -220,7 +220,6 @@ export function EditorContent({
               key={viewStateScopeId}
               content={currentContent}
               filePath={activeFile.filePath}
-              worktreeId={activeFile.worktreeId}
               scrollCacheKey={`${editorViewStateKey}:preview`}
             />
           </div>

@@ -52,7 +52,7 @@ export default function MarkdownViewToggle({
             aria-label={metadata.label}
             title={metadata.label}
           >
-            <Icon className="h-2 w-2" />
+            <Icon className="h-3 w-3" />
           </ToggleGroupItem>
         )
       })}

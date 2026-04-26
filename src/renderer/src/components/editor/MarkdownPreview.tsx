@@ -12,17 +12,24 @@ import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeSlug from 'rehype-slug'
+import GithubSlugger from 'github-slugger'
 import { extractFrontMatter } from './markdown-frontmatter'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { Components } from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAppStore } from '@/store'
+import { toast } from 'sonner'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { scrollTopCache, setWithLRU } from '@/lib/scroll-cache'
 import { detectLanguage } from '@/lib/language-detect'
 import type { Worktree } from '../../../../shared/types'
-import { fileUrlToAbsolutePath, resolveMarkdownPreviewHref } from './markdown-preview-links'
+import {
+  fileUrlToAbsolutePath,
+  getMarkdownPreviewLinkTarget,
+  resolveMarkdownPreviewHref
+} from './markdown-preview-links'
+import { absolutePathToFileUri, resolveMarkdownLinkTarget } from './markdown-internal-links'
 import { useLocalImageSrc } from './useLocalImageSrc'
 import CodeBlockCopyButton from './CodeBlockCopyButton'
 import MermaidBlock from './MermaidBlock'
@@ -38,7 +45,6 @@ import { openHttpLink } from '@/lib/http-link-routing'
 type MarkdownPreviewProps = {
   content: string
   filePath: string
-  worktreeId: string
   scrollCacheKey: string
   initialAnchor?: string | null
 }
@@ -84,19 +90,24 @@ function getMarkdownPreviewNodeText(node: React.ReactNode): string {
   return ''
 }
 
-function createMarkdownPreviewHeadingId(
-  headingText: string,
-  headingIdCounts: Map<string, number>
-): string {
-  const baseId =
-    headingText
-      .trim()
-      .toLowerCase()
-      .replace(/[`~!@#$%^&*()=+[\]{}|\\:;"'<>,.?/]+/g, '')
-      .replace(/\s+/g, '-') || 'section'
-  const duplicateCount = headingIdCounts.get(baseId) ?? 0
-  headingIdCounts.set(baseId, duplicateCount + 1)
-  return duplicateCount === 0 ? baseId : `${baseId}-${duplicateCount}`
+// Why: use the same GithubSlugger that rehype-slug uses internally so
+// heading IDs match standard GitHub/VS Code anchor links. The custom
+// slugger previously stripped punctuation differently, breaking links
+// like `#a--b` for headings containing `A & B`.
+function createMarkdownPreviewHeadingId(headingText: string, slugger: GithubSlugger): string {
+  return slugger.slug(headingText)
+}
+
+function parseLineTarget(hash: string): { line: number; column?: number } | null {
+  if (!hash) {
+    return null
+  }
+  const trimmed = hash.startsWith('#') ? hash.slice(1) : hash
+  const match = /^L(\d+)(?:C(\d+))?$/i.exec(trimmed)
+  if (!match) {
+    return null
+  }
+  return { line: Number(match[1]), column: match[2] ? Number(match[2]) : undefined }
 }
 
 function normalizeMarkdownPreviewAbsolutePath(absolutePath: string): string {
@@ -132,19 +143,9 @@ function findWorktreeForMarkdownPreviewPath(
 export default function MarkdownPreview({
   content,
   filePath,
-  worktreeId,
   scrollCacheKey,
   initialAnchor = null
 }: MarkdownPreviewProps): React.JSX.Element {
-  const worktreeRoot = useAppStore((s) => {
-    for (const list of Object.values(s.worktreesByRepo)) {
-      const wt = list.find((w) => w.id === worktreeId)
-      if (wt) {
-        return wt.path
-      }
-    }
-    return null
-  })
   const rootRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -154,9 +155,13 @@ export default function MarkdownPreview({
   const [query, setQuery] = useState('')
   const [matchCount, setMatchCount] = useState(0)
   const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
+  const isMac = navigator.userAgent.includes('Mac')
   const openFile = useAppStore((s) => s.openFile)
   const openMarkdownPreview = useAppStore((s) => s.openMarkdownPreview)
+  const setMarkdownViewMode = useAppStore((s) => s.setMarkdownViewMode)
+  const setPendingEditorReveal = useAppStore((s) => s.setPendingEditorReveal)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
+  const worktreeRoot = findWorktreeForMarkdownPreviewPath(worktreesByRepo, filePath)?.path ?? null
   const settings = useAppStore((s) => s.settings)
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const editorFontSize = computeEditorFontSize(14, editorFontZoomLevel)
@@ -176,7 +181,7 @@ export default function MarkdownPreview({
       .replace(/\r?\n(?:---|\+\+\+)\r?\n?$/, '')
       .trim()
   }, [frontMatter])
-  const headingIdCounts = new Map<string, number>()
+  const sluggerRef = useRef(new GithubSlugger())
 
   // Why: each split pane needs its own markdown preview viewport even when the
   // underlying file is shared. The caller passes a pane-scoped cache key so
@@ -401,223 +406,252 @@ export default function MarkdownPreview({
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [closeSearch, isSearchOpen, openSearch])
 
-  const components: Components = {
-    a: ({ href, children, ...props }) => {
-      const handleClick = (event: React.MouseEvent<HTMLAnchorElement>): void => {
-        if (!href) {
-          return
-        }
-
-        event.preventDefault()
-
-        if (href.startsWith('#')) {
-          void scrollToAnchor(href.slice(1))
-          return
-        }
-
-        // Why: Cmd/Ctrl+Shift-click is the OS escape hatch — always hand the
-        // link to the system default handler, bypassing the classifier. For a
-        // dangling in-worktree .md, pre-check existence so the user sees a
-        // toast instead of the silent no-op from shell.openFileUri.
-        const modKey = isMac ? event.metaKey : event.ctrlKey
-        if (modKey && event.shiftKey) {
-          const osTarget = getMarkdownPreviewLinkTarget(href, filePath)
-          if (!osTarget) {
+  const components: Components = useMemo(() => {
+    sluggerRef.current.reset()
+    const slugger = sluggerRef.current
+    return {
+      a: ({ href, children, ...props }) => {
+        const handleClick = (event: React.MouseEvent<HTMLAnchorElement>): void => {
+          if (!href) {
             return
           }
-          let parsed: URL
-          try {
-            parsed = new URL(osTarget)
-          } catch {
+
+          event.preventDefault()
+
+          if (href.startsWith('#')) {
+            void scrollToAnchor(href.slice(1))
             return
           }
-          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-            openHttpLink(parsed.toString(), { forceSystemBrowser: true })
-            return
-          }
-          if (parsed.protocol === 'file:') {
-            const classified = resolveMarkdownLinkTarget(href, filePath, worktreeRoot)
-            if (classified?.kind === 'markdown') {
-              // Why: use the classifier's stripped absolutePath (no `:line:col`
-              // or `#L10` suffix) so the OS handler receives a clean file URI.
-              const cleanUri = absolutePathToFileUri(classified.absolutePath)
-              void window.api.shell.pathExists(classified.absolutePath).then((exists) => {
-                if (!exists) {
-                  toast.error(`File not found: ${classified.relativePath}`)
-                  return
-                }
-                void window.api.shell.openFileUri(cleanUri)
-              })
+
+          // Why: Cmd/Ctrl+Shift-click is the OS escape hatch — always hand the
+          // link to the system default handler, bypassing the classifier. For a
+          // dangling in-worktree .md, pre-check existence so the user sees a
+          // toast instead of the silent no-op from shell.openFileUri.
+          const modKey = isMac ? event.metaKey : event.ctrlKey
+          if (modKey && event.shiftKey) {
+            const osTarget = getMarkdownPreviewLinkTarget(href, filePath)
+            if (!osTarget) {
               return
             }
-            void window.api.shell.openFileUri(parsed.toString())
+            let parsed: URL
+            try {
+              parsed = new URL(osTarget)
+            } catch {
+              return
+            }
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+              openHttpLink(parsed.toString(), { forceSystemBrowser: true })
+              return
+            }
+            if (parsed.protocol === 'file:') {
+              const classified = resolveMarkdownLinkTarget(href, filePath, worktreeRoot)
+              if (classified?.kind === 'markdown') {
+                // Why: use the classifier's stripped absolutePath (no `:line:col`
+                // or `#L10` suffix) so the OS handler receives a clean file URI.
+                const cleanUri = absolutePathToFileUri(classified.absolutePath)
+                void window.api.shell.pathExists(classified.absolutePath).then((exists) => {
+                  if (!exists) {
+                    toast.error(`File not found: ${classified.relativePath}`)
+                    return
+                  }
+                  void window.api.shell.openFileUri(cleanUri)
+                })
+                return
+              }
+              void window.api.shell.openFileUri(parsed.toString())
+            }
+            return
           }
-          return
-        }
 
-        const target = resolveMarkdownPreviewHref(href, filePath)
-        if (!target) {
-          return
-        }
+          const target = resolveMarkdownPreviewHref(href, filePath)
+          if (!target) {
+            return
+          }
 
-        if (target.protocol === 'http:' || target.protocol === 'https:') {
-          void window.api.shell.openUrl(target.toString())
-          return
-        }
+          if (target.protocol === 'http:' || target.protocol === 'https:') {
+            void window.api.shell.openUrl(target.toString())
+            return
+          }
 
-        if (target.protocol !== 'file:') {
-          return
-        }
+          if (target.protocol !== 'file:') {
+            return
+          }
 
-        const absolutePath = fileUrlToAbsolutePath(target)
-        if (!absolutePath) {
-          return
-        }
+          const absolutePath = fileUrlToAbsolutePath(target)
+          if (!absolutePath) {
+            return
+          }
 
-        if (absolutePath === filePath && target.hash) {
-          void scrollToAnchor(target.hash.slice(1))
-          return
-        }
+          if (absolutePath === filePath && target.hash) {
+            void scrollToAnchor(target.hash.slice(1))
+            return
+          }
 
-        const targetWorktree = findWorktreeForMarkdownPreviewPath(worktreesByRepo, absolutePath)
-        if (!targetWorktree) {
-          void window.api.shell.openFileUri(target.toString())
-          return
-        }
+          const targetWorktree = findWorktreeForMarkdownPreviewPath(worktreesByRepo, absolutePath)
+          if (!targetWorktree) {
+            void window.api.shell.openFileUri(target.toString())
+            return
+          }
 
-        const relativePath = absolutePath.slice(targetWorktree.path.length + 1)
-        const language = detectLanguage(absolutePath)
-        if (language === 'markdown') {
-          openMarkdownPreview(
-            {
+          const relativePath = absolutePath.slice(targetWorktree.path.length + 1)
+          const language = detectLanguage(absolutePath)
+
+          // Why: line-target fragments like #L10 or #L10C5 should open the
+          // source editor and reveal the line, not open a preview tab that
+          // treats "L10" as a heading anchor.
+          const lineTarget = parseLineTarget(target.hash)
+          if (language === 'markdown' && lineTarget) {
+            const fileId = absolutePath
+            setMarkdownViewMode(fileId, 'source')
+            openFile({
               filePath: absolutePath,
               relativePath,
               worktreeId: targetWorktree.id,
-              language
-            },
-            { anchor: target.hash ? target.hash.slice(1) : null }
-          )
-          return
+              language,
+              mode: 'edit'
+            })
+            setPendingEditorReveal(null)
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                setPendingEditorReveal({
+                  filePath: absolutePath,
+                  line: lineTarget.line,
+                  column: lineTarget.column ?? 1,
+                  matchLength: 0
+                })
+              })
+            })
+            return
+          }
+
+          if (language === 'markdown') {
+            openMarkdownPreview(
+              {
+                filePath: absolutePath,
+                relativePath,
+                worktreeId: targetWorktree.id,
+                language
+              },
+              { anchor: target.hash ? target.hash.slice(1) : null }
+            )
+            return
+          }
+
+          openFile({
+            filePath: absolutePath,
+            relativePath,
+            worktreeId: targetWorktree.id,
+            language,
+            mode: 'edit'
+          })
         }
 
-        openFile({
-          filePath: absolutePath,
-          relativePath,
-          worktreeId: targetWorktree.id,
-          language,
-          mode: 'edit'
-        })
-      }
-
-      return (
-        <a {...props} href={href} onClick={handleClick} style={{ cursor: 'pointer' }}>
-          {children}
-        </a>
-      )
-    },
-    img: function MarkdownImg({ src, alt, ...props }) {
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- react-markdown
-      // instantiates component overrides as regular React components, so hooks
-      // are valid here despite the lowercase function name.
-      const resolvedSrc = useLocalImageSrc(src, filePath)
-      return <img {...props} src={resolvedSrc} alt={alt ?? ''} />
-    },
-    // Why: Intercept code elements to detect mermaid fenced blocks. rehype-highlight
-    // sets className="language-mermaid" on the <code> inside <pre> for ```mermaid blocks.
-    // We render those as SVG diagrams instead of highlighted source. Markdown preview
-    // opts out of Mermaid HTML labels because this path sanitizes the SVG before
-    // injection, and sanitized foreignObject labels disappear on some platforms.
-    code: ({ className, children, ...props }) => {
-      if (/language-mermaid/.test(className || '')) {
         return (
-          <MermaidBlock content={String(children).trimEnd()} isDark={isDark} htmlLabels={false} />
+          <a {...props} href={href} onClick={handleClick} style={{ cursor: 'pointer' }}>
+            {children}
+          </a>
+        )
+      },
+      img: function MarkdownImg({ src, alt, ...props }) {
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- react-markdown
+        // instantiates component overrides as regular React components, so hooks
+        // are valid here despite the lowercase function name.
+        const resolvedSrc = useLocalImageSrc(src, filePath)
+        return <img {...props} src={resolvedSrc} alt={alt ?? ''} />
+      },
+      // Why: Intercept code elements to detect mermaid fenced blocks. rehype-highlight
+      // sets className="language-mermaid" on the <code> inside <pre> for ```mermaid blocks.
+      // We render those as SVG diagrams instead of highlighted source. Markdown preview
+      // opts out of Mermaid HTML labels because this path sanitizes the SVG before
+      // injection, and sanitized foreignObject labels disappear on some platforms.
+      code: ({ className, children, ...props }) => {
+        if (/language-mermaid/.test(className || '')) {
+          return (
+            <MermaidBlock content={String(children).trimEnd()} isDark={isDark} htmlLabels={false} />
+          )
+        }
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        )
+      },
+      // Why: Wrap <pre> blocks with a positioned container so a copy button can
+      // overlay the code block. Mermaid diagrams are detected and passed through
+      // unwrapped — MermaidBlock renders via useEffect/innerHTML, not React children,
+      // so CodeBlockCopyButton's extractText() would copy an empty string, and a
+      // <div> inside <pre> produces invalid HTML.
+      pre: ({ children, ...props }) => {
+        const child = React.Children.toArray(children)[0]
+        if (React.isValidElement(child) && child.type === MermaidBlock) {
+          return <>{children}</>
+        }
+        return <CodeBlockCopyButton {...props}>{children}</CodeBlockCopyButton>
+      },
+      h1: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h1 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h1>
+        )
+      },
+      h2: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h2 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h2>
+        )
+      },
+      h3: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h3 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h3>
+        )
+      },
+      h4: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h4 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h4>
+        )
+      },
+      h5: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h5 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h5>
+        )
+      },
+      h6: ({ children, ...props }) => {
+        const id = createMarkdownPreviewHeadingId(getMarkdownPreviewNodeText(children), slugger)
+        return (
+          <h6 {...props} id={id} tabIndex={-1}>
+            {children}
+          </h6>
         )
       }
-      return (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      )
-    },
-    // Why: Wrap <pre> blocks with a positioned container so a copy button can
-    // overlay the code block. Mermaid diagrams are detected and passed through
-    // unwrapped — MermaidBlock renders via useEffect/innerHTML, not React children,
-    // so CodeBlockCopyButton's extractText() would copy an empty string, and a
-    // <div> inside <pre> produces invalid HTML.
-    pre: ({ children, ...props }) => {
-      const child = React.Children.toArray(children)[0]
-      if (React.isValidElement(child) && child.type === MermaidBlock) {
-        return <>{children}</>
-      }
-      return <CodeBlockCopyButton {...props}>{children}</CodeBlockCopyButton>
-    },
-    h1: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h1 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h1>
-      )
-    },
-    h2: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h2 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h2>
-      )
-    },
-    h3: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h3 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h3>
-      )
-    },
-    h4: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h4 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h4>
-      )
-    },
-    h5: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h5 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h5>
-      )
-    },
-    h6: ({ children, ...props }) => {
-      const id = createMarkdownPreviewHeadingId(
-        getMarkdownPreviewNodeText(children),
-        headingIdCounts
-      )
-      return (
-        <h6 {...props} id={id} tabIndex={-1}>
-          {children}
-        </h6>
-      )
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the `img` override calls useLocalImageSrc
+    // which is a hook, so react-markdown must see a stable component identity. The deps listed here
+    // cover every value the overrides actually close over; slugger is a ref.
+  }, [
+    filePath,
+    isDark,
+    isMac,
+    openFile,
+    openMarkdownPreview,
+    scrollToAnchor,
+    setMarkdownViewMode,
+    setPendingEditorReveal,
+    worktreeRoot,
+    worktreesByRepo
+  ])
 
   return (
     <div

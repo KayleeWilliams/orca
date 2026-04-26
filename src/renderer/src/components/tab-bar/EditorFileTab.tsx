@@ -16,7 +16,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { basename, normalizeRelativePath } from '@/lib/path'
@@ -35,10 +34,7 @@ import {
   getDropIndicatorClasses,
   type DropIndicator
 } from './drop-indicator'
-import {
-  canOpenMarkdownPreview,
-  getMarkdownPreviewShortcutLabel
-} from '@/components/editor/markdown-preview-controls'
+import { canOpenMarkdownPreview } from '@/components/editor/markdown-preview-controls'
 
 const isMac = navigator.userAgent.includes('Mac')
 const isLinux = navigator.userAgent.includes('Linux')
@@ -49,7 +45,6 @@ const revealLabel = isMac
   : isLinux
     ? 'Open Containing Folder'
     : 'Reveal in File Explorer'
-const markdownPreviewShortcutLabel = getMarkdownPreviewShortcutLabel(isMac)
 
 export default function EditorFileTab({
   file,
@@ -376,9 +371,7 @@ export default function EditorFileTab({
                   })
                 }}
               >
-                <Eye className="w-3.5 h-3.5 mr-1.5" />
                 Open Markdown Preview
-                <DropdownMenuShortcut>{markdownPreviewShortcutLabel}</DropdownMenuShortcut>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
