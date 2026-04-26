@@ -20,55 +20,10 @@ import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { useDiffCommentDecorator } from '../diff-comments/useDiffCommentDecorator'
 import { DiffCommentPopover } from '../diff-comments/DiffCommentPopover'
 import { applyDiffEditorLineNumberOptions } from './diff-editor-line-number-options'
+import { computeLineStats } from './diff-line-stats'
 import type { DiffComment, GitDiffResult } from '../../../../shared/types'
 
 const ImageDiffViewer = lazy(() => import('./ImageDiffViewer'))
-
-/**
- * Compute approximate added/removed line counts by matching lines
- * between original and modified content using a multiset approach.
- * Not a true Myers diff, but fast and accurate enough for stat display.
- */
-function computeLineStats(
-  original: string,
-  modified: string,
-  status: string
-): { added: number; removed: number } | null {
-  // Why: for very large files (e.g. package-lock.json), splitting and
-  // iterating synchronously in the React render cycle would block the
-  // main thread and freeze the UI. Return null to skip stats display.
-  if (original.length + modified.length > 500_000) {
-    return null
-  }
-  if (status === 'added') {
-    return { added: modified ? modified.split('\n').length : 0, removed: 0 }
-  }
-  if (status === 'deleted') {
-    return { added: 0, removed: original ? original.split('\n').length : 0 }
-  }
-
-  const origLines = original.split('\n')
-  const modLines = modified.split('\n')
-
-  const origMap = new Map<string, number>()
-  for (const line of origLines) {
-    origMap.set(line, (origMap.get(line) ?? 0) + 1)
-  }
-
-  let matched = 0
-  for (const line of modLines) {
-    const count = origMap.get(line) ?? 0
-    if (count > 0) {
-      origMap.set(line, count - 1)
-      matched++
-    }
-  }
-
-  return {
-    added: modLines.length - matched,
-    removed: origLines.length - matched
-  }
-}
 
 type DiffSection = {
   key: string
