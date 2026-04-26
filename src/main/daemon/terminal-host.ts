@@ -33,15 +33,21 @@ export type TerminalHostOptions = {
     env?: Record<string, string>
     command?: string
   }) => SubprocessHandle
+  // Why: on graceful shutdown, the host writes final checkpoints for all live
+  // sessions before killing them. This bypasses the RPC round-trip — the daemon
+  // writes checkpoints in-process, guaranteeing completion before teardown.
+  onFinalCheckpoint?: (sessionId: string, snapshot: TerminalSnapshot) => void
 }
 
 export class TerminalHost {
   private sessions = new Map<string, Session>()
   private killedTombstones = new Map<string, number>()
   private spawnSubprocess: TerminalHostOptions['spawnSubprocess']
+  private onFinalCheckpoint: TerminalHostOptions['onFinalCheckpoint']
 
   constructor(opts: TerminalHostOptions) {
     this.spawnSubprocess = opts.spawnSubprocess
+    this.onFinalCheckpoint = opts.onFinalCheckpoint
   }
 
   async createOrAttach(opts: CreateOrAttachOptions): Promise<CreateOrAttachResult> {
@@ -150,6 +156,17 @@ export class TerminalHost {
     this.getAliveSession(sessionId).clearScrollback()
   }
 
+  // Why: unlike getAliveSession (which throws), this returns null for dead/missing
+  // sessions. Checkpoint is best-effort — a session that exited between the timer
+  // firing and the RPC arriving should not throw.
+  getSnapshot(sessionId: string): TerminalSnapshot | null {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.isAlive) {
+      return null
+    }
+    return session.getSnapshot()
+  }
+
   isKilled(sessionId: string): boolean {
     return this.killedTombstones.has(sessionId)
   }
@@ -177,6 +194,24 @@ export class TerminalHost {
   }
 
   dispose(): void {
+    // Why: write final checkpoints before killing sessions so graceful shutdown
+    // has zero data loss. The checkpoint callback writes synchronously to disk.
+    if (this.onFinalCheckpoint) {
+      for (const [sessionId, session] of this.sessions) {
+        if (!session.isAlive) {
+          continue
+        }
+        const snapshot = session.getSnapshot()
+        if (snapshot) {
+          try {
+            this.onFinalCheckpoint(sessionId, snapshot)
+          } catch {
+            // Best-effort — don't block shutdown
+          }
+        }
+      }
+    }
+
     for (const [, session] of this.sessions) {
       session.detachAllClients()
       session.kill()
