@@ -824,12 +824,12 @@ describe('connectPanePty', () => {
     expect(mockStoreState.removeDeferredSshSessionId).toHaveBeenCalledWith('tab-1')
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'leaf-session')
     expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'leaf-session')
-    expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[2J\x1b[3J\x1b[H',
-      expect.any(Function)
-    )
+    // Why: the relay's replay buffer holds the full terminal history, so the
+    // client clears xterm before writing to prevent duplication with any
+    // content already in the terminal from a prior session.
+    expect(pane.terminal.write).toHaveBeenCalledWith('\x1b[2J\x1b[3J\x1b[H', expect.any(Function))
     expect(pane.terminal.write).toHaveBeenCalledWith('restored-ssh-output', expect.any(Function))
-    expect(pane.terminal.write).not.toHaveBeenCalledWith(
+    expect(pane.terminal.write).toHaveBeenCalledWith(
       POST_REPLAY_FOCUS_REPORTING_RESET,
       expect.any(Function)
     )
