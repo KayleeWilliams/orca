@@ -8,7 +8,12 @@ import { DaemonClient } from './client'
 import { HistoryManager } from './history-manager'
 import { HistoryReader } from './history-reader'
 import { supportsPtyStartupBarrier } from './shell-ready'
-import type { CreateOrAttachResult, DaemonEvent, ListSessionsResult } from './types'
+import type {
+  CreateOrAttachResult,
+  DaemonEvent,
+  GetSnapshotResult,
+  ListSessionsResult
+} from './types'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 
 export type DaemonPtyAdapterOptions = {
@@ -56,6 +61,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // mount → ??? The sticky cache returns the same cold restore data on the
   // second mount until the renderer explicitly acknowledges it.
   private coldRestoreCache = new Map<string, { scrollback: string; cwd: string }>()
+  private activeSessionIds = new Set<string>()
+  private checkpointInterval: ReturnType<typeof setInterval> | null = null
+  private static CHECKPOINT_INTERVAL_MS = 5_000
 
   constructor(opts: DaemonPtyAdapterOptions) {
     this.client = new DaemonClient({
@@ -122,23 +130,21 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return { id: sessionId, pid, coldRestore: cachedRestore }
     }
 
+    this.activeSessionIds.add(sessionId)
+
     // Cold restore: daemon created a new session but disk history shows
     // an unclean shutdown → return saved scrollback so the renderer can
-    // display the previous terminal content. Must run BEFORE openSession
-    // which would overwrite the saved history files.
+    // display the previous terminal content.
     if (result.isNew && restoreInfo) {
-      const coldRestore = { scrollback: restoreInfo.scrollback, cwd: restoreInfo.cwd }
+      const scrollback = restoreInfo.rehydrateSequences + restoreInfo.snapshotAnsi
+      const coldRestore = { scrollback, cwd: restoreInfo.cwd }
       this.coldRestoreCache.set(sessionId, coldRestore)
-      // Why: seed the reopened history with the recovered metadata, not the
-      // renderer's transient mount-time size, so a second crash restores the
-      // same terminal context the daemon just revived.
       if (this.historyManager) {
         void this.historyManager
           .openSession(sessionId, {
             cwd: restoreInfo.cwd,
             cols: restoreInfo.cols,
-            rows: restoreInfo.rows,
-            initialScrollback: restoreInfo.scrollback
+            rows: restoreInfo.rows
           })
           .catch((err) => console.warn('[history] openSession failed:', sessionId, err))
       }
@@ -150,8 +156,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         .openSession(sessionId, {
           cwd: effectiveCwd ?? '',
           cols: effectiveCols,
-          rows: effectiveRows,
-          initialScrollback: result.snapshot?.snapshotAnsi
+          rows: effectiveRows
         })
         .catch((err) => console.warn('[history] openSession failed:', sessionId, err))
     }
@@ -194,6 +199,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   async shutdown(id: string, _immediate: boolean): Promise<void> {
     await this.client.request('kill', { sessionId: id })
+    this.activeSessionIds.delete(id)
     this.initialCwds.delete(id)
     // Why: user explicitly closed this terminal — clean up disk history
     // so it doesn't trigger a false cold restore on next launch.
@@ -363,8 +369,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   dispose(): void {
+    if (this.checkpointInterval) {
+      clearInterval(this.checkpointInterval)
+      this.checkpointInterval = null
+    }
     this.removeEventListener?.()
     this.removeEventListener = null
+    // Why: final checkpoints are written daemon-side in TerminalHost.dispose()
+    // which has direct access to sessions. The adapter only marks sessions as
+    // cleanly ended here so they don't trigger false cold restores.
     if (this.historyManager) {
       void this.historyManager
         .dispose()
@@ -378,6 +391,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // restore. disconnectOnly() leaves history files in unclean state so
   // the next launch detects them as crash-recoverable.
   disconnectOnly(): void {
+    if (this.checkpointInterval) {
+      clearInterval(this.checkpointInterval)
+      this.checkpointInterval = null
+    }
     this.removeEventListener?.()
     this.removeEventListener = null
     this.client.disconnect()
@@ -386,6 +403,35 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private async ensureConnected(): Promise<void> {
     await this.client.ensureConnected()
     this.setupEventRouting()
+    this.startCheckpointTimer()
+  }
+
+  private startCheckpointTimer(): void {
+    if (this.checkpointInterval || !this.historyManager) {
+      return
+    }
+    this.checkpointInterval = setInterval(() => {
+      this.checkpointAllSessions()
+    }, DaemonPtyAdapter.CHECKPOINT_INTERVAL_MS)
+  }
+
+  // Why: the adapter runs in the Electron main process and does not have direct
+  // access to daemon Session objects. It calls the getSnapshot RPC over the
+  // daemon socket per session.
+  private checkpointAllSessions(): void {
+    if (!this.historyManager) {
+      return
+    }
+    for (const sessionId of this.activeSessionIds) {
+      void this.client
+        .request<GetSnapshotResult>('getSnapshot', { sessionId })
+        .then((result) => {
+          if (result.snapshot && this.historyManager) {
+            return this.historyManager.checkpoint(sessionId, result.snapshot)
+          }
+        })
+        .catch((err) => console.warn('[history] checkpoint failed:', sessionId, err))
+    }
   }
 
   // Why: when the daemon process dies, operations fail with ENOENT (socket
@@ -431,16 +477,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
 
       if (event.event === 'data') {
-        if (this.historyManager) {
-          void this.historyManager
-            .appendData(event.sessionId, event.payload.data)
-            .catch((err) => console.warn('[history] appendData failed:', event.sessionId, err))
-        }
         // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
         for (const listener of [...this.dataListeners]) {
           listener({ id: event.sessionId, data: event.payload.data })
         }
       } else if (event.event === 'exit') {
+        this.activeSessionIds.delete(event.sessionId)
         if (this.historyManager) {
           void this.historyManager
             .closeSession(event.sessionId, event.payload.code)

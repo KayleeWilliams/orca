@@ -280,6 +280,9 @@ export class DaemonServer {
       case 'listSessions':
         return { sessions: this.host.listSessions() }
 
+      case 'getSnapshot':
+        return { snapshot: this.host.getSnapshot(request.payload.sessionId) }
+
       case 'ping':
         return { pong: true }
 
