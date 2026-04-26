@@ -349,17 +349,11 @@ export class PtyHandler {
     }
   }
 
-  startGraceTimer(onExpire: () => void, options?: { allowImmediateIfEmpty?: boolean }): void {
+  startGraceTimer(onExpire: () => void): void {
     this.cancelGraceTimer()
-    // Why: when allowImmediateIfEmpty is set and no PTYs exist, exit
-    // immediately instead of keeping an orphan relay alive for the full
-    // grace period. This avoids leaking relay processes on connect/disconnect
-    // cycles where no terminal was ever opened. When false (detached startup),
-    // always wait — a --connect client will arrive shortly.
-    if (options?.allowImmediateIfEmpty && this.ptys.size === 0) {
-      onExpire()
-      return
-    }
+    // Why: always wait the full grace period even with zero PTYs.  A detached
+    // relay may have no PTYs yet but a --connect client will arrive shortly.
+    // Firing immediately would kill the relay before anyone could connect.
     this.graceTimer = setTimeout(() => {
       onExpire()
     }, this.graceTimeMs)

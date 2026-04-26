@@ -266,7 +266,7 @@ function main(): void {
         if (activeSocket === sock) {
           activeSocket = null
           dispatcher.invalidateClient()
-          startGrace({ allowImmediateIfEmpty: true })
+          startGrace()
         }
       })
 
@@ -307,10 +307,10 @@ function main(): void {
     stdoutAlive = false
   })
 
-  function startGrace(options?: { allowImmediateIfEmpty?: boolean }): void {
+  function startGrace(): void {
     ptyHandler.startGraceTimer(() => {
       shutdown()
-    }, options)
+    })
   }
 
   if (detached) {
@@ -336,7 +336,7 @@ function main(): void {
       stdoutAlive = false
       if (!activeSocket) {
         dispatcher.invalidateClient()
-        startGrace({ allowImmediateIfEmpty: true })
+        startGrace()
       }
     })
 
@@ -344,7 +344,7 @@ function main(): void {
       stdoutAlive = false
       if (!activeSocket) {
         dispatcher.invalidateClient()
-        startGrace({ allowImmediateIfEmpty: true })
+        startGrace()
       }
     })
   }

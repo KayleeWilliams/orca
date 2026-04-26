@@ -67,95 +67,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         return
       }
 
-      // Why: when the real worktree list arrives (e.g. after SSH reconnect),
-      // placeholder worktrees from session restore may no longer exist on
-      // the remote. Shut down any live PTYs for removed worktrees before
-      // pruning state, so shells/agents don't leak as orphaned processes.
-      const liveIds = new Set(worktrees.map((w) => w.id))
-      const prevIds = (get().worktreesByRepo[repoId] ?? []).map((w) => w.id)
-      const removedIds = prevIds.filter((id) => !liveIds.has(id))
-      for (const id of removedIds) {
-        await get().shutdownWorktreeTerminals(id)
-      }
-
-      set((s) => {
-        if (removedIds.length === 0) {
-          return {
-            worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
-            sortEpoch: s.sortEpoch + 1
-          }
-        }
-
-        const removedSet = new Set(removedIds)
-        const nextTabsByWorktree = { ...s.tabsByWorktree }
-        const removedTabIds = new Set<string>()
-        const nextActiveTabIdByWorktree = { ...s.activeTabIdByWorktree }
-        const nextActiveTabTypeByWorktree = { ...s.activeTabTypeByWorktree }
-        const nextTerminalLayoutsByTabId = { ...s.terminalLayoutsByTabId }
-        const nextPtyIdsByTabId = { ...s.ptyIdsByTabId }
-        const nextPendingReconnectTabByWorktree = { ...s.pendingReconnectTabByWorktree }
-        const nextUnifiedTabsByWorktree = { ...s.unifiedTabsByWorktree }
-        const nextGroupsByWorktree = { ...s.groupsByWorktree }
-        const nextLayoutByWorktree = { ...s.layoutByWorktree }
-        const nextActiveGroupIdByWorktree = { ...s.activeGroupIdByWorktree }
-        const nextBrowserTabsByWorktree = { ...s.browserTabsByWorktree }
-        const nextActiveBrowserTabIdByWorktree = { ...s.activeBrowserTabIdByWorktree }
-        const nextActiveFileIdByWorktree = { ...s.activeFileIdByWorktree }
-
-        for (const id of removedIds) {
-          for (const tab of nextTabsByWorktree[id] ?? []) {
-            removedTabIds.add(tab.id)
-          }
-          delete nextTabsByWorktree[id]
-          delete nextActiveTabIdByWorktree[id]
-          delete nextActiveTabTypeByWorktree[id]
-          delete nextPendingReconnectTabByWorktree[id]
-          delete nextUnifiedTabsByWorktree[id]
-          delete nextGroupsByWorktree[id]
-          delete nextLayoutByWorktree[id]
-          delete nextActiveGroupIdByWorktree[id]
-          delete nextBrowserTabsByWorktree[id]
-          delete nextActiveBrowserTabIdByWorktree[id]
-          delete nextActiveFileIdByWorktree[id]
-        }
-        for (const tabId of removedTabIds) {
-          delete nextTerminalLayoutsByTabId[tabId]
-          delete nextPtyIdsByTabId[tabId]
-        }
-
-        // Why: mirror the global-state cleanup from removeWorktree() so the
-        // UI doesn't stay focused on a deleted worktree's tab or editor file.
-        const nextOpenFiles = s.openFiles.filter((f) => !removedSet.has(f.worktreeId))
-        const activeWorktreeGone = s.activeWorktreeId != null && removedSet.has(s.activeWorktreeId)
-        const activeTabGone = s.activeTabId != null && removedTabIds.has(s.activeTabId)
-        const activeFileGone =
-          s.activeFileId != null &&
-          s.openFiles.some((f) => f.id === s.activeFileId && removedSet.has(f.worktreeId))
-
-        return {
-          worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
-          tabsByWorktree: nextTabsByWorktree,
-          activeTabIdByWorktree: nextActiveTabIdByWorktree,
-          activeTabTypeByWorktree: nextActiveTabTypeByWorktree,
-          terminalLayoutsByTabId: nextTerminalLayoutsByTabId,
-          ptyIdsByTabId: nextPtyIdsByTabId,
-          pendingReconnectTabByWorktree: nextPendingReconnectTabByWorktree,
-          unifiedTabsByWorktree: nextUnifiedTabsByWorktree,
-          groupsByWorktree: nextGroupsByWorktree,
-          layoutByWorktree: nextLayoutByWorktree,
-          activeGroupIdByWorktree: nextActiveGroupIdByWorktree,
-          browserTabsByWorktree: nextBrowserTabsByWorktree,
-          activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
-          activeFileIdByWorktree: nextActiveFileIdByWorktree,
-          openFiles: nextOpenFiles,
-          ...(activeWorktreeGone
-            ? { activeWorktreeId: null, activeTabType: 'terminal' as const }
-            : {}),
-          ...(activeTabGone ? { activeTabId: null } : {}),
-          ...(activeFileGone ? { activeFileId: null } : {}),
-          sortEpoch: s.sortEpoch + 1
-        }
-      })
+      set((s) => ({
+        // Why: active worktrees can change branches entirely from a terminal.
+        // We refresh that live git identity into renderer state, but only bump
+        // sortEpoch when git actually reports a different worktree payload.
+        worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
+        sortEpoch: s.sortEpoch + 1
+      }))
     } catch (err) {
       console.error(`Failed to fetch worktrees for repo ${repoId}:`, err)
     }
