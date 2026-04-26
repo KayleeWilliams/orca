@@ -778,7 +778,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
           comments(first: 100) {
             nodes {
               databaseId
-              author { login avatarUrl(size: 48) }
+              author { __typename login avatarUrl(size: 48) }
               body
               createdAt
               url
@@ -850,7 +850,7 @@ export async function getPRComments(
       // Parse issue comments (REST)
       type RESTComment = {
         id: number
-        user: { login: string; avatar_url: string } | null
+        user: { login: string; avatar_url: string; type?: string } | null
         body: string
         created_at: string
         html_url: string
@@ -864,7 +864,8 @@ export async function getPRComments(
             authorAvatarUrl: c.user?.avatar_url ?? '',
             body: c.body ?? '',
             createdAt: c.created_at,
-            url: c.html_url
+            url: c.html_url,
+            isBot: c.user?.type === 'Bot'
           })
         )
       } else {
@@ -882,7 +883,7 @@ export async function getPRComments(
         comments: {
           nodes: {
             databaseId: number
-            author: { login: string; avatarUrl: string } | null
+            author: { __typename?: string; login: string; avatarUrl: string } | null
             body: string
             createdAt: string
             url: string
@@ -908,6 +909,7 @@ export async function getPRComments(
               path: c.path,
               threadId: thread.id,
               isResolved: thread.isResolved,
+              isBot: c.author?.__typename === 'Bot',
               // Why: GitHub nulls out line/startLine when the commented code is
               // outdated (e.g. after a force-push). Fall back to originalLine which
               // always preserves the line numbers from when the comment was created.
@@ -924,7 +926,7 @@ export async function getPRComments(
       // since empty-body reviews (e.g. approvals with no comment) add noise.
       type RESTReview = {
         id: number
-        user: { login: string; avatar_url: string } | null
+        user: { login: string; avatar_url: string; type?: string } | null
         body: string
         state: string
         submitted_at: string
@@ -941,7 +943,8 @@ export async function getPRComments(
               authorAvatarUrl: r.user?.avatar_url ?? '',
               body: r.body,
               createdAt: r.submitted_at,
-              url: r.html_url
+              url: r.html_url,
+              isBot: r.user?.type === 'Bot'
             })
           )
       } else {

@@ -26,6 +26,16 @@ describe('pr-comment-filters', () => {
     expect(isAutomatedPRComment(comment('robotics-dev'))).toBe(false)
   })
 
+  it('trusts the GitHub-provided isBot flag over the login heuristic', () => {
+    // Third-party review bots like qodo-ai-reviewer don't contain "bot" in
+    // their login, so the heuristic alone misclassifies them. GitHub's
+    // user.type / __typename signal is authoritative.
+    expect(isAutomatedPRComment({ ...comment('qodo-ai-reviewer'), isBot: true })).toBe(true)
+    expect(isAutomatedPRComment({ ...comment('coderabbitai'), isBot: true })).toBe(true)
+    // Explicit isBot=false wins over a suspicious-looking login.
+    expect(isAutomatedPRComment({ ...comment('robotics-dev'), isBot: false })).toBe(false)
+  })
+
   it('filters comments by audience', () => {
     const comments = [
       comment('octocat'),

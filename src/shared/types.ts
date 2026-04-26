@@ -381,6 +381,12 @@ export type PRComment = {
   line?: number
   /** Start line of the review annotation range (1-based). Absent for single-line comments. */
   startLine?: number
+  /** True when GitHub identifies the author as a bot (REST `user.type === 'Bot'` or
+   *  GraphQL `__typename === 'Bot'`). Preferred over login-string heuristics because
+   *  third-party review bots (e.g. qodo-ai-reviewer, coderabbitai) don't follow a
+   *  predictable naming convention. Absent when the data source can't report it
+   *  (non-GitHub fallbacks via `gh pr view`). */
+  isBot?: boolean
 }
 
 export type IssueInfo = {
