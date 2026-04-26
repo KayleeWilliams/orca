@@ -67,16 +67,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         return
       }
 
-      set((s) => {
-        // Why: when the real worktree list arrives (e.g. after SSH reconnect),
-        // placeholder worktrees from session restore may no longer exist on
-        // the remote. Prune all worktree-scoped state so the UI doesn't show
-        // orphaned tabs, stale active selections, or phantom sidebar entries
-        // for deleted worktrees.
-        const liveIds = new Set(worktrees.map((w) => w.id))
-        const prevIds = (s.worktreesByRepo[repoId] ?? []).map((w) => w.id)
-        const removedIds = prevIds.filter((id) => !liveIds.has(id))
+      // Why: when the real worktree list arrives (e.g. after SSH reconnect),
+      // placeholder worktrees from session restore may no longer exist on
+      // the remote. Shut down any live PTYs for removed worktrees before
+      // pruning state, so shells/agents don't leak as orphaned processes.
+      const liveIds = new Set(worktrees.map((w) => w.id))
+      const prevIds = (get().worktreesByRepo[repoId] ?? []).map((w) => w.id)
+      const removedIds = prevIds.filter((id) => !liveIds.has(id))
+      for (const id of removedIds) {
+        await get().shutdownWorktreeTerminals(id)
+      }
 
+      set((s) => {
         if (removedIds.length === 0) {
           return {
             worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },

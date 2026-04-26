@@ -346,6 +346,10 @@ async function launchRelay(
   const launchChannel = await conn.exec(launchCmd)
   launchChannel.on('data', () => {})
   launchChannel.stderr.on('data', () => {})
+  // Why: the shell exits quickly (nohup ... &), but the SSH channel stays
+  // open until all child fds close. Explicitly closing it after the poll
+  // loop prevents channel accumulation across relay restarts, which would
+  // eventually hit the server's MaxSessions limit.
   launchChannel.on('close', () => {})
 
   // Why: the backgrounded relay needs time to bind its Unix socket.  We
@@ -377,6 +381,11 @@ async function launchRelay(
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
+
+  // Why: close the fire-and-forget launch channel now that the relay's
+  // socket is either ready or the poll timed out. Leaving it open leaks
+  // an SSH channel per relay restart.
+  launchChannel.close()
 
   if (!socketReady) {
     const logOutput = await execCommand(
