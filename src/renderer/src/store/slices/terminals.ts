@@ -13,6 +13,14 @@ import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-hel
 import { isClaudeAgent, detectAgentStatusFromTitle } from '@/lib/agent-status'
 import { buildOrphanTerminalCleanupPatch, getOrphanTerminalIds } from './terminal-orphan-helpers'
 import {
+  dedupeTabOrder,
+  ensureGroup,
+  findTabByEntityInGroup,
+  pushRecentTabId,
+  sanitizeRecentTabIds,
+  updateGroup
+} from './tab-group-state'
+import {
   ensurePtyDispatcher,
   unregisterPtyDataHandlers
 } from '@/components/terminal-pane/pty-transport'
@@ -293,6 +301,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     let tab!: TerminalTab
     set((s) => {
       const orphanTerminalIds = getOrphanTerminalIds(s, worktreeId)
+      const orphanCleanupPatch = buildOrphanTerminalCleanupPatch(s, worktreeId, orphanTerminalIds)
       const existing = (s.tabsByWorktree[worktreeId] ?? []).filter(
         (entry) => !orphanTerminalIds.has(entry.id)
       )
@@ -312,17 +321,73 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         sortOrder: existing.length,
         createdAt: Date.now()
       }
+      const validTargetGroupId =
+        targetGroupId && s.groupsByWorktree[worktreeId]?.some((group) => group.id === targetGroupId)
+          ? targetGroupId
+          : undefined
+      const { group, groupsByWorktree, activeGroupIdByWorktree } = ensureGroup(
+        s.groupsByWorktree,
+        s.activeGroupIdByWorktree,
+        worktreeId,
+        validTargetGroupId ?? s.activeGroupIdByWorktree[worktreeId]
+      )
+      const nextActiveGroupIdByWorktree = validTargetGroupId
+        ? { ...activeGroupIdByWorktree, [worktreeId]: validTargetGroupId }
+        : activeGroupIdByWorktree
+      const existingUnifiedTabs = s.unifiedTabsByWorktree[worktreeId] ?? []
+      const existingTerminalTab = findTabByEntityInGroup(
+        s.unifiedTabsByWorktree,
+        worktreeId,
+        group.id,
+        id,
+        'terminal'
+      )
+      const unifiedTab = existingTerminalTab ?? {
+        id,
+        entityId: id,
+        groupId: group.id,
+        worktreeId,
+        contentType: 'terminal' as const,
+        label: tab.title,
+        customLabel: tab.customTitle,
+        color: tab.color,
+        sortOrder: dedupeTabOrder(group.tabOrder).length,
+        createdAt: tab.createdAt
+      }
+      const nextGroupOrder = dedupeTabOrder([...group.tabOrder, unifiedTab.id])
+      const nextRecent = pushRecentTabId(
+        sanitizeRecentTabIds(group.recentTabIds, nextGroupOrder),
+        unifiedTab.id
+      )
       return {
-        ...buildOrphanTerminalCleanupPatch(s, worktreeId, orphanTerminalIds),
+        ...orphanCleanupPatch,
         tabsByWorktree: {
-          ...s.tabsByWorktree,
+          ...orphanCleanupPatch.tabsByWorktree,
           [worktreeId]: [...existing, tab]
         },
-        activeGroupIdByWorktree:
-          targetGroupId &&
-          s.groupsByWorktree[worktreeId]?.some((group) => group.id === targetGroupId)
-            ? { ...s.activeGroupIdByWorktree, [worktreeId]: targetGroupId }
-            : s.activeGroupIdByWorktree,
+        // Why: task-page launch queues startup/setup work before React mounts
+        // the terminal. Publishing the unified tab atomically with the runtime
+        // tab prevents a transient legacy mount from racing the split host.
+        unifiedTabsByWorktree: {
+          ...s.unifiedTabsByWorktree,
+          [worktreeId]: existingTerminalTab
+            ? existingUnifiedTabs
+            : [...existingUnifiedTabs, unifiedTab]
+        },
+        groupsByWorktree: {
+          ...groupsByWorktree,
+          [worktreeId]: updateGroup(groupsByWorktree[worktreeId] ?? [], {
+            ...group,
+            activeTabId: unifiedTab.id,
+            tabOrder: nextGroupOrder,
+            recentTabIds: nextRecent
+          })
+        },
+        activeGroupIdByWorktree: nextActiveGroupIdByWorktree,
+        layoutByWorktree: {
+          ...s.layoutByWorktree,
+          [worktreeId]: s.layoutByWorktree[worktreeId] ?? { type: 'leaf', groupId: group.id }
+        },
         activeTabId: tab.id,
         activeTabIdByWorktree: { ...s.activeTabIdByWorktree, [worktreeId]: tab.id },
         ptyIdsByTabId: { ...s.ptyIdsByTabId, [tab.id]: [] },
@@ -332,29 +397,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       }
     })
-    const state = get()
-    const resolvedTargetGroupId =
-      targetGroupId ??
-      state.activeGroupIdByWorktree[worktreeId] ??
-      state.groupsByWorktree[worktreeId]?.[0]?.id ??
-      state.ensureWorktreeRootGroup?.(worktreeId)
-    if (
-      resolvedTargetGroupId &&
-      !state.findTabForEntityInGroup(worktreeId, resolvedTargetGroupId, id, 'terminal')
-    ) {
-      // Why: a brand-new worktree can auto-create its first terminal before
-      // Terminal.tsx has mounted and seeded a root tab group. Force a root
-      // group here so the first terminal always gets a visible unified tab
-      // instead of existing only in the legacy terminal slice.
-      state.createUnifiedTab(worktreeId, 'terminal', {
-        id,
-        entityId: id,
-        label: tab.title,
-        customLabel: tab.customTitle,
-        color: tab.color,
-        targetGroupId: resolvedTargetGroupId
-      })
-    }
     return tab
   },
 
