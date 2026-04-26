@@ -216,13 +216,13 @@ export function registerSshHandlers(
         reconnectAttempt: 0
       })
 
-      await session.establish(conn, target.relayGracePeriodSeconds)
-
       // Why: the relay exec channel can close independently of the SSH
       // connection (e.g. --connect bridge exits, relay process crashes).
       // When that happens, the mux is disposed but onStateChange never
       // fires because the SSH connection is still alive. This callback
       // triggers session.reconnect() using the live SSH connection.
+      // Set before establish() so the callback is in place if the relay
+      // dies during the deploy/connect sequence.
       session.setOnRelayLost((tid) => {
         const s = activeSessions.get(tid)
         if (!s) {
@@ -234,6 +234,8 @@ export function registerSshHandlers(
           void s.reconnect(c, t?.relayGracePeriodSeconds)
         }
       })
+
+      await session.establish(conn, target.relayGracePeriodSeconds)
 
       // Why: we manually pushed `deploying-relay` above, so the renderer's
       // state is stuck there. Send `connected` directly to the renderer

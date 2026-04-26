@@ -845,9 +845,20 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           delete nextCodexRestartNoticeByPtyId[currentPtyId]
         }
       }
+      // Why: when a specific ptyId is passed, the PTY actually exited (not
+      // just disconnected). Remove its lastKnown entry so session-save does
+      // not attempt to reattach a dead relay PTY on next restart. When no
+      // ptyId is passed (bulk clear on connection_lost), preserve lastKnown
+      // because the relay still has the PTY alive during its grace period.
+      const nextLastKnownRelay = { ...s.lastKnownRelayPtyIdByTabId }
+      if (ptyId && nextLastKnownRelay[tabId] === ptyId) {
+        delete nextLastKnownRelay[tabId]
+      }
+
       return {
         tabsByWorktree: next,
         ptyIdsByTabId: nextPtyIdsByTabId,
+        lastKnownRelayPtyIdByTabId: nextLastKnownRelay,
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
         codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId
       }
@@ -1370,7 +1381,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           continue
         }
         const path = worktreeId.split('::')[1] ?? ''
-        const displayName = path.split('/').pop() || path
+        // Why: SSH worktree paths may use backslash separators on Windows remotes.
+        const displayName = path.split(/[/\\]/).pop() || path
         const placeholder: Worktree = {
           id: worktreeId,
           repoId,
