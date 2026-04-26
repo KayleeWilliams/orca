@@ -6,6 +6,7 @@ import { getHistorySessionDirName } from './history-paths'
 
 export type ColdRestoreInfo = {
   snapshotAnsi: string
+  scrollbackAnsi: string
   rehydrateSequences: string
   cwd: string
   cols: number
@@ -48,6 +49,7 @@ export class HistoryReader {
       const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf-8'))
       return {
         snapshotAnsi: checkpoint.snapshotAnsi,
+        scrollbackAnsi: checkpoint.scrollbackAnsi ?? '',
         rehydrateSequences: checkpoint.rehydrateSequences,
         cwd: checkpoint.cwd,
         cols: checkpoint.cols,
@@ -116,8 +118,10 @@ export class HistoryReader {
     }
     try {
       const scrollback = readFileSync(scrollbackPath, 'utf-8')
+      const truncated = this.truncateAltScreen(scrollback)
       return {
-        snapshotAnsi: this.truncateAltScreen(scrollback),
+        snapshotAnsi: truncated,
+        scrollbackAnsi: truncated,
         rehydrateSequences: '',
         cwd: meta.cwd,
         cols: meta.cols,
