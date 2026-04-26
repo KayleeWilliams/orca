@@ -66,8 +66,13 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 }))
 
 const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
-const { registerSshPtyProvider, unregisterSshPtyProvider, getPtyIdsForConnection } =
-  await import('../ipc/pty')
+const {
+  registerSshPtyProvider,
+  unregisterSshPtyProvider,
+  getPtyIdsForConnection,
+  clearProviderPtyState,
+  deletePtyOwnership
+} = await import('../ipc/pty')
 const { registerSshFilesystemProvider, unregisterSshFilesystemProvider } =
   await import('../providers/ssh-filesystem-dispatch')
 const { registerSshGitProvider, unregisterSshGitProvider } =
@@ -81,11 +86,12 @@ function createMockDeps() {
   const mockPortForward = {
     removeAllForwards: vi.fn()
   } as unknown as SshPortForwardManager
-  const getMainWindow = vi.fn().mockReturnValue({
+  const mockWindow = {
     isDestroyed: () => false,
     webContents: { send: vi.fn() }
-  })
-  return { mockConn, mockStore, mockPortForward, getMainWindow }
+  }
+  const getMainWindow = vi.fn().mockReturnValue(mockWindow)
+  return { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow }
 }
 
 function mockDeploySuccess() {
@@ -185,6 +191,36 @@ describe('SshRelaySession', () => {
 
     expect(mockAttach).toHaveBeenCalledWith('pty-1')
     expect(mockAttach).toHaveBeenCalledWith('pty-2')
+  })
+
+  it('invalidates and broadcasts remote PTYs that cannot reattach after relay reconnect', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    vi.clearAllMocks()
+    mockDeploySuccess()
+
+    const { getSshPtyProvider } = await import('../ipc/pty')
+    const mockAttach = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('missing pty'))
+      .mockResolvedValueOnce(undefined)
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attach: mockAttach,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-stale', 'pty-live'])
+
+    await session.reconnect(mockConn)
+
+    expect(mockAttach).toHaveBeenCalledWith('pty-stale')
+    expect(mockAttach).toHaveBeenCalledWith('pty-live')
+    expect(clearProviderPtyState).toHaveBeenCalledWith('pty-stale')
+    expect(deletePtyOwnership).toHaveBeenCalledWith('pty-stale')
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('pty:exit', {
+      id: 'pty-stale',
+      code: -1
+    })
   })
 
   it('dispose transitions to disposed and unregisters providers', async () => {

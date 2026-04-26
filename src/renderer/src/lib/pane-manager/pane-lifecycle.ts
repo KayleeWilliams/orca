@@ -22,41 +22,13 @@ import {
   attachPaneFitResizeObserver,
   detachPaneFitResizeObserver
 } from './pane-fit-resize-observer'
+import { buildDefaultTerminalOptions } from './pane-terminal-options'
 
 // ---------------------------------------------------------------------------
 // Pane creation, terminal open/close, addon management
 // ---------------------------------------------------------------------------
 
 const ENABLE_WEBGL_RENDERER = true
-
-export function buildDefaultTerminalOptions(): ITerminalOptions {
-  return {
-    allowProposedApi: true,
-    cursorBlink: true,
-    cursorStyle: 'bar',
-    fontSize: 14,
-    // Cross-platform fallback chain — ensures the terminal can always find a
-    // usable monospace font regardless of OS, even if user settings haven't
-    // loaded yet. macOS-only fonts are harmlessly skipped on other platforms.
-    // Must stay in sync with FALLBACK_FONTS in layout-serialization.ts; the
-    // trailing Nerd Fonts let Powerline/PUA glyphs render even at first paint
-    // before the user's configured terminalFontFamily is applied.
-    fontFamily:
-      '"SF Mono", "Menlo", "Monaco", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "MesloLGS Nerd Font", "JetBrainsMono Nerd Font", "Hack Nerd Font", monospace',
-    fontWeight: '300',
-    fontWeightBold: '500',
-    scrollback: 10000,
-    allowTransparency: false,
-    // Why: on macOS, non-US layouts rely on Option to compose real characters
-    // like @ (German Option+L) and € (German Option+E). Enabling xterm's
-    // Meta mode here makes Option behave like Esc+key instead, which steals
-    // those composed characters before they reach the shell.
-    // Readline shortcuts (Option+B/F/D) are compensated in terminal-shortcut-policy.ts.
-    macOptionIsMeta: false,
-    macOptionClickForcesSelection: true,
-    drawBoldTextInBrightColors: true
-  }
-}
 
 function getTerminalUrlOpenHint(): string {
   return navigator.userAgent.includes('Mac')
@@ -137,6 +109,8 @@ export function createPaneDOM(
     xtermContainer,
     linkTooltip,
     gpuRenderingEnabled: ENABLE_WEBGL_RENDERER,
+    webglAttachmentDeferred: false,
+    webglDisabledAfterContextLoss: false,
     fitAddon,
     fitResizeObserver: null,
     pendingObservedFitRafId: null,
@@ -307,7 +281,12 @@ export function disposeWebgl(pane: ManagedPaneInternal): void {
 }
 
 export function attachWebgl(pane: ManagedPaneInternal): void {
-  if (!ENABLE_WEBGL_RENDERER || !pane.gpuRenderingEnabled) {
+  if (
+    !ENABLE_WEBGL_RENDERER ||
+    !pane.gpuRenderingEnabled ||
+    pane.webglAttachmentDeferred ||
+    pane.webglDisabledAfterContextLoss
+  ) {
     pane.webglAddon = null
     return
   }
@@ -319,6 +298,10 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
         pane.id,
         '— falling back to DOM renderer'
       )
+      // Why: Chromium starts reclaiming terminal contexts under pressure.
+      // Recreating WebGL for this pane can loop context loss and leave xterm
+      // visually blank, so keep the pane on the DOM renderer until remount.
+      pane.webglDisabledAfterContextLoss = true
       webglAddon.dispose()
       pane.webglAddon = null
       // Why: when the WebGL context is lost (GPU memory pressure, Chromium
