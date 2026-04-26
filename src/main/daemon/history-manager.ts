@@ -1,5 +1,13 @@
 import { join } from 'path'
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync } from 'fs'
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  renameSync,
+  unlinkSync
+} from 'fs'
 import { getHistorySessionDirName } from './history-paths'
 import type { TerminalSnapshot } from './types'
 
@@ -54,9 +62,20 @@ export class HistoryManager {
       }
       writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
 
+      // Why: if a session ID is reused after a previous clean exit, the old
+      // checkpoint.json may still be on disk. Without removing it, a crash
+      // before the first 5s checkpoint tick would cause detectColdRestore to
+      // replay stale terminal content from the previous session.
+      const checkpointPath = join(dir, 'checkpoint.json')
+      try {
+        unlinkSync(checkpointPath)
+      } catch {
+        // ENOENT is expected for new sessions
+      }
+
       this.writers.set(sessionId, {
         dir,
-        checkpointPath: join(dir, 'checkpoint.json')
+        checkpointPath
       })
     } catch (err) {
       this.handleWriteError(sessionId, err)
