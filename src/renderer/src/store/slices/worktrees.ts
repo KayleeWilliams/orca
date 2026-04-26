@@ -123,6 +123,15 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           delete nextPtyIdsByTabId[tabId]
         }
 
+        // Why: mirror the global-state cleanup from removeWorktree() so the
+        // UI doesn't stay focused on a deleted worktree's tab or editor file.
+        const nextOpenFiles = s.openFiles.filter((f) => !removedSet.has(f.worktreeId))
+        const activeWorktreeGone = s.activeWorktreeId != null && removedSet.has(s.activeWorktreeId)
+        const activeTabGone = s.activeTabId != null && removedTabIds.has(s.activeTabId)
+        const activeFileGone =
+          s.activeFileId != null &&
+          s.openFiles.some((f) => f.id === s.activeFileId && removedSet.has(f.worktreeId))
+
         return {
           worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
           tabsByWorktree: nextTabsByWorktree,
@@ -138,11 +147,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           browserTabsByWorktree: nextBrowserTabsByWorktree,
           activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
           activeFileIdByWorktree: nextActiveFileIdByWorktree,
-          // Why: if the active worktree was deleted remotely, clear it so the
-          // sidebar doesn't stay focused on a nonexistent entry.
-          ...(s.activeWorktreeId && removedSet.has(s.activeWorktreeId)
-            ? { activeWorktreeId: null }
-            : {}),
+          openFiles: nextOpenFiles,
+          ...(activeWorktreeGone ? { activeWorktreeId: null } : {}),
+          ...(activeTabGone ? { activeTabId: null } : {}),
+          ...(activeFileGone ? { activeFileId: null } : {}),
           sortEpoch: s.sortEpoch + 1
         }
       })
