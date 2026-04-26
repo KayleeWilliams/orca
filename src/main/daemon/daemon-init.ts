@@ -327,12 +327,16 @@ async function createLegacyDaemonAdapters(runtimeDir: string): Promise<DaemonPty
     // Legacy adapters intentionally do not respawn: respawning an old protocol
     // daemon from new code would recreate stale env semantics and can be less
     // predictable than letting the session fail if that old daemon dies.
+    // Why no historyPath: checkpoint-based persistence requires the getSnapshot
+    // RPC (protocol v4+). Pre-v4 daemons reject that call, so the checkpoint
+    // timer would silently discard every write. Omitting historyPath avoids
+    // wasted RPC round-trips. Pre-upgrade scrollback.bin files remain on disk
+    // and the history reader's fallback path can still cold-restore from them.
     adapters.push(
       new DaemonPtyAdapter({
         socketPath,
         tokenPath,
-        protocolVersion,
-        historyPath: getHistoryDir()
+        protocolVersion
       })
     )
   }
