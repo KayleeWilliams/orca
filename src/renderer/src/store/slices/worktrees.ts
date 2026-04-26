@@ -148,7 +148,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
           activeFileIdByWorktree: nextActiveFileIdByWorktree,
           openFiles: nextOpenFiles,
-          ...(activeWorktreeGone ? { activeWorktreeId: null } : {}),
+          ...(activeWorktreeGone
+            ? { activeWorktreeId: null, activeTabType: 'terminal' as const }
+            : {}),
           ...(activeTabGone ? { activeTabId: null } : {}),
           ...(activeFileGone ? { activeFileId: null } : {}),
           sortEpoch: s.sortEpoch + 1
