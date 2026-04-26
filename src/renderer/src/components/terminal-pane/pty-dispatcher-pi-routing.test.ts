@@ -151,4 +151,59 @@ describe('dispatcher → transport → onTitleChange for Pi spinner', () => {
 
     transport.disconnect()
   })
+
+  // Why: regression test for the cursor spinner "solid after 500ms" bug.
+  // cursor-agent re-emits its native `OSC 0: "Cursor Agent"` title on every
+  // internal redraw mid-turn. Orca's main process injects synthesized
+  // "⠋ Cursor Agent" spinner frames from the hook server; the renderer must
+  // drop cursor's bare native title so it cannot overwrite the synthesized
+  // working title in `runtimePaneTitlesByTabId` (which drives `getWorktreeStatus`'s
+  // solid/spinning dot decision). If the bare title leaked through, the last
+  // title in the store would flip to "Cursor Agent" (which `detectAgentStatusFromTitle`
+  // classifies as null / not-working) and the sidebar would snap solid
+  // mid-turn.
+  it('drops cursor-agent native "Cursor Agent" title so it cannot overwrite the synthesized spinner', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const onTitleChange = vi.fn()
+
+    const transport = createIpcPtyTransport({ onTitleChange })
+    await transport.connect({ url: '', callbacks: {} })
+
+    // Simulate the realistic interleave: Orca injects a synthesized working
+    // frame, cursor-agent re-emits its bare native title shortly after, Orca
+    // injects the next spinner frame, etc.
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;⠋ Cursor Agent${BEL}` })
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;Cursor Agent${BEL}` })
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;⠙ Cursor Agent${BEL}` })
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;Cursor Agent${BEL}` })
+
+    const seenTitles = onTitleChange.mock.calls.map((c) => c[0])
+    // The two bare "Cursor Agent" titles must NOT reach the title-change
+    // pipeline. The two synthesized spinner frames must.
+    expect(seenTitles).not.toContain('Cursor Agent')
+    expect(seenTitles).toContain('⠋ Cursor Agent')
+    expect(seenTitles).toContain('⠙ Cursor Agent')
+
+    transport.disconnect()
+  })
+
+  it('still surfaces the synthesized "Cursor ready" idle title after working', async () => {
+    // Why: make sure the bare-title drop does not accidentally catch the
+    // decorated "Cursor ready" done frame Orca synthesizes on the `stop` hook.
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const onTitleChange = vi.fn()
+
+    const transport = createIpcPtyTransport({ onTitleChange })
+    await transport.connect({ url: '', callbacks: {} })
+
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;⠋ Cursor Agent${BEL}` })
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;Cursor Agent${BEL}` })
+    dispatcherCallback?.({ id: 'pty-pi', data: `${ESC}]0;Cursor ready${BEL}${BEL}` })
+
+    const seenTitles = onTitleChange.mock.calls.map((c) => c[0])
+    expect(seenTitles).toContain('⠋ Cursor Agent')
+    expect(seenTitles).toContain('Cursor ready')
+
+    transport.disconnect()
+  })
 })

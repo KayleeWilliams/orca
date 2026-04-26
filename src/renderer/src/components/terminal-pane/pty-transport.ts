@@ -197,6 +197,21 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   }
 
   function applyObservedTerminalTitle(title: string): void {
+    // Why: cursor-agent's native OSC title is the literal string "Cursor Agent"
+    // and it re-emits that title many times per turn (on every internal redraw)
+    // even while it's actively working. Orca drives the cursor spinner/unread
+    // path by injecting its own synthesized "⠋ Cursor Agent" and "Cursor ready"
+    // frames from the hook server (see src/main/index.ts). If we let cursor's
+    // bare title through, it lands in `runtimePaneTitlesByTabId` — where
+    // `getWorktreeStatus` reads from — and flips the sidebar dot back to solid
+    // within a second of the spinner appearing. Dropping the bare title before
+    // it reaches the store leaves the synthesized frame as the last-applied
+    // state until the next hook event overwrites it. Match is literal (trimmed,
+    // case-insensitive) so any task/chat title cursor auto-generates still
+    // passes through unchanged.
+    if (title.trim().toLowerCase() === 'cursor agent') {
+      return
+    }
     lastEmittedTitle = normalizeTerminalTitle(title)
     onTitleChange?.(lastEmittedTitle, title)
     agentTracker?.handleTitle(title)

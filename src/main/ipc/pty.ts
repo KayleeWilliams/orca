@@ -49,6 +49,20 @@ export function getPtyIdForPaneKey(paneKey: string): string | undefined {
   return paneKeyPtyId.get(paneKey)
 }
 
+// Why: consumers (currently the cursor-agent synthesized-spinner loop in
+// main/index.ts) need to tear down paneKey-scoped state when a PTY exits so
+// intervals / timers cannot leak for the process lifetime. A callback
+// registry keeps the cross-module dependency narrow — clearProviderPtyState
+// only has to know about "things to notify", not about every consumer's
+// internals.
+type PaneKeyTeardownListener = (paneKey: string) => void
+const paneKeyTeardownListeners = new Set<PaneKeyTeardownListener>()
+
+export function registerPaneKeyTeardownListener(listener: PaneKeyTeardownListener): () => void {
+  paneKeyTeardownListeners.add(listener)
+  return () => paneKeyTeardownListeners.delete(listener)
+}
+
 function getProvider(connectionId: string | null | undefined): IPtyProvider {
   if (!connectionId) {
     return localProvider
@@ -154,6 +168,16 @@ export function clearProviderPtyState(id: string): void {
     agentHookServer.clearPaneState(paneKey)
     ptyPaneKey.delete(id)
     paneKeyPtyId.delete(paneKey)
+    // Why: notify registered consumers AFTER we've dropped the paneKey↔ptyId
+    // entries so a listener that re-reads the map sees the post-teardown
+    // state. Wrap each call so one throwing listener cannot block the rest.
+    for (const listener of paneKeyTeardownListeners) {
+      try {
+        listener(paneKey)
+      } catch (err) {
+        console.error('[pty] paneKey teardown listener threw', err)
+      }
+    }
   }
 }
 

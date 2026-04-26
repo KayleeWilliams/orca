@@ -45,7 +45,7 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
-import { getPtyIdForPaneKey } from './ipc/pty'
+import { getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
 import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
@@ -174,6 +174,15 @@ function openMainWindow(): BrowserWindow {
     // replay-loop through lastStatusByPaneKey runs only on deliberate
     // window recreations instead of stacking on top of stale listeners.
     agentHookServer.setListener(null)
+    // Why: any running cursor spinner intervals would fire into a destroyed
+    // webContents; stop them all here instead of deferring to per-pane
+    // teardown, which may never run for restored-but-never-torn-down panes
+    // when the window goes away.
+    // Why: stopCursorSpinner deletes only the current entry, which the Map
+    // iterator handles safely — no snapshot copy needed.
+    for (const paneKey of cursorSpinnerByPaneKey.keys()) {
+      stopCursorSpinner(paneKey)
+    }
   })
   mainWindow = window
   agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
@@ -198,30 +207,95 @@ function openMainWindow(): BrowserWindow {
     // This runs regardless of AGENT_DASHBOARD_ENABLED because cursor has no
     // pre-dashboard title heuristic to fall back to.
     if (payload.agentType === 'cursor') {
-      const ptyId = getPtyIdForPaneKey(paneKey)
-      if (!ptyId) {
-        return
-      }
-      // Why: working uses a braille-spinner prefix so `detectAgentStatusFromTitle`
-      // classifies via `containsBrailleSpinner`. "action required" hits the
-      // permission-keyword path. Idle/done uses a decorated "Cursor ready"
-      // label rather than the bare native "Cursor Agent" — which the detector
-      // deliberately treats as a no-op so cursor's own per-turn re-emissions
-      // cannot clobber our synthesized state. The done/permission frames also
-      // carry a trailing BEL (0x07 outside of any OSC sequence) because
-      // cursor-agent does not emit one on its own — and the tab-level unread
-      // badge + notification dispatch in pty-connection keys off BEL, not the
-      // working→idle title transition.
-      const synthetic =
-        payload.state === 'working'
-          ? '\x1b]0;⠋ Cursor Agent\x07'
-          : payload.state === 'blocked' || payload.state === 'waiting'
-            ? '\x1b]0;Cursor - action required\x07\x07'
-            : '\x1b]0;Cursor ready\x07\x07'
-      mainWindow?.webContents.send('pty:data', { id: ptyId, data: synthetic })
+      driveCursorPaneFromHook(paneKey, payload.state)
     }
   })
   return window
+}
+
+// Why: Pi-style persistent spinner — cursor-agent re-emits its own
+// "Cursor Agent" OSC title on every internal redraw, so a single synthesized
+// "⠋ Cursor Agent" frame gets silently overwritten in the renderer within
+// milliseconds and the sidebar dot snaps back to solid. Keep asserting a
+// fresh working frame on an interval until the hook reports a non-working
+// state. Interval matches Pi's 80ms cadence — fast enough for a smooth
+// spinner, slow enough to stay well under the per-flush IPC budget.
+const CURSOR_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const CURSOR_SPINNER_INTERVAL_MS = 80
+const cursorSpinnerByPaneKey = new Map<
+  string,
+  { timer: ReturnType<typeof setInterval>; frame: number }
+>()
+
+// Why: on PTY teardown the paneKey→ptyId mapping is dropped, so the spinner
+// interval would keep firing but sendCursorTitle would no-op forever. Stop
+// the interval explicitly so the process doesn't carry a timer per dead pane.
+registerPaneKeyTeardownListener((paneKey) => {
+  stopCursorSpinner(paneKey)
+})
+
+function sendCursorTitle(ptyId: string, data: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+  mainWindow.webContents.send('pty:data', { id: ptyId, data })
+}
+
+function stopCursorSpinner(paneKey: string): void {
+  const entry = cursorSpinnerByPaneKey.get(paneKey)
+  if (entry) {
+    clearInterval(entry.timer)
+    cursorSpinnerByPaneKey.delete(paneKey)
+  }
+}
+
+function driveCursorPaneFromHook(paneKey: string, state: string): void {
+  const ptyId = getPtyIdForPaneKey(paneKey)
+  if (!ptyId) {
+    return
+  }
+  if (state === 'working') {
+    // Why: immediately emit the first frame so the spinner starts visible at
+    // this hook event even if the interval's next tick is 80ms away. Subsequent
+    // frames come from the interval below.
+    const existing = cursorSpinnerByPaneKey.get(paneKey)
+    const frame = existing ? existing.frame : 0
+    sendCursorTitle(ptyId, `\x1b]0;${CURSOR_SPINNER_FRAMES[frame]} Cursor Agent\x07`)
+    if (existing) {
+      return
+    }
+    const timer = setInterval(() => {
+      const ptyIdNow = getPtyIdForPaneKey(paneKey)
+      if (!ptyIdNow) {
+        stopCursorSpinner(paneKey)
+        return
+      }
+      const cur = cursorSpinnerByPaneKey.get(paneKey)
+      if (!cur) {
+        return
+      }
+      cur.frame = (cur.frame + 1) % CURSOR_SPINNER_FRAMES.length
+      sendCursorTitle(ptyIdNow, `\x1b]0;${CURSOR_SPINNER_FRAMES[cur.frame]} Cursor Agent\x07`)
+    }, CURSOR_SPINNER_INTERVAL_MS)
+    cursorSpinnerByPaneKey.set(paneKey, { timer, frame })
+    return
+  }
+  // Why: leaving the spinner running after a `blocked`/`waiting`/`done` event
+  // would immediately race the terminal state back to "working" on the next
+  // tick. Stop first, then inject the terminal frame. Idle/done uses a
+  // decorated "Cursor ready" label rather than the bare native "Cursor Agent"
+  // — which the detector deliberately treats as a no-op so cursor's own
+  // per-turn re-emissions cannot clobber our synthesized state. The
+  // done/permission frames also carry a trailing BEL (0x07 outside of any OSC
+  // sequence) because cursor-agent does not emit one on its own — and the
+  // tab-level unread badge + notification dispatch in pty-connection keys off
+  // BEL, not the working→idle title transition.
+  stopCursorSpinner(paneKey)
+  const synthetic =
+    state === 'blocked' || state === 'waiting'
+      ? '\x1b]0;Cursor - action required\x07\x07'
+      : '\x1b]0;Cursor ready\x07\x07'
+  sendCursorTitle(ptyId, synthetic)
 }
 
 app.whenReady().then(async () => {
