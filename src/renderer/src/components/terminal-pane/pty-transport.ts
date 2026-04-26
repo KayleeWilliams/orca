@@ -7,7 +7,7 @@ import {
   clearWorkingIndicators,
   createAgentStatusTracker,
   normalizeTerminalTitle,
-  extractLastOscTitle
+  extractAllOscTitles
 } from '../../../../shared/agent-detection'
 import {
   ptyDataHandlers,
@@ -232,13 +232,23 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         storedCallbacks.onData?.(data)
       }
       if (onTitleChange) {
-        const title = extractLastOscTitle(data)
-        if (title !== null) {
+        // Why: feed EVERY OSC title in the chunk through the observer, not just
+        // the last one. node-pty + the main-process 8ms batch window commonly
+        // coalesce multiple title updates into a single IPC payload — for Pi's
+        // 80ms spinner + agent_end idle cycle, the last title in the chunk is
+        // the idle one and the intermediate working frames were silently
+        // dropped, so the worktree card never observed the working state.
+        // Processing titles in order preserves the working→idle transition
+        // that detectAgentStatusFromTitle and agentTracker both key off.
+        const titles = extractAllOscTitles(data)
+        if (titles.length > 0) {
           if (staleTitleTimer) {
             clearTimeout(staleTitleTimer)
             staleTitleTimer = null
           }
-          applyObservedTerminalTitle(title)
+          for (const title of titles) {
+            applyObservedTerminalTitle(title)
+          }
         } else if (lastEmittedTitle && detectAgentStatusFromTitle(lastEmittedTitle) === 'working') {
           if (staleTitleTimer) {
             clearTimeout(staleTitleTimer)

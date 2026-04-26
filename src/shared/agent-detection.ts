@@ -94,6 +94,24 @@ export function extractLastOscTitle(data: string): string | null {
   return last
 }
 
+/**
+ * Extract ALL OSC title-set sequences from raw PTY data, in order of appearance.
+ * Why separate from extractLastOscTitle: node-pty and the main-process batch
+ * window (PTY_BATCH_INTERVAL_MS) often coalesce multiple title changes into
+ * one IPC payload. For fast agents (Pi's 80ms spinner + agent_end idle in the
+ * same batch), returning only the last title silently drops the working
+ * transition. Callers that care about driving UI state transitions
+ * (working/idle spinner) need every title in the chunk. See issue #1083's
+ * spinner-miss follow-up.
+ */
+export function extractAllOscTitles(data: string): string[] {
+  const titles: string[] = []
+  for (const m of data.matchAll(OSC_TITLE_RE)) {
+    titles.push(m[2])
+  }
+  return titles
+}
+
 export function isGeminiTerminalTitle(title: string): boolean {
   return (
     title.includes(GEMINI_PERMISSION) ||
