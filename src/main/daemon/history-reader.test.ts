@@ -49,6 +49,7 @@ function makeMeta(overrides: Partial<SessionMeta> = {}): SessionMeta {
 function makeCheckpoint(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     snapshotAnsi: 'hello world\r\n$ ls\r\n',
+    scrollbackAnsi: 'hello world\r\n',
     rehydrateSequences: '',
     cwd: '/home/user/project',
     cols: 80,

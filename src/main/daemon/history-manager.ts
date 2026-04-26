@@ -123,6 +123,7 @@ export class HistoryManager {
 
       const data = JSON.stringify({
         snapshotAnsi: snapshot.snapshotAnsi,
+        scrollbackAnsi: snapshot.scrollbackAnsi,
         rehydrateSequences: snapshot.rehydrateSequences,
         cwd: effectiveCwd,
         cols: snapshot.cols,

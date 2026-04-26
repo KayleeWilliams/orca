@@ -137,22 +137,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
     // display the previous terminal content.
     if (result.isNew && restoreInfo) {
       // Why: if the checkpoint was captured while an alternate-screen app
-      // (vim, less, htop) was active, rehydrateSequences contains \x1b[?1049h
-      // which would reopen the alternate buffer in a fresh shell. The old
-      // scrollback fallback explicitly truncated alt-screen content; replaying
-      // it here would leave the terminal stuck behind stale TUI content.
-      const prefix = restoreInfo.modes.alternateScreen ? '' : restoreInfo.rehydrateSequences
-      const scrollback = prefix + restoreInfo.snapshotAnsi
+      // (vim, less, htop) was active, snapshotAnsi is the alt buffer content.
+      // Replaying that into a fresh shell would show stale TUI content. Use
+      // scrollbackAnsi (rows above the viewport only) which excludes the alt
+      // buffer. For normal sessions, use the full snapshot with rehydrate
+      // sequences to restore terminal modes (colors, cursor position, etc).
+      const isAltScreen = restoreInfo.modes.alternateScreen
+      const scrollback = isAltScreen
+        ? restoreInfo.scrollbackAnsi
+        : restoreInfo.rehydrateSequences + restoreInfo.snapshotAnsi
       const coldRestore = { scrollback, cwd: restoreInfo.cwd }
       this.coldRestoreCache.set(sessionId, coldRestore)
+      // Why: use registerWriter (not openSession) to avoid deleting the
+      // existing checkpoint.json. If the revived daemon crashes again before
+      // the next 5s tick, the checkpoint is the only recovery data available.
       if (this.historyManager) {
-        void this.historyManager
-          .openSession(sessionId, {
-            cwd: restoreInfo.cwd,
-            cols: restoreInfo.cols,
-            rows: restoreInfo.rows
-          })
-          .catch((err) => console.warn('[history] openSession failed:', sessionId, err))
+        this.historyManager.registerWriter(sessionId)
       }
       return { id: sessionId, pid, coldRestore }
     }
