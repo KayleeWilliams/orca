@@ -34,7 +34,14 @@ import { connectPanePty } from './pty-connection'
  *  Zustand with serialized buffers before flushing the session to disk. */
 export const shutdownBufferCaptures = new Set<() => void>()
 
-const MAX_BUFFER_BYTES = 512 * 1024
+// Why: per-pane ceiling on the scrollback snapshot serialized during
+// beforeunload and handed across IPC for warm restore. Paired with the
+// renderer's 100 000-line live buffer cap — 2 MB gives us roughly 10 000
+// lines of restored history (~200 B/line), enough to feel continuous for
+// most agent sessions while staying well inside Electron IPC payload
+// comfort zone. If this grows further, switch to streaming IPC rather
+// than a single structuredClone payload.
+const MAX_BUFFER_BYTES = 2 * 1024 * 1024
 
 type TerminalPaneProps = {
   tabId: string

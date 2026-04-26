@@ -193,11 +193,11 @@ describe('HistoryManager', () => {
       expect(data).toBe('final')
     })
 
-    it('resets scrollback on CSI 3J even after 5MB cap is hit', async () => {
+    it('resets scrollback on CSI 3J even after size cap is hit', async () => {
       await mgr.openSession('sess-1', { cwd: '/tmp', cols: 80, rows: 24 })
 
-      const fiveMB = 'x'.repeat(5 * 1024 * 1024)
-      await mgr.appendData('sess-1', fiveMB)
+      const capSized = 'x'.repeat(25 * 1024 * 1024)
+      await mgr.appendData('sess-1', capSized)
       // Cap is hit — normal writes are blocked
       await mgr.appendData('sess-1', 'blocked')
       let data = readFileSync(sessionPath(dir, 'sess-1', 'scrollback.bin'), 'utf-8')
@@ -210,18 +210,18 @@ describe('HistoryManager', () => {
     })
   })
 
-  describe('5MB size cap', () => {
-    it('stops appending after 5MB', async () => {
+  describe('size cap', () => {
+    it('stops appending after the 25MB cap', async () => {
       await mgr.openSession('sess-1', { cwd: '/tmp', cols: 80, rows: 24 })
 
-      // Write 5MB + some extra
+      // Write 25MB + some extra
       const chunk = 'x'.repeat(1024 * 1024) // 1MB
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 26; i++) {
         await mgr.appendData('sess-1', chunk)
       }
 
       const stats = readFileSync(sessionPath(dir, 'sess-1', 'scrollback.bin'))
-      expect(stats.length).toBeLessThanOrEqual(5 * 1024 * 1024 + 1024) // some tolerance
+      expect(stats.length).toBeLessThanOrEqual(25 * 1024 * 1024 + 1024) // some tolerance
     })
   })
 

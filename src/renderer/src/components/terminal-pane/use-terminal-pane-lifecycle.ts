@@ -565,8 +565,17 @@ export function useTerminalPaneLifecycle({
           fontFamily: buildFontFamily(currentSettings?.terminalFontFamily ?? ''),
           fontWeight: terminalFontWeights.fontWeight,
           fontWeightBold: terminalFontWeights.fontWeightBold,
+          // Why: hard-cap the xterm.js live scrollback at 100 000 lines
+          // (~20 MB renderer heap at ~200 B/line) regardless of the user
+          // setting. Beyond this, SerializeAddon's linear cost during
+          // beforeunload (xterm.js#4470) and the non-incremental, linear-scan
+          // search addon (xterm.js#5176) produce user-visible jank. The byte
+          // setting remains authoritative below this cap; above it the cap
+          // wins and the setting is an aspirational ceiling. The floor of
+          // 1 000 lines keeps short-form agent output usable even on
+          // misconfigured settings.
           scrollback: Math.min(
-            50_000,
+            100_000,
             Math.max(
               1000,
               Math.round((currentSettings?.terminalScrollbackBytes ?? 10_000_000) / 200)

@@ -697,7 +697,9 @@ export function TerminalPane({
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Advanced</h3>
           <p className="text-xs text-muted-foreground">
-            Scrollback is bounded for stability. This setting applies to new terminal panes.
+            Scrollback is bounded for stability (live buffer tops out near 20 MB regardless of
+            setting). Increasing this raises renderer memory proportionally; reduce if you hit
+            stability issues. Applies to new terminal panes.
           </p>
         </div>
 
@@ -751,12 +753,12 @@ export function TerminalPane({
               value={scrollbackMb}
               defaultValue={10}
               min={1}
-              max={256}
+              max={512}
               step={1}
               suffix="MB"
               onChange={(value) =>
                 updateSettings({
-                  terminalScrollbackBytes: clampNumber(value, 1, 256) * 1_000_000
+                  terminalScrollbackBytes: clampNumber(value, 1, 512) * 1_000_000
                 })
               }
             />

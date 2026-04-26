@@ -18,7 +18,13 @@ export type OpenSessionOptions = {
   initialScrollback?: string
 }
 
-const MAX_SCROLLBACK_BYTES = 5 * 1024 * 1024
+// Why: hard ceiling on the per-pane on-disk scrollback file used for
+// cold restore when no renderer snapshot is available (crash / update).
+// 25 MB gives ~125 000 lines of restored history at ~200 B/line, comfortably
+// more than the renderer's 100 000-line live buffer cap so a cold restore
+// matches a warm restore in perceived depth. Disk cost scales per worktree
+// per pane; revisit if fleet telemetry shows it biting real users.
+const MAX_SCROLLBACK_BYTES = 25 * 1024 * 1024
 
 function parseFileUriPath(uri: string): string | null {
   try {
