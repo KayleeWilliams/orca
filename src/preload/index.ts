@@ -546,7 +546,9 @@ const api = {
     codexStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:codexStatus'),
     geminiStatus: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:geminiStatus')
+      ipcRenderer.invoke('agentHooks:geminiStatus'),
+    cursorStatus: (): Promise<AgentHookInstallStatus> =>
+      ipcRenderer.invoke('agentHooks:cursorStatus')
   },
 
   preflight: {

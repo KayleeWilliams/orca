@@ -44,6 +44,7 @@ import { agentHookServer } from './agent-hooks/server'
 import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
+import { cursorHookService } from './cursor/hook-service'
 import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
@@ -224,7 +225,8 @@ app.whenReady().then(async () => {
     for (const installManagedHooks of [
       () => claudeHookService.install(),
       () => codexHookService.install(),
-      () => geminiHookService.install()
+      () => geminiHookService.install(),
+      () => cursorHookService.install()
     ]) {
       try {
         installManagedHooks()
@@ -298,7 +300,7 @@ app.whenReady().then(async () => {
       // terminals never race ahead without hook env on first launch.
       await agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' })
     } catch (error) {
-      // Why: Claude/Codex/Gemini/OpenCode hook callbacks are sidebar
+      // Why: Claude/Codex/Gemini/OpenCode/Cursor hook callbacks are sidebar
       // enrichment only. Orca must still boot even if the local loopback
       // receiver cannot bind on this launch.
       console.error('[agent-hooks] Failed to start local hook server:', error)

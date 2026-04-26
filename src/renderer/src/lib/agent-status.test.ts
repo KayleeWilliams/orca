@@ -598,8 +598,12 @@ describe('formatAgentTypeLabel', () => {
     expect(formatAgentTypeLabel('gemini')).toBe('Gemini')
   })
 
-  it("passes through unknown-but-nonsentinel strings as-is (e.g. 'cursor')", () => {
-    expect(formatAgentTypeLabel('cursor')).toBe('cursor')
+  it("maps 'cursor' to 'Cursor'", () => {
+    expect(formatAgentTypeLabel('cursor')).toBe('Cursor')
+  })
+
+  it('passes through arbitrary custom agent names as-is', () => {
+    expect(formatAgentTypeLabel('weirdo')).toBe('weirdo')
   })
 })
 
