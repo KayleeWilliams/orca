@@ -965,9 +965,19 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const isActiveWorktree = s.activeWorktreeId === worktreeId
       const shouldResetGlobalBrowser = isActiveWorktree && hadBrowserTabs
 
+      // Why: intentional shutdown kills the relay PTY. Remove the tab's
+      // lastKnown entry so session-save does not persist a dead session ID
+      // into remoteSessionIdsByTabId, which would cause the next restart
+      // to attempt reattaching to a PTY that no longer exists.
+      const nextLastKnownRelay = { ...s.lastKnownRelayPtyIdByTabId }
+      for (const tab of tabs) {
+        delete nextLastKnownRelay[tab.id]
+      }
+
       return {
         tabsByWorktree: nextTabsByWorktree,
         ptyIdsByTabId: nextPtyIdsByTabId,
+        lastKnownRelayPtyIdByTabId: nextLastKnownRelay,
         runtimePaneTitlesByTabId: nextRuntimePaneTitlesByTabId,
         suppressedPtyExitIds: nextSuppressedPtyExitIds,
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
