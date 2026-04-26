@@ -5,6 +5,7 @@ place while this surface is still evolving. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
+  ChevronDown,
   CircleDot,
   EllipsisVertical,
   ExternalLink,
@@ -229,7 +230,7 @@ function GHStatusCell({
     return (
       <span
         className={cn(
-          'rounded-full border px-2 py-0.5 text-[10px] font-medium',
+          'rounded-full border px-2 py-0.5 text-[10px] font-medium opacity-70',
           getTaskStatusTone(item)
         )}
       >
@@ -245,13 +246,14 @@ function GHStatusCell({
           type="button"
           onClick={(e) => e.stopPropagation()}
           className={cn(
-            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition hover:opacity-80',
+            'group/status inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[10px] font-medium transition hover:brightness-125 hover:ring-1 hover:ring-white/10',
             localState === 'closed'
               ? 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300'
               : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
           )}
         >
           {localState === 'closed' ? 'Closed' : 'Open'}
+          <ChevronDown className="size-2.5 opacity-50" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-36 p-1" align="start" onClick={(e) => e.stopPropagation()}>
@@ -354,13 +356,14 @@ function LinearStatusCell({ issue }: { issue: LinearIssue }): React.JSX.Element 
           type="button"
           onClick={(e) => e.stopPropagation()}
           disabled={states.loading}
-          className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 transition hover:bg-muted/60 disabled:opacity-50"
+          className="group/status flex items-center gap-1.5 rounded-sm px-1 py-0.5 transition hover:bg-muted/60 disabled:opacity-50"
         >
           <span
             className="inline-block size-2 shrink-0 rounded-full"
             style={{ backgroundColor: localState.color }}
           />
           <span className="truncate text-xs text-muted-foreground">{localState.name}</span>
+          <ChevronDown className="size-2.5 shrink-0 text-muted-foreground opacity-50" />
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -458,10 +461,14 @@ function LinearPriorityCell({ issue }: { issue: LinearIssue }): React.JSX.Elemen
           type="button"
           onClick={(e) => e.stopPropagation()}
           disabled={pending}
-          className="rounded-sm px-1 py-0.5 text-xs text-muted-foreground transition hover:bg-muted/60 disabled:opacity-50"
+          className="group/priority inline-flex items-center gap-0.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground transition hover:bg-muted/60 disabled:opacity-50"
         >
           {LINEAR_PRIORITY_LABELS[localPriority] ?? `P${localPriority}`}
-          {pending && <LoaderCircle className="ml-1 inline size-3 animate-spin" />}
+          {pending ? (
+            <LoaderCircle className="ml-1 inline size-3 animate-spin" />
+          ) : (
+            <ChevronDown className="size-2.5 shrink-0 opacity-50" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-36 p-1" align="start" onClick={(e) => e.stopPropagation()}>
