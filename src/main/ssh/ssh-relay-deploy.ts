@@ -351,15 +351,22 @@ async function launchRelay(
   // Why: the backgrounded relay needs time to bind its Unix socket.  We
   // poll rather than sleep a fixed duration because remote host speed
   // varies widely (CI vs. Raspberry Pi).
+  // Why: checking `test -S` only verifies the inode exists, not that the
+  // relay is listening. After a stale socket removal + fresh launch, the
+  // old inode can linger briefly. We probe with a connect-and-close to
+  // confirm the socket is actually accepting connections.
   const POLL_INTERVAL_MS = 200
   const POLL_TIMEOUT_MS = 10_000
   const pollStart = Date.now()
   let socketReady = false
   while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
     try {
+      // Why: node is guaranteed to exist on the remote (we just deployed
+      // the relay with it). Using it to probe the socket is more portable
+      // than python3/socat/perl which may not be installed.
       const result = await execCommand(
         conn,
-        `test -S ${shellEscape(sockFile)} && echo READY || echo WAITING`
+        `${escapedNode} -e "var s=require('net').connect(${JSON.stringify(sockFile)});s.on('connect',()=>{s.destroy();process.stdout.write('READY')});s.on('error',()=>{process.stdout.write('WAITING')})" 2>/dev/null || (test -S ${shellEscape(sockFile)} && echo READY || echo WAITING)`
       )
       if (result.trim() === 'READY') {
         socketReady = true

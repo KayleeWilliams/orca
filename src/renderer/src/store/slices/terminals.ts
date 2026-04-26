@@ -1289,10 +1289,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // raw session data BEFORE clearTransientTerminalState nulled the ptyIds.
       // This ensures reconnectPersistedTerminals binds PTYs to the correct
       // tabs, not just tabs[0], which matters for multi-tab worktrees.
+      // Also include tabs whose relay session IDs were preserved in
+      // remoteSessionIdsByTabId — those tabs were disconnected before shutdown
+      // (ptyId was null) but the relay still has their PTY alive.
+      const remoteSessionIds = session.remoteSessionIdsByTabId ?? {}
       const pendingReconnectTabByWorktree: Record<string, string[]> = {}
       for (const worktreeId of pendingReconnectWorktreeIds) {
         const rawTabs = session.tabsByWorktree[worktreeId] ?? []
-        const liveTabIds = rawTabs.filter((t) => t.ptyId && validTabIds.has(t.id)).map((t) => t.id)
+        const liveTabIds = rawTabs
+          .filter((t) => (t.ptyId || remoteSessionIds[t.id]) && validTabIds.has(t.id))
+          .map((t) => t.id)
         if (liveTabIds.length > 0) {
           pendingReconnectTabByWorktree[worktreeId] = liveTabIds
         }
@@ -1330,7 +1336,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // daemon. SSH-backed tabs need their session IDs regardless of the
       // experimentalTerminalDaemon setting. The existing loop above correctly
       // skips SSH repos (connectionId check), so there is no overlap.
-      const remoteSessionIds = session.remoteSessionIdsByTabId ?? {}
       console.warn(
         `[terminals-hydration] remoteSessionIdsByTabId:`,
         JSON.stringify(remoteSessionIds)
