@@ -70,22 +70,77 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       set((s) => {
         // Why: when the real worktree list arrives (e.g. after SSH reconnect),
         // placeholder worktrees from session restore may no longer exist on
-        // the remote. Prune their tabsByWorktree entries so the UI doesn't
-        // show orphaned tabs for deleted worktrees.
+        // the remote. Prune all worktree-scoped state so the UI doesn't show
+        // orphaned tabs, stale active selections, or phantom sidebar entries
+        // for deleted worktrees.
         const liveIds = new Set(worktrees.map((w) => w.id))
         const prevIds = (s.worktreesByRepo[repoId] ?? []).map((w) => w.id)
         const removedIds = prevIds.filter((id) => !liveIds.has(id))
-        let nextTabsByWorktree = s.tabsByWorktree
-        if (removedIds.length > 0) {
-          nextTabsByWorktree = { ...s.tabsByWorktree }
-          for (const id of removedIds) {
-            delete nextTabsByWorktree[id]
+
+        if (removedIds.length === 0) {
+          return {
+            worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
+            sortEpoch: s.sortEpoch + 1
           }
+        }
+
+        const removedSet = new Set(removedIds)
+        const nextTabsByWorktree = { ...s.tabsByWorktree }
+        const removedTabIds = new Set<string>()
+        const nextActiveTabIdByWorktree = { ...s.activeTabIdByWorktree }
+        const nextActiveTabTypeByWorktree = { ...s.activeTabTypeByWorktree }
+        const nextTerminalLayoutsByTabId = { ...s.terminalLayoutsByTabId }
+        const nextPtyIdsByTabId = { ...s.ptyIdsByTabId }
+        const nextPendingReconnectTabByWorktree = { ...s.pendingReconnectTabByWorktree }
+        const nextUnifiedTabsByWorktree = { ...s.unifiedTabsByWorktree }
+        const nextGroupsByWorktree = { ...s.groupsByWorktree }
+        const nextLayoutByWorktree = { ...s.layoutByWorktree }
+        const nextActiveGroupIdByWorktree = { ...s.activeGroupIdByWorktree }
+        const nextBrowserTabsByWorktree = { ...s.browserTabsByWorktree }
+        const nextActiveBrowserTabIdByWorktree = { ...s.activeBrowserTabIdByWorktree }
+        const nextActiveFileIdByWorktree = { ...s.activeFileIdByWorktree }
+
+        for (const id of removedIds) {
+          for (const tab of nextTabsByWorktree[id] ?? []) {
+            removedTabIds.add(tab.id)
+          }
+          delete nextTabsByWorktree[id]
+          delete nextActiveTabIdByWorktree[id]
+          delete nextActiveTabTypeByWorktree[id]
+          delete nextPendingReconnectTabByWorktree[id]
+          delete nextUnifiedTabsByWorktree[id]
+          delete nextGroupsByWorktree[id]
+          delete nextLayoutByWorktree[id]
+          delete nextActiveGroupIdByWorktree[id]
+          delete nextBrowserTabsByWorktree[id]
+          delete nextActiveBrowserTabIdByWorktree[id]
+          delete nextActiveFileIdByWorktree[id]
+        }
+        for (const tabId of removedTabIds) {
+          delete nextTerminalLayoutsByTabId[tabId]
+          delete nextPtyIdsByTabId[tabId]
         }
 
         return {
           worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
           tabsByWorktree: nextTabsByWorktree,
+          activeTabIdByWorktree: nextActiveTabIdByWorktree,
+          activeTabTypeByWorktree: nextActiveTabTypeByWorktree,
+          terminalLayoutsByTabId: nextTerminalLayoutsByTabId,
+          ptyIdsByTabId: nextPtyIdsByTabId,
+          pendingReconnectTabByWorktree: nextPendingReconnectTabByWorktree,
+          unifiedTabsByWorktree: nextUnifiedTabsByWorktree,
+          groupsByWorktree: nextGroupsByWorktree,
+          layoutByWorktree: nextLayoutByWorktree,
+          activeGroupIdByWorktree: nextActiveGroupIdByWorktree,
+          browserTabsByWorktree: nextBrowserTabsByWorktree,
+          activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
+          activeFileIdByWorktree: nextActiveFileIdByWorktree,
+          // Why: if the active worktree was deleted remotely, clear it so the
+          // sidebar doesn't stay focused on a nonexistent entry.
+          ...(s.activeWorktreeId && removedSet.has(s.activeWorktreeId)
+            ? { activeWorktreeId: null }
+            : {}),
           sortEpoch: s.sortEpoch + 1
         }
       })

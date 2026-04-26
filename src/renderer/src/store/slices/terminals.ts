@@ -1385,7 +1385,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         if (existing) {
           continue
         }
-        const path = worktreeId.split('::')[1] ?? ''
+        // Why: worktreeId is `${repoId}::${path}` and POSIX paths can legally
+        // contain `::`. Split only on the first separator to preserve the full path.
+        const separatorIdx = worktreeId.indexOf('::')
+        const path = separatorIdx >= 0 ? worktreeId.slice(separatorIdx + 2) : ''
         // Why: SSH worktree paths may use backslash separators on Windows remotes.
         const displayName = path.split(/[/\\]/).pop() || path
         const placeholder: Worktree = {
