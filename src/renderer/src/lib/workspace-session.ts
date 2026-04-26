@@ -196,12 +196,6 @@ export function buildWorkspaceSessionPayload(
     activeGroupIdByWorktree: snapshot.activeGroupIdByWorktree,
     activeConnectionIdsAtShutdown: connectedTargetIds.length > 0 ? connectedTargetIds : undefined,
     remoteSessionIdsByTabId:
-      Object.keys(remoteSessionIdsByTabId).length > 0 ? remoteSessionIdsByTabId : undefined,
-    ...(() => {
-      console.warn(
-        `[session-save] connectedTargetIds=${JSON.stringify(connectedTargetIds)} remoteSessionIdsByTabId=${JSON.stringify(remoteSessionIdsByTabId)}`
-      )
-      return {}
-    })()
+      Object.keys(remoteSessionIdsByTabId).length > 0 ? remoteSessionIdsByTabId : undefined
   }
 }

@@ -166,10 +166,16 @@ export class PtyHandler {
     // not registered replay handlers yet, so return the bytes to the caller
     // instead of notifying them too early.
     if (managed.buffered) {
+      const replay = managed.buffered
+      // Why: the buffer captures output between disconnects for replay on
+      // reconnect. Once replayed, clear it so the next reconnect only
+      // shows output generated after this attach — otherwise every restart
+      // replays the entire history from the original spawn.
+      managed.buffered = ''
       if (params.suppressReplayNotification) {
-        return { replay: managed.buffered }
+        return { replay }
       }
-      this.dispatcher.notify('pty.replay', { id, data: managed.buffered })
+      this.dispatcher.notify('pty.replay', { id, data: replay })
     }
     return {}
   }

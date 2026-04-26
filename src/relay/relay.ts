@@ -86,6 +86,18 @@ function runConnectMode(sockPath: string): void {
     sock.pipe(process.stdout)
   })
 
+  // Why: when the SSH channel closes, stdout becomes a broken pipe.
+  // Node.js silently swallows EPIPE on process.stdout, so the bridge
+  // stays alive as a zombie — connected to the relay socket but unable
+  // to forward data. The relay keeps writing to this dead bridge,
+  // silently dropping pty.data frames until the next --connect replaces
+  // the socket. Exiting immediately on stdout error lets the relay
+  // detect the disconnect (socket close) and enter grace mode promptly.
+  process.stdout.on('error', () => {
+    sock.destroy()
+    process.exit(1)
+  })
+
   sock.on('error', (err) => {
     clearTimeout(connectTimeout)
     process.stderr.write(`[relay-connect] Socket error: ${err.message}\n`)
@@ -231,6 +243,18 @@ function main(): void {
         }
         ptyHandler.cancelGraceTimer()
         dispatcher.feed(chunk)
+      })
+
+      // Why: when the --connect bridge's SSH channel dies, stdin.pipe(sock)
+      // calls sock.end(), sending FIN to the relay. Without this handler
+      // the relay-side socket stays half-open — the relay keeps writing
+      // pty.data frames that the bridge can no longer forward, silently
+      // dropping output until the next --connect replaces the socket.
+      // Destroying on 'end' ensures the 'close' handler fires promptly.
+      sock.on('end', () => {
+        if (!sock.destroyed) {
+          sock.destroy()
+        }
       })
 
       sock.on('close', () => {
