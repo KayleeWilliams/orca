@@ -38,6 +38,7 @@ import {
 } from './pane-tree-ops'
 import { lockDragScroll, unlockDragScroll } from './pane-drag-scroll'
 import { scheduleSplitScrollRestore } from './pane-split-scroll'
+import { toPublicPane } from './pane-public-view'
 
 export type { PaneManagerOptions, PaneStyleOptions, ManagedPane, DropZone }
 
@@ -86,8 +87,8 @@ export class PaneManager {
       pane.terminal.focus()
     }
 
-    void this.options.onPaneCreated?.(this.toPublic(pane))
-    return this.toPublic(pane)
+    void this.options.onPaneCreated?.(toPublicPane(pane))
+    return toPublicPane(pane)
   }
 
   splitPane(
@@ -130,7 +131,7 @@ export class PaneManager {
     this.applyDividerStylesWrapped()
     newPane.terminal?.focus()
     updateMultiPaneState(this.getDragCallbacks())
-    void this.options.onPaneCreated?.(this.toPublic(newPane))
+    void this.options.onPaneCreated?.(toPublicPane(newPane))
     this.options.onLayoutChanged?.()
 
     scheduleSplitScrollRestore(
@@ -140,7 +141,7 @@ export class PaneManager {
       () => this.destroyed
     )
 
-    return this.toPublic(newPane)
+    return toPublicPane(newPane)
   }
 
   closePane(paneId: number): void {
@@ -182,7 +183,7 @@ export class PaneManager {
   }
 
   getPanes(): ManagedPane[] {
-    return Array.from(this.panes.values()).map((p) => this.toPublic(p))
+    return Array.from(this.panes.values()).map(toPublicPane)
   }
 
   fitAllPanes(): void {
@@ -194,7 +195,7 @@ export class PaneManager {
       return null
     }
     const pane = this.panes.get(this.activePaneId)
-    return pane ? this.toPublic(pane) : null
+    return pane ? toPublicPane(pane) : null
   }
 
   setActivePane(paneId: number, opts?: { focus?: boolean }): void {
@@ -211,7 +212,7 @@ export class PaneManager {
     }
 
     if (changed) {
-      this.options.onActivePaneChange?.(this.toPublic(pane))
+      this.options.onActivePaneChange?.(toPublicPane(pane))
     }
   }
 
@@ -365,18 +366,6 @@ export class PaneManager {
 
   private applyDividerStylesWrapped(): void {
     applyDividerStyles(this.root, this.styleOptions)
-  }
-
-  private toPublic(pane: ManagedPaneInternal): ManagedPane {
-    return {
-      id: pane.id,
-      terminal: pane.terminal,
-      container: pane.container,
-      linkTooltip: pane.linkTooltip,
-      fitAddon: pane.fitAddon,
-      searchAddon: pane.searchAddon,
-      serializeAddon: pane.serializeAddon
-    }
   }
 
   /** Build the callbacks object for drag-reorder functions. */

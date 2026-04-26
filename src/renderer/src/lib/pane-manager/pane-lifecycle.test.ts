@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedPaneInternal } from './pane-manager-types'
-import { attachWebgl, buildDefaultTerminalOptions } from './pane-lifecycle'
+import { attachWebgl } from './pane-lifecycle'
+import { buildDefaultTerminalOptions } from './pane-terminal-options'
 
 const webglMock = vi.hoisted(() => ({
   contextLossHandler: null as (() => void) | null,
@@ -40,6 +41,7 @@ function createPane(): ManagedPaneInternal {
     searchAddon: {} as never,
     serializeAddon: {} as never,
     unicode11Addon: {} as never,
+    ligaturesAddon: null,
     webLinksAddon: {} as never,
     webglAddon: null,
     compositionHandler: null,
