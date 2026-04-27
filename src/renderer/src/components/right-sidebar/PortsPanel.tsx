@@ -142,10 +142,10 @@ export default function PortsPanel(): React.JSX.Element {
 
       {/* Forwarded ports */}
       {allForwards.length > 0 && (
-        <div className="px-3 py-2">
+        <div className="px-3 pt-2">
           <button
             type="button"
-            className="flex items-center gap-1 w-full text-left mb-1.5"
+            className="flex items-center gap-1 w-full text-left mb-1"
             onClick={() => setForwardedCollapsed((v) => !v)}
           >
             <ChevronRight
@@ -169,10 +169,10 @@ export default function PortsPanel(): React.JSX.Element {
 
       {/* Detected ports */}
       {allDetected.length > 0 && (
-        <div className="px-3 py-2">
+        <div className="px-3 pt-2">
           <button
             type="button"
-            className="flex items-center gap-1 w-full text-left mb-1.5"
+            className="flex items-center gap-1 w-full text-left mb-1"
             onClick={() => setDetectedCollapsed((v) => !v)}
           >
             <ChevronRight
