@@ -23,8 +23,8 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     path: ['orchestration', 'check'],
     summary: 'Check messages for a terminal',
     usage:
-      'orca orchestration check [--terminal <handle>] [--unread] [--types <type,...>] [--inject] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'unread', 'types', 'inject']
+      'orca orchestration check [--terminal <handle>] [--unread] [--types <type,...>] [--inject] [--wait] [--timeout-ms <n>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'unread', 'types', 'inject', 'wait', 'timeout-ms']
   },
   {
     path: ['orchestration', 'reply'],

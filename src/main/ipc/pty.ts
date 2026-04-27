@@ -395,6 +395,12 @@ export function registerPtyHandlers(
     pendingData.clear()
   }
 
+  // Why: LocalPtyProvider routes data to the runtime via configure().onData,
+  // but daemon-backed providers don't have configure(). Without this, daemon
+  // PTY data never reaches the runtime's tail buffer, so terminal.read returns
+  // empty and agent-detection from raw data never fires.
+  const isLocalProvider = localProvider instanceof LocalPtyProvider
+
   localDataUnsub = localProvider.onData((payload) => {
     if (mainWindow.isDestroyed()) {
       // Why: clear the pending flush timer so it doesn't fire after the window
@@ -407,6 +413,9 @@ export function registerPtyHandlers(
       pendingData.clear()
       return
     }
+    if (!isLocalProvider) {
+      runtime?.onPtyData(payload.id, payload.data, Date.now())
+    }
     const existing = pendingData.get(payload.id)
     pendingData.set(payload.id, existing ? existing + payload.data : payload.data)
     if (!flushTimer) {
@@ -414,6 +423,12 @@ export function registerPtyHandlers(
     }
   })
   localExitUnsub = localProvider.onExit((payload) => {
+    if (!isLocalProvider) {
+      clearProviderPtyState(payload.id)
+      ptyOwnership.delete(payload.id)
+      markClaudePtyExited(payload.id)
+      runtime?.onPtyExit(payload.id, payload.code)
+    }
     if (!mainWindow.isDestroyed()) {
       // Why: flush any batched data for this PTY before sending the exit event,
       // otherwise the last ≤8ms of output is silently lost because the renderer
@@ -471,6 +486,13 @@ export function registerPtyHandlers(
       markClaudePtyExited(ptyId)
       runtime?.onPtyExit(ptyId, -1)
       return true
+    },
+    getForegroundProcess: async (ptyId) => {
+      try {
+        return await getProviderForPty(ptyId).getForegroundProcess(ptyId)
+      } catch {
+        return null
+      }
     }
   })
 

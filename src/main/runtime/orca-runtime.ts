@@ -1,7 +1,11 @@
 /* eslint-disable max-lines -- Why: the Orca runtime is the authoritative live control plane for the CLI, so handle validation, selector resolution, wait state, and summaries are kept together to avoid split-brain behavior. */
 /* eslint-disable unicorn/no-useless-spread -- Why: waiter sets and handle keys are cloned intentionally before mutation so resolution and rejection can safely remove entries while iterating. */
 /* eslint-disable no-control-regex -- Why: terminal normalization must strip ANSI and OSC control sequences from PTY output before returning bounded text to agents. */
-import { extractLastOscTitle, detectAgentStatusFromTitle } from '../../shared/agent-detection'
+import {
+  extractLastOscTitle,
+  detectAgentStatusFromTitle,
+  isShellProcess
+} from '../../shared/agent-detection'
 import type { AgentStatus } from '../../shared/agent-detection'
 import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
@@ -137,6 +141,7 @@ type RuntimeLeafRecord = RuntimeSyncedLeaf & {
 type RuntimePtyController = {
   write(ptyId: string, data: string): boolean
   kill(ptyId: string): boolean
+  getForegroundProcess(ptyId: string): Promise<string | null>
 }
 
 type RuntimeNotifier = {
@@ -170,6 +175,14 @@ type TerminalWaiter = {
   condition: RuntimeTerminalWaitCondition
   resolve: (result: RuntimeTerminalWait) => void
   reject: (error: Error) => void
+  timeout: NodeJS.Timeout | null
+  pollInterval: NodeJS.Timeout | null
+}
+
+type MessageWaiter = {
+  handle: string
+  typeFilter: string[] | undefined
+  resolve: (result: void) => void
   timeout: NodeJS.Timeout | null
 }
 
@@ -226,6 +239,7 @@ export class OrcaRuntimeService {
   private resolvedWorktreeCache: ResolvedWorktreeCache | null = null
   private agentDetector: AgentDetector | null = null
   private _orchestrationDb: OrchestrationDb | null = null
+  private messageWaitersByHandle = new Map<string, Set<MessageWaiter>>()
 
   constructor(store: RuntimeStore | null = null, stats?: StatsCollector) {
     this.store = store
@@ -452,11 +466,13 @@ export class OrcaRuntimeService {
       if (agentStatus !== null) {
         const prevStatus = leaf.lastAgentStatus
         leaf.lastAgentStatus = agentStatus
-        // Why: resolve tui-idle waiters only on working→idle, not working→permission.
-        // Permission means the agent is blocked on user approval (e.g. Gemini's
-        // "y/n" prompt) — it hasn't finished its task. Resolving tui-idle here
-        // would cause the CLI consumer to proceed while the agent is still waiting.
-        if (prevStatus === 'working' && agentStatus === 'idle') {
+        // Why: resolve tui-idle on any transition TO idle (not just working→idle).
+        // Claude Code may skip "working" entirely on fast tasks, going null→idle,
+        // and the coordinator's tui-idle waiter would hang forever waiting for a
+        // working→idle transition that never comes. Permission→idle is excluded:
+        // it means the agent was blocked on user approval and the user said no,
+        // which isn't a task-completion signal.
+        if (agentStatus === 'idle' && prevStatus !== 'idle') {
           this.resolveTuiIdleWaiters(leaf)
           this.deliverPendingMessages(leaf)
         }
@@ -655,10 +671,33 @@ export class OrcaRuntimeService {
     if (payload === null) {
       throw new Error('invalid_terminal_send')
     }
-    const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
-    if (!wrote) {
-      throw new Error('terminal_not_writable')
+
+    // Why: TUI apps (Claude Code, etc.) treat a single large write as a paste
+    // event. If \r is included in the same write as multi-line text, the TUI
+    // interprets it as part of the paste rather than a discrete Enter keypress.
+    // Splitting the text and the trailing control characters into separate
+    // writes with a small delay ensures the TUI processes the paste first,
+    // then receives Enter as a distinct input event.
+    const hasText = typeof action.text === 'string' && action.text.length > 0
+    const hasSuffix = action.enter || action.interrupt
+    if (hasText && hasSuffix) {
+      const textWrote = this.ptyController?.write(leaf.ptyId, action.text!) ?? false
+      if (!textWrote) {
+        throw new Error('terminal_not_writable')
+      }
+      const suffix = (action.enter ? '\r' : '') + (action.interrupt ? '\x03' : '')
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const suffixWrote = this.ptyController?.write(leaf.ptyId, suffix) ?? false
+      if (!suffixWrote) {
+        throw new Error('terminal_not_writable')
+      }
+    } else {
+      const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
+      if (!wrote) {
+        throw new Error('terminal_not_writable')
+      }
     }
+
     return {
       handle,
       accepted: true,
@@ -705,7 +744,8 @@ export class OrcaRuntimeService {
         condition,
         resolve,
         reject,
-        timeout: null
+        timeout: null,
+        pollInterval: null
       }
 
       if (effectiveTimeoutMs > 0) {
@@ -730,8 +770,21 @@ export class OrcaRuntimeService {
         if (getTerminalState(live.leaf) === 'exited') {
           this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
         } else if (condition === 'tui-idle' && live.leaf.lastAgentStatus === 'idle') {
-          live.leaf.lastAgentStatus = null
+          // Why: don't clear lastAgentStatus here. It's a factual record of the
+          // last detected OSC state, not a one-shot signal. Clearing it causes
+          // subsequent tui-idle waiters to hang even though the agent is idle —
+          // the first waiter consumes the status and all later ones see null.
           this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+        } else if (condition === 'tui-idle' && live.leaf.lastAgentStatus === null) {
+          // Why: for daemon-hosted terminals, lastAgentStatus stays null because
+          // PTY data doesn't flow through onPtyData. Check the renderer-synced
+          // title as a fast path before falling back to polling.
+          const fastPathTitle = live.leaf.paneTitle ?? this.tabs.get(live.leaf.tabId)?.title
+          if (fastPathTitle && detectAgentStatusFromTitle(fastPathTitle) === 'idle') {
+            this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+          } else {
+            this.startTuiIdleFallbackPoll(waiter, live.leaf)
+          }
         }
       } catch (error) {
         this.removeWaiter(waiter)
@@ -1546,6 +1599,40 @@ export class OrcaRuntimeService {
     }
   }
 
+  // Why: OSC title detection via onPtyData is the tightest signal for agent
+  // presence, but the runtime may not see PTY data for daemon-hosted terminals
+  // (the daemon adapter stubs getForegroundProcess). This checks three signals
+  // in order: (1) lastAgentStatus from PTY data OSC titles, (2) the renderer-
+  // synced tab title (which reflects OSC titles from the xterm instance), and
+  // (3) the PTY foreground process. Returns true if any signal indicates a
+  // non-shell agent is running.
+  async isTerminalRunningAgent(handle: string): Promise<boolean> {
+    try {
+      const { leaf } = this.getLiveLeafForHandle(handle)
+      if (leaf.lastAgentStatus !== null) {
+        return true
+      }
+      // Why: check both the leaf-level pane title (synced from the renderer's
+      // runtimePaneTitlesByTabId) and the tab-level title. The tab title already
+      // includes OSC-enriched agent indicators (e.g. ✳ prefix) synced from the
+      // renderer's xterm instance.
+      const titleToCheck = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
+      if (titleToCheck && detectAgentStatusFromTitle(titleToCheck) !== null) {
+        return true
+      }
+      if (!leaf.ptyId || !this.ptyController) {
+        return false
+      }
+      const fg = await this.ptyController.getForegroundProcess(leaf.ptyId)
+      if (!fg) {
+        return false
+      }
+      return !isShellProcess(fg)
+    } catch {
+      return false
+    }
+  }
+
   deliverPendingMessagesForHandle(handle: string): void {
     try {
       const { leaf } = this.getLiveLeafForHandle(handle)
@@ -1555,6 +1642,66 @@ export class OrcaRuntimeService {
     } catch {
       // Unknown or stale handles cannot be pushed immediately; the persisted
       // message remains available via explicit check or future idle delivery.
+    }
+  }
+
+  // Why: after a message is inserted for a recipient, any blocking
+  // orchestration.check --wait calls watching that handle must be woken
+  // so they can return the new message immediately instead of polling.
+  notifyMessageArrived(handle: string): void {
+    const waiters = this.messageWaitersByHandle.get(handle)
+    if (!waiters || waiters.size === 0) {
+      return
+    }
+    for (const waiter of [...waiters]) {
+      this.resolveMessageWaiter(waiter)
+    }
+  }
+
+  waitForMessage(
+    handle: string,
+    options?: { typeFilter?: string[]; timeoutMs?: number }
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const timeoutMs = options?.timeoutMs ?? MESSAGE_WAIT_DEFAULT_TIMEOUT_MS
+
+      const waiter: MessageWaiter = {
+        handle,
+        typeFilter: options?.typeFilter,
+        resolve,
+        timeout: null
+      }
+
+      waiter.timeout = setTimeout(() => {
+        this.removeMessageWaiter(waiter)
+        resolve()
+      }, timeoutMs)
+
+      let waiters = this.messageWaitersByHandle.get(handle)
+      if (!waiters) {
+        waiters = new Set()
+        this.messageWaitersByHandle.set(handle, waiters)
+      }
+      waiters.add(waiter)
+    })
+  }
+
+  private resolveMessageWaiter(waiter: MessageWaiter): void {
+    this.removeMessageWaiter(waiter)
+    waiter.resolve()
+  }
+
+  private removeMessageWaiter(waiter: MessageWaiter): void {
+    if (waiter.timeout) {
+      clearTimeout(waiter.timeout)
+      waiter.timeout = null
+    }
+    const waiters = this.messageWaitersByHandle.get(waiter.handle)
+    if (waiters) {
+      waiters.delete(waiter)
+      if (waiters.size === 0) {
+        this.messageWaitersByHandle.delete(waiter.handle)
+      }
     }
   }
 
@@ -1698,6 +1845,59 @@ export class OrcaRuntimeService {
     }
   }
 
+  // Why: OSC title detection via onPtyData is the primary signal for tui-idle,
+  // but daemon-hosted terminals don't flow PTY data through the runtime, and
+  // some agents don't emit recognized titles on startup. This fallback polls
+  // two signals: (1) the renderer-synced tab title (reflects xterm's OSC title
+  // handler, works even for daemon terminals), and (2) the PTY foreground process
+  // + output quiescence. The poll self-cancels when the primary OSC path fires.
+  private startTuiIdleFallbackPoll(waiter: TerminalWaiter, leaf: RuntimeLeafRecord): void {
+    waiter.pollInterval = setInterval(async () => {
+      try {
+        // If OSC detection via onPtyData kicked in, stop — the primary path
+        // will handle (or has already handled) resolution.
+        if (leaf.lastAgentStatus !== null) {
+          if (waiter.pollInterval) {
+            clearInterval(waiter.pollInterval)
+            waiter.pollInterval = null
+          }
+          return
+        }
+        // Why: check the renderer-synced title. For daemon-hosted terminals,
+        // this is the only path where OSC titles are visible to the runtime.
+        const pollTitle = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
+        if (pollTitle) {
+          const titleStatus = detectAgentStatusFromTitle(pollTitle)
+          if (titleStatus === 'idle') {
+            if (waiter.pollInterval) {
+              clearInterval(waiter.pollInterval)
+              waiter.pollInterval = null
+            }
+            this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+            return
+          }
+        }
+        // Foreground process fallback: if the daemon/local provider can report
+        // the process and it's a non-shell with quiet output, treat as idle.
+        if (leaf.ptyId && this.ptyController) {
+          const fg = await this.ptyController.getForegroundProcess(leaf.ptyId)
+          if (fg && !isShellProcess(fg)) {
+            const quietMs = leaf.lastOutputAt ? Date.now() - leaf.lastOutputAt : 0
+            if (quietMs >= TUI_IDLE_QUIESCENCE_MS) {
+              if (waiter.pollInterval) {
+                clearInterval(waiter.pollInterval)
+                waiter.pollInterval = null
+              }
+              this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+            }
+          }
+        }
+      } catch {
+        // Swallow transient PTY inspection errors and keep polling.
+      }
+    }, TUI_IDLE_POLL_INTERVAL_MS)
+  }
+
   // Why: push-on-idle delivery — when an agent transitions working→idle, check
   // for unread orchestration messages addressed to that terminal and inject them
   // into the PTY. This is event-driven (no polling) because the runtime owns
@@ -1753,6 +1953,9 @@ export class OrcaRuntimeService {
   private removeWaiter(waiter: TerminalWaiter): void {
     if (waiter.timeout) {
       clearTimeout(waiter.timeout)
+    }
+    if (waiter.pollInterval) {
+      clearInterval(waiter.pollInterval)
     }
     const waiters = this.waitersByHandle.get(waiter.handle)
     if (!waiters) {
@@ -2930,6 +3133,9 @@ function buildSendPayload(action: {
 // will ever fire. A 5-minute ceiling prevents indefinite hangs while still
 // giving real agent tasks plenty of time to complete.
 const TUI_IDLE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
+const TUI_IDLE_POLL_INTERVAL_MS = 2000
+const TUI_IDLE_QUIESCENCE_MS = 3000
+const MESSAGE_WAIT_DEFAULT_TIMEOUT_MS = 2 * 60 * 1000
 
 function buildTerminalWaitResult(
   handle: string,

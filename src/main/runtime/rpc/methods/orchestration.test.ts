@@ -437,6 +437,7 @@ describe('orchestration RPC methods', () => {
     it('rolls back active dispatch when injection fails', async () => {
       setup()
       const task = db.createTask({ spec: 'work' })
+      vi.spyOn(runtime, 'isTerminalRunningAgent').mockResolvedValue(true)
       vi.spyOn(runtime, 'sendTerminal').mockRejectedValue(new Error('terminal_not_writable'))
 
       await expect(
@@ -454,6 +455,7 @@ describe('orchestration RPC methods', () => {
     it('uses caller-provided dev mode for injected preamble', async () => {
       setup()
       const task = db.createTask({ spec: 'work' })
+      vi.spyOn(runtime, 'isTerminalRunningAgent').mockResolvedValue(true)
       const send = vi.spyOn(runtime, 'sendTerminal').mockResolvedValue({
         handle: 'term_a',
         accepted: true,
@@ -468,6 +470,20 @@ describe('orchestration RPC methods', () => {
       })
 
       expect(send.mock.calls[0]?.[1].text).toContain('orca-dev orchestration send')
+    })
+
+    it('rejects inject to terminal without recognized agent', async () => {
+      setup()
+      const task = db.createTask({ spec: 'work' })
+      vi.spyOn(runtime, 'isTerminalRunningAgent').mockResolvedValue(false)
+
+      await expect(
+        call('orchestration.dispatch', {
+          task: task.id,
+          to: 'term_a',
+          inject: true
+        })
+      ).rejects.toThrow('no recognized agent detected')
     })
 
     it('rejects dispatch to occupied terminal', async () => {

@@ -70,7 +70,9 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       terminal,
       unread: flags.has('unread') ? true : undefined,
       types: getOptionalStringFlag(flags, 'types'),
-      inject: flags.has('inject') ? true : undefined
+      inject: flags.has('inject') ? true : undefined,
+      wait: flags.has('wait') ? true : undefined,
+      timeoutMs: flags.has('timeout-ms') ? Number(flags.get('timeout-ms')) : undefined
     })
     printResult(result, json, (r) => {
       if (r.formatted) {

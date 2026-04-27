@@ -97,7 +97,8 @@ function syncSinglePty(runtime: OrcaRuntimeService, ptyId: string | null = 'pty-
         worktreeId: TEST_WORKTREE_ID,
         leafId: 'pane:1',
         paneRuntimeId: 1,
-        ptyId
+        ptyId,
+        paneTitle: null
       }
     ]
   })
@@ -325,7 +326,8 @@ describe('OrcaRuntimeService', () => {
         writes.push(data)
         return true
       },
-      kill: () => true
+      kill: () => true,
+      getForegroundProcess: async () => null
     })
 
     runtime.attachWindow(1)
@@ -369,7 +371,7 @@ describe('OrcaRuntimeService', () => {
       handle: terminal.handle,
       accepted: true
     })
-    expect(writes).toEqual(['continue\r'])
+    expect(writes).toEqual(['continue', '\r'])
   })
 
   it('waits for terminal exit and resolves with the exit status', async () => {
@@ -470,7 +472,8 @@ describe('OrcaRuntimeService', () => {
     runtime.setOrchestrationDb(db)
     runtime.setPtyController({
       write,
-      kill: vi.fn()
+      kill: vi.fn(),
+      getForegroundProcess: async () => null
     })
     syncSinglePty(runtime)
 
@@ -551,7 +554,8 @@ describe('OrcaRuntimeService', () => {
     runtime.setOrchestrationDb(db)
     runtime.setPtyController({
       write,
-      kill: vi.fn()
+      kill: vi.fn(),
+      getForegroundProcess: async () => null
     })
     syncSinglePty(runtime)
 
@@ -565,6 +569,24 @@ describe('OrcaRuntimeService', () => {
 
     expect(write).toHaveBeenCalledWith('pty-1', expect.stringContaining('Subject: after wait'))
     db.close()
+  })
+
+  it('resolves message waiters when notifyMessageArrived is called', async () => {
+    const runtime = new OrcaRuntimeService(store)
+
+    const waitPromise = runtime.waitForMessage('term_abc', { timeoutMs: 5000 })
+    runtime.notifyMessageArrived('term_abc')
+    await waitPromise
+  })
+
+  it('resolves message waiters on timeout when no message arrives', async () => {
+    const runtime = new OrcaRuntimeService(store)
+
+    const start = Date.now()
+    await runtime.waitForMessage('term_abc', { timeoutMs: 100 })
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeGreaterThanOrEqual(90)
+    expect(elapsed).toBeLessThan(500)
   })
 
   it('fails terminal waits closed when the handle goes stale during reload', async () => {
@@ -610,7 +632,7 @@ describe('OrcaRuntimeService', () => {
           {
             tabId: 'tab-1',
             worktreeId: 'repo-1::/tmp/worktree-a',
-            title: 'Claude',
+            title: 'Terminal 1',
             activeLeafId: 'pane:1',
             layout: null
           }
@@ -740,7 +762,8 @@ describe('OrcaRuntimeService', () => {
       kill: () => {
         killed = true
         return true
-      }
+      },
+      getForegroundProcess: async () => null
     })
 
     runtime.attachWindow(1)
@@ -820,7 +843,8 @@ describe('OrcaRuntimeService', () => {
       kill: () => {
         killed = true
         return true
-      }
+      },
+      getForegroundProcess: async () => null
     })
 
     runtime.attachWindow(1)

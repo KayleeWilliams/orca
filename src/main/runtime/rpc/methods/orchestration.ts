@@ -53,7 +53,9 @@ const CheckParams = z.object({
   terminal: OptionalString,
   unread: OptionalBoolean,
   types: OptionalString,
-  inject: OptionalBoolean
+  inject: OptionalBoolean,
+  wait: OptionalBoolean,
+  timeoutMs: OptionalFiniteNumber
 })
 
 const ReplyParams = z.object({
@@ -134,6 +136,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           payload: params.payload
         })
         runtime.deliverPendingMessagesForHandle(params.to)
+        runtime.notifyMessageArrived(params.to)
         return { message: msg }
       }
 
@@ -164,6 +167,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       )
       for (const handle of handles) {
         runtime.deliverPendingMessagesForHandle(handle)
+        runtime.notifyMessageArrived(handle)
       }
 
       return { messages, recipients: handles.length }
@@ -173,7 +177,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.check',
     params: CheckParams,
-    handler: (params, { runtime }) => {
+    handler: async (params, { runtime }) => {
       const db = runtime.getOrchestrationDb()
       const handle = params.terminal ?? 'unknown'
       const typeFilter = params.types
@@ -188,22 +192,36 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       const showUnread = params.unread !== false
-      const messages = showUnread
-        ? db.getUnreadMessages(handle, typeFilter)
-        : db.getAllMessages(handle)
 
-      // Why: mark retrieved unread messages as read so the next check call
-      // only surfaces genuinely new messages (Section 4.4).
-      if (showUnread && messages.length > 0) {
-        db.markAsRead(messages.map((m) => m.id))
+      const readAndReturn = () => {
+        const messages = showUnread
+          ? db.getUnreadMessages(handle, typeFilter)
+          : db.getAllMessages(handle)
+
+        if (showUnread && messages.length > 0) {
+          db.markAsRead(messages.map((m) => m.id))
+        }
+
+        if (params.inject) {
+          const formatted = messages.map(formatMessageBanner).join('\n\n')
+          return { messages, formatted, count: messages.length }
+        }
+
+        return { messages, count: messages.length }
       }
 
-      if (params.inject) {
-        const formatted = messages.map(formatMessageBanner).join('\n\n')
-        return { messages, formatted, count: messages.length }
+      const result = readAndReturn()
+      if (result.count > 0 || !params.wait) {
+        return result
       }
 
-      return { messages, count: messages.length }
+      // Why: blocking wait lets coordinators replace sleep+poll loops with a
+      // single call that resolves when a message arrives or the timeout expires.
+      await runtime.waitForMessage(handle, {
+        typeFilter: typeFilter as string[] | undefined,
+        timeoutMs: params.timeoutMs ?? undefined
+      })
+      return readAndReturn()
     }
   }),
 
@@ -227,6 +245,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         threadId: original.thread_id ?? original.id
       })
 
+      runtime.notifyMessageArrived(original.from_handle)
       return { message: reply }
     }
   }),
@@ -304,6 +323,21 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
       if (task.status !== 'ready') {
         throw new Error(`Task ${params.task} is ${task.status}; only ready tasks can be dispatched`)
+      }
+
+      // Why: dispatching with --inject to a bare shell (zsh/bash) dumps the
+      // preamble as shell commands, producing gibberish. Check both OSC title
+      // status and foreground process — Claude Code doesn't emit recognized OSC
+      // titles on startup, so title-only detection misses freshly spawned agents.
+      if (params.inject) {
+        const hasAgent = await runtime.isTerminalRunningAgent(params.to)
+        if (!hasAgent) {
+          throw new Error(
+            `Cannot dispatch --inject to terminal ${params.to}: no recognized agent detected. ` +
+              'Start an agent CLI (e.g. claude, codex, gemini) in the terminal first, ' +
+              'or dispatch without --inject and send the prompt manually.'
+          )
+        }
       }
 
       const ctx = db.createDispatchContext(params.task, params.to)
