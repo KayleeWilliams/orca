@@ -12,6 +12,11 @@ export type CreateOrAttachOptions = {
   cwd?: string
   env?: Record<string, string>
   command?: string
+  /** Explicit shell the renderer asked for (e.g. 'wsl.exe' for "New WSL
+   *  terminal" from the "+" menu). Forwarded to the subprocess spawner so the
+   *  daemon path honors per-tab shell selection the same way LocalPtyProvider
+   *  does. */
+  shellOverride?: string
   shellReadySupported?: boolean
   streamClient: { onData: (data: string) => void; onExit: (code: number) => void }
 }
@@ -32,6 +37,7 @@ export type TerminalHostOptions = {
     cwd?: string
     env?: Record<string, string>
     command?: string
+    shellOverride?: string
   }) => SubprocessHandle
   // Why: on graceful shutdown, the host writes final checkpoints for all live
   // sessions before killing them. This bypasses the RPC round-trip — the daemon
@@ -87,7 +93,8 @@ export class TerminalHost {
       rows: size.rows,
       cwd: opts.cwd,
       env: opts.env,
-      command: opts.command
+      command: opts.command,
+      shellOverride: opts.shellOverride
     })
 
     const session = new Session({

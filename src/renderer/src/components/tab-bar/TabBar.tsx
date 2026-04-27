@@ -23,6 +23,7 @@ import { reconcileTabOrder } from './reconcile-order'
 import type { HoveredTabInsertion, TabDragItemData } from '../tab-group/useTabDragSplit'
 import { resolveTabIndicatorEdges } from '../tab-group/tab-insertion'
 import { getEditorDisplayLabel } from '@/components/editor/editor-labels'
+import { ShellIcon } from './shell-icons'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -459,17 +460,19 @@ function TabBarInner({
           {isWindows && onNewTerminalWithShell ? (
             // Why: previously the Windows path nested shell choices under a
             // Radix submenu. In practice the submenu frequently failed to open
-            // on hover/click (see "New Terminal Selection Windows" feedback),
-            // and even when it worked the two-step expansion hid the fact that
-            // multiple shells were available. Inlining all shells as flat
-            // items with the configured default pinned to the top — and
-            // carrying the Ctrl+T shortcut label since it opens the default —
-            // matches the user's rec: no popouts, show up to three shells at
-            // once, make the "selected" default obvious at a glance.
+            // on hover/click, and even when it worked the two-step expansion
+            // hid the fact that multiple shells were available. Inlining all
+            // shells as flat items — default pinned to the top with the
+            // Ctrl+T hint — matches the "no popouts, show all options at
+            // once" rec. Each entry uses a shell-specific icon (ShellIcon)
+            // so PowerShell / CMD / WSL are distinguishable at a glance.
+            // Labels use "CMD Prompt" instead of "Command Prompt" to keep
+            // each row narrow enough that the shortcut hint fits without
+            // wrapping.
             (() => {
               const allShells = [
                 { label: 'PowerShell', shell: 'powershell.exe' },
-                { label: 'Command Prompt', shell: 'cmd.exe' },
+                { label: 'CMD Prompt', shell: 'cmd.exe' },
                 ...(wslAvailable ? [{ label: 'WSL', shell: 'wsl.exe' }] : [])
               ]
               const defaultEntry =
@@ -492,15 +495,8 @@ function TabBarInner({
                     }}
                     className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
                   >
-                    <TerminalSquare className="size-4 text-muted-foreground" />
-                    <span className="flex-1">
-                      New Terminal: {entry.label}
-                      {isDefault ? (
-                        <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Default
-                        </span>
-                      ) : null}
-                    </span>
+                    <ShellIcon shell={entry.shell} size={14} />
+                    <span className="flex-1">New Terminal: {entry.label}</span>
                     {isDefault ? (
                       <DropdownMenuShortcut>{NEW_TERMINAL_SHORTCUT}</DropdownMenuShortcut>
                     ) : null}

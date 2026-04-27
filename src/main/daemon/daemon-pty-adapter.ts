@@ -116,6 +116,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
       cwd: effectiveCwd,
       env: opts.env,
       command: opts.command,
+      // Why: without this, the daemon always spawns cmd.exe (COMSPEC) or
+      // PowerShell as a fallback — regardless of which shell the renderer
+      // asked for in the "+" menu or persisted as the default. Forwarding
+      // the override makes the daemon path behave the same as the in-process
+      // LocalPtyProvider.
+      shellOverride: opts.shellOverride,
       shellReadySupported: opts.command ? supportsPtyStartupBarrier(opts.env ?? {}) : false
     })
 

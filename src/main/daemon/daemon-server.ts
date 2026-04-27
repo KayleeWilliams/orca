@@ -22,6 +22,7 @@ export type DaemonServerOptions = {
     cwd?: string
     env?: Record<string, string>
     command?: string
+    shellOverride?: string
   }) => SubprocessHandle
 }
 
@@ -199,6 +200,7 @@ export class DaemonServer {
           cwd: p.cwd,
           env: p.env,
           command: p.command,
+          shellOverride: p.shellOverride,
           shellReadySupported: p.shellReadySupported,
           streamClient: {
             onData: (data) => {

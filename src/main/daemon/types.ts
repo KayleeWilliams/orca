@@ -62,6 +62,12 @@ export type CreateOrAttachRequest = {
     cwd?: string
     env?: Record<string, string>
     command?: string
+    /** Explicit Windows shell override selected by the user (e.g. 'wsl.exe').
+     *  The daemon forwards this to its subprocess spawner so each tab honors
+     *  the shell picked in the "+" menu or the persisted default-shell setting,
+     *  instead of defaulting to COMSPEC (which is always cmd.exe on Windows)
+     *  or the hard-coded powershell.exe fallback. */
+    shellOverride?: string
     shellReadySupported?: boolean
   }
 }
