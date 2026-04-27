@@ -21,6 +21,7 @@ import { StarNagCard } from './components/StarNagCard'
 import { ZoomOverlay } from './components/ZoomOverlay'
 import { SshPassphraseDialog } from './components/settings/SshPassphraseDialog'
 import { useGitStatusPolling } from './components/right-sidebar/useGitStatusPolling'
+import { attachAppAutoCloseAfterMergeController } from './components/sidebar/auto-close-after-merge-controller'
 import { useEditorExternalWatch } from './hooks/useEditorExternalWatch'
 import {
   setRuntimeGraphStoreStateGetter,
@@ -318,6 +319,11 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => registerUpdaterBeforeUnloadBypass(), [])
+
+  // Why: attach at App level (not inside RightSidebar) so merge-driven
+  // auto-close still fires when the sidebar is closed. The controller is a
+  // no-op whenever `settings.autoCloseAfterMerge` is false.
+  useEffect(() => attachAppAutoCloseAfterMergeController(), [])
 
   useEffect(() => {
     setRuntimeGraphSyncEnabled(workspaceSessionReady)

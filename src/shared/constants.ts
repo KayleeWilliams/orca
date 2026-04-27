@@ -161,6 +161,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
     skipDeleteWorktreeConfirm: false,
+    autoCloseAfterMerge: false,
     defaultTaskViewPreset: 'all',
     defaultTaskSource: 'github',
     defaultRepoSelection: null,
