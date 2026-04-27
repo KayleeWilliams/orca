@@ -21,7 +21,7 @@ if (!commandPath) {
 
 function isOwnedByUs(target) {
   try {
-    if (!lstatSync(target).isSymbolicLink()) return false
+    if (!lstatSync(target).isSymbolicLink()) { return false }
     return readlinkSync(target) === source
   } catch {
     return false
