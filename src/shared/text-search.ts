@@ -1,3 +1,9 @@
+/* oxlint-disable max-lines -- Why: this is the single source of truth for
+ * rg arg construction, rg --json parsing, git-grep submatch parsing, and
+ * relative-path normalization, shared by both the local main process and
+ * the SSH relay. The prior divergence between those two implementations
+ * caused the maxBuffer footgun the design doc calls out; re-splitting the
+ * file would re-introduce that failure mode. */
 /**
  * Shared, pure text-search helpers used by both the local main process and the
  * SSH relay. No Electron, no child_process, no fs — the caller owns process
@@ -14,11 +20,7 @@
  * sites must use this module; see filesystem.ts and relay/fs-handler.ts.
  */
 import { join, relative } from 'path'
-import type {
-  SearchFileResult,
-  SearchOptions,
-  SearchResult
-} from './types'
+import type { SearchFileResult, SearchOptions, SearchResult } from './types'
 
 export type SearchAccumulator = {
   fileMap: Map<string, SearchFileResult>
@@ -116,11 +118,7 @@ export type SearchOptionsLike = Pick<
  * its original shape, and rg's output paths are translated back to Windows
  * UNC via the `transformAbsPath` callback in `ingestRgJsonLine`.
  */
-export function buildRgArgs(
-  query: string,
-  target: string,
-  opts: SearchOptionsLike
-): string[] {
+export function buildRgArgs(query: string, target: string, opts: SearchOptionsLike): string[] {
   const args: string[] = [
     '--json',
     '--hidden',
@@ -141,12 +139,18 @@ export function buildRgArgs(
     args.push('--fixed-strings')
   }
   if (opts.includePattern) {
-    for (const pat of opts.includePattern.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const pat of opts.includePattern
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       args.push('--glob', pat)
     }
   }
   if (opts.excludePattern) {
-    for (const pat of opts.excludePattern.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const pat of opts.excludePattern
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       args.push('--glob', `!${pat}`)
     }
   }
@@ -180,7 +184,15 @@ export function ingestRgJsonLine(
   if (!line) {
     return 'continue'
   }
-  let msg: { type?: string; data?: { path?: { text?: string }; submatches?: { start: number; end: number }[]; line_number?: number; lines?: { text?: string } } }
+  let msg: {
+    type?: string
+    data?: {
+      path?: { text?: string }
+      submatches?: { start: number; end: number }[]
+      line_number?: number
+      lines?: { text?: string }
+    }
+  }
   try {
     msg = JSON.parse(line)
   } catch {
@@ -288,13 +300,19 @@ export function buildGitGrepArgs(query: string, opts: SearchOptionsLike): string
 
   let hasPathspecs = false
   if (opts.includePattern) {
-    for (const pat of opts.includePattern.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const pat of opts.includePattern
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       gitArgs.push(toGitGlobPathspec(pat))
       hasPathspecs = true
     }
   }
   if (opts.excludePattern) {
-    for (const pat of opts.excludePattern.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const pat of opts.excludePattern
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       gitArgs.push(toGitGlobPathspec(pat, true))
       hasPathspecs = true
     }
