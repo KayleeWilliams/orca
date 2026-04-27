@@ -1,6 +1,7 @@
 import type { StoreApi } from 'zustand'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store'
+import { branchName } from '@/lib/git-utils'
 import { runWorktreeDeleteWithToast } from './delete-worktree-flow'
 
 type AppStoreApi = Pick<StoreApi<AppState>, 'getState' | 'subscribe'>
@@ -34,9 +35,31 @@ type AppStoreApi = Pick<StoreApi<AppState>, 'getState' | 'subscribe'>
 export function attachAutoCloseAfterMergeController(store: AppStoreApi): () => void {
   const handled = new Set<string>()
   const startedAt = Date.now()
+  let prevSettings: AppState['settings'] | undefined
+  let prevWorktreesByRepo: AppState['worktreesByRepo'] | undefined
+  let prevRepos: AppState['repos'] | undefined
+  let prevPrCache: AppState['prCache'] | undefined
 
   const syncAutoClose = (): void => {
     const state = store.getState()
+
+    // Why: Zustand's subscriber fires on every state change (typing in text
+    // inputs, terminal updates, etc.), but this controller only depends on
+    // four slices. Short-circuit the hot path with reference-equality checks
+    // so unrelated updates don't walk every worktree on every keystroke.
+    if (
+      state.settings === prevSettings &&
+      state.worktreesByRepo === prevWorktreesByRepo &&
+      state.repos === prevRepos &&
+      state.prCache === prevPrCache
+    ) {
+      return
+    }
+    prevSettings = state.settings
+    prevWorktreesByRepo = state.worktreesByRepo
+    prevRepos = state.repos
+    prevPrCache = state.prCache
+
     const autoClose = state.settings?.autoCloseAfterMerge ?? false
 
     const liveIds = new Set<string>()
@@ -54,7 +77,7 @@ export function attachAutoCloseAfterMergeController(store: AppStoreApi): () => v
         if (!repo) {
           continue
         }
-        const branch = wt.branch.replace(/^refs\/heads\//, '')
+        const branch = branchName(wt.branch)
         if (!branch) {
           continue
         }
@@ -79,9 +102,21 @@ export function attachAutoCloseAfterMergeController(store: AppStoreApi): () => v
         }
 
         if (!autoClose) {
+          // Why: mirror the persisted-from-disk branch's backlog-protection
+          // rationale. If the PR merged live-in-session while the setting was
+          // off, the user implicitly chose to keep the worktree. Recording it
+          // in `handled` ensures a later toggle-on doesn't sweep the backlog
+          // and silently delete already-merged worktrees — matching the
+          // docstring's promise that toggling doesn't retroactively act.
+          handled.add(wt.id)
           continue
         }
 
+        // Why: mark handled *before* the async delete resolves. If the delete
+        // fails (e.g. uncommitted changes), we intentionally do NOT retry on
+        // every subsequent state change — that would spam duplicate toasts
+        // indefinitely. The Force Delete action in the error toast is the
+        // user's explicit, opt-in retry path.
         handled.add(wt.id)
         runWorktreeDeleteWithToast(wt.id, wt.displayName)
       }

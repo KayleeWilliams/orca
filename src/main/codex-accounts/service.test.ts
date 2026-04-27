@@ -74,6 +74,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
     skipDeleteWorktreeConfirm: false,
+    autoCloseAfterMerge: false,
     defaultTaskViewPreset: 'all',
     defaultTaskSource: 'github',
     defaultRepoSelection: null,
