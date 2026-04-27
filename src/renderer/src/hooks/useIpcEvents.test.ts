@@ -141,6 +141,7 @@ describe('useIpcEvents updater integration', () => {
 
     vi.stubGlobal('window', {
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -320,6 +321,7 @@ describe('useIpcEvents updater integration', () => {
 
     vi.stubGlobal('window', {
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -492,6 +494,7 @@ describe('useIpcEvents updater integration', () => {
 
     vi.stubGlobal('window', {
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -677,6 +680,7 @@ describe('useIpcEvents browser tab close routing', () => {
     vi.stubGlobal('window', {
       dispatchEvent: vi.fn(),
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -851,6 +855,7 @@ describe('useIpcEvents browser tab close routing', () => {
     vi.stubGlobal('window', {
       dispatchEvent: vi.fn(),
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -1020,6 +1025,7 @@ describe('useIpcEvents browser tab close routing', () => {
     vi.stubGlobal('window', {
       dispatchEvent: vi.fn(),
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -1201,6 +1207,7 @@ describe('useIpcEvents shortcut hint clearing', () => {
     vi.stubGlobal('window', {
       dispatchEvent,
       api: {
+        pty: { onForegroundShell: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {

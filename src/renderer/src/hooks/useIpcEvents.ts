@@ -669,6 +669,23 @@ export function useIpcEvents(): void {
     // Re-parse it here so the renderer enforces the same normalization rules
     // (state enum, field truncation) regardless of whether the source was a
     // hook callback or an OSC fallback path.
+    // Why: main-process foreground-process poller fires this when a tracked
+    // PTY's foreground returns to a shell, signalling the agent CLI has
+    // exited (interrupted or finished). The renderer maps ptyId → paneKey via
+    // the live `ptyIdsByTabId` and drops the store entry so the row cannot
+    // linger as stale 'working' until its 30-min TTL decays. Unknown ptyIds
+    // no-op — the PTY may have been torn down in a parallel teardown path
+    // that already called removeAgentStatus.
+    unsubs.push(
+      window.api.pty.onForegroundShell((data) => {
+        const paneKey = resolvePaneKeyForPtyId(useAppStore.getState(), data.ptyId)
+        if (!paneKey) {
+          return
+        }
+        useAppStore.getState().removeAgentStatus(paneKey)
+      })
+    )
+
     if (AGENT_DASHBOARD_ENABLED) {
       unsubs.push(
         window.api.agentStatus.onSet((data) => {
@@ -751,4 +768,38 @@ function resolvePaneKey(
     }
   }
   return { exists, title: paneTitle ?? tabTitle }
+}
+
+/** Resolve a ptyId to the first paneKey (`${tabId}:${paneId}`) currently
+ *  associated with it. Returns null when no live tab claims the PTY.
+ *
+ *  Why: the main-process foreground-process poller emits a ptyId-only
+ *  payload so it doesn't have to replicate the renderer's paneKey
+ *  construction. The renderer already maintains two sources of truth that
+ *  link tabs to ptys — `ptyIdsByTabId` for liveness-tracked ptys and
+ *  `terminalLayoutsByTabId[tabId].ptyIdsByLeafId` for per-pane bindings.
+ *  We prefer the per-pane map because the paneKey encodes the pane id (the
+ *  leaf id's numeric suffix), so a tab with multiple split panes resolves
+ *  to the right one. */
+export function resolvePaneKeyForPtyId(
+  store: ReturnType<typeof useAppStore.getState>,
+  ptyId: string
+): string | null {
+  for (const [tabId, layout] of Object.entries(store.terminalLayoutsByTabId ?? {})) {
+    const bindings = layout.ptyIdsByLeafId
+    if (!bindings) {
+      continue
+    }
+    for (const [leafId, boundPtyId] of Object.entries(bindings)) {
+      if (boundPtyId !== ptyId) {
+        continue
+      }
+      // Why: leafId is `pane:${paneId}` (see layout-serialization.ts). Strip
+      // the `pane:` prefix — the store's agent-status slice keys entries by
+      // the numeric pane id, not the leaf id.
+      const paneId = leafId.startsWith('pane:') ? leafId.slice('pane:'.length) : leafId
+      return `${tabId}:${paneId}`
+    }
+  }
+  return null
 }

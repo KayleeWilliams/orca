@@ -45,7 +45,8 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
-import { getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
+import { getLocalPtyProvider, getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
+import { createAgentForegroundPoller } from './agent-foreground-poller'
 import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
@@ -183,6 +184,11 @@ function openMainWindow(): BrowserWindow {
     for (const paneKey of cursorSpinnerByPaneKey.keys()) {
       stopCursorSpinner(paneKey)
     }
+    // Why: the foreground-process poller writes into the closed webContents
+    // via `pty:foreground-shell`. Stop the timer here so the interval cannot
+    // outlive the window; a fresh window re-registers via the agentHookServer
+    // listener above on the next `agentStatus:set`.
+    agentForegroundPoller.stop()
   })
   mainWindow = window
   agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
@@ -196,6 +202,15 @@ function openMainWindow(): BrowserWindow {
         worktreeId,
         ...payload
       })
+      // Why: every paneKey that surfaces an agent-status event has a live
+      // entry in the renderer's `agentStatusByPaneKey`. Tracking on the same
+      // signal keeps the main-side poller in lock-step with the renderer map
+      // without needing a separate subscribe/unsubscribe IPC round trip. The
+      // poller is idempotent on re-tracking the same (paneKey, ptyId).
+      const ptyId = getPtyIdForPaneKey(paneKey)
+      if (ptyId) {
+        agentForegroundPoller.trackPane(paneKey, ptyId)
+      }
     }
     // Why: cursor-agent emits no title-based working/idle signal — its OSC
     // title stays "Cursor Agent" for the whole turn. Synthesize an OSC title
@@ -212,6 +227,30 @@ function openMainWindow(): BrowserWindow {
   })
   return window
 }
+
+// Why: owns the per-PTY foreground-process poller that emits
+// `pty:foreground-shell` when an interrupted agent CLI exits back to the
+// shell. Lives at module scope so the single instance outlives window
+// re-creation (macOS dock re-activation closes and reopens the main window
+// without re-initializing the PTY provider). See agent-foreground-poller.ts
+// for the full rationale.
+const agentForegroundPoller = createAgentForegroundPoller({
+  getForegroundProcess: (ptyId) => getLocalPtyProvider().getForegroundProcess(ptyId),
+  emitShell: (ptyId) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+    mainWindow.webContents.send('pty:foreground-shell', { ptyId })
+  }
+})
+
+// Why: stop tracking a pane the moment its PTY is torn down so the poller's
+// map cannot outlive the process it's observing. Without this, an unsubscribed
+// paneKey would continue to be polled (and worse, a recycled PTY id could
+// resolve to a different real process by the time the next tick fires).
+registerPaneKeyTeardownListener((paneKey) => {
+  agentForegroundPoller.untrackPane(paneKey)
+})
 
 // Why: Pi-style persistent spinner — cursor-agent re-emits its own
 // "Cursor Agent" OSC title on every internal redraw, so a single synthesized

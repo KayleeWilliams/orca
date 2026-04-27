@@ -332,6 +332,17 @@ const api = {
         callback(data)
       ipcRenderer.on('pty:exit', listener)
       return () => ipcRenderer.removeListener('pty:exit', listener)
+    },
+
+    /** Fired by the main-process foreground-process poller when a tracked
+     *  PTY's foreground transitions back to a shell — signalling that the
+     *  agent CLI process has exited. The renderer uses this to drop the
+     *  pane's entry from `agentStatusByPaneKey`. */
+    onForegroundShell: (callback: (data: { ptyId: string }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { ptyId: string }) =>
+        callback(data)
+      ipcRenderer.on('pty:foreground-shell', listener)
+      return () => ipcRenderer.removeListener('pty:foreground-shell', listener)
     }
   },
 
