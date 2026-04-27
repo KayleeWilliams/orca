@@ -186,6 +186,11 @@ export function createAgentForegroundPoller(
       if (existing && existing.ptyId === ptyId) {
         return
       }
+      // Why: a re-track with a different ptyId represents a fresh PTY on the
+      // same pane — the new process deserves its own chance to log a one-time
+      // provider error. Leaving the previous entry in `loggedErrorPaneKeys`
+      // would permanently suppress errors for the replacement PTY.
+      loggedErrorPaneKeys.delete(paneKey)
       tracked.set(paneKey, { ptyId, lastWasShell: null })
       ensureTimerRunning()
     },
