@@ -1,6 +1,6 @@
 import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
 import { createDivider } from './pane-divider'
-import { captureScrollState, restoreScrollState } from './pane-scroll'
+import { restoreScrollState } from './pane-scroll'
 
 export { findLineByContent, captureScrollState, restoreScrollState } from './pane-scroll'
 
@@ -26,6 +26,25 @@ function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows:
   }
 }
 
+// Why: xterm's terminal.resize() (called by fitAddon.fit()) natively preserves
+// the user's scroll position across reflows — verified in scroll-reflow.test.ts
+// "reference: undisturbed" (old viewportY == new viewportY after resize).
+// So the default path here is just fit(); no capture/restore. Superset and
+// VSCode both rely on this same native behavior during sidebar/panel resizes
+// and don't suffer the mid-resize scroll drift we used to see.
+//
+// Two narrow cases still need intervention:
+//   1. pendingSplitScrollState — wrapInSplit() reparents the DOM container,
+//      which causes the browser to asynchronously reset scrollTop to 0 during
+//      layout. splitPane captures scroll state once, leaves the flag on the
+//      pane for the duration of the post-split layout settling, and a
+//      separate scheduleSplitScrollRestore timeout does the authoritative
+//      restore. We skip capture/restore here because the authoritative path
+//      owns it.
+//   2. pendingDragScrollState — in-pane divider drag captures once at
+//      pointerdown and restores the same snapshot every frame to prevent
+//      cumulative drift from xterm's bottom-anchoring behavior when the user
+//      is pinned to the bottom. Unchanged.
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
     const dims = getProposedDimensions(pane)
@@ -35,18 +54,12 @@ export function safeFit(pane: ManagedPaneInternal): void {
       // churn, which was causing visible terminal blinking while resizing.
       return
     }
-    if (pane.pendingSplitScrollState) {
-      pane.fitAddon.fit()
-      return
-    }
     if (pane.pendingDragScrollState) {
       pane.fitAddon.fit()
       restoreScrollState(pane.terminal, pane.pendingDragScrollState)
       return
     }
-    const state = captureScrollState(pane.terminal)
     pane.fitAddon.fit()
-    restoreScrollState(pane.terminal, state)
   } catch {
     // Container may not have dimensions yet
   }
@@ -59,18 +72,12 @@ export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): vo
       if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
         continue
       }
-      if (pane.pendingSplitScrollState) {
-        pane.fitAddon.fit()
-        continue
-      }
       if (pane.pendingDragScrollState) {
         pane.fitAddon.fit()
         restoreScrollState(pane.terminal, pane.pendingDragScrollState)
         continue
       }
-      const state = captureScrollState(pane.terminal)
       pane.fitAddon.fit()
-      restoreScrollState(pane.terminal, state)
     } catch {
       /* ignore */
     }
