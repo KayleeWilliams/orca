@@ -1089,7 +1089,7 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
                 </a>
               </>
             )}
-            {updateStatus.state === 'error' && `Update error: ${updateStatus.message}`}
+            {updateStatus.state === 'error' && `Update check failed. ${updateStatus.message}`}
           </p>
         </SearchableSetting>
       </section>
