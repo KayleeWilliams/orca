@@ -1,3 +1,8 @@
+/* oxlint-disable max-lines -- Why: daemon-server owns the full RPC route
+ * table for the daemon protocol. Each case in routeRequest is a single
+ * pattern-matched call into TerminalHost, so splitting this file would
+ * require leaking the host reference across modules for no readability win
+ * over keeping all route handlers co-located. */
 import { createServer, type Server, type Socket } from 'net'
 import { randomUUID } from 'crypto'
 import { writeFileSync, chmodSync, unlinkSync } from 'fs'
