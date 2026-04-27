@@ -709,5 +709,89 @@ describe('Store', () => {
         vi.useRealTimers()
       }
     })
+
+    // Why (issue #1158): scheduleSave → writeToDiskAsync → rotateBackupsAsync
+    // is the hot path during normal use (every mutation debounces through it);
+    // flush() is only used at shutdown. The 1-hour gate must hold on the async
+    // path too, or routine edits would burn the 5-slot ring in minutes.
+    it('does not rotate on the async write path within the 1-hour window', async () => {
+      vi.useFakeTimers()
+      try {
+        // Seed disk so the first async write has something to snapshot.
+        writeDataFile({
+          schemaVersion: 1,
+          repos: [makeRepo({ id: 'seed' })],
+          worktreeMeta: {},
+          settings: {},
+          ui: {},
+          githubCache: { pr: {}, issue: {} },
+          workspaceSession: {}
+        })
+
+        const store = await createStore()
+
+        // First async write (debounced) — rotates because .bak.0 doesn't exist
+        // yet, so shouldRotateBackups returns true on statSync ENOENT.
+        store.addRepo(makeRepo({ id: 'first-async' }))
+        vi.advanceTimersByTime(300)
+        await store.waitForPendingWrite()
+
+        const bak0AfterFirst = readBackup(0)
+        expect(bak0AfterFirst.repos.map((r) => r.id)).toEqual(['seed'])
+
+        // Advance only 5 minutes, then trigger another async write. The 1-hour
+        // gate must block rotation: .bak.0 should still reflect the seed state,
+        // NOT the "first-async" state from the previous write.
+        vi.setSystemTime(new Date(Date.now() + 5 * 60 * 1000))
+        store.addRepo(makeRepo({ id: 'within-hour-async', path: '/within-async' }))
+        vi.advanceTimersByTime(300)
+        await store.waitForPendingWrite()
+
+        const bak0AfterSecond = readBackup(0)
+        expect(bak0AfterSecond.repos.map((r) => r.id)).toEqual(['seed'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('rotates on the async write path after the 1-hour window elapses', async () => {
+      vi.useFakeTimers()
+      try {
+        // Seed disk so the first async write has something to snapshot.
+        writeDataFile({
+          schemaVersion: 1,
+          repos: [makeRepo({ id: 'seed' })],
+          worktreeMeta: {},
+          settings: {},
+          ui: {},
+          githubCache: { pr: {}, issue: {} },
+          workspaceSession: {}
+        })
+
+        const store = await createStore()
+
+        // First async write: snapshots "seed" into .bak.0.
+        store.addRepo(makeRepo({ id: 'first-async' }))
+        vi.advanceTimersByTime(300)
+        await store.waitForPendingWrite()
+
+        expect(readBackup(0).repos.map((r) => r.id)).toEqual(['seed'])
+
+        // Jump past BACKUP_MIN_INTERVAL_MS (1h). The next async write should
+        // rotate: the previous on-disk state (seed + first-async) lands in
+        // .bak.0, and the prior .bak.0 ("seed" alone) shifts to .bak.1.
+        vi.setSystemTime(new Date(Date.now() + 61 * 60 * 1000))
+        store.addRepo(makeRepo({ id: 'after-hour-async', path: '/after-async' }))
+        vi.advanceTimersByTime(300)
+        await store.waitForPendingWrite()
+
+        const bak0After = readBackup(0)
+        expect(bak0After.repos.map((r) => r.id).sort()).toEqual(['first-async', 'seed'])
+        expect(existsSync(backupFile(1))).toBe(true)
+        expect(readBackup(1).repos.map((r) => r.id)).toEqual(['seed'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

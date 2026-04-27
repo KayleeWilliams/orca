@@ -167,6 +167,13 @@ function App(): React.JSX.Element {
     // without this, the first (unmounted) pass would keep spawning PTYs.
     const abortController = new AbortController()
 
+    // Why (issue #1158): track whether the real persisted UI hydration
+    // succeeded so the catch path below doesn't overwrite freshly-loaded
+    // ui.json values with hardcoded defaults. The debounced UI writer is
+    // gated only on persistedUIReady, so a default-hydration after a real
+    // one would serialize those defaults back to disk — silently erasing
+    // sidebar width, sort order, filters, etc.
+    let uiHydrated = false
     void (async () => {
       try {
         await actions.fetchRepos()
@@ -181,6 +188,7 @@ function App(): React.JSX.Element {
         await actions.fetchSettings()
         if (!cancelled) {
           actions.hydratePersistedUI(persistedUI)
+          uiHydrated = true
           actions.hydrateWorkspaceSession(session)
           actions.hydrateTabsSession(session)
           actions.hydrateEditorSession(session)
@@ -298,30 +306,53 @@ function App(): React.JSX.Element {
           error
         )
         if (!cancelled) {
-          actions.hydratePersistedUI({
-            lastActiveRepoId: null,
-            lastActiveWorktreeId: null,
-            sidebarWidth: 280,
-            rightSidebarWidth: 350,
-            groupBy: 'none',
-            sortBy: 'name',
-            showActiveOnly: false,
-            filterRepoIds: [],
-            collapsedGroups: [],
-            uiZoomLevel: 0,
-            editorFontZoomLevel: 0,
-            worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
-            statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
-            statusBarVisible: true,
-            dismissedUpdateVersion: null,
-            lastUpdateCheckAt: null
-          })
+          // Why (issue #1158): only hydrate UI with defaults if the real
+          // hydration never ran. If fetchRepos/fetchAllWorktrees/session.get/
+          // fetchSettings threw before line 183, persistedUIReady is still
+          // false and the UI cannot mount until we hydrate something. But if
+          // the real hydrate already ran and a later step threw, overwriting
+          // with defaults would flow through the debounced UI writer and
+          // clobber ui.json (sidebar width, sort, filters, etc.).
+          if (!uiHydrated) {
+            actions.hydratePersistedUI({
+              lastActiveRepoId: null,
+              lastActiveWorktreeId: null,
+              sidebarWidth: 280,
+              rightSidebarWidth: 350,
+              groupBy: 'none',
+              sortBy: 'name',
+              showActiveOnly: false,
+              filterRepoIds: [],
+              collapsedGroups: [],
+              uiZoomLevel: 0,
+              editorFontZoomLevel: 0,
+              worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+              statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
+              statusBarVisible: true,
+              dismissedUpdateVersion: null,
+              lastUpdateCheckAt: null
+            })
+          }
           // Why: reconnectPersistedTerminals flips workspaceSessionReady so the
           // UI mounts; auto-tab-creation becomes unblocked. hydrationSucceeded
           // is intentionally NOT set — the session writer must stay a no-op
           // until the user gets a clean restart, so we don't overwrite the
           // on-disk file we failed to load.
-          await actions.reconnectPersistedTerminals()
+          try {
+            await actions.reconnectPersistedTerminals()
+          } catch (reconnectErr) {
+            console.error(
+              '[startup] reconnectPersistedTerminals failed in error path:',
+              reconnectErr
+            )
+            // Why (issue #1158): this is already the recovery path from a
+            // failed hydration. If the recovery itself throws, the async IIFE
+            // rejects as an unhandled promise and workspaceSessionReady never
+            // flips — leaving the user staring at a blank window. Forcing the
+            // flag true lets the app shell mount with an empty session, which
+            // is strictly better than a non-functional UI.
+            useAppStore.setState({ workspaceSessionReady: true })
+          }
         }
       }
       void actions.initGitHubCache()
