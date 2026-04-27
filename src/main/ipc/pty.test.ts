@@ -722,6 +722,57 @@ describe('registerPtyHandlers', () => {
     expect(sshShutdown).toHaveBeenCalledWith('remote-pty', true)
   })
 
+  it('injects ORCA_TERMINAL_HANDLE for non-local PTY providers', async () => {
+    const spawn = vi.fn(async () => ({ id: 'remote-pty' }))
+    registerSshPtyProvider('ssh-1', {
+      spawn,
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn(),
+      acknowledgeDataEvent: vi.fn()
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_remote'),
+      registerPreAllocatedHandleForPty: vi.fn()
+    }
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      connectionId: 'ssh-1',
+      env: { EXISTING: '1' }
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          EXISTING: '1',
+          ORCA_TERMINAL_HANDLE: 'term_remote'
+        })
+      })
+    )
+    expect(runtime.registerPreAllocatedHandleForPty).toHaveBeenCalledWith(
+      'remote-pty',
+      'term_remote'
+    )
+  })
+
   describe('Windows UTF-8 code page', () => {
     let originalPlatform: string
     let originalComspec: string | undefined
@@ -1216,7 +1267,8 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyData: vi.fn(),
-      onPtyExit: vi.fn()
+      onPtyExit: vi.fn(),
+      preAllocateHandleForPty: vi.fn()
     }
     spawnMock.mockReturnValue(proc)
 
@@ -1254,7 +1306,8 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyData: vi.fn(),
-      onPtyExit: vi.fn()
+      onPtyExit: vi.fn(),
+      preAllocateHandleForPty: vi.fn()
     }
     spawnMock.mockReturnValue(proc)
 

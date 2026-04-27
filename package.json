@@ -72,6 +72,7 @@
     "@xterm/headless": "6.1.0-beta.198",
     "@xterm/xterm": "6.1.0-beta.198",
     "agent-browser": "~0.24.1",
+    "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -114,6 +115,7 @@
     "@playwright/test": "^1.59.1",
     "@stablyai/playwright-test": "^2.1.13",
     "@tailwindcss/vite": "^4.2.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -149,6 +151,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@parcel/watcher",
+      "better-sqlite3",
       "cpu-features",
       "electron",
       "esbuild",

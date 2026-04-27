@@ -8,6 +8,8 @@ import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { rm } from 'fs/promises'
+import { OrchestrationDb } from './orchestration/db'
+import { formatMessagesForInjection } from './orchestration/formatter'
 import type { CreateWorktreeResult, Repo } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import type {
@@ -214,6 +216,8 @@ export class OrcaRuntimeService {
   private leaves = new Map<string, RuntimeLeafRecord>()
   private handles = new Map<string, TerminalHandleRecord>()
   private handleByLeafKey = new Map<string, string>()
+  private handleByPtyId = new Map<string, string>()
+  private detachedPreAllocatedLeaves = new Map<string, RuntimeLeafRecord>()
   private graphSyncCallbacks: (() => void)[] = []
   private waitersByHandle = new Map<string, Set<TerminalWaiter>>()
   private ptyController: RuntimePtyController | null = null
@@ -221,12 +225,29 @@ export class OrcaRuntimeService {
   private agentBrowserBridge: AgentBrowserBridge | null = null
   private resolvedWorktreeCache: ResolvedWorktreeCache | null = null
   private agentDetector: AgentDetector | null = null
+  private _orchestrationDb: OrchestrationDb | null = null
 
   constructor(store: RuntimeStore | null = null, stats?: StatsCollector) {
     this.store = store
     if (stats) {
       this.agentDetector = new AgentDetector(stats)
     }
+  }
+
+  // Why: lazy initialization — the DB path depends on Electron's userData
+  // which may not be finalized until after app.ready. Also allows unit tests
+  // to inject an in-memory DB without touching the filesystem.
+  getOrchestrationDb(): OrchestrationDb {
+    if (!this._orchestrationDb) {
+      const { app } = require('electron')
+      const dbPath = join(app.getPath('userData'), 'orchestration.db')
+      this._orchestrationDb = new OrchestrationDb(dbPath)
+    }
+    return this._orchestrationDb
+  }
+
+  setOrchestrationDb(db: OrchestrationDb): void {
+    this._orchestrationDb = db
   }
 
   getRuntimeId(): string {
@@ -284,43 +305,77 @@ export class OrcaRuntimeService {
     this.tabs = new Map(graph.tabs.map((tab) => [tab.tabId, tab]))
     const nextLeaves = new Map<string, RuntimeLeafRecord>()
 
+    // Why: renderer reloads can briefly republish the same leaf with no ptyId;
+    // keep live CLI handles usable while the UI graph rebuilds.
+    const preserveLivePtysDuringReload = this.graphStatus === 'reloading'
     for (const leaf of graph.leaves) {
       const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
       const existing = this.leaves.get(leafKey)
+      const ptyId =
+        preserveLivePtysDuringReload && leaf.ptyId === null && existing?.ptyId
+          ? existing.ptyId
+          : leaf.ptyId
       const ptyGeneration =
-        existing && existing.ptyId !== leaf.ptyId
+        existing && existing.ptyId !== ptyId
           ? existing.ptyGeneration + 1
           : (existing?.ptyGeneration ?? 0)
 
       nextLeaves.set(leafKey, {
         ...leaf,
+        ptyId,
         ptyGeneration,
-        connected: leaf.ptyId !== null,
-        writable: this.graphStatus === 'ready' && leaf.ptyId !== null,
-        lastOutputAt: existing?.ptyId === leaf.ptyId ? existing.lastOutputAt : null,
-        lastExitCode: existing?.ptyId === leaf.ptyId ? existing.lastExitCode : null,
-        tailBuffer: existing?.ptyId === leaf.ptyId ? existing.tailBuffer : [],
-        tailPartialLine: existing?.ptyId === leaf.ptyId ? existing.tailPartialLine : '',
-        tailTruncated: existing?.ptyId === leaf.ptyId ? existing.tailTruncated : false,
-        tailLinesTotal: existing?.ptyId === leaf.ptyId ? existing.tailLinesTotal : 0,
-        preview: existing?.ptyId === leaf.ptyId ? existing.preview : '',
-        lastAgentStatus: existing?.ptyId === leaf.ptyId ? existing.lastAgentStatus : null
+        connected: ptyId !== null,
+        writable: this.graphStatus === 'ready' && ptyId !== null,
+        lastOutputAt: existing?.ptyId === ptyId ? existing.lastOutputAt : null,
+        lastExitCode: existing?.ptyId === ptyId ? existing.lastExitCode : null,
+        tailBuffer: existing?.ptyId === ptyId ? existing.tailBuffer : [],
+        tailPartialLine: existing?.ptyId === ptyId ? existing.tailPartialLine : '',
+        tailTruncated: existing?.ptyId === ptyId ? existing.tailTruncated : false,
+        tailLinesTotal: existing?.ptyId === ptyId ? existing.tailLinesTotal : 0,
+        preview: existing?.ptyId === ptyId ? existing.preview : '',
+        lastAgentStatus: existing?.ptyId === ptyId ? existing.lastAgentStatus : null
       })
 
-      if (existing && (existing.ptyId !== leaf.ptyId || existing.ptyGeneration !== ptyGeneration)) {
+      if (existing && (existing.ptyId !== ptyId || existing.ptyGeneration !== ptyGeneration)) {
         this.invalidateLeafHandle(leafKey)
       }
     }
 
     for (const oldLeafKey of this.leaves.keys()) {
       if (!nextLeaves.has(oldLeafKey)) {
-        this.invalidateLeafHandle(oldLeafKey)
+        const oldLeaf = this.leaves.get(oldLeafKey)
+        if (
+          preserveLivePtysDuringReload &&
+          oldLeaf?.ptyId &&
+          this.handleByPtyId.has(oldLeaf.ptyId)
+        ) {
+          // Why: a CLI-created agent keeps using its exported handle even if
+          // the reloaded renderer has not rebound the pane yet.
+          nextLeaves.set(oldLeafKey, oldLeaf)
+        } else {
+          this.invalidateLeafHandle(oldLeafKey)
+        }
       }
+    }
+
+    const nextPtyIds = new Set(
+      [...nextLeaves.values()].map((leaf) => leaf.ptyId).filter((ptyId): ptyId is string => !!ptyId)
+    )
+    for (const [ptyId, leaf] of this.detachedPreAllocatedLeaves) {
+      if (nextPtyIds.has(ptyId) || !this.handleByPtyId.has(ptyId)) {
+        this.detachedPreAllocatedLeaves.delete(ptyId)
+        continue
+      }
+      nextLeaves.set(this.getLeafKey(leaf.tabId, leaf.leafId), leaf)
+      nextPtyIds.add(ptyId)
     }
 
     this.leaves = nextLeaves
     this.graphStatus = 'ready'
     this.refreshWritableFlags()
+    for (const leaf of this.leaves.values()) {
+      this.adoptPreAllocatedHandle(leaf)
+    }
 
     // Why: createTerminal waits for the renderer's graph sync to populate the
     // new leaf so it can return a handle. Drain callbacks after leaves update.
@@ -331,11 +386,39 @@ export class OrcaRuntimeService {
     return this.getStatus()
   }
 
+  // Why: terminal handles are normally created lazily when first referenced via
+  // RPC, but agents need their own handle at spawn time (via ORCA_TERMINAL_HANDLE
+  // env var) so they can self-identify in orchestration messages without an
+  // extra RPC round-trip. Pre-allocating by ptyId lets issueHandle reuse it.
+  preAllocateHandleForPty(ptyId: string): string {
+    const existing = this.handleByPtyId.get(ptyId)
+    if (existing) {
+      return existing
+    }
+    const handle = this.createPreAllocatedTerminalHandle()
+    this.handleByPtyId.set(ptyId, handle)
+    return handle
+  }
+
+  createPreAllocatedTerminalHandle(): string {
+    return `term_${randomUUID()}`
+  }
+
+  registerPreAllocatedHandleForPty(ptyId: string, handle: string): void {
+    this.handleByPtyId.set(ptyId, handle)
+    for (const leaf of this.leaves.values()) {
+      if (leaf.ptyId === ptyId) {
+        this.adoptPreAllocatedHandle(leaf)
+      }
+    }
+  }
+
   onPtySpawned(ptyId: string): void {
     for (const leaf of this.leaves.values()) {
       if (leaf.ptyId === ptyId) {
         leaf.connected = true
         leaf.writable = this.graphStatus === 'ready'
+        this.adoptPreAllocatedHandle(leaf)
       }
     }
   }
@@ -375,6 +458,7 @@ export class OrcaRuntimeService {
         // would cause the CLI consumer to proceed while the agent is still waiting.
         if (prevStatus === 'working' && agentStatus === 'idle') {
           this.resolveTuiIdleWaiters(leaf)
+          this.deliverPendingMessages(leaf)
         }
       }
     }
@@ -387,10 +471,54 @@ export class OrcaRuntimeService {
       if (leaf.ptyId !== ptyId) {
         continue
       }
+      this.detachedPreAllocatedLeaves.delete(ptyId)
       leaf.connected = false
       leaf.writable = false
       leaf.lastExitCode = exitCode
       this.resolveExitWaiters(leaf)
+      this.failActiveDispatchOnExit(leaf, exitCode)
+    }
+  }
+
+  // Why: Section 7.2 — the runtime detects agent exit directly and updates
+  // dispatch contexts immediately, rather than waiting for the coordinator's
+  // next poll cycle. This catches agent crashes and unexpected exits within
+  // milliseconds. The task is set back to 'pending' so it can be re-dispatched.
+  private failActiveDispatchOnExit(leaf: RuntimeLeafRecord, exitCode: number): void {
+    if (!this._orchestrationDb) {
+      return
+    }
+
+    const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+    if (!handle) {
+      return
+    }
+
+    const dispatch = this._orchestrationDb.getActiveDispatchForTerminal(handle)
+    if (!dispatch) {
+      return
+    }
+
+    const errorContext = `Agent exited with code ${exitCode}`
+    this._orchestrationDb.failDispatch(dispatch.id, errorContext)
+
+    // Why: create an escalation message so the coordinator is notified about
+    // the unexpected exit on its next check cycle, even if the circuit breaker
+    // hasn't tripped yet.
+    const run = this._orchestrationDb.getActiveCoordinatorRun()
+    if (run) {
+      this._orchestrationDb.insertMessage({
+        from: handle,
+        to: run.coordinator_handle,
+        subject: `Agent exited unexpectedly (code ${exitCode})`,
+        type: 'escalation',
+        priority: 'high',
+        payload: JSON.stringify({
+          taskId: dispatch.task_id,
+          exitCode,
+          handle
+        })
+      })
     }
   }
 
@@ -558,10 +686,6 @@ export class OrcaRuntimeService {
     // Why: only 'idle' satisfies tui-idle, not 'permission'. Permission means the
     // agent is blocked on user approval, not finished with its task.
     if (condition === 'tui-idle' && leaf.lastAgentStatus === 'idle') {
-      // Why: reset so the next `wait --for tui-idle` blocks until a fresh
-      // working→idle transition instead of resolving instantly from a stale
-      // status left over from a previous agent session.
-      leaf.lastAgentStatus = null
       return buildTerminalWaitResult(handle, condition, leaf)
     }
 
@@ -1218,6 +1342,7 @@ export class OrcaRuntimeService {
     // against whatever the renderer rebuilds next.
     this.rendererGraphEpoch += 1
     this.graphStatus = 'reloading'
+    this.rememberDetachedPreAllocatedLeaves()
     this.handles.clear()
     this.handleByLeafKey.clear()
     this.rejectAllWaiters('terminal_handle_stale')
@@ -1243,6 +1368,7 @@ export class OrcaRuntimeService {
     }
     this.graphStatus = 'unavailable'
     this.authoritativeWindowId = null
+    this.rememberDetachedPreAllocatedLeaves()
     this.tabs.clear()
     this.leaves.clear()
     this.handles.clear()
@@ -1409,6 +1535,29 @@ export class OrcaRuntimeService {
     }
   }
 
+  // Why: group address resolution (Section 4.5) needs to query per-handle agent
+  // status without throwing on stale handles, so this returns null on any error.
+  getAgentStatusForHandle(handle: string): string | null {
+    try {
+      const { leaf } = this.getLiveLeafForHandle(handle)
+      return leaf.lastAgentStatus
+    } catch {
+      return null
+    }
+  }
+
+  deliverPendingMessagesForHandle(handle: string): void {
+    try {
+      const { leaf } = this.getLiveLeafForHandle(handle)
+      if (leaf.lastAgentStatus === 'idle') {
+        this.deliverPendingMessages(leaf)
+      }
+    } catch {
+      // Unknown or stale handles cannot be pushed immediately; the persisted
+      // message remains available via explicit check or future idle delivery.
+    }
+  }
+
   private getLiveLeafForHandle(handle: string): {
     record: TerminalHandleRecord
     leaf: RuntimeLeafRecord
@@ -1444,7 +1593,10 @@ export class OrcaRuntimeService {
       }
     }
 
-    const handle = `term_${randomUUID()}`
+    const handle = this.adoptPreAllocatedHandle(leaf) ?? `term_${randomUUID()}`
+    if (this.handles.has(handle)) {
+      return handle
+    }
     this.handles.set(handle, {
       handle,
       runtimeId: this.runtimeId,
@@ -1457,6 +1609,29 @@ export class OrcaRuntimeService {
     })
     this.handleByLeafKey.set(leafKey, handle)
     return handle
+  }
+
+  private adoptPreAllocatedHandle(leaf: RuntimeLeafRecord): string | null {
+    if (!leaf.ptyId) {
+      return null
+    }
+    const preAllocated = this.handleByPtyId.get(leaf.ptyId)
+    if (!preAllocated) {
+      return null
+    }
+    const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
+    this.handles.set(preAllocated, {
+      handle: preAllocated,
+      runtimeId: this.runtimeId,
+      rendererGraphEpoch: this.rendererGraphEpoch,
+      worktreeId: leaf.worktreeId,
+      tabId: leaf.tabId,
+      leafId: leaf.leafId,
+      ptyId: leaf.ptyId,
+      ptyGeneration: leaf.ptyGeneration
+    })
+    this.handleByLeafKey.set(leafKey, preAllocated)
+    return preAllocated
   }
 
   private refreshWritableFlags(): void {
@@ -1475,8 +1650,18 @@ export class OrcaRuntimeService {
     this.rejectWaitersForHandle(handle, 'terminal_handle_stale')
   }
 
+  private rememberDetachedPreAllocatedLeaves(): void {
+    for (const leaf of this.leaves.values()) {
+      if (leaf.ptyId && this.handleByPtyId.has(leaf.ptyId)) {
+        // Why: ORCA_TERMINAL_HANDLE is an agent identity, so CLI control should
+        // survive renderer graph loss as long as the underlying PTY is alive.
+        this.detachedPreAllocatedLeaves.set(leaf.ptyId, leaf)
+      }
+    }
+  }
+
   private resolveExitWaiters(leaf: RuntimeLeafRecord): void {
-    const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+    const handle = this.issueHandle(leaf)
     if (!handle) {
       return
     }
@@ -1510,6 +1695,36 @@ export class OrcaRuntimeService {
       if (waiter.condition === 'tui-idle') {
         this.resolveWaiter(waiter, buildTerminalWaitResult(handle, 'tui-idle', leaf))
       }
+    }
+  }
+
+  // Why: push-on-idle delivery — when an agent transitions working→idle, check
+  // for unread orchestration messages addressed to that terminal and inject them
+  // into the PTY. This is event-driven (no polling) because the runtime owns
+  // both the message store and terminal status detection.
+  private deliverPendingMessages(leaf: RuntimeLeafRecord): void {
+    if (!this._orchestrationDb) {
+      return
+    }
+
+    const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+    if (!handle) {
+      return
+    }
+
+    const unread = this._orchestrationDb.getUnreadMessages(handle)
+    if (unread.length === 0) {
+      return
+    }
+
+    if (!leaf.writable || !leaf.ptyId) {
+      return
+    }
+
+    const payload = formatMessagesForInjection(unread)
+    const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
+    if (wrote) {
+      this._orchestrationDb.markAsRead(unread.map((m) => m.id))
     }
   }
 

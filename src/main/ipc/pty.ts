@@ -188,6 +188,13 @@ export function buildPtyHostEnv(
   // Orca's own PTYs. Injecting lightweight PATH shims at spawn-time keeps
   // the behavior local to Orca instead of rewriting user git config or
   // touching external shells.
+  if (!opts.githubAttributionEnabled) {
+    delete baseEnv.ORCA_ENABLE_GIT_ATTRIBUTION
+    delete baseEnv.ORCA_GIT_COMMIT_TRAILER
+    delete baseEnv.ORCA_GH_PR_FOOTER
+    delete baseEnv.ORCA_GH_ISSUE_FOOTER
+    delete baseEnv.ORCA_ATTRIBUTION_SHIM_DIR
+  }
   applyTerminalAttributionEnv(baseEnv, {
     enabled: opts.githubAttributionEnabled,
     userDataPath: opts.userDataPath
@@ -339,13 +346,21 @@ export function registerPtyHandlers(
     localProvider.configure({
       isHistoryEnabled: () => getSettings?.()?.terminalScopeHistoryByWorktree ?? true,
       getWindowsShell: () => getSettings?.()?.terminalWindowsShell,
-      buildSpawnEnv: (id, baseEnv) =>
-        buildPtyHostEnv(id, baseEnv, {
+      buildSpawnEnv: (id, baseEnv) => {
+        const env = buildPtyHostEnv(id, baseEnv, {
           isPackaged: app.isPackaged,
           userDataPath: app.getPath('userData'),
           selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
           githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
-        }),
+        })
+        // Why: agents need their own terminal handle at process start so they
+        // can self-identify in orchestration messages without an extra RPC.
+        const preAllocatedHandle = runtime?.preAllocateHandleForPty(id)
+        if (preAllocatedHandle) {
+          env.ORCA_TERMINAL_HANDLE = preAllocatedHandle
+        }
+        return env
+      },
       onSpawned: (id) => runtime?.onPtySpawned(id),
       onExit: (id, code) => {
         clearProviderPtyState(id)
@@ -528,6 +543,10 @@ export function registerPtyHandlers(
           : undefined)
       const baseEnv = claudeAuth ? { ...args.env, ...claudeAuth.envPatch } : args.env
       let env: Record<string, string> | undefined = baseEnv
+      const preAllocatedHandle =
+        runtime && !(provider instanceof LocalPtyProvider)
+          ? runtime.createPreAllocatedTerminalHandle()
+          : null
       if (isDaemonHostSpawn) {
         // Why: clone before mutating so we don't leak injections back into
         // args.env (which the renderer may reuse for other IPC calls).
@@ -539,6 +558,9 @@ export function registerPtyHandlers(
           githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
         })
       }
+      const spawnEnv = preAllocatedHandle
+        ? { ...env, ORCA_TERMINAL_HANDLE: preAllocatedHandle }
+        : env
       const envToDelete = claudeAuth?.stripAuthEnv
         ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
         : undefined
@@ -546,7 +568,7 @@ export function registerPtyHandlers(
         cols: args.cols,
         rows: args.rows,
         cwd: args.cwd,
-        env
+        env: spawnEnv
       }
       if (envToDelete) {
         spawnOptions.envToDelete = envToDelete
@@ -577,6 +599,9 @@ export function registerPtyHandlers(
       }
       const result = await provider.spawn(spawnOptions)
       ptyOwnership.set(result.id, args.connectionId ?? null)
+      if (preAllocatedHandle) {
+        runtime?.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+      }
       if (isClaudeLaunch) {
         markClaudePtySpawned(result.id)
       }
