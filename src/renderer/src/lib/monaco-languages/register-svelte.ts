@@ -13,60 +13,84 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
     { open: '<', close: '>', token: 'delimiter.angle' }
   ],
   tokenizer: {
-    // Entry state. No embed is active yet, so structural rules must NOT pop
-    // an embedded tokenizer (Monaco throws on `nextEmbedded: '@pop'` when no
-    // embed is on the stack). The first piece of template markup transitions
-    // into `markup`, where the html embed is active and structural rules pop
-    // it cleanly.
+    // Entry state: the `start` state runs on the very first token and has no
+    // embed on the stack. Structural rules MUST NOT emit `nextEmbedded:
+    // '@pop'` from here (Monarch throws "cannot pop embedded language if not
+    // inside one"). The first non-structural character transitions into
+    // `markup`, activating the html embed — from then on every path that
+    // returns to `markup` routes through `markupReenter` so the invariant
+    // "markup has html embed active" always holds.
     root: [
-      [/<script(?=\s|>)/, 'tag', '@scriptOpen.typescript'],
-      [/<style(?=\s|>)/, 'tag', '@styleOpen.css'],
-      [/<!--/, 'comment', '@comment'],
+      [/<script(?=\s|>)/, { token: 'tag', switchTo: '@scriptOpen.typescript' }],
+      [/<style(?=\s|>)/, { token: 'tag', switchTo: '@styleOpen.css' }],
+      [/<!--/, { token: 'comment', switchTo: '@comment' }],
       [/\{\s*\/(if|each|await|key|snippet)\s*\}/, 'keyword.control'],
       [
         /\{\s*#(if|each|await|key|snippet)\b/,
-        { token: 'keyword.control', next: '@svelteBlockExpressionEnter' }
+        { token: 'keyword.control', switchTo: '@svelteBlockExpressionEnter' }
       ],
       [
         /\{\s*:(else|then|catch)\b/,
-        { token: 'keyword.control', next: '@svelteBlockExpressionEnter' }
+        { token: 'keyword.control', switchTo: '@svelteBlockExpressionEnter' }
       ],
       [
         /\{\s*@(html|debug|const|render)\b/,
-        { token: 'keyword.control', next: '@svelteExpressionEnter' }
+        { token: 'keyword.control', switchTo: '@svelteExpressionEnter' }
       ],
-      [/\{(?=[^#:/@])/, { token: 'delimiter.curly', next: '@svelteExpressionEnter' }],
-      // First markup character: switch into `markup` and start the html embed.
+      [/\{(?=[^#:/@])/, { token: 'delimiter.curly', switchTo: '@svelteExpressionEnter' }],
       [/(?=.)/, { token: '', switchTo: '@markup', nextEmbedded: 'html' }]
     ],
-    // html-embedded markup state. Structural rules end the embed before
-    // pushing into script/style/comment/svelte states; the catch-all
-    // re-enters html when those states pop back.
+    // html-embedded markup state. INVARIANT: whenever we are in `markup`, the
+    // html embed is active. Every state that pops back to markup routes
+    // through `markupReenter` to re-enter html first. This means `_myTokenize`
+    // never sees `markup` with embed=null — which is what would trigger
+    // "cannot pop embedded language if not inside one" when a structural rule
+    // with `nextEmbedded: '@pop'` fires.
+    //
+    // Two tokenization paths use this state:
+    //   (1) `_nestedTokenize`: scans rules whose action pops the embed; the
+    //       structural rules below are those pop rules.
+    //   (2) `_myTokenize`: called on the substring starting at the popOffset;
+    //       the pop rule at position 0 is the first (and only) rule to match
+    //       before state transitions out of `markup`.
+    // All transitions use `switchTo` rather than `next` so the Monarch stack
+    // stays flat — otherwise re-entering markup via `markupReenter` would add
+    // a frame on every svelte expression close and eventually hit
+    // `maxStack` (100).
     markup: [
-      [/<script(?=\s|>)/, { token: 'tag', next: '@scriptOpen.typescript', nextEmbedded: '@pop' }],
-      [/<style(?=\s|>)/, { token: 'tag', next: '@styleOpen.css', nextEmbedded: '@pop' }],
-      [/<!--/, { token: 'comment', next: '@comment', nextEmbedded: '@pop' }],
+      [
+        /<script(?=\s|>)/,
+        { token: 'tag', switchTo: '@scriptOpen.typescript', nextEmbedded: '@pop' }
+      ],
+      [/<style(?=\s|>)/, { token: 'tag', switchTo: '@styleOpen.css', nextEmbedded: '@pop' }],
+      [/<!--/, { token: 'comment', switchTo: '@comment', nextEmbedded: '@pop' }],
       [/\{\s*\/(if|each|await|key|snippet)\s*\}/, 'keyword.control'],
       [
         /\{\s*#(if|each|await|key|snippet)\b/,
-        { token: 'keyword.control', next: '@svelteBlockExpressionEnter', nextEmbedded: '@pop' }
+        { token: 'keyword.control', switchTo: '@svelteBlockExpressionEnter', nextEmbedded: '@pop' }
       ],
       [
         /\{\s*:(else|then|catch)\b/,
-        { token: 'keyword.control', next: '@svelteBlockExpressionEnter', nextEmbedded: '@pop' }
+        { token: 'keyword.control', switchTo: '@svelteBlockExpressionEnter', nextEmbedded: '@pop' }
       ],
       [
         /\{\s*@(html|debug|const|render)\b/,
-        { token: 'keyword.control', next: '@svelteExpressionEnter', nextEmbedded: '@pop' }
+        { token: 'keyword.control', switchTo: '@svelteExpressionEnter', nextEmbedded: '@pop' }
       ],
       [
         /\{(?=[^#:/@])/,
-        { token: 'delimiter.curly', next: '@svelteExpressionEnter', nextEmbedded: '@pop' }
-      ],
-      [/(?=.)/, { token: '', nextEmbedded: 'html' }]
+        { token: 'delimiter.curly', switchTo: '@svelteExpressionEnter', nextEmbedded: '@pop' }
+      ]
     ],
+    // Re-entry shim: every state that finishes and returns to markup context
+    // switches to this state (with `nextEmbedded: '@pop'` if it had an embed
+    // to pop). A zero-width `@rematch` then re-enters the html embed and
+    // switches to `markup`. `@rematch` short-circuits Monarch's progress
+    // check — a zero-width match that stays in the same state and stack
+    // depth otherwise throws "no progress in tokenizer".
+    markupReenter: [[/(?=.)/, { token: '@rematch', switchTo: '@markup', nextEmbedded: 'html' }]],
     comment: [
-      [/-->/, 'comment', '@pop'],
+      [/-->/, { token: 'comment', switchTo: '@markupReenter' }],
       [/[^-]+/, 'comment'],
       [/./, 'comment']
     ],
@@ -78,19 +102,25 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
     // Matches the RFC's note that regex-based grammars have edge cases;
     // the common single-brace case `{count}` works correctly.
     svelteExpressionEnter: [
-      [/\}/, { token: 'delimiter.curly', next: '@pop' }],
+      // Empty expression `{}`: entry popped the html embed, but we never
+      // entered the typescript embed, so only the state needs to unwind.
+      [/\}/, { token: 'delimiter.curly', switchTo: '@markupReenter' }],
       [/(?=.)/, { token: '', switchTo: '@svelteExpression', nextEmbedded: 'typescript' }]
     ],
-    svelteExpression: [[/\}/, { token: 'delimiter.curly', next: '@pop', nextEmbedded: '@pop' }]],
+    svelteExpression: [
+      [/\}/, { token: 'delimiter.curly', switchTo: '@markupReenter', nextEmbedded: '@pop' }]
+    ],
     svelteBlockExpressionEnter: [
-      [/\}/, { token: 'keyword.control', next: '@pop' }],
+      [/\}/, { token: 'keyword.control', switchTo: '@markupReenter' }],
       [/(?=.)/, { token: '', switchTo: '@svelteBlockExpression', nextEmbedded: 'typescript' }]
     ],
     svelteBlockExpression: [
-      [/\}/, { token: 'keyword.control', next: '@pop', nextEmbedded: '@pop' }]
+      [/\}/, { token: 'keyword.control', switchTo: '@markupReenter', nextEmbedded: '@pop' }]
     ],
     scriptOpen: [
-      [/\/>/, 'tag', '@pop'],
+      // Self-closing `<script/>` didn't enter an embed, but it might have been
+      // entered from markup (which popped html on entry). Re-enter uniformly.
+      [/\/>/, { token: 'tag', switchTo: '@markupReenter' }],
       [/>/, { token: 'tag', switchTo: '@scriptBody.$S2', nextEmbedded: '$S2' }],
       [/lang(?=\s*=)/, { token: 'attribute.name', switchTo: '@scriptLangBeforeEquals.$S2' }],
       { include: '@tagAttributes' }
@@ -118,9 +148,11 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
       [/'[^']*'/, { token: 'attribute.value', switchTo: '@scriptOpen.$S2' }],
       [/\s+/, 'white']
     ],
-    scriptBody: [[/<\/script\s*>/, { token: 'tag', next: '@pop', nextEmbedded: '@pop' }]],
+    scriptBody: [
+      [/<\/script\s*>/, { token: 'tag', switchTo: '@markupReenter', nextEmbedded: '@pop' }]
+    ],
     styleOpen: [
-      [/\/>/, 'tag', '@pop'],
+      [/\/>/, { token: 'tag', switchTo: '@markupReenter' }],
       [/>/, { token: 'tag', switchTo: '@styleBody.$S2', nextEmbedded: '$S2' }],
       [/lang(?=\s*=)/, { token: 'attribute.name', switchTo: '@styleLangBeforeEquals.$S2' }],
       { include: '@tagAttributes' }
@@ -148,7 +180,9 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
       [/'[^']*'/, { token: 'attribute.value', switchTo: '@styleOpen.$S2' }],
       [/\s+/, 'white']
     ],
-    styleBody: [[/<\/style\s*>/, { token: 'tag', next: '@pop', nextEmbedded: '@pop' }]],
+    styleBody: [
+      [/<\/style\s*>/, { token: 'tag', switchTo: '@markupReenter', nextEmbedded: '@pop' }]
+    ],
     tagAttributes: [
       [/[^\s/>=]+/, 'attribute.name'],
       [/=/, 'delimiter'],

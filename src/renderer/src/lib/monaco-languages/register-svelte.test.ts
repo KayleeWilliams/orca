@@ -29,10 +29,27 @@ function getRuleAction(rule: [RegExp, string | MonarchAction, string?]): Monarch
       : undefined
 }
 
-function findRuleAction(state: string, source: string): MonarchAction | undefined {
+function findRuleAction(
+  state: string,
+  source: string,
+  { embedPopOnly = false }: { embedPopOnly?: boolean } = {}
+): MonarchAction | undefined {
   const tokenizer = svelteMonarchLanguage.tokenizer as Record<string, MonarchRule[]>
   const stateRules = tokenizer[state] ?? tokenizer[state.split('.')[0]]
-  const matchedRule = stateRules.find((rule) => {
+  // When the html embed is active inside `markup`, Monaco's
+  // `_findLeavingNestedLanguageOffset` only consults rules whose action has
+  // `nextEmbedded: '@pop'` — the zero-width `@rematch` catch-all is
+  // skipped. Mirror that when callers want to verify the "structural rule
+  // pops the embed" path.
+  const candidateRules = embedPopOnly
+    ? stateRules.filter((rule) => {
+        if (!isRuleEntry(rule)) {
+          return false
+        }
+        return getRuleAction(rule)?.nextEmbedded === '@pop'
+      })
+    : stateRules
+  const matchedRule = candidateRules.find((rule) => {
     if (!isRuleEntry(rule)) {
       return false
     }
@@ -160,24 +177,24 @@ describe('svelte tokenizer transitions', () => {
 
     expect(ruleActions).toMatchInlineSnapshot(`
       [
-        "1:root:<script -> next=scriptOpen.typescript, embedded=-, switch=-",
+        "1:root:<script -> next=-, embedded=-, switch=scriptOpen.typescript",
         "1:scriptOpen.typescript:> -> next=-, embedded=$S2, switch=scriptBody.$S2",
-        "4:scriptBody.typescript:</script> -> next=pop, embedded=@pop, switch=-",
+        "4:scriptBody.typescript:</script> -> next=-, embedded=@pop, switch=markupReenter",
         "6:root:<html> -> next=-, embedded=html, switch=markup",
-        "7:markup:{#if -> next=svelteBlockExpressionEnter, embedded=@pop, switch=-",
-        "7:svelteBlockExpression:} -> next=pop, embedded=@pop, switch=-",
-        "8:markup:{ -> next=svelteExpressionEnter, embedded=@pop, switch=-",
-        "8:svelteExpression:} -> next=pop, embedded=@pop, switch=-",
-        "9:markup:{:else -> next=svelteBlockExpressionEnter, embedded=@pop, switch=-",
-        "9:svelteBlockExpressionEnter:} -> next=pop, embedded=-, switch=-",
+        "7:markup:{#if -> next=-, embedded=@pop, switch=svelteBlockExpressionEnter",
+        "7:svelteBlockExpression:} -> next=-, embedded=@pop, switch=markupReenter",
+        "8:markup:{ -> next=-, embedded=@pop, switch=svelteExpressionEnter",
+        "8:svelteExpression:} -> next=-, embedded=@pop, switch=markupReenter",
+        "9:markup:{:else -> next=-, embedded=@pop, switch=svelteBlockExpressionEnter",
+        "9:svelteBlockExpressionEnter:} -> next=-, embedded=-, switch=markupReenter",
         "11:markup:{/if} -> next=-, embedded=-, switch=-",
-        "13:markup:{ -> next=svelteExpressionEnter, embedded=@pop, switch=-",
-        "13:svelteExpression:} -> next=pop, embedded=@pop, switch=-",
-        "14:markup:{@html -> next=svelteExpressionEnter, embedded=@pop, switch=-",
-        "14:svelteExpression:} -> next=pop, embedded=@pop, switch=-",
-        "16:markup:<style -> next=styleOpen.css, embedded=@pop, switch=-",
+        "13:markup:{ -> next=-, embedded=@pop, switch=svelteExpressionEnter",
+        "13:svelteExpression:} -> next=-, embedded=@pop, switch=markupReenter",
+        "14:markup:{@html -> next=-, embedded=@pop, switch=svelteExpressionEnter",
+        "14:svelteExpression:} -> next=-, embedded=@pop, switch=markupReenter",
+        "16:markup:<style -> next=-, embedded=@pop, switch=styleOpen.css",
         "16:styleOpen.css:> -> next=-, embedded=$S2, switch=styleBody.$S2",
-        "18:styleBody.css:</style> -> next=pop, embedded=@pop, switch=-",
+        "18:styleBody.css:</style> -> next=-, embedded=@pop, switch=markupReenter",
       ]
     `)
   })
@@ -191,7 +208,7 @@ describe('svelte tokenizer regressions', () => {
   // entry-only `root` state from the html-embedded `markup` state.
   it('does not pop a non-existent embed when a file starts with a Svelte block', () => {
     const action = findRuleAction('root', '{#if foo}')
-    expect(action).toMatchObject({ next: '@svelteBlockExpressionEnter' })
+    expect(action).toMatchObject({ switchTo: '@svelteBlockExpressionEnter' })
     expect(action?.nextEmbedded).toBeUndefined()
   })
 
@@ -208,16 +225,16 @@ describe('svelte tokenizer regressions', () => {
   // so a trailing `<style lang="scss">` after markup never reached the
   // lang-switching code. The `markup` state wires the embed pop in.
   it('pops the html embed when later script/style/comment markers appear', () => {
-    expect(findRuleAction('markup', '<script lang="ts">')).toMatchObject({
-      next: '@scriptOpen.typescript',
+    expect(findRuleAction('markup', '<script lang="ts">', { embedPopOnly: true })).toMatchObject({
+      switchTo: '@scriptOpen.typescript',
       nextEmbedded: '@pop'
     })
-    expect(findRuleAction('markup', '<style lang="scss">')).toMatchObject({
-      next: '@styleOpen.css',
+    expect(findRuleAction('markup', '<style lang="scss">', { embedPopOnly: true })).toMatchObject({
+      switchTo: '@styleOpen.css',
       nextEmbedded: '@pop'
     })
-    expect(findRuleAction('markup', '<!-- comment -->')).toMatchObject({
-      next: '@comment',
+    expect(findRuleAction('markup', '<!-- comment -->', { embedPopOnly: true })).toMatchObject({
+      switchTo: '@comment',
       nextEmbedded: '@pop'
     })
   })
