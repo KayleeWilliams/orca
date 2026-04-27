@@ -217,7 +217,13 @@ async function sendCheckFailureStatus(message: string, userInitiated?: boolean):
         // "Update check failed.", so the message here only carries the
         // actionable cause.
         sendErrorStatus('GitHub may be temporarily unavailable. Try again in a minute.', true)
-      } else {
+      } else if (!(currentStatus.state === 'error' && currentStatus.userInitiated === true)) {
+        // Why: a userInitiated error must persist until the user acts —
+        // background success/benign-failure must not silently erase it.
+        // If the user clicked "Check for Updates" and got a visible error
+        // card, the scheduled 60-minute background retry that benign-fails
+        // again must NOT clobber that card back to 'idle'. The user should
+        // see the error until they retry or dismiss.
         sendStatus({ state: 'idle' })
       }
       return

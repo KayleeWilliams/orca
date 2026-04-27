@@ -206,4 +206,165 @@ describe('updater check failure handling', () => {
       expect(statuses).not.toContainEqual(expect.objectContaining({ state: 'error' }))
     })
   })
+
+  it('does not clobber a user-initiated error with a later background benign failure', async () => {
+    // Why: protects the guard in sendCheckFailureStatus (src/main/updater.ts
+    // lines 220-222). Once a user-initiated benign failure has produced a
+    // visible {state:'error', userInitiated:true} card, the scheduled
+    // background retry (which also benign-fails) must NOT silently push
+    // {state:'idle'} and erase the visible error. The card must persist
+    // until the user retries or dismisses.
+    autoUpdaterMock.checkForUpdates
+      // 1st: startup background check from setupAutoUpdater — swallow it.
+      .mockResolvedValueOnce(undefined)
+      // 2nd: user-initiated check — benign fail.
+      .mockImplementationOnce(() => {
+        autoUpdaterMock.emit('checking-for-update')
+        queueMicrotask(() => {
+          autoUpdaterMock.emit('error', new Error('Unable to find latest version on GitHub'))
+        })
+        return Promise.reject(new Error('Unable to find latest version on GitHub'))
+      })
+      // 3rd: subsequent background retry — also benign-fails. We drive the
+      // failure via the rejected promise path (rather than emitting
+      // 'checking-for-update' first) so the guard under test is actually
+      // exercised: the guard reads currentStatus, and 'checking-for-update'
+      // would have clobbered it to {state:'checking'} before the guard runs.
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error('Unable to find latest version on GitHub'))
+      )
+
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    const { setupAutoUpdater, checkForUpdatesFromMenu, checkForUpdates } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never)
+
+    // User-initiated benign failure → visible error card.
+    checkForUpdatesFromMenu()
+    await vi.waitFor(() => {
+      const statuses = sendMock.mock.calls
+        .filter(([channel]) => channel === 'updater:status')
+        .map(([, status]) => status)
+      expect(statuses).toContainEqual(
+        expect.objectContaining({
+          state: 'error',
+          userInitiated: true,
+          message: expect.stringContaining('GitHub may be temporarily unavailable')
+        })
+      )
+    })
+
+    const errorIndex = sendMock.mock.calls.findIndex(
+      ([channel, status]) =>
+        channel === 'updater:status' && status?.state === 'error' && status?.userInitiated === true
+    )
+    expect(errorIndex).toBeGreaterThanOrEqual(0)
+
+    // Background benign retry — must NOT clobber the visible error to 'idle'.
+    checkForUpdates()
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(3)
+    })
+    // Give the failure handler a chance to flush through microtasks.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const statusesAfterError = sendMock.mock.calls
+      .slice(errorIndex + 1)
+      .filter(([channel]) => channel === 'updater:status')
+      .map(([, status]) => status)
+    expect(statusesAfterError).not.toContainEqual(expect.objectContaining({ state: 'idle' }))
+
+    // Terminal status must still be the user-initiated error.
+    const allStatuses = sendMock.mock.calls
+      .filter(([channel]) => channel === 'updater:status')
+      .map(([, status]) => status)
+    const terminal = allStatuses.at(-1)
+    expect(terminal).toEqual(expect.objectContaining({ state: 'error', userInitiated: true }))
+  })
+
+  it('does not clobber a user-initiated error with a later background update-not-available', async () => {
+    // Why: protects the guard in updater-events.ts (lines 166-173). Once a
+    // user-initiated benign failure has produced a visible
+    // {state:'error', userInitiated:true} card, a subsequent background
+    // check that resolves via 'update-not-available' must NOT flip the UI
+    // to {state:'not-available'} and silently wipe the visible error. A
+    // user-initiated error persists until the user acts.
+    autoUpdaterMock.checkForUpdates
+      // 1st: startup background check from setupAutoUpdater — swallow it.
+      .mockResolvedValueOnce(undefined)
+      // 2nd: user-initiated check — benign fail.
+      .mockImplementationOnce(() => {
+        autoUpdaterMock.emit('checking-for-update')
+        queueMicrotask(() => {
+          autoUpdaterMock.emit('error', new Error('Unable to find latest version on GitHub'))
+        })
+        return Promise.reject(new Error('Unable to find latest version on GitHub'))
+      })
+      // 3rd: subsequent background check — succeeds benignly via
+      // 'update-not-available'. We skip emitting 'checking-for-update' so
+      // the guard under test (in updater-events 'update-not-available'
+      // handler) is exercised against the visible error currentStatus —
+      // an intervening 'checking-for-update' would have clobbered
+      // currentStatus to {state:'checking'} before the guard runs.
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          autoUpdaterMock.emit('update-not-available', { version: '1.0.51' })
+        })
+        return Promise.resolve(undefined)
+      })
+
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+
+    const { setupAutoUpdater, checkForUpdatesFromMenu, checkForUpdates } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never)
+
+    checkForUpdatesFromMenu()
+    await vi.waitFor(() => {
+      const statuses = sendMock.mock.calls
+        .filter(([channel]) => channel === 'updater:status')
+        .map(([, status]) => status)
+      expect(statuses).toContainEqual(
+        expect.objectContaining({
+          state: 'error',
+          userInitiated: true,
+          message: expect.stringContaining('GitHub may be temporarily unavailable')
+        })
+      )
+    })
+
+    const errorIndex = sendMock.mock.calls.findIndex(
+      ([channel, status]) =>
+        channel === 'updater:status' && status?.state === 'error' && status?.userInitiated === true
+    )
+    expect(errorIndex).toBeGreaterThanOrEqual(0)
+
+    // Background benign success — must NOT clobber the visible error.
+    checkForUpdates()
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(3)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const statusesAfterError = sendMock.mock.calls
+      .slice(errorIndex + 1)
+      .filter(([channel]) => channel === 'updater:status')
+      .map(([, status]) => status)
+    // Neither undefined nor false userInitiated should flip us to not-available.
+    expect(statusesAfterError).not.toContainEqual(
+      expect.objectContaining({ state: 'not-available', userInitiated: undefined })
+    )
+    expect(statusesAfterError).not.toContainEqual(
+      expect.objectContaining({ state: 'not-available', userInitiated: false })
+    )
+
+    const allStatuses = sendMock.mock.calls
+      .filter(([channel]) => channel === 'updater:status')
+      .map(([, status]) => status)
+    const terminal = allStatuses.at(-1)
+    expect(terminal).toEqual(expect.objectContaining({ state: 'error', userInitiated: true }))
+  })
 })

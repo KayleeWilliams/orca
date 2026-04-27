@@ -155,6 +155,22 @@ export function registerAutoUpdaterHandlers({
     if (!wasUserInitiated) {
       scheduleAutomaticUpdateCheck(24 * 60 * 60 * 1000)
     }
+    // Why: a userInitiated error must persist until the user acts —
+    // background success must not silently erase it. If a manual check
+    // surfaced "GitHub may be temporarily unavailable" and the scheduled
+    // 60-minute background retry then succeeds benignly, flipping to
+    // "You're on the latest version" would silently wipe the visible
+    // error without user acknowledgement. Skip the transition unless this
+    // result is itself user-initiated — a real `update-available` event
+    // still breaks through (handled separately in 'update-available').
+    const currentStatus = getCurrentStatus()
+    if (
+      !wasUserInitiated &&
+      currentStatus.state === 'error' &&
+      currentStatus.userInitiated === true
+    ) {
+      return
+    }
     sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
   })
 
