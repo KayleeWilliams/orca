@@ -2,7 +2,7 @@
 migration, mutation, and flush behavior in one file so schema changes are
 reviewed against the full storage contract instead of being scattered. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync } from 'fs'
+import { writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { Repo } from '../shared/types'
@@ -581,5 +581,133 @@ describe('Store', () => {
     store.removeWorktreeMeta('a')
     expect(store.getWorktreeMeta('a')).toBeUndefined()
     expect(store.getWorktreeMeta('b')).toBeDefined()
+  })
+
+  // ── Rolling backups (issue #1158) ──────────────────────────────────
+
+  describe('rolling backups', () => {
+    function backupFile(index: number): string {
+      return `${dataFile()}.bak.${index}`
+    }
+
+    function readBackup(index: number): { repos: Repo[] } {
+      return JSON.parse(readFileSync(backupFile(index), 'utf-8'))
+    }
+
+    function advanceMockedTime(advanceFn: () => void, ms: number): void {
+      vi.setSystemTime(new Date(Date.now() + ms))
+      advanceFn()
+    }
+
+    it('does not rotate when orca-data.json does not yet exist', async () => {
+      // First write creates orca-data.json and snapshots nothing (there was
+      // nothing to back up). Rotation must only engage once a prior file is
+      // present on disk.
+      const s = await createStore()
+      s.addRepo(makeRepo())
+      s.flush()
+      expect(existsSync(dataFile())).toBe(true)
+      expect(existsSync(backupFile(0))).toBe(false)
+    })
+
+    it('snapshots the previous file to .bak.0 before overwriting', async () => {
+      vi.useFakeTimers()
+      try {
+        // First launch: seed repo r1, flush to disk.
+        const first = await createStore()
+        first.addRepo(makeRepo({ id: 'r1' }))
+        first.flush()
+        expect((readDataFile() as { repos: Repo[] }).repos[0].id).toBe('r1')
+
+        // Jump past BACKUP_MIN_INTERVAL_MS (1h) so the next flush rotates.
+        vi.setSystemTime(new Date(Date.now() + 61 * 60 * 1000))
+
+        // Second launch: load existing file, add r2, flush. The old file
+        // (just r1) should land in .bak.0; current file should have r1 + r2.
+        const second = await createStore()
+        second.addRepo(makeRepo({ id: 'r2', path: '/repo2' }))
+        second.flush()
+
+        const current = readDataFile() as { repos: Repo[] }
+        expect(current.repos.map((r) => r.id).sort()).toEqual(['r1', 'r2'])
+        expect(existsSync(backupFile(0))).toBe(true)
+        expect(readBackup(0).repos.map((r) => r.id)).toEqual(['r1'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keeps at most 5 rotating backups', async () => {
+      vi.useFakeTimers()
+      try {
+        // Initial file on disk so rotation has something to snapshot.
+        writeDataFile({
+          schemaVersion: 1,
+          repos: [makeRepo({ id: 'seed' })],
+          worktreeMeta: {},
+          settings: {},
+          ui: {},
+          githubCache: { pr: {}, issue: {} },
+          workspaceSession: {}
+        })
+
+        // Spawn six sequential writes, each labeled so we can match the
+        // snapshot ring by content. Each write advances >1h so rotation fires.
+        for (let i = 0; i < 6; i++) {
+          vi.setSystemTime(new Date(Date.now() + 61 * 60 * 1000))
+          const s = await createStore()
+          s.addRepo(makeRepo({ id: `gen-${i}`, path: `/gen-${i}` }))
+          s.flush()
+        }
+
+        // .bak.0 ... .bak.4 must all exist; .bak.5 must not.
+        for (let i = 0; i < 5; i++) {
+          expect(existsSync(backupFile(i))).toBe(true)
+        }
+        expect(existsSync(backupFile(5))).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not rotate more than once per hour', async () => {
+      vi.useFakeTimers()
+      try {
+        // Seed disk so the first flush has something to snapshot.
+        writeDataFile({
+          schemaVersion: 1,
+          repos: [makeRepo({ id: 'seed' })],
+          worktreeMeta: {},
+          settings: {},
+          ui: {},
+          githubCache: { pr: {}, issue: {} },
+          workspaceSession: {}
+        })
+
+        // First post-seed flush rotates (interval since lastBackupAt=0 is
+        // huge). Subsequent flushes within the same hour must not touch
+        // .bak.0 — rotating on every debounced tick would burn the ring.
+        const store = await createStore()
+        store.addRepo(makeRepo({ id: 'after-seed' }))
+        store.flush()
+
+        const bak0After1 = readBackup(0)
+        expect(bak0After1.repos.map((r) => r.id)).toEqual(['seed'])
+
+        // Advance only 5 minutes; flush again. .bak.0 must still be "seed".
+        advanceMockedTime(
+          () => {
+            store.addRepo(makeRepo({ id: 'within-hour', path: '/within' }))
+            store.flush()
+          },
+          5 * 60 * 1000
+        )
+
+        const bak0After2 = readBackup(0)
+        expect(bak0After2.repos.map((r) => r.id)).toEqual(['seed'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

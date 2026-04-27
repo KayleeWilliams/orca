@@ -28,7 +28,10 @@ import {
 } from './runtime/sync-runtime-graph'
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
 import { registerUpdaterBeforeUnloadBypass } from './lib/updater-beforeunload'
-import { buildWorkspaceSessionPayload } from './lib/workspace-session'
+import {
+  buildWorkspaceSessionPayload,
+  shouldPersistWorkspaceSession
+} from './lib/workspace-session'
 import { countWorkingAgents, getWorkingAgentsPerWorktree } from './lib/agent-status'
 import { activateAndRevealWorktree } from './lib/worktree-activation'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
@@ -92,6 +95,7 @@ function App(): React.JSX.Element {
       setDeferredSshReconnectTargets: s.setDeferredSshReconnectTargets,
       setSshConnectionState: s.setSshConnectionState,
       hydratePersistedUI: s.hydratePersistedUI,
+      setHydrationSucceeded: s.setHydrationSucceeded,
       openModal: s.openModal,
       closeModal: s.closeModal,
       toggleRightSidebar: s.toggleRightSidebar,
@@ -181,6 +185,11 @@ function App(): React.JSX.Element {
           actions.hydrateTabsSession(session)
           actions.hydrateEditorSession(session)
           actions.hydrateBrowserSession(session)
+          // Why (issue #1158): unlock the debounced session writer only after
+          // hydration completed without throwing. Until this point any later
+          // failure would otherwise let the writer serialize a partially
+          // populated store back to disk and silently erase the user's tabs.
+          actions.setHydrationSucceeded(true)
           await actions.fetchBrowserSessionProfiles()
           await actions.fetchDetectedBrowsers()
 
@@ -271,7 +280,20 @@ function App(): React.JSX.Element {
           syncZoomCSSVar()
         }
       } catch (error) {
-        console.error('Failed to hydrate workspace session:', error)
+        // Why (issue #1158): previously this catch called hydrateWorkspaceSession
+        // with empty defaults, which overwrote the in-memory tab map. The
+        // debounced session writer then serialized that empty state back to
+        // orca-data.json, silently erasing the user's saved tabs. The fix is
+        // to leave in-memory state untouched and keep hydrationSucceeded
+        // false so the writer stays gated. We still hydrate the persisted UI
+        // with defaults and flip workspaceSessionReady (via
+        // reconnectPersistedTerminals) so the UI can mount without a session.
+        const stepLabel = error instanceof Error && error.message ? error.message : String(error)
+        console.error(
+          '[startup] Workspace session hydration failed; leaving disk state untouched:',
+          stepLabel,
+          error
+        )
         if (!cancelled) {
           actions.hydratePersistedUI({
             lastActiveRepoId: null,
@@ -291,16 +313,11 @@ function App(): React.JSX.Element {
             dismissedUpdateVersion: null,
             lastUpdateCheckAt: null
           })
-          actions.hydrateWorkspaceSession({
-            activeRepoId: null,
-            activeWorktreeId: null,
-            activeTabId: null,
-            tabsByWorktree: {},
-            terminalLayoutsByTabId: {}
-          })
-          // Why: hydrateWorkspaceSession no longer sets workspaceSessionReady.
-          // The error path has no worktrees to reconnect, but must still flip
-          // the flag so auto-tab-creation and session writes are unblocked.
+          // Why: reconnectPersistedTerminals flips workspaceSessionReady so the
+          // UI mounts; auto-tab-creation becomes unblocked. hydrationSucceeded
+          // is intentionally NOT set — the session writer must stay a no-op
+          // until the user gets a clean restart, so we don't overwrite the
+          // on-disk file we failed to load.
           await actions.reconnectPersistedTerminals()
         }
       }
@@ -335,7 +352,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     let timer: number | null = null
     const unsub = useAppStore.subscribe((state) => {
-      if (!state.workspaceSessionReady) {
+      if (!shouldPersistWorkspaceSession(state)) {
         return
       }
       if (timer) {
@@ -369,7 +386,7 @@ function App(): React.JSX.Element {
       if (shutdownBuffersCaptured) {
         return
       }
-      if (!useAppStore.getState().workspaceSessionReady) {
+      if (!shouldPersistWorkspaceSession(useAppStore.getState())) {
         return
       }
       for (const capture of shutdownBufferCaptures) {
@@ -379,8 +396,11 @@ function App(): React.JSX.Element {
           // Don't let one pane's failure block the rest.
         }
       }
-      const state = useAppStore.getState()
-      window.api.session.setSync(buildWorkspaceSessionPayload(state))
+      // Why: re-read state after capture() calls populated scrollback buffers
+      // into the store via Zustand setters. The earlier read is only for the
+      // gating flags and would miss those updates.
+      const freshState = useAppStore.getState()
+      window.api.session.setSync(buildWorkspaceSessionPayload(freshState))
       shutdownBuffersCaptured = true
     }
     window.addEventListener('beforeunload', captureAndFlush)

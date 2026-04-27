@@ -2,8 +2,16 @@
 load/save, and flush logic in one file so the full storage contract is reviewable
 as a unit instead of being scattered across modules. */
 import { app } from 'electron'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'fs'
-import { writeFile, rename, mkdir, rm } from 'fs/promises'
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  renameSync,
+  unlinkSync,
+  copyFileSync
+} from 'fs'
+import { writeFile, rename, mkdir, rm, copyFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import type { PersistedState, Repo, WorktreeMeta, GlobalSettings } from '../shared/types'
@@ -46,6 +54,18 @@ function getDataFile(): string {
   return _dataFile
 }
 
+// Why (issue #1158): keep 5 rolling backups of orca-data.json so a corrupt or
+// empty write (e.g., a hydration crash that serialized empty state over the
+// user's tabs) leaves at least one earlier copy recoverable. Five snapshots
+// at ≥1-hour spacing cover roughly the most recent work session without
+// churning disk on every 300ms debounced tick.
+const BACKUP_COUNT = 5
+const BACKUP_MIN_INTERVAL_MS = 60 * 60 * 1000
+
+function backupPath(dataFile: string, index: number): string {
+  return `${dataFile}.bak.${index}`
+}
+
 function normalizeSortBy(sortBy: unknown): 'name' | 'smart' | 'recent' | 'repo' {
   if (sortBy === 'smart' || sortBy === 'recent' || sortBy === 'repo' || sortBy === 'name') {
     return sortBy
@@ -65,9 +85,71 @@ export class Store {
   private pendingWrite: Promise<void> | null = null
   private writeGeneration = 0
   private gitUsernameCache = new Map<string, string>()
+  // Why (issue #1158): debounced writes fire as often as every 300ms during
+  // active use. Rotating a 5-slot ring on every tick would waste IO and
+  // quickly replace every older backup with near-identical snapshots, which
+  // defeats the point of having a rolling safety net. Gate rotation on a
+  // minimum interval so the ring captures meaningfully different moments.
+  private lastBackupAt = 0
 
   constructor() {
     this.state = this.load()
+  }
+
+  private shouldRotateBackups(now: number): boolean {
+    return now - this.lastBackupAt >= BACKUP_MIN_INTERVAL_MS
+  }
+
+  // Why: rotate oldest → discarded, then .bak.i → .bak.i+1 by rename (cheap;
+  // those files aren't visible to load()). The current data file is copied
+  // to .bak.0 rather than renamed so dataFile never temporarily disappears —
+  // a crash between rotation and the new write would otherwise leave load()
+  // falling back to defaults even though .bak.0 held the latest good state.
+  private async rotateBackupsAsync(dataFile: string): Promise<void> {
+    if (!existsSync(dataFile)) {
+      return
+    }
+    await rm(backupPath(dataFile, BACKUP_COUNT - 1)).catch(() => {})
+    for (let i = BACKUP_COUNT - 2; i >= 0; i--) {
+      const src = backupPath(dataFile, i)
+      const dst = backupPath(dataFile, i + 1)
+      if (existsSync(src)) {
+        await rename(src, dst).catch((err) => {
+          console.error('[persistence] Failed to rotate backup', src, '→', dst, err)
+        })
+      }
+    }
+    await copyFile(dataFile, backupPath(dataFile, 0)).catch((err) => {
+      console.error('[persistence] Failed to snapshot current file to .bak.0:', err)
+    })
+  }
+
+  private rotateBackupsSync(dataFile: string): void {
+    if (!existsSync(dataFile)) {
+      return
+    }
+    try {
+      unlinkSync(backupPath(dataFile, BACKUP_COUNT - 1))
+    } catch {
+      // Missing file is expected on first rotation — any other error is
+      // best-effort; we proceed with rotation rather than skip the write.
+    }
+    for (let i = BACKUP_COUNT - 2; i >= 0; i--) {
+      const src = backupPath(dataFile, i)
+      const dst = backupPath(dataFile, i + 1)
+      if (existsSync(src)) {
+        try {
+          renameSync(src, dst)
+        } catch (err) {
+          console.error('[persistence] Failed to rotate backup', src, '→', dst, err)
+        }
+      }
+    }
+    try {
+      copyFileSync(dataFile, backupPath(dataFile, 0))
+    } catch (err) {
+      console.error('[persistence] Failed to snapshot current file to .bak.0:', err)
+    }
   }
 
   private load(): PersistedState {
@@ -184,6 +266,15 @@ export class Store {
     const dataFile = getDataFile()
     const dir = dirname(dataFile)
     await mkdir(dir, { recursive: true }).catch(() => {})
+    // Why (issue #1158): rotate BEFORE the new write so the soon-to-be
+    // overwritten state is captured as .bak.0. Rotation failures are logged
+    // but non-fatal — losing a rolling backup is strictly better than
+    // skipping the write entirely.
+    const now = Date.now()
+    if (this.shouldRotateBackups(now)) {
+      await this.rotateBackupsAsync(dataFile)
+      this.lastBackupAt = now
+    }
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
     // Why: wrap write+rename in try/finally-on-error so any failure (ENOSPC,
     // ENFILE, EIO, permission) removes the tmp file rather than leaving a
@@ -213,6 +304,15 @@ export class Store {
     const dir = dirname(dataFile)
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
+    }
+    // Why (issue #1158): shutdown is the most important moment to take a
+    // snapshot — the next launch could be the one that hits the hydration
+    // crash. Apply the same min-interval gate as the async path so a
+    // restart-storm still only rotates once per hour.
+    const now = Date.now()
+    if (this.shouldRotateBackups(now)) {
+      this.rotateBackupsSync(dataFile)
+      this.lastBackupAt = now
     }
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
     // Why: mirror the async path — on any failure between writeFileSync and
