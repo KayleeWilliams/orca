@@ -62,15 +62,20 @@ export class HistoryManager {
       }
       writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
 
-      // Why: if a session ID is reused after a previous clean exit, the old
-      // checkpoint.json may still be on disk. Without removing it, a crash
+      // Why: if a session ID is reused after a previous clean exit, stale
+      // recovery files may still be on disk. Without removing them, a crash
       // before the first 5s checkpoint tick would cause detectColdRestore to
-      // replay stale terminal content from the previous session.
+      // replay stale terminal content from the previous session. Both
+      // checkpoint.json and scrollback.bin (legacy) must be cleaned up
+      // because the reader falls back to scrollback.bin when no checkpoint
+      // exists.
       const checkpointPath = join(dir, 'checkpoint.json')
-      try {
-        unlinkSync(checkpointPath)
-      } catch {
-        // ENOENT is expected for new sessions
+      for (const staleFile of [checkpointPath, join(dir, 'scrollback.bin')]) {
+        try {
+          unlinkSync(staleFile)
+        } catch {
+          // ENOENT is expected for new sessions
+        }
       }
 
       this.writers.set(sessionId, {
