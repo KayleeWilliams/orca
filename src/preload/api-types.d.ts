@@ -44,6 +44,7 @@ import type {
   SearchOptions,
   SearchResult,
   StatsSummary,
+  MemorySnapshot,
   UpdateStatus,
   Worktree,
   WorktreeMeta,
@@ -206,6 +207,10 @@ export type ExportApi = {
 
 export type StatsApi = {
   getSummary: () => Promise<StatsSummary>
+}
+
+export type MemoryApi = {
+  getSnapshot: () => Promise<MemorySnapshot>
 }
 
 export type ClaudeUsageApi = {
@@ -574,6 +579,7 @@ export type PreloadApi = {
     onClearDismissal: (callback: () => void) => () => void
   }
   stats: StatsApi
+  memory: MemoryApi
   claudeUsage: ClaudeUsageApi
   codexUsage: CodexUsageApi
   fs: {
