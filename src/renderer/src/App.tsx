@@ -159,14 +159,13 @@ function App(): React.JSX.Element {
   useEditorExternalWatch()
   useGlobalFileDrop()
 
-  // Why: toggling either sidebar open/closed is an instantaneous width change
-  // (unlike a drag, which is gradual). useLayoutEffect fires synchronously
-  // after React commits DOM mutations and BEFORE the browser paints — so by
-  // dispatching SYNC_FIT_PANES_EVENT here, the terminal fits and restores
-  // its scroll inside the same frame as the width change. No visible
-  // "wrongly-sized terminal" transient, no delayed snap. The subsequent
-  // ResizeObserver rAF and 150ms debounced fit become no-ops because
-  // proposeDimensions() will already match the current cols/rows.
+  // Why: sidebar open/close flips width instantaneously. useLayoutEffect
+  // runs synchronously after React commits the DOM but before paint, so
+  // dispatching SYNC_FIT_PANES_EVENT here lets the terminal reflow in the
+  // same frame as the width change — no "wrongly-sized terminal" transient
+  // and no delayed snap. The later ResizeObserver rAF and 150ms debounced
+  // fit both become no-ops because proposeDimensions() will match the
+  // already-fitted cols/rows.
   useLayoutEffect(() => {
     window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT))
   }, [sidebarOpen, rightSidebarOpen])
