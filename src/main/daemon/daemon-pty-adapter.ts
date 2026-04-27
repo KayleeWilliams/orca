@@ -63,6 +63,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private coldRestoreCache = new Map<string, { scrollback: string; cwd: string }>()
   private activeSessionIds = new Set<string>()
   private checkpointInterval: ReturnType<typeof setInterval> | null = null
+  private checkpointInFlight: Promise<void> | null = null
   private static CHECKPOINT_INTERVAL_MS = 5_000
 
   constructor(opts: DaemonPtyAdapterOptions) {
@@ -422,6 +423,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
       clearInterval(this.checkpointInterval)
       this.checkpointInterval = null
     }
+    // Why: wait for any in-flight timer pass to finish before starting
+    // the final checkpoint. Otherwise both passes race on the shared tmp
+    // file, risking ENOENT on rename and disabling future writes.
+    if (this.checkpointInFlight) {
+      await this.checkpointInFlight
+    }
     // Why: without a final checkpoint, sessions opened after the last timer
     // tick have no checkpoint.json on disk. If the detached daemon later
     // dies, detectColdRestore finds nothing to restore from. Must await
@@ -444,7 +451,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return
     }
     this.checkpointInterval = setInterval(() => {
-      void this.checkpointAllSessions()
+      // Why: if the previous pass is still in-flight (slow RPC or disk),
+      // skip this tick. Overlapping passes race on the shared tmp file
+      // in checkpoint(), and a lost rename triggers handleWriteError which
+      // permanently disables the session's history writes.
+      if (this.checkpointInFlight) {
+        return
+      }
+      this.checkpointInFlight = this.checkpointAllSessions().finally(() => {
+        this.checkpointInFlight = null
+      })
     }, DaemonPtyAdapter.CHECKPOINT_INTERVAL_MS)
   }
 
