@@ -51,6 +51,7 @@ describe('DaemonClient', () => {
     onControlMessage?: (msg: unknown) => string | null
     onStreamHello?: (msg: HelloMessage) => void
     rejectVersion?: boolean
+    ignoreHello?: boolean
   }): Promise<void> {
     return new Promise((resolve) => {
       server = createServer((socket) => {
@@ -69,6 +70,9 @@ describe('DaemonClient', () => {
 
             if (msg.type === 'hello') {
               const hello = msg as HelloMessage
+              if (opts?.ignoreHello) {
+                return
+              }
               if (opts?.rejectVersion) {
                 socket.write(encodeNdjson({ type: 'hello', ok: false, error: 'Version mismatch' }))
                 return
@@ -111,6 +115,13 @@ describe('DaemonClient', () => {
 
       client = new DaemonClient({ socketPath, tokenPath })
       await expect(client.ensureConnected()).rejects.toThrow()
+    })
+
+    it('rejects when the daemon accepts a socket but never answers hello', async () => {
+      await startMockDaemon({ ignoreHello: true })
+
+      client = new DaemonClient({ socketPath, tokenPath, handshakeTimeoutMs: 10 })
+      await expect(client.ensureConnected()).rejects.toThrow('Hello timed out')
     })
   })
 
