@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- Why: keeps the TerminalHost IPC surface spec in one file; splitting would fragment coverage of a single tightly-coupled unit. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TerminalHost } from './terminal-host'
 import type { SubprocessHandle } from './session'
@@ -5,6 +6,7 @@ import type { SubprocessHandle } from './session'
 function createMockSubprocess(): SubprocessHandle {
   let onDataCb: ((data: string) => void) | null = null
   let onExitCb: ((code: number) => void) | null = null
+  let foreground: string | null = null
   return {
     pid: 99999,
     write: vi.fn(),
@@ -14,6 +16,7 @@ function createMockSubprocess(): SubprocessHandle {
     }),
     forceKill: vi.fn(),
     signal: vi.fn(),
+    getForegroundProcess: () => foreground,
     onData(cb) {
       onDataCb = cb
     },
@@ -26,8 +29,15 @@ function createMockSubprocess(): SubprocessHandle {
     },
     get _onExitCb() {
       return onExitCb
+    },
+    _setForeground(name: string | null) {
+      foreground = name
     }
-  } as SubprocessHandle & { _onDataCb: typeof onDataCb; _onExitCb: typeof onExitCb }
+  } as SubprocessHandle & {
+    _onDataCb: typeof onDataCb
+    _onExitCb: typeof onExitCb
+    _setForeground: (name: string | null) => void
+  }
 }
 
 type MockSpawnFn = (opts: {
@@ -45,6 +55,7 @@ describe('TerminalHost', () => {
   let lastSubprocess: ReturnType<typeof createMockSubprocess> & {
     _onDataCb: ((data: string) => void) | null
     _onExitCb: ((code: number) => void) | null
+    _setForeground: (name: string | null) => void
   }
 
   beforeEach(() => {
@@ -52,6 +63,7 @@ describe('TerminalHost', () => {
       const sub = createMockSubprocess() as ReturnType<typeof createMockSubprocess> & {
         _onDataCb: ((data: string) => void) | null
         _onExitCb: ((code: number) => void) | null
+        _setForeground: (name: string | null) => void
       }
       lastSubprocess = sub
       return sub
@@ -274,6 +286,40 @@ describe('TerminalHost', () => {
       const sessions = host.listSessions()
       expect(sessions).toHaveLength(2)
       expect(sessions.map((s) => s.sessionId).sort()).toEqual(['session-1', 'session-2'])
+    })
+  })
+
+  describe('getForegroundProcess', () => {
+    // Why: TerminalHost.getForegroundProcess deliberately returns null rather
+    // than throwing for unknown/dead sessions, unlike getCwd() which throws.
+    // The poller calls this at a 2s cadence for every tracked pane; throwing
+    // would force the poller to add try/catch around every tick or else spam
+    // the console with stale-session errors during the normal pane-exit race.
+    it('forwards the subprocess foreground process name', async () => {
+      await host.createOrAttach({
+        sessionId: 'session-1',
+        cols: 80,
+        rows: 24,
+        streamClient: { onData: vi.fn(), onExit: vi.fn() }
+      })
+      lastSubprocess._setForeground('codex')
+      expect(host.getForegroundProcess('session-1')).toBe('codex')
+    })
+
+    it('returns null for an unknown session id', () => {
+      expect(host.getForegroundProcess('nonexistent')).toBeNull()
+    })
+
+    it('returns null for an exited session', async () => {
+      await host.createOrAttach({
+        sessionId: 'session-1',
+        cols: 80,
+        rows: 24,
+        streamClient: { onData: vi.fn(), onExit: vi.fn() }
+      })
+      lastSubprocess._setForeground('codex')
+      lastSubprocess._onExitCb?.(0)
+      expect(host.getForegroundProcess('session-1')).toBeNull()
     })
   })
 

@@ -8,7 +8,12 @@ import { DaemonClient } from './client'
 import { HistoryManager } from './history-manager'
 import { HistoryReader } from './history-reader'
 import { supportsPtyStartupBarrier } from './shell-ready'
-import type { CreateOrAttachResult, DaemonEvent, ListSessionsResult } from './types'
+import type {
+  CreateOrAttachResult,
+  DaemonEvent,
+  GetForegroundProcessResult,
+  ListSessionsResult
+} from './types'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 
 export type DaemonPtyAdapterOptions = {
@@ -248,8 +253,23 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return false
   }
 
-  async getForegroundProcess(_id: string): Promise<string | null> {
-    return null
+  async getForegroundProcess(id: string): Promise<string | null> {
+    // Why: this RPC was added alongside the agent-foreground poller. Old
+    // daemons that predate it reject with an "unknown request type" error.
+    // Returning null preserves the poller's "unknown = don't fire a
+    // transition" contract, so a stale daemon falls back to the 30-min TTL
+    // instead of crashing the poll pass. Any other error (disconnect, socket
+    // gone) also degrades to null rather than surfacing — the next poll will
+    // try again and, if it's a real daemon-death, withDaemonRetry on the
+    // next spawn respawns it.
+    try {
+      const result = await this.client.request<GetForegroundProcessResult>('getForegroundProcess', {
+        sessionId: id
+      })
+      return result.foreground ?? null
+    } catch {
+      return null
+    }
   }
 
   async serialize(ids: string[]): Promise<string> {

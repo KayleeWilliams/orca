@@ -16,6 +16,7 @@ function createMockSubprocess(): SubprocessHandle {
     kill() {},
     forceKill() {},
     signal() {},
+    getForegroundProcess: () => null,
     onData() {},
     onExit() {}
   }

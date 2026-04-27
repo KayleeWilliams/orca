@@ -13,8 +13,10 @@
  * tracked.
  *
  * Platform fallback: when `getForegroundProcess` returns null or throws
- * (Windows, SSH remotes), the poller emits nothing — the 30-min staleness
- * TTL + renderer's decay-to-idle handles those cases.
+ * (Windows, SSH remotes, or daemon-backed PTYs running an older daemon
+ * protocol that predates the getForegroundProcess RPC), the poller emits
+ * nothing — the 30-min staleness TTL + renderer's decay-to-idle handles
+ * those cases.
  */
 
 const DEFAULT_POLL_INTERVAL_MS = 2_000

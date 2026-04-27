@@ -273,6 +273,11 @@ export class DaemonServer {
       case 'getCwd':
         return { cwd: this.host.getCwd(request.payload.sessionId) }
 
+      case 'getForegroundProcess':
+        return {
+          foreground: this.host.getForegroundProcess(request.payload.sessionId)
+        }
+
       case 'clearScrollback':
         this.host.clearScrollback(request.payload.sessionId)
         return {}

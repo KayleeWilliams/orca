@@ -157,6 +157,21 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
         // Process may already be dead
       }
     },
+    // Why: node-pty exposes the current foreground process-group leader name
+    // via `proc.process`, which under the hood calls tcgetpgrp on the PTY fd.
+    // Same native layer that can throw Napi::Error post-exit as write/resize,
+    // so we gate on the `dead` flag and swallow exceptions — the poller
+    // treats null as "unknown, don't fire a transition" rather than "shell".
+    getForegroundProcess: () => {
+      if (dead) {
+        return null
+      }
+      try {
+        return proc.process || null
+      } catch {
+        return null
+      }
+    },
     onData: (cb) => {
       onDataCb = cb
     },

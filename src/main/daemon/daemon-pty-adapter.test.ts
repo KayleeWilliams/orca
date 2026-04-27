@@ -15,9 +15,11 @@ function createTestDir(): string {
 function createMockSubprocess(): SubprocessHandle & {
   _simulateData: (data: string) => void
   _simulateExit: (code: number) => void
+  _setForeground: (name: string | null) => void
 } {
   let onDataCb: ((data: string) => void) | null = null
   let onExitCb: ((code: number) => void) | null = null
+  let foreground: string | null = null
   return {
     pid: 66666,
     write: vi.fn(),
@@ -25,6 +27,7 @@ function createMockSubprocess(): SubprocessHandle & {
     kill: vi.fn(() => setTimeout(() => onExitCb?.(0), 5)),
     forceKill: vi.fn(),
     signal: vi.fn(),
+    getForegroundProcess: () => foreground,
     onData(cb) {
       onDataCb = cb
     },
@@ -36,6 +39,9 @@ function createMockSubprocess(): SubprocessHandle & {
     },
     _simulateExit(code: number) {
       onExitCb?.(code)
+    },
+    _setForeground(name: string | null) {
+      foreground = name
     }
   }
 }
@@ -277,8 +283,33 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(await adapter.hasChildProcesses(id)).toBe(false)
     })
 
-    it('returns null for getForegroundProcess (stub)', async () => {
+    it('returns null when the subprocess has no foreground process name', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      expect(await adapter.getForegroundProcess(id)).toBeNull()
+    })
+
+    it('forwards the subprocess foreground process name verbatim', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      // Why: verifies the full RPC path (adapter → server → host → session →
+      // subprocess.getForegroundProcess) — the agent-foreground poller relies
+      // on this round-trip to detect non-shell→shell transitions on daemon PTYs.
+      lastSubprocess._setForeground('codex')
+      expect(await adapter.getForegroundProcess(id)).toBe('codex')
+    })
+
+    it('returns null for an unknown session id', async () => {
+      expect(await adapter.getForegroundProcess('nonexistent-session')).toBeNull()
+    })
+
+    it('returns null when the RPC rejects (simulates a pre-v3.1 daemon)', async () => {
+      // Why: production daemons can outlive app upgrades. An older daemon
+      // process that predates this RPC rejects the request as "Unknown
+      // request type". The adapter must catch that and return null so the
+      // poller falls back to the 30-min TTL instead of surfacing the error.
+      // Shutting down the server mid-test produces a "Connection lost"
+      // rejection, which exercises the same try/catch branch.
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      await server.shutdown()
       expect(await adapter.getForegroundProcess(id)).toBeNull()
     })
   })

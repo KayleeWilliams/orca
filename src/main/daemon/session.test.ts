@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- Why: keeps the Session state-machine spec in one file; splitting would fragment coverage of a single tightly-coupled unit. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import type { SessionState, ShellReadyState } from './types'
@@ -10,6 +11,7 @@ function createMockSubprocess() {
   let onExit: ((code: number) => void) | null = null
   let killed = false
   let pid = 12345
+  let foreground: string | null = null
 
   return {
     written,
@@ -34,6 +36,12 @@ function createMockSubprocess() {
     },
     signal(sig: string) {
       signals.push(sig)
+    },
+    getForegroundProcess(): string | null {
+      return foreground
+    },
+    setForeground(name: string | null) {
+      foreground = name
     },
     onData(cb: (data: string) => void) {
       onData = cb
@@ -106,6 +114,25 @@ describe('Session', () => {
       createSession()
       subprocess.simulateExit(42)
       expect(session.exitCode).toBe(42)
+    })
+  })
+
+  describe('getForegroundProcess', () => {
+    it('forwards the subprocess foreground process name while running', () => {
+      createSession()
+      subprocess.setForeground('codex')
+      expect(session.getForegroundProcess()).toBe('codex')
+    })
+
+    it('returns null after the subprocess has exited', () => {
+      // Why: node-pty's .process lookup on a dead PTY can throw Napi errors
+      // from its native layer. Short-circuiting at the Session level before
+      // we delegate to subprocess.getForegroundProcess() protects the daemon
+      // process from those post-exit reads.
+      createSession()
+      subprocess.setForeground('codex')
+      subprocess.simulateExit(0)
+      expect(session.getForegroundProcess()).toBeNull()
     })
   })
 

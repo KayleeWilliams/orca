@@ -136,6 +136,14 @@ export type ClearScrollbackRequest = {
   }
 }
 
+export type GetForegroundProcessRequest = {
+  id: string
+  type: 'getForegroundProcess'
+  payload: {
+    sessionId: string
+  }
+}
+
 export type ShutdownRequest = {
   id: string
   type: 'shutdown'
@@ -160,6 +168,7 @@ export type DaemonRequest =
   | DetachRequest
   | GetCwdRequest
   | ClearScrollbackRequest
+  | GetForegroundProcessRequest
   | ShutdownRequest
   | PingRequest
 
@@ -188,6 +197,10 @@ export type CreateOrAttachResult = {
 
 export type ListSessionsResult = {
   sessions: SessionInfo[]
+}
+
+export type GetForegroundProcessResult = {
+  foreground: string | null
 }
 
 export type SessionInfo = {

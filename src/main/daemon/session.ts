@@ -16,6 +16,11 @@ export type SubprocessHandle = {
   signal(sig: string): void
   onData(cb: (data: string) => void): void
   onExit(cb: (code: number) => void): void
+  /** Name of the process currently owning the PTY's foreground process group.
+   *  Returns null when unknown (platform doesn't support it, PTY is dead, or
+   *  node-pty's tcgetpgrp lookup fails). The daemon forwards this verbatim so
+   *  the main-process poller can apply its shell/agent classification. */
+  getForegroundProcess(): string | null
 }
 
 export type SessionOptions = {
@@ -177,6 +182,13 @@ export class Session {
 
   getCwd(): string | null {
     return this.emulator.getCwd()
+  }
+
+  getForegroundProcess(): string | null {
+    if (this._state === 'exited' || this._disposed) {
+      return null
+    }
+    return this.subprocess.getForegroundProcess()
   }
 
   clearScrollback(): void {

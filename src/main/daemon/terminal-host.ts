@@ -146,6 +146,14 @@ export class TerminalHost {
     return this.getAliveSession(sessionId).getCwd()
   }
 
+  getForegroundProcess(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.isAlive) {
+      return null
+    }
+    return session.getForegroundProcess()
+  }
+
   clearScrollback(sessionId: string): void {
     this.getAliveSession(sessionId).clearScrollback()
   }

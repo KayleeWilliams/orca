@@ -20,6 +20,7 @@ function createMockSubprocess(): SubprocessHandle {
     kill: vi.fn(() => setTimeout(() => onExitCb?.(0), 5)),
     forceKill: vi.fn(),
     signal: vi.fn(),
+    getForegroundProcess: () => null,
     onData(_cb: (data: string) => void) {},
     onExit(cb: (code: number) => void) {
       onExitCb = cb

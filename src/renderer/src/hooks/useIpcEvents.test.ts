@@ -587,6 +587,323 @@ describe('useIpcEvents updater integration', () => {
   })
 })
 
+describe('useIpcEvents foreground-shell routing', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllGlobals()
+  })
+
+  it('drops the agent-status row for the pane owning the ptyId when pty:foreground-shell fires', async () => {
+    // Why: this guards the renderer-side completion of the whole
+    // foreground-process-agent-exit flow. The main-process poller emits a
+    // ptyId-only payload on `pty:foreground-shell`; the renderer must resolve
+    // that ptyId to a paneKey via terminalLayoutsByTabId.ptyIdsByLeafId and
+    // call removeAgentStatus. If this wiring regresses, interrupted agent
+    // rows will linger until their 30-min TTL — silently — because the
+    // underlying poller and the paneKey resolver both still pass their own
+    // unit tests. Only an end-to-end assertion over the listener catches it.
+    const removeAgentStatus = vi.fn()
+    const foregroundShellListenerRef: {
+      current: ((data: { id: string }) => void) | null
+    } = { current: null }
+
+    vi.doMock('react', async () => {
+      const actual = await vi.importActual<typeof ReactModule>('react')
+      return {
+        ...actual,
+        useEffect: (effect: () => void | (() => void)) => {
+          effect()
+        }
+      }
+    })
+
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        getState: () => ({
+          setUpdateStatus: vi.fn(),
+          fetchRepos: vi.fn(),
+          fetchWorktrees: vi.fn(),
+          setActiveView: vi.fn(),
+          activeModal: null,
+          closeModal: vi.fn(),
+          openModal: vi.fn(),
+          activeWorktreeId: 'wt-1',
+          activeView: 'terminal',
+          setActiveRepo: vi.fn(),
+          setActiveWorktree: vi.fn(),
+          revealWorktreeInSidebar: vi.fn(),
+          setIsFullScreen: vi.fn(),
+          activeTabType: 'terminal',
+          editorFontZoomLevel: 0,
+          setEditorFontZoomLevel: vi.fn(),
+          setRateLimitsFromPush: vi.fn(),
+          setSshConnectionState: vi.fn(),
+          setSshTargetLabels: vi.fn(),
+          enqueueSshCredentialRequest: vi.fn(),
+          removeSshCredentialRequest: vi.fn(),
+          settings: { terminalFontSize: 13 },
+          removeAgentStatus,
+          terminalLayoutsByTabId: {
+            'tab-1': {
+              ptyIdsByLeafId: {
+                'pane:1': 'pty-left',
+                'pane:2': 'pty-right'
+              }
+            }
+          }
+        })
+      }
+    }))
+
+    vi.doMock('@/lib/ui-zoom', () => ({ applyUIZoom: vi.fn() }))
+    vi.doMock('@/lib/worktree-activation', () => ({
+      activateAndRevealWorktree: vi.fn(),
+      ensureWorktreeHasInitialTerminal: vi.fn()
+    }))
+    vi.doMock('@/components/sidebar/visible-worktrees', () => ({
+      getVisibleWorktreeIds: () => []
+    }))
+    vi.doMock('@/lib/editor-font-zoom', () => ({
+      nextEditorFontZoomLevel: vi.fn(() => 0),
+      computeEditorFontSize: vi.fn(() => 13)
+    }))
+    vi.doMock('@/components/settings/SettingsConstants', () => ({
+      zoomLevelToPercent: vi.fn(() => 100),
+      ZOOM_MIN: -3,
+      ZOOM_MAX: 3
+    }))
+    vi.doMock('@/lib/zoom-events', () => ({ dispatchZoomLevelChanged: vi.fn() }))
+
+    vi.stubGlobal('window', {
+      api: {
+        pty: {
+          onForegroundShell: (listener: (data: { id: string }) => void) => {
+            foregroundShellListenerRef.current = listener
+            return () => {}
+          }
+        },
+        agentStatus: { onSet: () => () => {} },
+        repos: { onChanged: () => () => {} },
+        worktrees: { onChanged: () => () => {} },
+        ui: {
+          onOpenSettings: () => () => {},
+          onToggleLeftSidebar: () => () => {},
+          onToggleRightSidebar: () => () => {},
+          onToggleWorktreePalette: () => () => {},
+          onOpenQuickOpen: () => () => {},
+          onOpenNewWorkspace: () => () => {},
+          onJumpToWorktreeIndex: () => () => {},
+          onWorktreeHistoryNavigate: () => () => {},
+          onActivateWorktree: () => () => {},
+          onCreateTerminal: () => () => {},
+          onRequestTerminalCreate: () => () => {},
+          replyTerminalCreate: () => {},
+          onSplitTerminal: () => () => {},
+          onRenameTerminal: () => () => {},
+          onFocusTerminal: () => () => {},
+          onCloseTerminal: () => () => {},
+          onNewBrowserTab: () => () => {},
+          onRequestTabCreate: () => () => {},
+          replyTabCreate: () => {},
+          onRequestTabClose: () => () => {},
+          replyTabClose: () => {},
+          onNewTerminalTab: () => () => {},
+          onCloseActiveTab: () => () => {},
+          onSwitchTab: () => () => {},
+          onSwitchTerminalTab: () => () => {},
+          onToggleStatusBar: () => () => {},
+          onFullscreenChanged: () => () => {},
+          onTerminalZoom: () => () => {},
+          getZoomLevel: () => 0,
+          set: vi.fn()
+        },
+        updater: {
+          getStatus: () => Promise.resolve({ state: 'idle' }),
+          onStatus: () => () => {},
+          onClearDismissal: () => () => {}
+        },
+        browser: {
+          onGuestLoadFailed: () => () => {},
+          onOpenLinkInOrcaTab: () => () => {},
+          onNavigationUpdate: () => () => {},
+          onActivateView: () => () => {}
+        },
+        rateLimits: {
+          get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
+          onUpdate: () => () => {}
+        },
+        ssh: {
+          listTargets: () => Promise.resolve([]),
+          getState: () => Promise.resolve(null),
+          onStateChanged: () => () => {},
+          onCredentialRequest: () => () => {},
+          onCredentialResolved: () => () => {}
+        }
+      }
+    })
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+    useIpcEvents()
+    await Promise.resolve()
+
+    if (typeof foregroundShellListenerRef.current !== 'function') {
+      throw new Error('Expected pty:foreground-shell listener to be registered')
+    }
+
+    foregroundShellListenerRef.current({ id: 'pty-right' })
+
+    expect(removeAgentStatus).toHaveBeenCalledTimes(1)
+    expect(removeAgentStatus).toHaveBeenCalledWith('tab-1:2')
+  })
+
+  it('no-ops when the ptyId does not resolve to any tracked pane', async () => {
+    // Why: the poller can race a pane teardown — the PTY dies, the renderer
+    // clears its ptyIdsByLeafId entry, and the in-flight poll still delivers
+    // one final shell event. removeAgentStatus must NOT be called with null
+    // / an empty string; unknown ptyIds are a no-op by design.
+    const removeAgentStatus = vi.fn()
+    const foregroundShellListenerRef: {
+      current: ((data: { id: string }) => void) | null
+    } = { current: null }
+
+    vi.doMock('react', async () => {
+      const actual = await vi.importActual<typeof ReactModule>('react')
+      return {
+        ...actual,
+        useEffect: (effect: () => void | (() => void)) => {
+          effect()
+        }
+      }
+    })
+
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        getState: () => ({
+          setUpdateStatus: vi.fn(),
+          fetchRepos: vi.fn(),
+          fetchWorktrees: vi.fn(),
+          setActiveView: vi.fn(),
+          activeModal: null,
+          closeModal: vi.fn(),
+          openModal: vi.fn(),
+          activeWorktreeId: 'wt-1',
+          activeView: 'terminal',
+          setActiveRepo: vi.fn(),
+          setActiveWorktree: vi.fn(),
+          revealWorktreeInSidebar: vi.fn(),
+          setIsFullScreen: vi.fn(),
+          activeTabType: 'terminal',
+          editorFontZoomLevel: 0,
+          setEditorFontZoomLevel: vi.fn(),
+          setRateLimitsFromPush: vi.fn(),
+          setSshConnectionState: vi.fn(),
+          setSshTargetLabels: vi.fn(),
+          enqueueSshCredentialRequest: vi.fn(),
+          removeSshCredentialRequest: vi.fn(),
+          settings: { terminalFontSize: 13 },
+          removeAgentStatus,
+          terminalLayoutsByTabId: {}
+        })
+      }
+    }))
+
+    vi.doMock('@/lib/ui-zoom', () => ({ applyUIZoom: vi.fn() }))
+    vi.doMock('@/lib/worktree-activation', () => ({
+      activateAndRevealWorktree: vi.fn(),
+      ensureWorktreeHasInitialTerminal: vi.fn()
+    }))
+    vi.doMock('@/components/sidebar/visible-worktrees', () => ({
+      getVisibleWorktreeIds: () => []
+    }))
+    vi.doMock('@/lib/editor-font-zoom', () => ({
+      nextEditorFontZoomLevel: vi.fn(() => 0),
+      computeEditorFontSize: vi.fn(() => 13)
+    }))
+    vi.doMock('@/components/settings/SettingsConstants', () => ({
+      zoomLevelToPercent: vi.fn(() => 100),
+      ZOOM_MIN: -3,
+      ZOOM_MAX: 3
+    }))
+    vi.doMock('@/lib/zoom-events', () => ({ dispatchZoomLevelChanged: vi.fn() }))
+
+    vi.stubGlobal('window', {
+      api: {
+        pty: {
+          onForegroundShell: (listener: (data: { id: string }) => void) => {
+            foregroundShellListenerRef.current = listener
+            return () => {}
+          }
+        },
+        agentStatus: { onSet: () => () => {} },
+        repos: { onChanged: () => () => {} },
+        worktrees: { onChanged: () => () => {} },
+        ui: {
+          onOpenSettings: () => () => {},
+          onToggleLeftSidebar: () => () => {},
+          onToggleRightSidebar: () => () => {},
+          onToggleWorktreePalette: () => () => {},
+          onOpenQuickOpen: () => () => {},
+          onOpenNewWorkspace: () => () => {},
+          onJumpToWorktreeIndex: () => () => {},
+          onWorktreeHistoryNavigate: () => () => {},
+          onActivateWorktree: () => () => {},
+          onCreateTerminal: () => () => {},
+          onRequestTerminalCreate: () => () => {},
+          replyTerminalCreate: () => {},
+          onSplitTerminal: () => () => {},
+          onRenameTerminal: () => () => {},
+          onFocusTerminal: () => () => {},
+          onCloseTerminal: () => () => {},
+          onNewBrowserTab: () => () => {},
+          onRequestTabCreate: () => () => {},
+          replyTabCreate: () => {},
+          onRequestTabClose: () => () => {},
+          replyTabClose: () => {},
+          onNewTerminalTab: () => () => {},
+          onCloseActiveTab: () => () => {},
+          onSwitchTab: () => () => {},
+          onSwitchTerminalTab: () => () => {},
+          onToggleStatusBar: () => () => {},
+          onFullscreenChanged: () => () => {},
+          onTerminalZoom: () => () => {},
+          getZoomLevel: () => 0,
+          set: vi.fn()
+        },
+        updater: {
+          getStatus: () => Promise.resolve({ state: 'idle' }),
+          onStatus: () => () => {},
+          onClearDismissal: () => () => {}
+        },
+        browser: {
+          onGuestLoadFailed: () => () => {},
+          onOpenLinkInOrcaTab: () => () => {},
+          onNavigationUpdate: () => () => {},
+          onActivateView: () => () => {}
+        },
+        rateLimits: {
+          get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
+          onUpdate: () => () => {}
+        },
+        ssh: {
+          listTargets: () => Promise.resolve([]),
+          getState: () => Promise.resolve(null),
+          onStateChanged: () => () => {},
+          onCredentialRequest: () => () => {},
+          onCredentialResolved: () => () => {}
+        }
+      }
+    })
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+    useIpcEvents()
+    await Promise.resolve()
+
+    foregroundShellListenerRef.current?.({ id: 'pty-nowhere' })
+
+    expect(removeAgentStatus).not.toHaveBeenCalled()
+  })
+})
+
 describe('useIpcEvents browser tab close routing', () => {
   beforeEach(() => {
     vi.resetModules()
