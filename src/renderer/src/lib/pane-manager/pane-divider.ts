@@ -11,15 +11,15 @@ export function getDividerHitSize(styleOptions: PaneStyleOptions): number {
   return thickness + HIT_PADDING * 2
 }
 
+type DividerCallbacks = {
+  refitPanesUnder: (el: HTMLElement) => void
+  onLayoutChanged?: () => void
+}
+
 export function createDivider(
   isVertical: boolean,
   styleOptions: PaneStyleOptions,
-  callbacks: {
-    refitPanesUnder: (el: HTMLElement) => void
-    lockDragScroll: (el: HTMLElement) => void
-    unlockDragScroll: (el: HTMLElement) => void
-    onLayoutChanged?: () => void
-  }
+  callbacks: DividerCallbacks
 ): HTMLElement {
   const divider = document.createElement('div')
   divider.className = `pane-divider ${isVertical ? 'is-vertical' : 'is-horizontal'}`
@@ -45,12 +45,7 @@ export function createDivider(
 function attachDividerDrag(
   divider: HTMLElement,
   isVertical: boolean,
-  callbacks: {
-    refitPanesUnder: (el: HTMLElement) => void
-    lockDragScroll: (el: HTMLElement) => void
-    unlockDragScroll: (el: HTMLElement) => void
-    onLayoutChanged?: () => void
-  }
+  callbacks: DividerCallbacks
 ): void {
   const MIN_PANE_SIZE = 50
 
@@ -89,15 +84,6 @@ function attachDividerDrag(
     // Store current proportions as flex-basis values
     prevFlex = prevSize
     nextFlex = nextSize
-
-    // Why: we previously locked a drag-scroll snapshot on each pane and
-    // restored it on every mid-drag refit. That ran findLineByContent's
-    // 40-char prefix scan over the whole scrollback each frame — expensive
-    // on long Claude sessions and the source of the visible drag-lag. It
-    // turns out xterm's terminal.resize() already preserves viewportY
-    // across reflows natively (see scroll-reflow.test.ts "reference:
-    // undisturbed"), so a plain fit() each frame is sufficient. The
-    // default path in pane-tree-ops.ts safeFit() does exactly that.
   }
 
   const onPointerMove = (e: PointerEvent): void => {
@@ -136,8 +122,7 @@ function attachDividerDrag(
     dragging = false
     divider.releasePointerCapture(e.pointerId)
     divider.classList.remove('is-dragging')
-    // Final refit at the exact drop position. No drag-scroll unlock needed —
-    // see the onPointerDown comment: xterm preserves viewportY natively.
+    // Final refit at the exact drop position.
     if (prevEl) {
       callbacks.refitPanesUnder(prevEl)
     }

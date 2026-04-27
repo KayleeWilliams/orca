@@ -1,6 +1,5 @@
 import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
 import { createDivider } from './pane-divider'
-import { restoreScrollState } from './pane-scroll'
 
 export { findLineByContent, captureScrollState, restoreScrollState } from './pane-scroll'
 
@@ -13,8 +12,6 @@ type TreeOpsCallbacks = {
   getStyleOptions: () => PaneStyleOptions
   safeFit: (pane: ManagedPaneInternal) => void
   refitPanesUnder: (el: HTMLElement) => void
-  lockDragScroll: (el: HTMLElement) => void
-  unlockDragScroll: (el: HTMLElement) => void
   onLayoutChanged?: () => void
 }
 
@@ -27,24 +24,15 @@ function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows:
 }
 
 // Why: xterm's terminal.resize() (called by fitAddon.fit()) natively preserves
-// the user's scroll position across reflows — verified in scroll-reflow.test.ts
-// "reference: undisturbed" (old viewportY == new viewportY after resize).
-// So the default path here is just fit(); no capture/restore. Superset and
-// VSCode both rely on this same native behavior during sidebar/panel resizes
-// and don't suffer the mid-resize scroll drift we used to see.
+// viewportY across reflows — see scroll-reflow.test.ts "reference: undisturbed".
+// A plain fit() is all we need during sidebar drags, divider drags, and window
+// resizes. This matches how Superset and VSCode handle the same cases.
 //
-// Two narrow cases still need intervention:
-//   1. pendingSplitScrollState — wrapInSplit() reparents the DOM container,
-//      which causes the browser to asynchronously reset scrollTop to 0 during
-//      layout. splitPane captures scroll state once, leaves the flag on the
-//      pane for the duration of the post-split layout settling, and a
-//      separate scheduleSplitScrollRestore timeout does the authoritative
-//      restore. We skip capture/restore here because the authoritative path
-//      owns it.
-//   2. pendingDragScrollState — in-pane divider drag captures once at
-//      pointerdown and restores the same snapshot every frame to prevent
-//      cumulative drift from xterm's bottom-anchoring behavior when the user
-//      is pinned to the bottom. Unchanged.
+// pendingSplitScrollState is the one case where fit() alone isn't enough:
+// wrapInSplit() reparents the container, which makes the browser reset
+// scrollTop to 0 asynchronously. splitPane captures the pre-split state and
+// scheduleSplitScrollRestore owns the authoritative restore on a timer, so
+// safeFit here just fits and lets the scheduled restore do its job.
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
     const dims = getProposedDimensions(pane)
@@ -52,11 +40,6 @@ export function safeFit(pane: ManagedPaneInternal): void {
       // Why: divider drags fire refits every frame, but most frames do not
       // cross a cell boundary. Skipping those avoids FitAddon.clear()+refresh()
       // churn, which was causing visible terminal blinking while resizing.
-      return
-    }
-    if (pane.pendingDragScrollState) {
-      pane.fitAddon.fit()
-      restoreScrollState(pane.terminal, pane.pendingDragScrollState)
       return
     }
     pane.fitAddon.fit()
@@ -67,20 +50,7 @@ export function safeFit(pane: ManagedPaneInternal): void {
 
 export function fitAllPanesInternal(panes: Map<number, ManagedPaneInternal>): void {
   for (const pane of panes.values()) {
-    try {
-      const dims = getProposedDimensions(pane)
-      if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
-        continue
-      }
-      if (pane.pendingDragScrollState) {
-        pane.fitAddon.fit()
-        restoreScrollState(pane.terminal, pane.pendingDragScrollState)
-        continue
-      }
-      pane.fitAddon.fit()
-    } catch {
-      /* ignore */
-    }
+    safeFit(pane)
   }
 }
 
@@ -183,8 +153,6 @@ export function insertPaneNextTo(
   // Create divider
   const divider = createDivider(isVertical, callbacks.getStyleOptions(), {
     refitPanesUnder: callbacks.refitPanesUnder,
-    lockDragScroll: callbacks.lockDragScroll,
-    unlockDragScroll: callbacks.unlockDragScroll,
     onLayoutChanged: callbacks.onLayoutChanged
   })
 
