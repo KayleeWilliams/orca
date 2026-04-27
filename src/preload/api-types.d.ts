@@ -466,6 +466,13 @@ export type PreloadApi = {
       filter?: 'assigned' | 'created' | 'all' | 'completed'
       limit?: number
     }) => Promise<LinearIssue[]>
+    createIssue: (args: {
+      teamId: string
+      title: string
+      description?: string
+    }) => Promise<
+      { ok: true; id: string; identifier: string; url: string } | { ok: false; error: string }
+    >
     getIssue: (args: { id: string }) => Promise<LinearIssue | null>
     updateIssue: (args: {
       id: string

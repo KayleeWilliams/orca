@@ -494,6 +494,14 @@ const api = {
       limit?: number
     }): Promise<unknown[]> => ipcRenderer.invoke('linear:listIssues', args),
 
+    createIssue: (args: {
+      teamId: string
+      title: string
+      description?: string
+    }): Promise<
+      { ok: true; id: string; identifier: string; url: string } | { ok: false; error: string }
+    > => ipcRenderer.invoke('linear:createIssue', args),
+
     getIssue: (args: { id: string }): Promise<unknown> =>
       ipcRenderer.invoke('linear:getIssue', args),
 
