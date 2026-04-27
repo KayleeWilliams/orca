@@ -476,6 +476,9 @@ const api = {
 
     status: (): Promise<unknown> => ipcRenderer.invoke('linear:status'),
 
+    testConnection: (): Promise<{ ok: true; viewer: unknown } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('linear:testConnection'),
+
     searchIssues: (args: { query: string; limit?: number }): Promise<unknown[]> =>
       ipcRenderer.invoke('linear:searchIssues', args),
 

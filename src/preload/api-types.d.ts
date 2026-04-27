@@ -455,6 +455,7 @@ export type PreloadApi = {
     }) => Promise<{ ok: true; viewer: LinearViewer } | { ok: false; error: string }>
     disconnect: () => Promise<void>
     status: () => Promise<LinearConnectionStatus>
+    testConnection: () => Promise<{ ok: true; viewer: LinearViewer } | { ok: false; error: string }>
     searchIssues: (args: { query: string; limit?: number }) => Promise<LinearIssue[]>
     listIssues: (args?: {
       filter?: 'assigned' | 'created' | 'all' | 'completed'
