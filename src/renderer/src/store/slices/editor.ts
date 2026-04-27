@@ -119,7 +119,7 @@ export type OpenFile = {
   mode: 'edit' | 'diff' | 'conflict-review' | 'markdown-preview'
 }
 
-export type RightSidebarTab = 'explorer' | 'search' | 'source-control' | 'checks'
+export type RightSidebarTab = 'explorer' | 'search' | 'source-control' | 'checks' | 'ports'
 export type ActivityBarPosition = 'top' | 'side'
 
 export type MarkdownViewMode = 'source' | 'rich' | 'preview'
@@ -827,7 +827,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       // after close. Adding them to the reopen stack would let Cmd+Shift+T
       // try to reopen a path that no longer exists. Preview tabs are also
       // excluded — they are ephemeral views, not user-opened files.
-      if (closedFile && wtRecent && !shouldDeleteFromDisk && closedFile.mode !== 'markdown-preview') {
+      if (
+        closedFile &&
+        wtRecent &&
+        !shouldDeleteFromDisk &&
+        closedFile.mode !== 'markdown-preview'
+      ) {
         const { id: _id, isDirty: _dirty, ...snap } = closedFile
         const stack = s.recentlyClosedEditorTabsByWorktree[wtRecent] ?? []
         nextRecentlyClosed = {

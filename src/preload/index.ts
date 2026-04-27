@@ -13,7 +13,12 @@ import type {
 } from '../shared/types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../shared/runtime-types'
 import type { RateLimitState } from '../shared/rate-limit-types'
-import type { SshConnectionState, SshTarget } from '../shared/ssh-types'
+import type {
+  SshConnectionState,
+  SshTarget,
+  PortForwardEntry,
+  DetectedPort
+} from '../shared/ssh-types'
 import type { AgentStatusState } from '../shared/agent-status-types'
 import {
   ORCA_EDITOR_SAVE_DIRTY_FILES_EVENT,
@@ -1564,13 +1569,47 @@ const api = {
       remoteHost: string
       remotePort: number
       label?: string
-    }): Promise<unknown> => ipcRenderer.invoke('ssh:addPortForward', args),
+    }): Promise<PortForwardEntry> => ipcRenderer.invoke('ssh:addPortForward', args),
 
-    removePortForward: (args: { id: string }): Promise<boolean> =>
+    updatePortForward: (args: {
+      id: string
+      targetId: string
+      localPort: number
+      remoteHost: string
+      remotePort: number
+      label?: string
+    }): Promise<PortForwardEntry> => ipcRenderer.invoke('ssh:updatePortForward', args),
+
+    removePortForward: (args: { id: string }): Promise<PortForwardEntry | null> =>
       ipcRenderer.invoke('ssh:removePortForward', args),
 
-    listPortForwards: (args?: { targetId?: string }): Promise<unknown[]> =>
+    listPortForwards: (args?: { targetId?: string }): Promise<PortForwardEntry[]> =>
       ipcRenderer.invoke('ssh:listPortForwards', args),
+
+    listDetectedPorts: (args: { targetId: string }): Promise<DetectedPort[]> =>
+      ipcRenderer.invoke('ssh:listDetectedPorts', args),
+
+    onPortForwardsChanged: (
+      callback: (data: { targetId: string; forwards: PortForwardEntry[] }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { targetId: string; forwards: PortForwardEntry[] }
+      ) => callback(data)
+      ipcRenderer.on('ssh:port-forwards-changed', handler)
+      return () => ipcRenderer.removeListener('ssh:port-forwards-changed', handler)
+    },
+
+    onDetectedPortsChanged: (
+      callback: (data: { targetId: string; ports: DetectedPort[] }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { targetId: string; ports: DetectedPort[] }
+      ) => callback(data)
+      ipcRenderer.on('ssh:detected-ports-changed', handler)
+      return () => ipcRenderer.removeListener('ssh:detected-ports-changed', handler)
+    },
 
     browseDir: (args: {
       targetId: string

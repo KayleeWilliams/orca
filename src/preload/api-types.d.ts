@@ -85,7 +85,12 @@ import type {
   ClaudeUsageSummary
 } from '../../shared/claude-usage-types'
 import type { RateLimitState } from '../../shared/rate-limit-types'
-import type { SshConnectionState, SshTarget } from '../../shared/ssh-types'
+import type {
+  SshConnectionState,
+  SshTarget,
+  PortForwardEntry,
+  DetectedPort
+} from '../../shared/ssh-types'
 import type {
   CodexUsageBreakdownKind,
   CodexUsageBreakdownRow,
@@ -807,9 +812,24 @@ export type PreloadApi = {
       remoteHost: string
       remotePort: number
       label?: string
-    }) => Promise<unknown>
-    removePortForward: (args: { id: string }) => Promise<boolean>
-    listPortForwards: (args?: { targetId?: string }) => Promise<unknown[]>
+    }) => Promise<PortForwardEntry>
+    updatePortForward: (args: {
+      id: string
+      targetId: string
+      localPort: number
+      remoteHost: string
+      remotePort: number
+      label?: string
+    }) => Promise<PortForwardEntry>
+    removePortForward: (args: { id: string }) => Promise<PortForwardEntry | null>
+    listPortForwards: (args?: { targetId?: string }) => Promise<PortForwardEntry[]>
+    listDetectedPorts: (args: { targetId: string }) => Promise<DetectedPort[]>
+    onPortForwardsChanged: (
+      callback: (data: { targetId: string; forwards: PortForwardEntry[] }) => void
+    ) => () => void
+    onDetectedPortsChanged: (
+      callback: (data: { targetId: string; ports: DetectedPort[] }) => void
+    ) => () => void
     browseDir: (args: { targetId: string; dirPath: string }) => Promise<{
       entries: { name: string; isDirectory: boolean }[]
       resolvedPath: string

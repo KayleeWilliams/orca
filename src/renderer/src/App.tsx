@@ -675,6 +675,17 @@ function App(): React.JSX.Element {
         e.preventDefault()
         actions.setRightSidebarTab('source-control')
         actions.setRightSidebarOpen(true)
+        return
+      }
+
+      // Cmd+Shift+I — toggle right sidebar / ports tab (macOS only).
+      // Why: Ctrl+Shift+I is the built-in DevTools accelerator on Windows/Linux;
+      // intercepting it would break an essential developer tool.
+      if (isMac && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+        dispatchClearModifierHints()
+        e.preventDefault()
+        actions.setRightSidebarTab('ports')
+        actions.setRightSidebarOpen(true)
       }
     }
 
