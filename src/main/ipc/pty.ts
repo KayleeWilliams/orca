@@ -74,7 +74,7 @@ function getProvider(connectionId: string | null | undefined): IPtyProvider {
   return provider
 }
 
-function getProviderForPty(ptyId: string): IPtyProvider {
+export function getProviderForPty(ptyId: string): IPtyProvider {
   const connectionId = ptyOwnership.get(ptyId)
   if (connectionId === undefined) {
     return localProvider

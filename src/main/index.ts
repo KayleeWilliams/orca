@@ -45,7 +45,7 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
-import { getLocalPtyProvider, getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
+import { getProviderForPty, getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
 import { createAgentForegroundPoller } from './agent-foreground-poller'
 import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
@@ -207,9 +207,22 @@ function openMainWindow(): BrowserWindow {
       // signal keeps the main-side poller in lock-step with the renderer map
       // without needing a separate subscribe/unsubscribe IPC round trip. The
       // poller is idempotent on re-tracking the same (paneKey, ptyId).
-      const ptyId = getPtyIdForPaneKey(paneKey)
-      if (ptyId) {
-        agentForegroundPoller.trackPane(paneKey, ptyId)
+      // Why: skip tracking when the agent has already reported a terminal
+      // state (`done`). There's no live agent process to observe, so the
+      // poller's first tick would record `lastWasShell = true` (shell is
+      // foreground) and the non-shell→shell edge would never fire — but the
+      // timer would keep ticking for the life of the pane. Only active states
+      // (`working`, `blocked`, `waiting`) have an in-progress agent whose
+      // exit back to the shell is worth polling for.
+      if (
+        payload.state === 'working' ||
+        payload.state === 'blocked' ||
+        payload.state === 'waiting'
+      ) {
+        const ptyId = getPtyIdForPaneKey(paneKey)
+        if (ptyId) {
+          agentForegroundPoller.trackPane(paneKey, ptyId)
+        }
       }
     }
     // Why: cursor-agent emits no title-based working/idle signal — its OSC
@@ -232,15 +245,22 @@ function openMainWindow(): BrowserWindow {
 // `pty:foreground-shell` when an interrupted agent CLI exits back to the
 // shell. Lives at module scope so the single instance outlives window
 // re-creation (macOS dock re-activation closes and reopens the main window
-// without re-initializing the PTY provider). See agent-foreground-poller.ts
-// for the full rationale.
+// without re-initializing the PTY provider). Routing goes through
+// `getProviderForPty` so remote (SSH) panes are covered too — the local
+// provider's `ptyProcesses` map doesn't contain SSH-owned PTYs, so a hardcoded
+// `getLocalPtyProvider()` lookup would return null forever on those panes and
+// the agent-exit edge would never fire. See agent-foreground-poller.ts for the
+// full rationale.
 const agentForegroundPoller = createAgentForegroundPoller({
-  getForegroundProcess: (ptyId) => getLocalPtyProvider().getForegroundProcess(ptyId),
+  getForegroundProcess: (ptyId) => getProviderForPty(ptyId).getForegroundProcess(ptyId),
   emitShell: (ptyId) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return
     }
-    mainWindow.webContents.send('pty:foreground-shell', { ptyId })
+    // Why: every other `pty:*` IPC event (data/exit/replay) keys its payload
+    // on `id`. Match that convention so the renderer's preload type definitions
+    // and dispatch code stay uniform across PTY events.
+    mainWindow.webContents.send('pty:foreground-shell', { id: ptyId })
   }
 })
 

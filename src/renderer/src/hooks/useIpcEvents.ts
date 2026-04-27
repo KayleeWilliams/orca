@@ -665,28 +665,28 @@ export function useIpcEvents(): void {
       })
     )
 
-    // Why: agent status arrives from native hook receivers in the main process.
-    // Re-parse it here so the renderer enforces the same normalization rules
-    // (state enum, field truncation) regardless of whether the source was a
-    // hook callback or an OSC fallback path.
-    // Why: main-process foreground-process poller fires this when a tracked
-    // PTY's foreground returns to a shell, signalling the agent CLI has
-    // exited (interrupted or finished). The renderer maps ptyId → paneKey via
-    // the live `ptyIdsByTabId` and drops the store entry so the row cannot
-    // linger as stale 'working' until its 30-min TTL decays. Unknown ptyIds
-    // no-op — the PTY may have been torn down in a parallel teardown path
-    // that already called removeAgentStatus.
-    unsubs.push(
-      window.api.pty.onForegroundShell((data) => {
-        const paneKey = resolvePaneKeyForPtyId(useAppStore.getState(), data.ptyId)
-        if (!paneKey) {
-          return
-        }
-        useAppStore.getState().removeAgentStatus(paneKey)
-      })
-    )
-
     if (AGENT_DASHBOARD_ENABLED) {
+      // Why: main-process foreground-process poller fires this when a tracked
+      // PTY's foreground returns to a shell, signalling the agent CLI has
+      // exited (interrupted or finished). The renderer maps ptyId → paneKey via
+      // the live `terminalLayoutsByTabId[tabId].ptyIdsByLeafId` and drops the
+      // store entry so the row cannot linger as stale 'working' until its
+      // 30-min TTL decays. Unknown ptyIds no-op — the PTY may have been torn
+      // down in a parallel teardown path that already called removeAgentStatus.
+      unsubs.push(
+        window.api.pty.onForegroundShell((data) => {
+          const paneKey = resolvePaneKeyForPtyId(useAppStore.getState(), data.id)
+          if (!paneKey) {
+            return
+          }
+          useAppStore.getState().removeAgentStatus(paneKey)
+        })
+      )
+
+      // Why: agent status arrives from native hook receivers in the main process.
+      // Re-parse it here so the renderer enforces the same normalization rules
+      // (state enum, field truncation) regardless of whether the source was a
+      // hook callback or an OSC fallback path.
       unsubs.push(
         window.api.agentStatus.onSet((data) => {
           // Why: the IPC payload is already a structured object — pass it

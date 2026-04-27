@@ -338,9 +338,8 @@ const api = {
      *  PTY's foreground transitions back to a shell — signalling that the
      *  agent CLI process has exited. The renderer uses this to drop the
      *  pane's entry from `agentStatusByPaneKey`. */
-    onForegroundShell: (callback: (data: { ptyId: string }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { ptyId: string }) =>
-        callback(data)
+    onForegroundShell: (callback: (data: { id: string }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { id: string }) => callback(data)
       ipcRenderer.on('pty:foreground-shell', listener)
       return () => ipcRenderer.removeListener('pty:foreground-shell', listener)
     }

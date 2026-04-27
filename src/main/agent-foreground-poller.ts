@@ -25,7 +25,16 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000
 // paths plus the common Unix interactive shells. Kept intentionally small:
 // the detection rule is "foreground is not one of these" rather than
 // "foreground is a known agent", so new agent CLIs need no update here.
-const SHELL_BASENAMES = new Set(['zsh', 'bash', 'fish', 'pwsh', 'sh', 'cmd.exe', 'powershell.exe'])
+const SHELL_BASENAMES = new Set([
+  'zsh',
+  'bash',
+  'fish',
+  'pwsh',
+  'sh',
+  'cmd.exe',
+  'pwsh.exe',
+  'powershell.exe'
+])
 
 function isShellProcess(name: string | null): boolean {
   if (!name) {
@@ -75,11 +84,6 @@ export function createAgentForegroundPoller(
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const tracked = new Map<string, TrackedPane>()
   let timer: ReturnType<typeof setInterval> | null = null
-  // Why: poll passes are async, and a paneKey can be untracked mid-pass. Bump
-  // this counter on every untrack so an in-flight classification whose paneKey
-  // was removed (or re-added with a different ptyId) cannot clobber the map
-  // with stale data.
-  let epoch = 0
 
   const ensureTimerRunning = (): void => {
     if (timer !== null) {
@@ -100,48 +104,77 @@ export function createAgentForegroundPoller(
     }
   }
 
+  // Why: once-per-pane rate limit for swallowed getForegroundProcess errors.
+  // We want a breadcrumb (real provider regressions shouldn't be invisible)
+  // but not log spam on a persistently-failing provider (e.g. SSH remote or
+  // Windows pre-fallback). Cleared on untrack/stop so a re-tracked pane gets
+  // a fresh chance to log.
+  const loggedErrorPaneKeys = new Set<string>()
+
+  // Why: re-entry guard. A slow getForegroundProcess call (or many tracked
+  // panes) must not let setInterval fire a second pass while the first is
+  // still in flight: overlapping passes can double-fire emitShell on the
+  // same non-shell→shell edge or interleave writes to lastWasShell.
+  let isPolling = false
+
   const pollOnce = async (): Promise<void> => {
-    // Snapshot the current entries so untrack during await cannot mutate what
-    // we iterate. The epoch check below re-validates each entry after the
-    // async boundary.
-    const entries = Array.from(tracked.entries())
-    const epochAtStart = epoch
-    for (const [paneKey, entry] of entries) {
-      let foreground: string | null = null
-      try {
-        foreground = await options.getForegroundProcess(entry.ptyId)
-      } catch {
-        // Why: Windows today and SSH remotes today surface failures as thrown
-        // errors or null; in both cases we defer to the renderer's 30-min TTL
-        // rather than fire a transition we cannot trust.
-        continue
-      }
-      if (foreground === null) {
-        // Same rationale as the catch — treat "unknown" as "do not fire",
-        // never as "agent is gone".
-        continue
-      }
-      if (epoch !== epochAtStart) {
-        // Untrack happened while our await was in flight. Re-check the map
-        // before writing — a stale write here could resurrect a removed entry.
-        const current = tracked.get(paneKey)
-        if (!current || current.ptyId !== entry.ptyId) {
-          continue
-        }
-      }
-      const current = tracked.get(paneKey)
-      if (!current || current.ptyId !== entry.ptyId) {
-        continue
-      }
-      const isShell = isShellProcess(foreground)
-      const wasShell = current.lastWasShell
-      current.lastWasShell = isShell
-      // Why: fire exactly on the non-shell→shell edge. The initial poll
-      // (wasShell === null) never fires — we only know the transition is a
-      // real agent exit when we have seen the foreground as non-shell first.
-      if (wasShell === false && isShell) {
-        options.emitShell(entry.ptyId)
-      }
+    if (isPolling) {
+      return
+    }
+    isPolling = true
+    try {
+      // Snapshot the current entries so untrack during await cannot mutate
+      // what we iterate. The per-entry `tracked.get(paneKey)` re-check below
+      // re-validates each entry after the async boundary.
+      const entries = Array.from(tracked.entries())
+      // Pane-lookup parallelism is safe because each async task keys on a
+      // distinct paneKey, and writes to tracked.get(paneKey).lastWasShell
+      // touch only that pane's entry.
+      await Promise.all(
+        entries.map(async ([paneKey, entry]) => {
+          let foreground: string | null = null
+          try {
+            foreground = await options.getForegroundProcess(entry.ptyId)
+          } catch (error) {
+            // Why: Windows today and SSH remotes today surface failures as
+            // thrown errors or null; in both cases we defer to the renderer's
+            // 30-min TTL rather than fire a transition we cannot trust.
+            if (!loggedErrorPaneKeys.has(paneKey)) {
+              loggedErrorPaneKeys.add(paneKey)
+              console.warn(
+                '[agent-foreground-poller] getForegroundProcess failed for pane',
+                paneKey,
+                error
+              )
+            }
+            return
+          }
+          if (foreground === null) {
+            // Same rationale as the catch — treat "unknown" as "do not fire",
+            // never as "agent is gone".
+            return
+          }
+          const current = tracked.get(paneKey)
+          if (!current || current.ptyId !== entry.ptyId) {
+            // Untrack (or re-track with a different ptyId) happened while our
+            // await was in flight — a stale write here could resurrect a
+            // removed entry or clobber a freshly-tracked one.
+            return
+          }
+          const isShell = isShellProcess(foreground)
+          const wasShell = current.lastWasShell
+          current.lastWasShell = isShell
+          // Why: fire exactly on the non-shell→shell edge. The initial poll
+          // (wasShell === null) never fires — we only know the transition is
+          // a real agent exit when we have seen the foreground as non-shell
+          // first.
+          if (wasShell === false && isShell) {
+            options.emitShell(entry.ptyId)
+          }
+        })
+      )
+    } finally {
+      isPolling = false
     }
   }
 
@@ -158,7 +191,7 @@ export function createAgentForegroundPoller(
       if (!tracked.delete(paneKey)) {
         return
       }
-      epoch += 1
+      loggedErrorPaneKeys.delete(paneKey)
       if (tracked.size === 0) {
         stopTimer()
       }
@@ -170,10 +203,7 @@ export function createAgentForegroundPoller(
     stop() {
       stopTimer()
       tracked.clear()
-      epoch += 1
+      loggedErrorPaneKeys.clear()
     }
   }
 }
-
-// Exported for tests only.
-export const __testing = { SHELL_BASENAMES, isShellProcess }
