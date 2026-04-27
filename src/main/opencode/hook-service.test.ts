@@ -34,9 +34,21 @@ describe('OpenCode id safety guard', () => {
     expect(isUsableId(daemonSessionId)).toBe(true)
   })
 
+  it('accepts ids at the inclusive upper length bound', () => {
+    expect(isUsableId('x'.repeat(1024))).toBe(true)
+  })
+
   it('rejects empty or oversized ids', () => {
     expect(isUsableId('')).toBe(false)
     expect(isUsableId('x'.repeat(1025))).toBe(false)
+  })
+
+  it('rejects non-string runtime values even though the type says string', () => {
+    // Why: the typeof guard is defense-in-depth for any-typed callers;
+    // without a test, a future refactor could delete the guard silently.
+    expect(isUsableId(undefined as unknown as string)).toBe(false)
+    expect(isUsableId(null as unknown as string)).toBe(false)
+    expect(isUsableId(42 as unknown as string)).toBe(false)
   })
 
   it('derives a filesystem-safe directory name independent of the raw id', () => {

@@ -19,6 +19,10 @@ const ORCA_OPENCODE_PLUGIN_FILE = 'orca-opencode-status.js'
 // filesystem-safe name. Hashing also eliminates path-traversal risk at the
 // source: the directory name is always 32 hex chars, never a prefix/suffix
 // of the caller's input.
+// Why: 1024 is a generous sanity cap — daemon-shaped ids embed a worktree
+// filesystem path plus "@@<uuid>", and this bound prevents pathological inputs
+// from burning CPU in the SHA-256 step. Since the id is hashed anyway, 1024
+// is decoupled from PATH_MAX.
 function isUsableId(id: string): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= 1024
 }
@@ -227,10 +231,9 @@ export class OpenCodeHookService {
       return
     }
     // Why: writePluginConfig creates a directory per PTY under userData.
-    // Without cleanup these accumulate across sessions. Remove the hashed
-    // directory when the PTY is torn down — same hash-derived path
-    // writePluginConfig created.
-    const configDir = join(app.getPath('userData'), 'opencode-hooks', toSafeDirName(ptyId))
+    // Without cleanup these accumulate across sessions. Using getConfigDir
+    // keeps cleanup aligned with the path writePluginConfig created.
+    const configDir = this.getConfigDir(ptyId)
     try {
       rmSync(configDir, { recursive: true, force: true })
     } catch {
@@ -256,11 +259,15 @@ export class OpenCodeHookService {
     return { OPENCODE_CONFIG_DIR: configDir }
   }
 
+  private getConfigDir(ptyId: string): string {
+    return join(app.getPath('userData'), 'opencode-hooks', toSafeDirName(ptyId))
+  }
+
   private writePluginConfig(ptyId: string): string | null {
     if (!isUsableId(ptyId)) {
       return null
     }
-    const configDir = join(app.getPath('userData'), 'opencode-hooks', toSafeDirName(ptyId))
+    const configDir = this.getConfigDir(ptyId)
     const pluginsDir = join(configDir, 'plugins')
     try {
       mkdirSync(pluginsDir, { recursive: true })
