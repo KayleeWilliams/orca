@@ -13,10 +13,39 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
     { open: '<', close: '>', token: 'delimiter.angle' }
   ],
   tokenizer: {
+    // Entry state. No embed is active yet, so structural rules must NOT pop
+    // an embedded tokenizer (Monaco throws on `nextEmbedded: '@pop'` when no
+    // embed is on the stack). The first piece of template markup transitions
+    // into `markup`, where the html embed is active and structural rules pop
+    // it cleanly.
     root: [
       [/<script(?=\s|>)/, 'tag', '@scriptOpen.typescript'],
       [/<style(?=\s|>)/, 'tag', '@styleOpen.css'],
       [/<!--/, 'comment', '@comment'],
+      [/\{\s*\/(if|each|await|key|snippet)\s*\}/, 'keyword.control'],
+      [
+        /\{\s*#(if|each|await|key|snippet)\b/,
+        { token: 'keyword.control', next: '@svelteBlockExpressionEnter' }
+      ],
+      [
+        /\{\s*:(else|then|catch)\b/,
+        { token: 'keyword.control', next: '@svelteBlockExpressionEnter' }
+      ],
+      [
+        /\{\s*@(html|debug|const|render)\b/,
+        { token: 'keyword.control', next: '@svelteExpressionEnter' }
+      ],
+      [/\{(?=[^#:/@])/, { token: 'delimiter.curly', next: '@svelteExpressionEnter' }],
+      // First markup character: switch into `markup` and start the html embed.
+      [/(?=.)/, { token: '', switchTo: '@markup', nextEmbedded: 'html' }]
+    ],
+    // html-embedded markup state. Structural rules end the embed before
+    // pushing into script/style/comment/svelte states; the catch-all
+    // re-enters html when those states pop back.
+    markup: [
+      [/<script(?=\s|>)/, { token: 'tag', next: '@scriptOpen.typescript', nextEmbedded: '@pop' }],
+      [/<style(?=\s|>)/, { token: 'tag', next: '@styleOpen.css', nextEmbedded: '@pop' }],
+      [/<!--/, { token: 'comment', next: '@comment', nextEmbedded: '@pop' }],
       [/\{\s*\/(if|each|await|key|snippet)\s*\}/, 'keyword.control'],
       [
         /\{\s*#(if|each|await|key|snippet)\b/,
@@ -34,8 +63,6 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
         /\{(?=[^#:/@])/,
         { token: 'delimiter.curly', next: '@svelteExpressionEnter', nextEmbedded: '@pop' }
       ],
-      // Svelte has top-level markup instead of a <template> wrapper. Re-enter
-      // html after Svelte-specific states pop their embedded tokenizers.
       [/(?=.)/, { token: '', nextEmbedded: 'html' }]
     ],
     comment: [
