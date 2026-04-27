@@ -8,11 +8,12 @@ import { DaemonClient } from './client'
 import { HistoryManager } from './history-manager'
 import { HistoryReader } from './history-reader'
 import { supportsPtyStartupBarrier } from './shell-ready'
-import type {
-  CreateOrAttachResult,
-  DaemonEvent,
-  GetSnapshotResult,
-  ListSessionsResult
+import {
+  PROTOCOL_VERSION,
+  type CreateOrAttachResult,
+  type DaemonEvent,
+  type GetSnapshotResult,
+  type ListSessionsResult
 } from './types'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 
@@ -64,6 +65,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private activeSessionIds = new Set<string>()
   private checkpointInterval: ReturnType<typeof setInterval> | null = null
   private checkpointInFlight: Promise<void> | null = null
+  // Why: checkpoint-based persistence requires the getSnapshot RPC (v4+).
+  // Legacy daemons reject it, causing noisy log spam every 5 seconds.
+  private supportsCheckpoints: boolean
   private static CHECKPOINT_INTERVAL_MS = 5_000
 
   constructor(opts: DaemonPtyAdapterOptions) {
@@ -75,6 +79,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.historyManager = opts.historyPath ? new HistoryManager(opts.historyPath) : null
     this.historyReader = opts.historyPath ? new HistoryReader(opts.historyPath) : null
     this.respawnFn = opts.respawn ?? null
+    this.supportsCheckpoints = (opts.protocolVersion ?? PROTOCOL_VERSION) >= 4
   }
 
   getHistoryManager(): HistoryManager | null {
@@ -447,7 +452,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   private startCheckpointTimer(): void {
-    if (this.checkpointInterval || !this.historyManager) {
+    if (this.checkpointInterval || !this.historyManager || !this.supportsCheckpoints) {
       return
     }
     this.checkpointInterval = setInterval(() => {
