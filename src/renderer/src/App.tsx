@@ -185,11 +185,6 @@ function App(): React.JSX.Element {
           actions.hydrateTabsSession(session)
           actions.hydrateEditorSession(session)
           actions.hydrateBrowserSession(session)
-          // Why (issue #1158): unlock the debounced session writer only after
-          // hydration completed without throwing. Until this point any later
-          // failure would otherwise let the writer serialize a partially
-          // populated store back to disk and silently erase the user's tabs.
-          actions.setHydrationSucceeded(true)
           await actions.fetchBrowserSessionProfiles()
           await actions.fetchDetectedBrowsers()
 
@@ -278,6 +273,14 @@ function App(): React.JSX.Element {
 
           await actions.reconnectPersistedTerminals(abortController.signal)
           syncZoomCSSVar()
+          // Why (issue #1158): unlock the debounced session writer only after
+          // hydration AND all dependent startup steps (SSH reconnect, terminal
+          // reconnect) completed without throwing. If this flag flipped earlier
+          // and a later step threw, the catch path's reconnectPersistedTerminals
+          // would flip workspaceSessionReady=true with the gate already open,
+          // and the writer would serialize a partially-mutated store back to
+          // disk — the exact data-loss mode this PR fixes.
+          actions.setHydrationSucceeded(true)
         }
       } catch (error) {
         // Why (issue #1158): previously this catch called hydrateWorkspaceSession

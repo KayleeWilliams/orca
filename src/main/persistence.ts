@@ -9,7 +9,8 @@ import {
   existsSync,
   renameSync,
   unlinkSync,
-  copyFileSync
+  copyFileSync,
+  statSync
 } from 'fs'
 import { writeFile, rename, mkdir, rm, copyFile } from 'fs/promises'
 import { join, dirname } from 'path'
@@ -85,19 +86,40 @@ export class Store {
   private pendingWrite: Promise<void> | null = null
   private writeGeneration = 0
   private gitUsernameCache = new Map<string, string>()
-  // Why (issue #1158): debounced writes fire as often as every 300ms during
-  // active use. Rotating a 5-slot ring on every tick would waste IO and
-  // quickly replace every older backup with near-identical snapshots, which
-  // defeats the point of having a rolling safety net. Gate rotation on a
-  // minimum interval so the ring captures meaningfully different moments.
-  private lastBackupAt = 0
 
   constructor() {
     this.state = this.load()
   }
 
-  private shouldRotateBackups(now: number): boolean {
-    return now - this.lastBackupAt >= BACKUP_MIN_INTERVAL_MS
+  // Why (issue #1158): debounced writes fire as often as every 300ms during
+  // active use. Rotating a 5-slot ring on every tick would waste IO and
+  // quickly replace every older backup with near-identical snapshots, which
+  // defeats the point of having a rolling safety net. Gate rotation on a
+  // minimum interval so the ring captures meaningfully different moments.
+  //
+  // Why (issue #1158): do not cache lastBackupAt in memory — a crash-loop
+  // restart-storm would reset it to 0 on each launch and burn through the
+  // 5-slot backup ring in minutes, overwriting pre-crash snapshots with
+  // corrupted ones. The filesystem mtime of .bak.0 is the authoritative
+  // source of truth and survives process boundaries. This also narrows the
+  // concurrent-rotation window: once the first caller finishes
+  // copyFile(dataFile, .bak.0), the updated mtime closes the gate for any
+  // later caller — though a rotation already in-flight (between its
+  // rename(.bak.0, .bak.1) and copyFile) can still coincide with a concurrent
+  // shouldRotateBackups that sees ENOENT. In practice the async writer is
+  // debounced (one in-flight at a time) and flush() only runs at shutdown,
+  // so this window is narrow.
+  private shouldRotateBackups(now: number, dataFile: string): boolean {
+    try {
+      const mtime = statSync(backupPath(dataFile, 0)).mtimeMs
+      return now - mtime >= BACKUP_MIN_INTERVAL_MS
+    } catch {
+      // Any stat failure (ENOENT on first run, or rarer EACCES/EIO) is
+      // treated as "rotate now" — a missed rotation is worse than an extra
+      // best-effort one, and rotateBackupsAsync/Sync each tolerate missing
+      // source files.
+      return true
+    }
   }
 
   // Why: rotate oldest → discarded, then .bak.i → .bak.i+1 by rename (cheap;
@@ -271,9 +293,8 @@ export class Store {
     // but non-fatal — losing a rolling backup is strictly better than
     // skipping the write entirely.
     const now = Date.now()
-    if (this.shouldRotateBackups(now)) {
+    if (this.shouldRotateBackups(now, dataFile)) {
       await this.rotateBackupsAsync(dataFile)
-      this.lastBackupAt = now
     }
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
     // Why: wrap write+rename in try/finally-on-error so any failure (ENOSPC,
@@ -310,9 +331,8 @@ export class Store {
     // crash. Apply the same min-interval gate as the async path so a
     // restart-storm still only rotates once per hour.
     const now = Date.now()
-    if (this.shouldRotateBackups(now)) {
+    if (this.shouldRotateBackups(now, dataFile)) {
       this.rotateBackupsSync(dataFile)
-      this.lastBackupAt = now
     }
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
     // Why: mirror the async path — on any failure between writeFileSync and
