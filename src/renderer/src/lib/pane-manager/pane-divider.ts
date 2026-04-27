@@ -90,8 +90,14 @@ function attachDividerDrag(
     prevFlex = prevSize
     nextFlex = nextSize
 
-    callbacks.lockDragScroll(prevEl)
-    callbacks.lockDragScroll(nextEl)
+    // Why: we previously locked a drag-scroll snapshot on each pane and
+    // restored it on every mid-drag refit. That ran findLineByContent's
+    // 40-char prefix scan over the whole scrollback each frame — expensive
+    // on long Claude sessions and the source of the visible drag-lag. It
+    // turns out xterm's terminal.resize() already preserves viewportY
+    // across reflows natively (see scroll-reflow.test.ts "reference:
+    // undisturbed"), so a plain fit() each frame is sufficient. The
+    // default path in pane-tree-ops.ts safeFit() does exactly that.
   }
 
   const onPointerMove = (e: PointerEvent): void => {
@@ -130,15 +136,13 @@ function attachDividerDrag(
     dragging = false
     divider.releasePointerCapture(e.pointerId)
     divider.classList.remove('is-dragging')
-    // Final refit at the exact drop position, then unlock drag scroll state
-    // so the authoritative restore uses the original pre-drag scroll position
+    // Final refit at the exact drop position. No drag-scroll unlock needed —
+    // see the onPointerDown comment: xterm preserves viewportY natively.
     if (prevEl) {
       callbacks.refitPanesUnder(prevEl)
-      callbacks.unlockDragScroll(prevEl)
     }
     if (nextEl) {
       callbacks.refitPanesUnder(nextEl)
-      callbacks.unlockDragScroll(nextEl)
     }
     prevEl = null
     nextEl = null
@@ -157,16 +161,11 @@ function attachDividerDrag(
       return
     }
 
-    callbacks.lockDragScroll(prev)
-    callbacks.lockDragScroll(next)
-
     prev.style.flex = '1 1 0%'
     next.style.flex = '1 1 0%'
 
     callbacks.refitPanesUnder(prev)
-    callbacks.unlockDragScroll(prev)
     callbacks.refitPanesUnder(next)
-    callbacks.unlockDragScroll(next)
     callbacks.onLayoutChanged?.()
   }
 
