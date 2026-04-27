@@ -142,6 +142,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -322,6 +323,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -495,6 +497,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -681,6 +684,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -856,6 +860,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -1026,6 +1031,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {
@@ -1208,6 +1214,7 @@ describe('useIpcEvents shortcut hint clearing', () => {
       dispatchEvent,
       api: {
         pty: { onForegroundShell: () => () => {} },
+        agentStatus: { onSet: () => () => {} },
         repos: { onChanged: () => () => {} },
         worktrees: { onChanged: () => () => {} },
         ui: {

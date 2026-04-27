@@ -74,6 +74,16 @@ function getProvider(connectionId: string | null | undefined): IPtyProvider {
   return provider
 }
 
+/** Route a ptyId to its owning provider.
+ *
+ *  Falls back to the local provider when `ptyOwnership` has no entry for the
+ *  ptyId — this is safe for in-module callers (`write`/`resize`/`kill` etc.)
+ *  because ownership is registered at spawn time and reaped in tandem, so an
+ *  unknown ptyId here means the PTY has already exited. External callers that
+ *  can see stale ptyIds (e.g. pollers that retain ptyIds across async
+ *  boundaries) must verify liveness before calling — the local-provider
+ *  fallback could otherwise answer queries about a different real process if a
+ *  ptyId has been recycled. */
 export function getProviderForPty(ptyId: string): IPtyProvider {
   const connectionId = ptyOwnership.get(ptyId)
   if (connectionId === undefined) {

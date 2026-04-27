@@ -149,9 +149,11 @@ export function createAgentForegroundPoller(
             }
             return
           }
-          if (foreground === null) {
-            // Same rationale as the catch — treat "unknown" as "do not fire",
-            // never as "agent is gone".
+          if (foreground === null || foreground === '') {
+            // Why: treat "unknown" (null or empty string from providers that don't
+            // coalesce missing process info to null) as "do not fire" — never as
+            // "agent is gone". Firing on an empty foreground would prime a false
+            // non-shell→shell edge on the next real shell observation.
             return
           }
           const current = tracked.get(paneKey)

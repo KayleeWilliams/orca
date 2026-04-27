@@ -207,13 +207,22 @@ function openMainWindow(): BrowserWindow {
       // signal keeps the main-side poller in lock-step with the renderer map
       // without needing a separate subscribe/unsubscribe IPC round trip. The
       // poller is idempotent on re-tracking the same (paneKey, ptyId).
-      // Why: skip tracking when the agent has already reported a terminal
-      // state (`done`). There's no live agent process to observe, so the
-      // poller's first tick would record `lastWasShell = true` (shell is
-      // foreground) and the non-shell→shell edge would never fire — but the
-      // timer would keep ticking for the life of the pane. Only active states
+      // Why: skip tracking when the first observed state is terminal
+      // (`done`). There's no live agent process to observe, so the poller's
+      // first tick would record `lastWasShell = true` (shell is foreground)
+      // and the non-shell→shell edge would never fire — but the timer would
+      // keep ticking for the life of the pane. Only active states
       // (`working`, `blocked`, `waiting`) have an in-progress agent whose
       // exit back to the shell is worth polling for.
+      //
+      // Why no untrack on a subsequent `done`: once tracking is live, the
+      // agent CLI may linger at a "turn complete" prompt before the user
+      // runs `/exit`. Keeping the pane tracked past `done` lets the poller
+      // still fire the shell transition when the user eventually exits —
+      // the alternative (untrack on done) would regress the interrupted-
+      // then-resumed-then-exited flow that this whole poller exists to
+      // cover. Teardown happens via registerPaneKeyTeardownListener when
+      // the PTY itself goes away.
       if (
         payload.state === 'working' ||
         payload.state === 'blocked' ||
@@ -468,12 +477,13 @@ app.whenReady().then(async () => {
   }
   setAppRuntimeFlags({ daemonEnabledAtStartup: daemonStarted })
 
-  // Why: the hook server also runs unconditionally so cursor-agent panes can
-  // reach it. Claude/Codex/Gemini hook scripts stay uninstalled while
-  // AGENT_DASHBOARD_ENABLED is false, so only cursor events flow in. PTY
-  // spawn env reads ORCA_AGENT_HOOK_* from the live server state, so the
-  // server must start before the window opens — otherwise restored terminals
-  // race ahead without the env on first launch.
+  // Why: the hook server runs unconditionally — cursor-agent panes depend on
+  // it even when the dashboard flag is off, and Claude/Codex/Gemini hook
+  // scripts install only when AGENT_DASHBOARD_ENABLED is true (see the
+  // install block earlier in this function). PTY spawn env reads
+  // ORCA_AGENT_HOOK_* from the live server state, so the server must start
+  // before the window opens — otherwise restored terminals race ahead
+  // without the env on first launch.
   try {
     await agentHookServer.start({ env: app.isPackaged ? 'production' : 'development' })
   } catch (error) {

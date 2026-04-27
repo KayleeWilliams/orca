@@ -43,6 +43,13 @@ export function paneLeafId(paneId: number): string {
   return `pane:${paneId}`
 }
 
+/** Inverse of {@link paneLeafId}. Returns the stringified paneId when the
+ *  leaf id uses the `pane:` convention; returns the raw leafId otherwise so
+ *  callers can decide whether to treat an unknown shape as invalid. */
+export function paneIdFromLeafId(leafId: string): string {
+  return leafId.startsWith('pane:') ? leafId.slice('pane:'.length) : leafId
+}
+
 export function collectLeafIdsInOrder(node: TerminalPaneLayoutNode | null | undefined): string[] {
   if (!node) {
     return []

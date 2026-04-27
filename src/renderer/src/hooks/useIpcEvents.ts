@@ -21,6 +21,7 @@ import { dispatchClearModifierHints } from './useModifierHint'
 import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
 import { AGENT_DASHBOARD_ENABLED } from '../../../shared/constants'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { paneIdFromLeafId } from '@/components/terminal-pane/layout-serialization'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -675,11 +676,12 @@ export function useIpcEvents(): void {
       // down in a parallel teardown path that already called removeAgentStatus.
       unsubs.push(
         window.api.pty.onForegroundShell((data) => {
-          const paneKey = resolvePaneKeyForPtyId(useAppStore.getState(), data.id)
+          const store = useAppStore.getState()
+          const paneKey = resolvePaneKeyForPtyId(store, data.id)
           if (!paneKey) {
             return
           }
-          useAppStore.getState().removeAgentStatus(paneKey)
+          store.removeAgentStatus(paneKey)
         })
       )
 
@@ -794,11 +796,9 @@ export function resolvePaneKeyForPtyId(
       if (boundPtyId !== ptyId) {
         continue
       }
-      // Why: leafId is `pane:${paneId}` (see layout-serialization.ts). Strip
-      // the `pane:` prefix — the store's agent-status slice keys entries by
-      // the numeric pane id, not the leaf id.
-      const paneId = leafId.startsWith('pane:') ? leafId.slice('pane:'.length) : leafId
-      return `${tabId}:${paneId}`
+      // Why: leafIds use the `pane:${paneId}` convention; delegate parsing to
+      // paneIdFromLeafId so both sides of the pane-id encoding live in one file.
+      return `${tabId}:${paneIdFromLeafId(leafId)}`
     }
   }
   return null
