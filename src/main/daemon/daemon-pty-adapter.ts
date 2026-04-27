@@ -142,19 +142,26 @@ export class DaemonPtyAdapter implements IPtyProvider {
       // scrollbackAnsi (rows above the viewport only) which excludes the alt
       // buffer. For normal sessions, use the full snapshot with rehydrate
       // sequences to restore terminal modes (colors, cursor position, etc).
+      // Why: scrollbackAnsi may be empty if the emulator hadn't accumulated
+      // scrollback before the alt-screen app launched. In that case, skip
+      // cold restore entirely rather than showing a blank terminal — no
+      // content is better than confusing the user with an empty restore.
       const isAltScreen = restoreInfo.modes.alternateScreen
       const scrollback = isAltScreen
-        ? restoreInfo.scrollbackAnsi
+        ? restoreInfo.scrollbackAnsi || null
         : restoreInfo.rehydrateSequences + restoreInfo.snapshotAnsi
-      const coldRestore = { scrollback, cwd: restoreInfo.cwd }
-      this.coldRestoreCache.set(sessionId, coldRestore)
       // Why: use registerWriter (not openSession) to avoid deleting the
       // existing checkpoint.json. If the revived daemon crashes again before
       // the next 5s tick, the checkpoint is the only recovery data available.
       if (this.historyManager) {
         this.historyManager.registerWriter(sessionId)
       }
-      return { id: sessionId, pid, coldRestore }
+      if (scrollback) {
+        const coldRestore = { scrollback, cwd: restoreInfo.cwd }
+        this.coldRestoreCache.set(sessionId, coldRestore)
+        return { id: sessionId, pid, coldRestore }
+      }
+      return { id: sessionId, pid }
     }
 
     if (this.historyManager && result.isNew) {
@@ -320,6 +327,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
         killed.push(session.sessionId)
       } else {
         alive.push(session.sessionId)
+        // Why: background sessions discovered here may produce output before
+        // the user reattaches their pane. Without adding them to the checkpoint
+        // set, disconnectOnly()'s final checkpoint would skip them, leaving
+        // stale recovery data if the daemon later crashes.
+        this.activeSessionIds.add(session.sessionId)
+        this.historyManager?.registerWriter(session.sessionId)
       }
     }
 
