@@ -48,16 +48,15 @@ export class HistoryReader {
     try {
       const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf-8'))
       // Why: HeadlessEmulator.getSnapshot() doesn't populate scrollbackAnsi
-      // (it's always ''). For alt-screen checkpoints, derive usable scrollback
-      // by truncating snapshotAnsi at the alt-screen boundary — same logic the
-      // scrollback.bin fallback uses. This ensures alt-screen cold restores
-      // recover normal shell output that existed before the TUI launched.
-      const rawScrollback = checkpoint.scrollbackAnsi ?? ''
+      // (it's always ''). For non-alt-screen checkpoints, snapshotAnsi IS
+      // the normal buffer content and is safe to use as scrollback. For
+      // alt-screen checkpoints, snapshotAnsi is the serialized TUI buffer
+      // (not raw PTY stream), so truncateAltScreen won't find transition
+      // sequences and would return stale TUI content. Return empty instead
+      // — the adapter skips cold restore when scrollbackAnsi is falsy.
       const scrollbackAnsi =
-        rawScrollback ||
-        (checkpoint.modes?.alternateScreen
-          ? this.truncateAltScreen(checkpoint.snapshotAnsi ?? '')
-          : (checkpoint.snapshotAnsi ?? ''))
+        checkpoint.scrollbackAnsi ||
+        (checkpoint.modes?.alternateScreen ? '' : (checkpoint.snapshotAnsi ?? ''))
       return {
         snapshotAnsi: checkpoint.snapshotAnsi,
         scrollbackAnsi,
