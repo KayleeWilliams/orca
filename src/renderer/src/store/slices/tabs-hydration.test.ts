@@ -1,3 +1,7 @@
+/* oxlint-disable max-lines -- Why: exhaustive table-driven tests for the
+ * tabs-hydration reducer — each case is a minimal fixture + assertion, and
+ * splitting the table across files would scatter closely related regression
+ * coverage for the same function. */
 import { describe, it, expect, vi } from 'vitest'
 import type { WorkspaceSessionState } from '../../../../shared/types'
 import { buildHydratedTabState } from './tabs-hydration'
