@@ -463,8 +463,7 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
           <div className="space-y-0.5">
             <Label>Auto-Close After Merge</Label>
             <p className="text-xs text-muted-foreground">
-              Automatically delete a worktree once its pull request is merged. Errors surface as a
-              toast with a Force Delete fallback.
+              Automatically delete a worktree once its pull request is merged.
             </p>
           </div>
           <button
