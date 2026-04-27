@@ -11,6 +11,14 @@ import type {
 import { DEFAULT_TERMINAL_FONT_WEIGHT } from './terminal-fonts'
 
 export const SCHEMA_VERSION = 1
+
+// Why: temporary compile-time gate for the agent status dashboard feature.
+// Flip to `true` only when every dashboard PR has landed; the follow-up cleanup
+// PR will delete this constant and every `if (!AGENT_DASHBOARD_ENABLED)` branch
+// entirely, making the feature permanent. Not user-facing — do not read from
+// settings, env, or IPC.
+export const AGENT_DASHBOARD_ENABLED = false
+
 export const ORCA_BROWSER_PARTITION = 'persist:orca-browser'
 // Why: blank browser tabs must start from an inert guest URL that does not
 // navigate the privileged main window to about:blank. Renderer and main both
@@ -69,7 +77,18 @@ export const DEFAULT_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = [
   'comment'
 ]
 
-export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = ['claude', 'codex', 'ssh', 'sessions']
+export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
+  'claude',
+  'codex',
+  'ssh',
+  'sessions',
+  'memory'
+]
+
+/** Synthetic worktree id used by the memory collector to bucket PTYs that
+ *  are not associated with any worktree. Shared across main and renderer so
+ *  the collector and the status-bar popover agree on the sentinel. */
+export const ORPHAN_WORKTREE_ID = '__orphan__'
 
 export const REPO_COLORS = [
   '#737373', // neutral
@@ -98,6 +117,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     refreshLocalBaseRefOnWorktreeCreate: false,
     branchPrefix: 'git-username',
     branchPrefixCustom: '',
+    enableGitHubAttribution: true,
     theme: 'system',
     editorAutoSave: false,
     editorAutoSaveDelayMs: DEFAULT_EDITOR_AUTO_SAVE_DELAY_MS,
@@ -105,6 +125,11 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalFontFamily: defaultTerminalFontFamily(),
     terminalFontWeight: DEFAULT_TERMINAL_FONT_WEIGHT,
     terminalLineHeight: 1,
+    // Why 'auto': when the user has picked a known ligature font we want the
+    // feature enabled by default, but we never force it if they pick a font
+    // that lacks ligatures or if they've explicitly opted out. The resolver
+    // is in shared/terminal-ligatures.ts.
+    terminalLigatures: 'auto',
     terminalCursorStyle: 'bar',
     terminalCursorBlink: true,
     terminalThemeDark: 'Ghostty Default Style Dark',
@@ -120,29 +145,46 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // box. Other platforms ignore this field because the UI never exposes it,
     // and Ctrl+right-click still opens the context menu when paste is enabled.
     terminalRightClickToPaste: true,
+    terminalWindowsShell: 'powershell.exe',
+    terminalMouseHideWhileTyping: false,
     // Default false: opt-in only (matches Ghostty's default). Existing users
     // on upgrade inherit this default via persistence.ts's
     // { ...defaults.settings, ...parsed.settings } merge, so enabling
     // focus-follows-mouse never happens unexpectedly.
     terminalFocusFollowsMouse: false,
+    windowBackgroundBlur: false,
     terminalClipboardOnSelect: false,
+    terminalAllowOsc52Clipboard: false,
     setupScriptLaunchMode: 'new-tab',
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: true,
     rightSidebarOpenByDefault: true,
     showTitlebarAgentActivity: true,
+    showTaskProviderIcons: true,
     notifications: getDefaultNotificationSettings(),
     diffDefaultView: 'inline',
     promptCacheTimerEnabled: false,
     promptCacheTtlMs: 300_000,
     codexManagedAccounts: [],
     activeCodexManagedAccountId: null,
+    claudeManagedAccounts: [],
+    activeClaudeManagedAccountId: null,
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
     skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
+    defaultTaskSource: 'github',
+    defaultRepoSelection: null,
+    defaultLinearTeamSelection: null,
     agentCmdOverrides: {},
-    terminalMacOptionAsAlt: 'true',
+    // Why: 'auto' runs a layout-aware probe at boot (see
+    // src/renderer/src/lib/keyboard-layout/*) that picks 'true' for US and
+    // US-International and 'false' for every other layout. This mirrors
+    // Ghostty's detectOptionAsAlt() and ensures users on Turkish, German,
+    // French, etc. can type Option+Q/L/E characters like @, €, [, ] out of
+    // the box (issue #903) while US users keep Option-as-Alt readline chords.
+    terminalMacOptionAsAlt: 'auto',
+    terminalMacOptionAsAltMigrated: false,
     experimentalTerminalDaemon: false,
     experimentalTerminalDaemonNoticeShown: false
   }

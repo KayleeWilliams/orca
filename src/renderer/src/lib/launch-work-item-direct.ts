@@ -1,7 +1,6 @@
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
-import { detectAgentsCached } from '@/lib/detect-agents-cached'
 import { waitForAgentReady } from '@/lib/agent-ready-wait'
 import { buildAgentStartupPlan } from '@/lib/tui-agent-startup'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
@@ -11,13 +10,17 @@ import {
   getSetupConfig,
   getWorkspaceSeedName
 } from '@/lib/new-workspace'
-import type {
-  GitHubWorkItem,
-  OrcaHooks,
-  RepoHookSettings,
-  SetupDecision,
-  TuiAgent
-} from '../../../shared/types'
+import type { OrcaHooks, RepoHookSettings, SetupDecision, TuiAgent } from '../../../shared/types'
+
+export type LaunchableWorkItem = {
+  title: string
+  url: string
+  type: 'issue' | 'pr'
+  number: number | null
+  repoId?: string
+  /** Content to paste into the agent's input. Defaults to the URL when omitted. */
+  pasteContent?: string
+}
 
 // Why: bracketed paste markers let modern TUIs treat the inserted text as a
 // single atomic paste — Claude Code / Codex / Gemini put it in their input
@@ -28,7 +31,7 @@ const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 
 export type LaunchWorkItemDirectArgs = {
-  item: GitHubWorkItem
+  item: LaunchableWorkItem
   repoId: string
   /** Called when the flow cannot proceed without user input (setup policy is
    *  `ask`, or the selected repo cannot resolve). Callers wire this to the
@@ -106,7 +109,7 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   }
 
   const settings = store.settings
-  const detectedIds = new Set(await detectAgentsCached())
+  const detectedIds = new Set(await store.ensureDetectedAgents())
   const effectiveAgent = pickAgent(settings?.defaultTuiAgent, detectedIds)
 
   const setupResolution = await resolveSetupDecision(repoId, repo)
@@ -118,8 +121,8 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   const workspaceName = getWorkspaceSeedName({
     explicitName: getLinkedWorkItemSuggestedName(item),
     prompt: '',
-    linkedIssueNumber: item.type === 'issue' ? item.number : null,
-    linkedPR: item.type === 'pr' ? item.number : null
+    linkedIssueNumber: item.type === 'issue' ? (item.number ?? null) : null,
+    linkedPR: item.type === 'pr' ? (item.number ?? null) : null
   })
 
   // Why: launch the agent with no prompt so the first frame it draws is the
@@ -165,9 +168,9 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   }
 
   const meta: { linkedIssue?: number; linkedPR?: number } = {}
-  if (item.type === 'issue') {
+  if (item.type === 'issue' && item.number) {
     meta.linkedIssue = item.number
-  } else {
+  } else if (item.type === 'pr' && item.number) {
     meta.linkedPR = item.number
   }
   try {
@@ -205,10 +208,14 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     return
   }
 
-  // Why: some TUIs buffer input while they paint their first frame even after
-  // the foreground/title signal flips ready. One extra tick lets the input box
-  // render before we shove bytes into the PTY.
-  await new Promise((resolve) => window.setTimeout(resolve, 120))
+  // Why: TUIs must enable bracketed paste mode (\x1b[?2004h) before they can
+  // interpret our paste markers. `title-idle` means the TUI has fully rendered
+  // its input box and enabled paste mode; weaker signals (`foreground-match`,
+  // `child-process`) only confirm the binary is running — the TUI's input
+  // setup may still be in-flight, especially on slow shell environments.
+  const graceMs = readyResult.reason === 'title-idle' ? 150 : 600
+  await new Promise((resolve) => window.setTimeout(resolve, graceMs))
 
-  window.api.pty.write(ptyId, `${BRACKETED_PASTE_BEGIN}${item.url}${BRACKETED_PASTE_END}`)
+  const content = item.pasteContent ?? item.url
+  window.api.pty.write(ptyId, `${BRACKETED_PASTE_BEGIN}${content}${BRACKETED_PASTE_END}`)
 }

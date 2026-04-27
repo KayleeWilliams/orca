@@ -1,9 +1,13 @@
 /* eslint-disable max-lines */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
-import { Minimize2, PanelLeft, PanelRight } from 'lucide-react'
-import { FOCUS_TERMINAL_PANE_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
+import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
+import {
+  FOCUS_TERMINAL_PANE_EVENT,
+  SYNC_FIT_PANES_EVENT,
+  TOGGLE_TERMINAL_PANE_EXPAND_EVENT
+} from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -14,13 +18,7 @@ import { useIpcEvents } from './hooks/useIpcEvents'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
-import Landing from './components/Landing'
-import TaskPage from './components/TaskPage'
-import Settings from './components/settings/Settings'
 import RightSidebar from './components/right-sidebar'
-import QuickOpen from './components/QuickOpen'
-import WorktreeJumpPalette from './components/WorktreeJumpPalette'
-import NewWorkspaceComposerModal from './components/NewWorkspaceComposerModal'
 import { StatusBar } from './components/status-bar/StatusBar'
 import { UpdateCard } from './components/UpdateCard'
 import { StarNagCard } from './components/StarNagCard'
@@ -39,9 +37,19 @@ import { countWorkingAgents, getWorkingAgentsPerWorktree } from './lib/agent-sta
 import { activateAndRevealWorktree } from './lib/worktree-activation'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { findWorktreeById, getRepoIdFromWorktreeId } from '@/store/slices/worktree-helpers'
+import {
+  canGoBackWorktreeHistory,
+  canGoForwardWorktreeHistory
+} from '@/store/slices/worktree-nav-history'
 import { dispatchClearModifierHints } from './hooks/useModifierHint'
 
 const isMac = navigator.userAgent.includes('Mac')
+const Landing = lazy(() => import('./components/Landing'))
+const TaskPage = lazy(() => import('./components/TaskPage'))
+const Settings = lazy(() => import('./components/settings/Settings'))
+const QuickOpen = lazy(() => import('./components/QuickOpen'))
+const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
+const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -85,6 +93,8 @@ function App(): React.JSX.Element {
       fetchBrowserSessionProfiles: s.fetchBrowserSessionProfiles,
       fetchDetectedBrowsers: s.fetchDetectedBrowsers,
       reconnectPersistedTerminals: s.reconnectPersistedTerminals,
+      setDeferredSshReconnectTargets: s.setDeferredSshReconnectTargets,
+      setSshConnectionState: s.setSshConnectionState,
       hydratePersistedUI: s.hydratePersistedUI,
       openModal: s.openModal,
       closeModal: s.closeModal,
@@ -96,6 +106,7 @@ function App(): React.JSX.Element {
   )
 
   const activeView = useAppStore((s) => s.activeView)
+  const activeModal = useAppStore((s) => s.activeModal)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -126,8 +137,11 @@ function App(): React.JSX.Element {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const isFullScreen = useAppStore((s) => s.isFullScreen)
   const settings = useAppStore((s) => s.settings)
+  const canGoBackWorktree = useAppStore(canGoBackWorktreeHistory)
+  const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
   const [collapsedSidebarHeaderWidth, setCollapsedSidebarHeaderWidth] = useState(0)
+  const [mountedLazyModalIds, setMountedLazyModalIds] = useState(() => new Set<string>())
 
   // Subscribe to IPC push events
   useIpcEvents()
@@ -144,6 +158,17 @@ function App(): React.JSX.Element {
   // of tying reloads to the Explorer UI lifecycle.
   useEditorExternalWatch()
   useGlobalFileDrop()
+
+  // Why: sidebar open/close flips width instantaneously. useLayoutEffect
+  // runs synchronously after React commits the DOM but before paint, so
+  // dispatching SYNC_FIT_PANES_EVENT here lets the terminal reflow in the
+  // same frame as the width change — no "wrongly-sized terminal" transient
+  // and no delayed snap. The later ResizeObserver rAF and 150ms debounced
+  // fit both become no-ops because proposeDimensions() will match the
+  // already-fitted cols/rows.
+  useLayoutEffect(() => {
+    window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT))
+  }, [sidebarOpen, rightSidebarOpen])
 
   // Fetch initial data + hydrate GitHub cache from disk
   useEffect(() => {
@@ -173,6 +198,90 @@ function App(): React.JSX.Element {
           actions.hydrateBrowserSession(session)
           await actions.fetchBrowserSessionProfiles()
           await actions.fetchDetectedBrowsers()
+
+          // Why: SSH connections must be re-established BEFORE terminal
+          // reconnect so that reconnectPersistedTerminals can route SSH-backed
+          // tabs through pty.attach on the relay. Passphrase-protected targets
+          // are deferred to tab focus to avoid stacking credential dialogs at
+          // startup before the user has context.
+          const connectionIds = session.activeConnectionIdsAtShutdown ?? []
+          if (connectionIds.length > 0) {
+            try {
+              const SSH_RECONNECT_TIMEOUT_MS = 15_000
+              const allTargets = await window.api.ssh.listTargets()
+              const targetMap = new Map(allTargets.map((t) => [t.id, t]))
+              const targets = connectionIds.map((targetId) => ({
+                targetId,
+                needsPassphrase: targetMap.get(targetId)?.lastRequiredPassphrase ?? false
+              }))
+
+              const eagerTargets = targets.filter((t) => !t.needsPassphrase)
+              const deferredTargets = targets.filter((t) => t.needsPassphrase)
+
+              if (deferredTargets.length > 0) {
+                actions.setDeferredSshReconnectTargets(deferredTargets.map((t) => t.targetId))
+              }
+
+              // Why: track which eager targets timed out so we can treat them
+              // as deferred — the underlying ssh.connect() keeps running in the
+              // main process, but reconnectPersistedTerminals won't see them as
+              // connected. Adding them to the deferred list ensures PTYs get
+              // reattached when the user focuses the tab (by which time the
+              // slow connect will likely have succeeded).
+              const timedOutTargets: string[] = []
+              await Promise.allSettled(
+                eagerTargets.map(({ targetId }) =>
+                  Promise.race([
+                    window.api.ssh.connect({ targetId }),
+                    new Promise((_, reject) =>
+                      setTimeout(
+                        () => reject(new Error('SSH reconnect timeout')),
+                        SSH_RECONNECT_TIMEOUT_MS
+                      )
+                    )
+                  ]).catch((err) => {
+                    const isTimeout =
+                      err instanceof Error && err.message === 'SSH reconnect timeout'
+                    if (isTimeout) {
+                      timedOutTargets.push(targetId)
+                    }
+                    console.warn(`SSH auto-reconnect failed for ${targetId}:`, err)
+                  })
+                )
+              )
+              if (timedOutTargets.length > 0) {
+                actions.setDeferredSshReconnectTargets([
+                  ...deferredTargets.map((t) => t.targetId),
+                  ...timedOutTargets
+                ])
+              }
+
+              // Why: ssh.connect() resolves before the ssh:state-changed IPC
+              // event updates sshConnectionStates in the store. Without this,
+              // reconnectPersistedTerminals reads stale state and misclassifies
+              // successfully connected targets as disconnected, stranding their
+              // persisted PTYs. Polling getState ensures the store is current.
+              for (const { targetId } of eagerTargets) {
+                if (timedOutTargets.includes(targetId)) {
+                  continue
+                }
+                try {
+                  const state = await window.api.ssh.getState({ targetId })
+                  console.warn(
+                    `[ssh-restore] Polled state for ${targetId}: status=${state?.status}`
+                  )
+                  if (state?.status === 'connected') {
+                    actions.setSshConnectionState(targetId, state)
+                  }
+                } catch {
+                  /* best-effort */
+                }
+              }
+            } catch (err) {
+              console.warn('SSH startup reconnect failed:', err)
+            }
+          }
+
           await actions.reconnectPersistedTerminals(abortController.signal)
           syncZoomCSSVar()
         }
@@ -491,6 +600,33 @@ function App(): React.JSX.Element {
       if (isEditableTarget(e.target)) {
         return
       }
+
+      // Cmd/Ctrl+Alt+Arrow — worktree history back/forward. Handled before the
+      // `mod && !alt` branch below since this is the one renderer-side shortcut
+      // that intentionally requires Alt.
+      if (
+        e.altKey &&
+        !e.shiftKey &&
+        (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) &&
+        (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
+      ) {
+        // Why: hidden buttons in non-terminal views mean the shortcut must be
+        // a no-op there too — navigating worktree history from Settings or
+        // Tasks is not a meaningful action.
+        if (activeView !== 'terminal') {
+          return
+        }
+        dispatchClearModifierHints()
+        e.preventDefault()
+        const store = useAppStore.getState()
+        if (e.code === 'ArrowLeft') {
+          store.goBackWorktree()
+        } else {
+          store.goForwardWorktree()
+        }
+        return
+      }
+
       if (!mod) {
         return
       }
@@ -554,6 +690,17 @@ function App(): React.JSX.Element {
         e.preventDefault()
         actions.setRightSidebarTab('source-control')
         actions.setRightSidebarOpen(true)
+        return
+      }
+
+      // Cmd+Shift+I — toggle right sidebar / ports tab (macOS only).
+      // Why: Ctrl+Shift+I is the built-in DevTools accelerator on Windows/Linux;
+      // intercepting it would break an essential developer tool.
+      if (isMac && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+        dispatchClearModifierHints()
+        e.preventDefault()
+        actions.setRightSidebarTab('ports')
+        actions.setRightSidebarOpen(true)
       }
     }
 
@@ -586,138 +733,204 @@ function App(): React.JSX.Element {
     sidebarOpen
   ])
 
+  useEffect(() => {
+    if (
+      activeModal !== 'quick-open' &&
+      activeModal !== 'worktree-palette' &&
+      activeModal !== 'new-workspace-composer'
+    ) {
+      return
+    }
+    setMountedLazyModalIds((currentIds) => {
+      if (currentIds.has(activeModal)) {
+        return currentIds
+      }
+      const nextIds = new Set(currentIds)
+      // Why: lazy-load these modals only after first use, then keep them mounted
+      // so repeat opens preserve their local state and avoid re-fetch flashes.
+      nextIds.add(activeModal)
+      return nextIds
+    })
+  }, [activeModal])
+
   // Why: extracted so both the full-width titlebar (settings/landing) and
   // the sidebar-width left header (workspace view) can share the same
   // controls without duplicating the agent badge popover.
   const titlebarLeftControls = (
-    <div ref={titlebarLeftControlsRef} className="flex h-full shrink-0 items-center">
-      <div className={isMac && !isFullScreen ? 'titlebar-traffic-light-pad' : 'pl-2'} />
-      {showSidebar && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className="sidebar-toggle"
-              onClick={actions.toggleSidebar}
-              aria-label="Toggle sidebar"
-            >
-              <PanelLeft size={16} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={6}>
-            {`Toggle sidebar (${isMac ? '⌘B' : 'Ctrl+B'})`}
-          </TooltipContent>
-        </Tooltip>
-      )}
-      {settings?.showTitlebarAgentActivity !== false ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              className={`titlebar-agent-badge${activeAgentCount === 0 ? ' titlebar-agent-badge-idle' : ''}`}
-              aria-label={`${activeAgentCount} ${activeAgentCount === 1 ? 'agent' : 'agents'} active`}
-            >
-              <span
-                className={`titlebar-agent-badge-dot${activeAgentCount === 0 ? ' titlebar-agent-badge-dot-idle' : ''}`}
-                aria-hidden
-              />
-              <span className="titlebar-agent-badge-count">{activeAgentCount}</span>
-            </button>
-          </PopoverTrigger>
-          <PopoverContent side="bottom" sideOffset={6} className="titlebar-agent-hovercard">
-            <div
-              className={`titlebar-agent-hovercard-header${activeAgentCount > 0 ? ' titlebar-agent-hovercard-header-with-list' : ''}`}
-            >
-              {activeAgentCount === 0
-                ? 'No agents active'
-                : `${activeAgentCount} ${activeAgentCount === 1 ? 'agent' : 'agents'} active`}
-            </div>
-            {activeAgentCount > 0 && (
-              <div className="titlebar-agent-hovercard-list">
-                {Object.entries(workingAgentsPerWorktree).map(([worktreeId, { agents }]) => {
-                  const wt = findWorktreeById(worktreesByRepo, worktreeId)
-                  // Why: when a transient git error causes worktreesByRepo to
-                  // lose a worktree, the raw worktreeId (uuid::path) is not
-                  // useful. Extract a cross-platform path basename as a
-                  // readable fallback.
-                  const sepIdx = worktreeId.indexOf('::')
-                  const pathPart = sepIdx !== -1 ? worktreeId.slice(sepIdx + 2) : worktreeId
-                  const fallbackName = pathPart.split(/[\\/]/).pop() || pathPart
-                  return (
-                    <div key={worktreeId}>
-                      <button
-                        className="titlebar-agent-hovercard-worktree"
-                        onClick={() => {
-                          // Why: if the worktree is missing from worktreesByRepo
-                          // (transient git error cleared the list), refresh the
-                          // repo's worktrees before navigating so the activation
-                          // lookup succeeds instead of silently failing.
-                          if (!wt) {
-                            const repoId = getRepoIdFromWorktreeId(worktreeId)
-                            void useAppStore
-                              .getState()
-                              .fetchWorktrees(repoId)
-                              .then(() => {
-                                activateAndRevealWorktree(worktreeId)
-                              })
-                            return
-                          }
-                          activateAndRevealWorktree(worktreeId)
-                        }}
-                      >
-                        <span className="titlebar-agent-hovercard-name">
-                          {wt?.displayName ?? fallbackName}
-                        </span>
-                      </button>
-                      {agents.map((agent, index) => (
+    // Why: measure the ENTIRE row (traffic-light pad + sidebar toggle + agent
+    // badge + back/forward group) so the sidebar-collapse spacer in
+    // TabGroupPanel reserves enough width to clear the full floating
+    // `titlebar-left`. Measuring only the inner control cluster left the
+    // back/forward arrows hanging over the first tab when the sidebar was
+    // collapsed (Cmd+B), producing a half-occluded, non-scrollable tab strip.
+    <div ref={titlebarLeftControlsRef} className="flex h-full w-full shrink-0 items-center">
+      <div className="flex h-full items-center">
+        <div className={isMac && !isFullScreen ? 'titlebar-traffic-light-pad' : 'pl-2'} />
+        {showSidebar && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="sidebar-toggle"
+                onClick={actions.toggleSidebar}
+                aria-label="Toggle sidebar"
+              >
+                <PanelLeft size={16} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {`Toggle sidebar (${isMac ? '⌘B' : 'Ctrl+B'})`}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {settings?.showTitlebarAgentActivity !== false ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                className={`titlebar-agent-badge${activeAgentCount === 0 ? ' titlebar-agent-badge-idle' : ''}`}
+                aria-label={`${activeAgentCount} ${activeAgentCount === 1 ? 'agent' : 'agents'} active`}
+              >
+                <span
+                  className={`titlebar-agent-badge-dot${activeAgentCount === 0 ? ' titlebar-agent-badge-dot-idle' : ''}`}
+                  aria-hidden
+                />
+                <span className="titlebar-agent-badge-count">{activeAgentCount}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent side="bottom" sideOffset={6} className="titlebar-agent-hovercard">
+              <div
+                className={`titlebar-agent-hovercard-header${activeAgentCount > 0 ? ' titlebar-agent-hovercard-header-with-list' : ''}`}
+              >
+                {activeAgentCount === 0
+                  ? 'No agents active'
+                  : `${activeAgentCount} ${activeAgentCount === 1 ? 'agent' : 'agents'} active`}
+              </div>
+              {activeAgentCount > 0 && (
+                <div className="titlebar-agent-hovercard-list">
+                  {Object.entries(workingAgentsPerWorktree).map(([worktreeId, { agents }]) => {
+                    const wt = findWorktreeById(worktreesByRepo, worktreeId)
+                    // Why: when a transient git error causes worktreesByRepo to
+                    // lose a worktree, the raw worktreeId (uuid::path) is not
+                    // useful. Extract a cross-platform path basename as a
+                    // readable fallback.
+                    const sepIdx = worktreeId.indexOf('::')
+                    const pathPart = sepIdx !== -1 ? worktreeId.slice(sepIdx + 2) : worktreeId
+                    const fallbackName = pathPart.split(/[\\/]/).pop() || pathPart
+                    return (
+                      <div key={worktreeId}>
                         <button
-                          key={index}
-                          className="titlebar-agent-hovercard-agent"
+                          className="titlebar-agent-hovercard-worktree"
                           onClick={() => {
-                            activateAndRevealWorktree(worktreeId)
-                            useAppStore.getState().setActiveTab(agent.tabId)
-                            if (agent.paneId !== null) {
-                              // Why: a split-terminal tab can host multiple
-                              // agents. After selecting the tab, wait one
-                              // frame so the active TerminalPane can mount
-                              // and then focus the specific pane the user
-                              // clicked instead of leaving whichever pane
-                              // was previously active highlighted.
-                              requestAnimationFrame(() => {
-                                window.dispatchEvent(
-                                  new CustomEvent(FOCUS_TERMINAL_PANE_EVENT, {
-                                    detail: { tabId: agent.tabId, paneId: agent.paneId }
-                                  })
-                                )
-                              })
+                            // Why: if the worktree is missing from worktreesByRepo
+                            // (transient git error cleared the list), refresh the
+                            // repo's worktrees before navigating so the activation
+                            // lookup succeeds instead of silently failing.
+                            if (!wt) {
+                              const repoId = getRepoIdFromWorktreeId(worktreeId)
+                              void useAppStore
+                                .getState()
+                                .fetchWorktrees(repoId)
+                                .then(() => {
+                                  activateAndRevealWorktree(worktreeId)
+                                })
+                              return
                             }
+                            activateAndRevealWorktree(worktreeId)
                           }}
                         >
-                          <span className="titlebar-agent-hovercard-agent-label">
-                            {agent.label}
+                          <span className="titlebar-agent-hovercard-name">
+                            {wt?.displayName ?? fallbackName}
                           </span>
-                          <span className="titlebar-agent-hovercard-agent-dot" />
                         </button>
-                      ))}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            <button
-              className="titlebar-agent-hovercard-hide"
-              onClick={() => {
-                void actions.updateSettings({ showTitlebarAgentActivity: false })
-                toast('Agent activity badge hidden', {
-                  description: 'You can turn it back on in Settings → Appearance.',
-                  duration: Infinity,
-                  dismissible: true
-                })
-              }}
-            >
-              Hide from titlebar
-            </button>
-          </PopoverContent>
-        </Popover>
-      ) : null}
+                        {agents.map((agent) => (
+                          <button
+                            key={`${agent.tabId}:${agent.paneId ?? 'none'}:${agent.label}`}
+                            className="titlebar-agent-hovercard-agent"
+                            onClick={() => {
+                              activateAndRevealWorktree(worktreeId)
+                              useAppStore.getState().setActiveTab(agent.tabId)
+                              if (agent.paneId !== null) {
+                                // Why: a split-terminal tab can host multiple
+                                // agents. After selecting the tab, wait one
+                                // frame so the active TerminalPane can mount
+                                // and then focus the specific pane the user
+                                // clicked instead of leaving whichever pane
+                                // was previously active highlighted.
+                                requestAnimationFrame(() => {
+                                  window.dispatchEvent(
+                                    new CustomEvent(FOCUS_TERMINAL_PANE_EVENT, {
+                                      detail: { tabId: agent.tabId, paneId: agent.paneId }
+                                    })
+                                  )
+                                })
+                              }
+                            }}
+                          >
+                            <span className="titlebar-agent-hovercard-agent-label">
+                              {agent.label}
+                            </span>
+                            <span className="titlebar-agent-hovercard-agent-dot" />
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <button
+                className="titlebar-agent-hovercard-hide"
+                onClick={() => {
+                  void actions.updateSettings({ showTitlebarAgentActivity: false })
+                  toast('Agent activity badge hidden', {
+                    description: 'You can turn it back on in Settings → Appearance.',
+                    duration: Infinity,
+                    dismissible: true
+                  })
+                }}
+              >
+                Hide from titlebar
+              </button>
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+      {/* Why: Back/Forward navigate worktree-activation history. Only
+          meaningful while viewing a worktree (terminal view); hidden in
+          Settings/Tasks/Landing to keep the titlebar compact and the
+          semantics unambiguous. */}
+      {activeView === 'terminal' && (
+        <div className="ml-auto mr-3 flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="sidebar-toggle sidebar-toggle-compact"
+                onClick={() => useAppStore.getState().goBackWorktree()}
+                disabled={!canGoBackWorktree}
+                aria-label="Go back"
+              >
+                <ArrowLeft size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {`Go back (${isMac ? '⌘⌥←' : 'Ctrl+Alt+←'})`}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="sidebar-toggle sidebar-toggle-compact"
+                onClick={() => useAppStore.getState().goForwardWorktree()}
+                disabled={!canGoForwardWorktree}
+                aria-label="Go forward"
+              >
+                <ArrowRight size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {`Go forward (${isMac ? '⌘⌥→' : 'Ctrl+Alt+→'})`}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
     </div>
   )
 
@@ -807,7 +1020,13 @@ function App(): React.JSX.Element {
                 className={`flex min-h-0 flex-col shrink-0${sidebarOpen ? '' : ' relative w-0 overflow-visible'}`}
               >
                 <div
-                  className={`titlebar-left${sidebarOpen ? '' : ' absolute top-0 left-0 z-10'}`}
+                  // Why: when the sidebar is collapsed, titlebar-left floats
+                  // absolutely on top of the center column's own `border-l`
+                  // (see TabGroupSplitLayout), occluding that seam. Add a
+                  // `border-r` in the floating state so the vertical line
+                  // between the traffic-light/nav cluster and the tab strip
+                  // stays visible in both states.
+                  className={`titlebar-left${sidebarOpen ? '' : ' absolute top-0 left-0 z-10 border-r border-border'}`}
                   style={{
                     // Why: the Sidebar resize hook updates the sidebar DOM width
                     // directly during drag and only persists to Zustand on
@@ -824,7 +1043,7 @@ function App(): React.JSX.Element {
                       above the sidebar. Without a flex-1/min-h-0 slot here,
                       the sidebar falls back to its content height, so the
                       worktree list loses its scroll viewport and the fixed
-                      bottom toolbar (including Add Repo) gets pushed offscreen. */}
+                      bottom toolbar (including Add Project) gets pushed offscreen. */}
                   <Sidebar />
                 </div>
               </div>
@@ -835,10 +1054,15 @@ function App(): React.JSX.Element {
           <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
             {/* Why: right sidebar toggle floats at the top-right of the center
                 column so it's always accessible whether the right sidebar is
-                open or closed. Its height matches the 42px workspace strip
-                used by the sidebar and tab rows. */}
+                open or closed. Match the RightSidebar header's 42px height and
+                top-0 anchor so the icon's vertical center is identical between
+                open and closed states — otherwise toggling makes the icon jump
+                a few pixels, which reads as layout jitter. */}
             {workspaceActive && !rightSidebarOpen && (
-              <div className="absolute top-0 right-0 z-10 flex items-center h-[42px]">
+              <div
+                className="absolute top-0 right-0 z-10 flex items-center h-[42px]"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              >
                 {rightSidebarToggle}
               </div>
             )}
@@ -852,9 +1076,11 @@ function App(): React.JSX.Element {
               >
                 <Terminal />
               </div>
-              {activeView === 'settings' ? <Settings /> : null}
-              {activeView === 'tasks' ? <TaskPage /> : null}
-              {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              <Suspense fallback={null}>
+                {activeView === 'settings' ? <Settings /> : null}
+                {activeView === 'tasks' ? <TaskPage /> : null}
+                {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+              </Suspense>
             </div>
           </div>
           {/* Why: keep RightSidebar mounted even when closed so that its
@@ -869,10 +1095,14 @@ function App(): React.JSX.Element {
             when mounted outside a TooltipProvider ancestor. Keep the global
             composer modal inside this provider so the card renders safely
             whether triggered from Cmd+J or any future entry point. */}
-        <NewWorkspaceComposerModal />
+        <Suspense fallback={null}>
+          {mountedLazyModalIds.has('new-workspace-composer') ? <NewWorkspaceComposerModal /> : null}
+        </Suspense>
       </TooltipProvider>
-      <QuickOpen />
-      <WorktreeJumpPalette />
+      <Suspense fallback={null}>
+        {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
+        {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
+      </Suspense>
       <UpdateCard />
       <StarNagCard />
       <ZoomOverlay />

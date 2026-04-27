@@ -8,10 +8,20 @@ import type {
   GitHubViewer,
   GitHubWorkItem
 } from '../../shared/types'
+import { parseTaskQuery, type ParsedTaskQuery } from '../../shared/task-query'
+import { sortWorkItemsByUpdatedAt } from '../../shared/work-items'
 import { getPRConflictSummary } from './conflict-summary'
 import { execFileAsync, ghExecFileAsync, acquire, release, getOwnerRepo } from './gh-utils'
 export { _resetOwnerRepoCache } from './gh-utils'
-export { getIssue, listIssues, createIssue } from './issues'
+export {
+  getIssue,
+  listIssues,
+  createIssue,
+  updateIssue,
+  addIssueComment,
+  listLabels,
+  listAssignableUsers
+} from './issues'
 import {
   mapCheckRunRESTStatus,
   mapCheckRunRESTConclusion,
@@ -89,7 +99,12 @@ export async function getAuthenticatedViewer(): Promise<GitHubViewer | null> {
   }
 }
 
-function mapIssueWorkItem(item: Record<string, unknown>): GitHubWorkItem {
+// Why: main-process maps omit repoId because the IPC handler never receives
+// a repo identifier beyond path. The renderer stamps repoId after IPC so
+// single-repo and cross-repo items are uniform downstream.
+type MainWorkItem = Omit<GitHubWorkItem, 'repoId'>
+
+function mapIssueWorkItem(item: Record<string, unknown>): MainWorkItem {
   return {
     id: `issue:${String(item.number)}`,
     type: 'issue',
@@ -116,7 +131,44 @@ function mapIssueWorkItem(item: Record<string, unknown>): GitHubWorkItem {
   }
 }
 
-function mapPullRequestWorkItem(item: Record<string, unknown>): GitHubWorkItem {
+function extractHeadOwnerLogin(item: Record<string, unknown>): string | null {
+  // gh CLI `pr list --json headRepositoryOwner` shape: { login }
+  if (typeof item.headRepositoryOwner === 'object' && item.headRepositoryOwner !== null) {
+    const login = (item.headRepositoryOwner as { login?: unknown }).login
+    if (typeof login === 'string' && login.trim()) {
+      return login
+    }
+  }
+  // REST API `pull_request` shape: head.repo.owner.login
+  if (typeof item.head === 'object' && item.head !== null) {
+    const repo = (item.head as { repo?: unknown }).repo
+    if (typeof repo === 'object' && repo !== null) {
+      const owner = (repo as { owner?: unknown }).owner
+      if (typeof owner === 'object' && owner !== null) {
+        const login = (owner as { login?: unknown }).login
+        if (typeof login === 'string' && login.trim()) {
+          return login
+        }
+      }
+    }
+  }
+  return null
+}
+
+function mapPullRequestWorkItem(
+  item: Record<string, unknown>,
+  baseOwnerLogin: string | null = null
+): MainWorkItem {
+  // Why: fork PRs are disabled in the Start-from picker. We compare the PR head's
+  // owner to the selected repo's owner; when baseOwnerLogin is unknown we default
+  // to false so non-picker call sites see the same shape as before.
+  const headOwnerLogin = extractHeadOwnerLogin(item)
+  // Why: only emit isCrossRepository when we actually know the head owner. If
+  // the gh response lacks `headRepositoryOwner` (older callers, tests without
+  // that fixture, or gh not returning it), leave the field undefined instead
+  // of falsely claiming "not a fork".
+  const isCrossRepository =
+    headOwnerLogin !== null && baseOwnerLogin !== null ? headOwnerLogin !== baseOwnerLogin : null
   return {
     id: `pr:${String(item.number)}`,
     type: 'pr',
@@ -154,117 +206,9 @@ function mapPullRequestWorkItem(item: Record<string, unknown>): GitHubWorkItem {
     baseRefName:
       typeof item.base === 'object' && item.base !== null && 'ref' in item.base
         ? String((item.base as { ref?: unknown }).ref ?? '')
-        : String(item.baseRefName ?? '')
+        : String(item.baseRefName ?? ''),
+    ...(isCrossRepository !== null ? { isCrossRepository } : {})
   }
-}
-
-function sortWorkItemsByUpdatedAt(items: GitHubWorkItem[]): GitHubWorkItem[] {
-  return [...items].sort((left, right) => {
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  })
-}
-
-type ParsedTaskQuery = {
-  scope: 'all' | 'issue' | 'pr'
-  state: 'open' | 'closed' | 'all' | 'merged' | null
-  assignee: string | null
-  author: string | null
-  reviewRequested: string | null
-  reviewedBy: string | null
-  labels: string[]
-  freeText: string
-}
-
-function tokenizeSearchQuery(rawQuery: string): string[] {
-  const tokens: string[] = []
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(rawQuery)) !== null) {
-    tokens.push(match[1] ?? match[2] ?? match[3] ?? '')
-  }
-  return tokens
-}
-
-function parseTaskQuery(rawQuery: string): ParsedTaskQuery {
-  const query: ParsedTaskQuery = {
-    scope: 'all',
-    state: null,
-    assignee: null,
-    author: null,
-    reviewRequested: null,
-    reviewedBy: null,
-    labels: [],
-    freeText: ''
-  }
-
-  const freeTextTokens: string[] = []
-  for (const token of tokenizeSearchQuery(rawQuery.trim())) {
-    const normalized = token.toLowerCase()
-    if (normalized === 'is:issue') {
-      if (query.scope === 'pr') {
-        continue
-      }
-      query.scope = 'issue'
-      continue
-    }
-    if (normalized === 'is:pr') {
-      query.scope = query.scope === 'issue' ? 'all' : 'pr'
-      continue
-    }
-    if (normalized === 'is:open') {
-      query.state = 'open'
-      continue
-    }
-    if (normalized === 'is:closed') {
-      query.state = 'closed'
-      continue
-    }
-    if (normalized === 'is:merged') {
-      query.state = 'merged'
-      continue
-    }
-    if (normalized === 'is:draft') {
-      query.scope = 'pr'
-      query.state = 'open'
-      continue
-    }
-
-    const [rawKey, ...rest] = token.split(':')
-    const value = rest.join(':').trim()
-    const key = rawKey.toLowerCase()
-    if (!value) {
-      freeTextTokens.push(token)
-      continue
-    }
-
-    if (key === 'assignee') {
-      query.assignee = value
-      continue
-    }
-    if (key === 'author') {
-      query.author = value
-      continue
-    }
-    if (key === 'review-requested') {
-      query.scope = 'pr'
-      query.reviewRequested = value
-      continue
-    }
-    if (key === 'reviewed-by') {
-      query.scope = 'pr'
-      query.reviewedBy = value
-      continue
-    }
-    if (key === 'label') {
-      query.labels.push(value)
-      continue
-    }
-
-    freeTextTokens.push(token)
-  }
-
-  query.freeText = freeTextTokens.join(' ').trim()
-  return query
 }
 
 function buildWorkItemListArgs(args: {
@@ -272,12 +216,13 @@ function buildWorkItemListArgs(args: {
   ownerRepo: { owner: string; repo: string } | null
   limit: number
   query: ParsedTaskQuery
+  before?: string
 }): string[] {
-  const { kind, ownerRepo, limit, query } = args
+  const { kind, ownerRepo, limit, query, before } = args
   const fields =
     kind === 'issue'
       ? 'number,title,state,url,labels,updatedAt,author'
-      : 'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName'
+      : 'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName,headRepositoryOwner'
   const command = kind === 'issue' ? ['issue', 'list'] : ['pr', 'list']
   const out = [...command, '--limit', String(limit), '--json', fields]
 
@@ -305,20 +250,20 @@ function buildWorkItemListArgs(args: {
       out.push('--label', label)
     }
   }
-  if (
-    kind === 'pr' &&
-    query.scope === 'pr' &&
-    query.state === 'open' &&
-    query.freeText === '' &&
-    !query.reviewRequested &&
-    !query.reviewedBy
-  ) {
+  // Why: only add --draft when the user explicitly typed `is:draft`. Previously
+  // this fired for any PR-scoped open query, which made `is:pr is:open` (the
+  // "PRs" preset) silently filter to drafts-only.
+  if (kind === 'pr' && query.draft) {
     out.push('--draft')
   }
 
-  // review-requested and reviewed-by are not supported as standalone gh CLI flags,
-  // so they must be passed as GitHub search qualifiers via --search.
   const searchParts: string[] = []
+  // Why: cursor-based pagination. GitHub search supports updated:<DATE to
+  // fetch items older than the cursor. We use the oldest item's updatedAt
+  // from the previous page as the cursor.
+  if (before) {
+    searchParts.push(`updated:<${before}`)
+  }
   if (kind === 'pr' && query.reviewRequested) {
     searchParts.push(`review-requested:${query.reviewRequested}`)
   }
@@ -338,7 +283,7 @@ async function listRecentWorkItems(
   repoPath: string,
   ownerRepo: { owner: string; repo: string } | null,
   limit: number
-): Promise<GitHubWorkItem[]> {
+): Promise<MainWorkItem[]> {
   if (ownerRepo) {
     const [issuesResult, prsResult] = await Promise.all([
       ghExecFileAsync(
@@ -368,8 +313,8 @@ async function listRecentWorkItems(
       .filter((item) => !('pull_request' in item))
       .map(mapIssueWorkItem)
 
-    const prs = (JSON.parse(prsResult.stdout) as Record<string, unknown>[]).map(
-      mapPullRequestWorkItem
+    const prs = (JSON.parse(prsResult.stdout) as Record<string, unknown>[]).map((item) =>
+      mapPullRequestWorkItem(item, ownerRepo.owner)
     )
 
     return sortWorkItemsByUpdatedAt([...issues, ...prs]).slice(0, limit)
@@ -398,7 +343,7 @@ async function listRecentWorkItems(
         '--state',
         'open',
         '--json',
-        'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName'
+        'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName,headRepositoryOwner'
       ],
       { cwd: repoPath }
     )
@@ -407,8 +352,8 @@ async function listRecentWorkItems(
   const issues = (JSON.parse(issuesResult.stdout) as Record<string, unknown>[]).map(
     mapIssueWorkItem
   )
-  const prs = (JSON.parse(prsResult.stdout) as Record<string, unknown>[]).map(
-    mapPullRequestWorkItem
+  const prs = (JSON.parse(prsResult.stdout) as Record<string, unknown>[]).map((item) =>
+    mapPullRequestWorkItem(item, null)
   )
 
   return sortWorkItemsByUpdatedAt([...issues, ...prs]).slice(0, limit)
@@ -418,16 +363,17 @@ async function listQueriedWorkItems(
   repoPath: string,
   ownerRepo: { owner: string; repo: string } | null,
   query: ParsedTaskQuery,
-  limit: number
-): Promise<GitHubWorkItem[]> {
-  const fetchers: Promise<GitHubWorkItem[]>[] = []
+  limit: number,
+  before?: string
+): Promise<MainWorkItem[]> {
+  const fetchers: Promise<MainWorkItem[]>[] = []
   const issueScope = query.scope !== 'pr'
   const prScope = query.scope !== 'issue'
 
   if (issueScope) {
     fetchers.push(
       (async () => {
-        const args = buildWorkItemListArgs({ kind: 'issue', ownerRepo, limit, query })
+        const args = buildWorkItemListArgs({ kind: 'issue', ownerRepo, limit, query, before })
         try {
           const { stdout } = await ghExecFileAsync(args, { cwd: repoPath })
           return (JSON.parse(stdout) as Record<string, unknown>[]).map(mapIssueWorkItem)
@@ -441,10 +387,12 @@ async function listQueriedWorkItems(
   if (prScope) {
     fetchers.push(
       (async () => {
-        const args = buildWorkItemListArgs({ kind: 'pr', ownerRepo, limit, query })
+        const args = buildWorkItemListArgs({ kind: 'pr', ownerRepo, limit, query, before })
         try {
           const { stdout } = await ghExecFileAsync(args, { cwd: repoPath })
-          return (JSON.parse(stdout) as Record<string, unknown>[]).map(mapPullRequestWorkItem)
+          return (JSON.parse(stdout) as Record<string, unknown>[]).map((item) =>
+            mapPullRequestWorkItem(item, ownerRepo?.owner ?? null)
+          )
         } catch {
           return []
         }
@@ -459,20 +407,102 @@ async function listQueriedWorkItems(
 export async function listWorkItems(
   repoPath: string,
   limit = 24,
-  query?: string
-): Promise<GitHubWorkItem[]> {
+  query?: string,
+  before?: string
+): Promise<MainWorkItem[]> {
   const ownerRepo = await getOwnerRepo(repoPath)
   const trimmedQuery = query?.trim() ?? ''
   await acquire()
   try {
+    // Why: errors propagate to IPC so the renderer's cross-repo aggregator can
+    // count this repo as failed and surface the partial-failure banner. A
+    // catch-all here would make an auth/network failure indistinguishable from
+    // an empty result and silently under-report per-repo failures.
     if (!trimmedQuery) {
       return await listRecentWorkItems(repoPath, ownerRepo, limit)
     }
 
     const parsedQuery = parseTaskQuery(trimmedQuery)
-    return await listQueriedWorkItems(repoPath, ownerRepo, parsedQuery, limit)
-  } catch {
-    return []
+    return await listQueriedWorkItems(repoPath, ownerRepo, parsedQuery, limit, before)
+  } finally {
+    release()
+  }
+}
+
+function buildSearchQueryString(
+  ownerRepo: { owner: string; repo: string },
+  query: ParsedTaskQuery
+): string {
+  const parts: string[] = [`repo:${ownerRepo.owner}/${ownerRepo.repo}`]
+  if (query.scope === 'pr') {
+    parts.push('is:pull-request')
+  } else if (query.scope === 'issue') {
+    parts.push('is:issue')
+  }
+  if (query.state === 'open') {
+    parts.push('is:open')
+  } else if (query.state === 'closed') {
+    parts.push('is:closed')
+  } else if (query.state === 'merged') {
+    parts.push('is:merged')
+  }
+  if (query.draft) {
+    parts.push('draft:true')
+  }
+  if (query.assignee) {
+    parts.push(`assignee:${query.assignee}`)
+  }
+  if (query.author) {
+    parts.push(`author:${query.author}`)
+  }
+  if (query.reviewRequested) {
+    parts.push(`review-requested:${query.reviewRequested}`)
+  }
+  if (query.reviewedBy) {
+    parts.push(`reviewed-by:${query.reviewedBy}`)
+  }
+  for (const label of query.labels) {
+    parts.push(`label:${label}`)
+  }
+  if (query.freeText) {
+    parts.push(query.freeText)
+  }
+  return parts.join(' ')
+}
+
+// Why: uses GitHub's search API to get total_count without fetching items.
+// This powers the pagination bar so the user sees total pages upfront.
+// Cached for 120s to avoid burning the search rate limit (30 req/min).
+export async function countWorkItems(repoPath: string, query?: string): Promise<number> {
+  const ownerRepo = await getOwnerRepo(repoPath)
+  if (!ownerRepo) {
+    return 0
+  }
+
+  const trimmedQuery = query?.trim() ?? ''
+  const parsedQuery = trimmedQuery ? parseTaskQuery(trimmedQuery) : null
+
+  const searchQ = parsedQuery
+    ? buildSearchQueryString(ownerRepo, parsedQuery)
+    : `repo:${ownerRepo.owner}/${ownerRepo.repo} is:open`
+
+  await acquire()
+  try {
+    const { stdout } = await ghExecFileAsync(
+      [
+        'api',
+        '--cache',
+        '120s',
+        `search/issues?q=${encodeURIComponent(searchQ)}&per_page=1`,
+        '--jq',
+        '.total_count'
+      ],
+      { cwd: repoPath }
+    )
+    return parseInt(stdout.trim(), 10) || 0
+  } catch (err) {
+    console.warn('countWorkItems failed:', err)
+    return 0
   } finally {
     release()
   }
@@ -484,10 +514,7 @@ export async function getRepoSlug(
   return getOwnerRepo(repoPath)
 }
 
-export async function getWorkItem(
-  repoPath: string,
-  number: number
-): Promise<GitHubWorkItem | null> {
+export async function getWorkItem(repoPath: string, number: number): Promise<MainWorkItem | null> {
   await acquire()
   try {
     const ownerRepo = await getOwnerRepo(repoPath)
@@ -503,6 +530,7 @@ export async function getWorkItem(
           { cwd: repoPath }
         )
         const pr = JSON.parse(prResult.stdout) as Record<string, unknown>
+        const prHeadOwner = extractHeadOwnerLogin(pr)
         return {
           id: `pr:${String(pr.number)}`,
           type: 'pr',
@@ -538,7 +566,11 @@ export async function getWorkItem(
           baseRefName:
             typeof pr.base === 'object' && pr.base !== null && 'ref' in pr.base
               ? String((pr.base as { ref?: unknown }).ref ?? '')
-              : undefined
+              : undefined,
+          // Why: only emit isCrossRepository when we actually know the head
+          // owner. Falsely claiming "not a fork" would let the picker try a
+          // normal-PR fetch against a fork head and fail.
+          ...(prHeadOwner !== null ? { isCrossRepository: prHeadOwner !== ownerRepo.owner } : {})
         }
       }
 
@@ -607,7 +639,7 @@ export async function getWorkItem(
           'view',
           String(number),
           '--json',
-          'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName'
+          'number,title,state,url,labels,updatedAt,author,isDraft,headRefName,baseRefName,headRepositoryOwner'
         ],
         { cwd: repoPath }
       )
@@ -635,6 +667,10 @@ export async function getWorkItem(
             : null,
         branchName: String(item.headRefName ?? ''),
         baseRefName: String(item.baseRefName ?? '')
+        // Why: ownerRepo is null on this path so we can't compare head vs base
+        // owners. Leave isCrossRepository undefined rather than guessing —
+        // falsely claiming "not a fork" would let the picker try a normal-PR
+        // fetch against a fork head and fail.
       }
     }
   } catch {
@@ -824,7 +860,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
           comments(first: 100) {
             nodes {
               databaseId
-              author { login avatarUrl(size: 48) }
+              author { __typename login avatarUrl(size: 48) }
               body
               createdAt
               url
@@ -896,7 +932,7 @@ export async function getPRComments(
       // Parse issue comments (REST)
       type RESTComment = {
         id: number
-        user: { login: string; avatar_url: string } | null
+        user: { login: string; avatar_url: string; type?: string } | null
         body: string
         created_at: string
         html_url: string
@@ -910,7 +946,8 @@ export async function getPRComments(
             authorAvatarUrl: c.user?.avatar_url ?? '',
             body: c.body ?? '',
             createdAt: c.created_at,
-            url: c.html_url
+            url: c.html_url,
+            isBot: c.user?.type === 'Bot'
           })
         )
       } else {
@@ -928,7 +965,7 @@ export async function getPRComments(
         comments: {
           nodes: {
             databaseId: number
-            author: { login: string; avatarUrl: string } | null
+            author: { __typename?: string; login: string; avatarUrl: string } | null
             body: string
             createdAt: string
             url: string
@@ -954,6 +991,7 @@ export async function getPRComments(
               path: c.path,
               threadId: thread.id,
               isResolved: thread.isResolved,
+              isBot: c.author?.__typename === 'Bot',
               // Why: GitHub nulls out line/startLine when the commented code is
               // outdated (e.g. after a force-push). Fall back to originalLine which
               // always preserves the line numbers from when the comment was created.
@@ -970,7 +1008,7 @@ export async function getPRComments(
       // since empty-body reviews (e.g. approvals with no comment) add noise.
       type RESTReview = {
         id: number
-        user: { login: string; avatar_url: string } | null
+        user: { login: string; avatar_url: string; type?: string } | null
         body: string
         state: string
         submitted_at: string
@@ -987,7 +1025,8 @@ export async function getPRComments(
               authorAvatarUrl: r.user?.avatar_url ?? '',
               body: r.body,
               createdAt: r.submitted_at,
-              url: r.html_url
+              url: r.html_url,
+              isBot: r.user?.type === 'Bot'
             })
           )
       } else {

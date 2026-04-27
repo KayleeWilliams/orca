@@ -1,5 +1,10 @@
+/* oxlint-disable max-lines -- Why: rendering the drop-indicator prop on each
+ * of three distinct tab components (terminal, browser, editor) adds 3 lines
+ * to a file that was already ~398 code lines on main. The per-type render
+ * branches share little beyond drag data, so consolidating them would cost
+ * more clarity than the ~5 lines of bloat is worth. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
+import { SortableContext } from '@dnd-kit/sortable'
 import { FilePlus, Globe, Plus, TerminalSquare } from 'lucide-react'
 import type {
   BrowserTab as BrowserTabState,
@@ -11,9 +16,14 @@ import { buildStatusMap } from '../right-sidebar/status-display'
 import type { OpenFile } from '../../store/slices/editor'
 import SortableTab from './SortableTab'
 import EditorFileTab from './EditorFileTab'
-import BrowserTab from './BrowserTab'
+import BrowserTab, { getBrowserTabLabel } from './BrowserTab'
+import { QuickLaunchAgentMenuItems } from './QuickLaunchButton'
+import type { DropIndicator } from './drop-indicator'
 import { reconcileTabOrder } from './reconcile-order'
-import type { TabDragItemData } from '../tab-group/useTabDragSplit'
+import type { HoveredTabInsertion, TabDragItemData } from '../tab-group/useTabDragSplit'
+import { resolveTabIndicatorEdges } from '../tab-group/tab-insertion'
+import { getEditorDisplayLabel } from '@/components/editor/editor-labels'
+import { ShellIcon } from './shell-icons'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 const isMac = navigator.userAgent.includes('Mac')
+const isWindows = navigator.userAgent.includes('Windows')
 const NEW_TERMINAL_SHORTCUT = isMac ? '⌘T' : 'Ctrl+T'
 const NEW_BROWSER_SHORTCUT = isMac ? '⌘⇧B' : 'Ctrl+Shift+B'
 const NEW_FILE_SHORTCUT = isMac ? '⌘⇧M' : 'Ctrl+Shift+M'
@@ -38,8 +49,13 @@ type TabBarProps = {
   onCloseOthers: (tabId: string) => void
   onCloseToRight: (tabId: string) => void
   onNewTerminalTab: () => void
+  /** On Windows, opens a new terminal with a specific shell instead of the default. */
+  onNewTerminalWithShell?: (shell: string) => void
   onNewBrowserTab: () => void
   onNewFileTab?: () => void
+  /** Whether WSL is installed on this Windows machine. When true, the "+"
+   *  dropdown shows a WSL option under the terminal submenu. */
+  wslAvailable?: boolean
   onSetCustomTitle: (tabId: string, title: string | null) => void
   onSetTabColor: (tabId: string, color: string | null) => void
   onTogglePaneExpand: (tabId: string) => void
@@ -60,6 +76,7 @@ type TabBarProps = {
     direction: 'left' | 'right' | 'up' | 'down',
     sourceVisibleTabId?: string
   ) => void
+  hoveredTabInsertion?: HoveredTabInsertion | null
 }
 
 type TabItem =
@@ -77,6 +94,16 @@ type TabItem =
       data: BrowserTabState & { tabId?: string }
     }
 
+function getTabDragLabel(item: TabItem): string {
+  if (item.type === 'terminal') {
+    return item.data.customTitle ?? item.data.title
+  }
+  if (item.type === 'browser') {
+    return getBrowserTabLabel(item.data)
+  }
+  return getEditorDisplayLabel(item.data)
+}
+
 function TabBarInner({
   tabs,
   activeTabId,
@@ -88,6 +115,7 @@ function TabBarInner({
   onCloseOthers,
   onCloseToRight,
   onNewTerminalTab,
+  onNewTerminalWithShell,
   onNewBrowserTab,
   onNewFileTab,
   onSetCustomTitle,
@@ -106,9 +134,14 @@ function TabBarInner({
   onCloseAllFiles,
   onPinFile,
   tabBarOrder,
-  onCreateSplitGroup
+  onCreateSplitGroup,
+  hoveredTabInsertion,
+  wslAvailable
 }: TabBarProps): React.JSX.Element {
   const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
+  const defaultWindowsShell = useAppStore(
+    (s) => s.settings?.terminalWindowsShell ?? 'powershell.exe'
+  )
   const resolvedGroupId = groupId ?? worktreeId
   const statusByRelativePath = useMemo(
     () => buildStatusMap(gitStatusByWorktree[worktreeId] ?? []),
@@ -163,6 +196,19 @@ function TabBarInner({
   }, [tabBarOrder, terminalIds, editorFileIds, browserTabIds, terminalMap, editorMap, browserMap])
 
   const sortableIds = useMemo(() => orderedItems.map((item) => item.id), [orderedItems])
+
+  const activeIndicator =
+    hoveredTabInsertion?.groupId === resolvedGroupId ? hoveredTabInsertion : null
+  const dropIndicatorByVisibleId = useMemo(() => {
+    const indicators = new Map<string, DropIndicator>()
+    for (const edge of resolveTabIndicatorEdges(
+      orderedItems.map((item) => item.id),
+      activeIndicator
+    )) {
+      indicators.set(edge.visibleTabId, edge.side)
+    }
+    return indicators
+  }, [activeIndicator, orderedItems])
 
   const focusTerminalTabSurface = useCallback((tabId: string) => {
     // Why: creating a terminal from the "+" menu is a two-step focus race:
@@ -293,13 +339,24 @@ function TabBarInner({
       // editor drop zone.
       data-native-file-drop-target="editor"
     >
-      <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+      {/* Why: no strategy means dnd-kit does not animate siblings aside for
+          the active tab. Combined with dropping transform/transition on the
+          dragged tab (see SortableTab etc.), this keeps every tab visually
+          anchored during a drag so only the blue insertion bar moves. */}
+      <SortableContext items={sortableIds}>
         {/* Why: no-drag lets tab interactions work inside the titlebar's drag
             region. The outer container inherits drag so empty space after the
             "+" button remains window-draggable. */}
         <div
           ref={tabStripRef}
-          className="terminal-tab-strip flex items-stretch overflow-x-auto overflow-y-hidden"
+          // Why: only `border-r` on the strip — the trailing edge must stay
+          // visible even when tabs overflow-scroll past the last tab. The
+          // left edge is instead painted by the FIRST tab's own `border-l`
+          // (see per-tab components) so its rendering is identical to every
+          // between-tab separator. A strip-level `border-l` would render at
+          // a different box than the tab's own `border-t`, producing a
+          // heavier-looking L-corner at the leftmost tab when inactive.
+          className="terminal-tab-strip flex items-stretch overflow-x-auto overflow-y-hidden border-r border-border"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           {orderedItems.map((item, index) => {
@@ -309,9 +366,10 @@ function TabBarInner({
               groupId: resolvedGroupId,
               unifiedTabId: item.unifiedTabId,
               visibleTabId: item.id,
-              tabType: item.type
+              tabType: item.type,
+              label: getTabDragLabel(item),
+              color: item.type === 'terminal' ? (item.data.color ?? null) : null
             }
-
             if (item.type === 'terminal') {
               return (
                 <SortableTab
@@ -332,6 +390,7 @@ function TabBarInner({
                     onCreateSplitGroup?.(direction, sourceVisibleTabId)
                   }
                   dragData={dragData}
+                  dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
                 />
               )
             }
@@ -350,6 +409,7 @@ function TabBarInner({
                   }
                   onDuplicate={() => onDuplicateBrowserTab?.(item.id)}
                   dragData={dragData}
+                  dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
                 />
               )
             }
@@ -369,6 +429,7 @@ function TabBarInner({
                   onCreateSplitGroup?.(direction, sourceVisibleTabId)
                 }
                 dragData={dragData}
+                dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
               />
             )
           })}
@@ -396,20 +457,69 @@ function TabBarInner({
             e.preventDefault()
           }}
         >
-          <DropdownMenuItem
-            onSelect={() => {
-              onNewTerminalTab()
-              const newActiveTabId = useAppStore.getState().activeTabId
-              if (newActiveTabId) {
-                focusTerminalTabSurface(newActiveTabId)
-              }
-            }}
-            className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
-          >
-            <TerminalSquare className="size-4 text-muted-foreground" />
-            New Terminal
-            <DropdownMenuShortcut>{NEW_TERMINAL_SHORTCUT}</DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {isWindows && onNewTerminalWithShell ? (
+            // Why: previously the Windows path nested shell choices under a
+            // Radix submenu. In practice the submenu frequently failed to open
+            // on hover/click, and even when it worked the two-step expansion
+            // hid the fact that multiple shells were available. Inlining all
+            // shells as flat items — default pinned to the top with the
+            // Ctrl+T hint — matches the "no popouts, show all options at
+            // once" rec. Each entry uses a shell-specific icon (ShellIcon)
+            // so PowerShell / CMD / WSL are distinguishable at a glance.
+            // Labels use "CMD Prompt" instead of "Command Prompt" to keep
+            // each row narrow enough that the shortcut hint fits without
+            // wrapping.
+            (() => {
+              const allShells = [
+                { label: 'PowerShell', shell: 'powershell.exe' },
+                { label: 'CMD Prompt', shell: 'cmd.exe' },
+                ...(wslAvailable ? [{ label: 'WSL', shell: 'wsl.exe' }] : [])
+              ]
+              const defaultEntry =
+                allShells.find((s) => s.shell === defaultWindowsShell) ?? allShells[0]
+              const orderedShells = [
+                defaultEntry,
+                ...allShells.filter((s) => s.shell !== defaultEntry.shell)
+              ]
+              return orderedShells.map((entry, idx) => {
+                const isDefault = idx === 0
+                return (
+                  <DropdownMenuItem
+                    key={entry.shell}
+                    onSelect={() => {
+                      onNewTerminalWithShell(entry.shell)
+                      const newActiveTabId = useAppStore.getState().activeTabId
+                      if (newActiveTabId) {
+                        focusTerminalTabSurface(newActiveTabId)
+                      }
+                    }}
+                    className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
+                  >
+                    <ShellIcon shell={entry.shell} size={14} />
+                    <span className="flex-1">New Terminal: {entry.label}</span>
+                    {isDefault ? (
+                      <DropdownMenuShortcut>{NEW_TERMINAL_SHORTCUT}</DropdownMenuShortcut>
+                    ) : null}
+                  </DropdownMenuItem>
+                )
+              })
+            })()
+          ) : (
+            <DropdownMenuItem
+              onSelect={() => {
+                onNewTerminalTab()
+                const newActiveTabId = useAppStore.getState().activeTabId
+                if (newActiveTabId) {
+                  focusTerminalTabSurface(newActiveTabId)
+                }
+              }}
+              className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
+            >
+              <TerminalSquare className="size-4 text-muted-foreground" />
+              New Terminal
+              <DropdownMenuShortcut>{NEW_TERMINAL_SHORTCUT}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onSelect={onNewBrowserTab}
             className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
@@ -428,6 +538,11 @@ function TabBarInner({
               <DropdownMenuShortcut>{NEW_FILE_SHORTCUT}</DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
+          <QuickLaunchAgentMenuItems
+            worktreeId={worktreeId}
+            groupId={resolvedGroupId}
+            onFocusTerminal={focusTerminalTabSurface}
+          />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

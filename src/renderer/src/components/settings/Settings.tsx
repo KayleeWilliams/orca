@@ -11,6 +11,7 @@ import {
   Palette,
   Server,
   SlidersHorizontal,
+  Blocks,
   SquareTerminal
 } from 'lucide-react'
 import type { OrcaHooks } from '../../../../shared/types'
@@ -24,6 +25,9 @@ import { BrowserPane, BROWSER_PANE_SEARCH_ENTRIES } from './BrowserPane'
 import { AppearancePane, APPEARANCE_PANE_SEARCH_ENTRIES } from './AppearancePane'
 import { ShortcutsPane, SHORTCUTS_PANE_SEARCH_ENTRIES } from './ShortcutsPane'
 import { TerminalPane } from './TerminalPane'
+import { useGhosttyImport } from './useGhosttyImport'
+import { Button } from '../ui/button'
+import ghosttyIcon from '../../../../../resources/ghostty.svg'
 import { RepositoryPane, getRepositoryPaneSearchEntries } from './RepositoryPane'
 import { getTerminalPaneSearchEntries } from './terminal-search'
 import { GitPane, GIT_PANE_SEARCH_ENTRIES } from './GitPane'
@@ -32,12 +36,14 @@ import { SshPane, SSH_PANE_SEARCH_ENTRIES } from './SshPane'
 import { ExperimentalPane, EXPERIMENTAL_PANE_SEARCH_ENTRIES } from './ExperimentalPane'
 import { AgentsPane, AGENTS_PANE_SEARCH_ENTRIES } from './AgentsPane'
 import { StatsPane, STATS_PANE_SEARCH_ENTRIES } from '../stats/StatsPane'
+import { IntegrationsPane, INTEGRATIONS_PANE_SEARCH_ENTRIES } from './IntegrationsPane'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSection } from './SettingsSection'
 import { matchesSettingsSearch, type SettingsSearchEntry } from './settings-search'
 
 type SettingsNavTarget =
   | 'general'
+  | 'integrations'
   | 'browser'
   | 'git'
   | 'appearance'
@@ -133,6 +139,14 @@ function Settings(): React.JSX.Element {
   )
   const [scrollbackMode, setScrollbackMode] = useState<'preset' | 'custom'>('preset')
   const [prevScrollbackBytes, setPrevScrollbackBytes] = useState(settings?.terminalScrollbackBytes)
+  // Why: lifted out of TerminalPane so the Terminal section header can render
+  // the import trigger as a headerAction. The modal itself still lives inside
+  // TerminalPane, driven by this shared state.
+  const ghostty = useGhosttyImport(updateSettings, settings)
+  const [wslAvailable, setWslAvailable] = useState(false)
+  useEffect(() => {
+    void window.api.wsl.isAvailable().then(setWslAvailable)
+  }, [])
   const [terminalFontSuggestions, setTerminalFontSuggestions] = useState<string[]>(
     getFallbackTerminalFonts()
   )
@@ -329,6 +343,13 @@ function Settings(): React.JSX.Element {
         description: 'Keyboard shortcuts for common actions.',
         icon: Keyboard,
         searchEntries: SHORTCUTS_PANE_SEARCH_ENTRIES
+      },
+      {
+        id: 'integrations',
+        title: 'Integrations',
+        description: 'GitHub, Linear, and other service connections.',
+        icon: Blocks,
+        searchEntries: INTEGRATIONS_PANE_SEARCH_ENTRIES
       },
       {
         id: 'stats',
@@ -537,6 +558,15 @@ function Settings(): React.JSX.Element {
                 </SettingsSection>
 
                 <SettingsSection
+                  id="integrations"
+                  title="Integrations"
+                  description="GitHub, Linear, and other service connections."
+                  searchEntries={INTEGRATIONS_PANE_SEARCH_ENTRIES}
+                >
+                  <IntegrationsPane />
+                </SettingsSection>
+
+                <SettingsSection
                   id="agents"
                   title="Agents"
                   description="Manage AI agents, set a default, and customize commands."
@@ -576,6 +606,17 @@ function Settings(): React.JSX.Element {
                   title="Terminal"
                   description="Terminal appearance, previews, and defaults for new panes."
                   searchEntries={terminalPaneSearchEntries}
+                  headerAction={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => void ghostty.handleClick()}
+                    >
+                      <img src={ghosttyIcon} alt="" aria-hidden="true" className="size-4" />
+                      Import from Ghostty
+                    </Button>
+                  }
                 >
                   <TerminalPane
                     settings={settings}
@@ -584,6 +625,8 @@ function Settings(): React.JSX.Element {
                     terminalFontSuggestions={terminalFontSuggestions}
                     scrollbackMode={scrollbackMode}
                     setScrollbackMode={setScrollbackMode}
+                    ghostty={ghostty}
+                    wslAvailable={wslAvailable}
                   />
                 </SettingsSection>
 

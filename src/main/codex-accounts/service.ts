@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { join, relative, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { app } from 'electron'
+import { getSpawnArgsForWindows } from '../win32-utils'
 import type {
   CodexManagedAccount,
   CodexManagedAccountSummary,
@@ -321,16 +322,6 @@ export class CodexAccountService {
     const resolvedCandidate = resolve(candidatePath)
     const resolvedRoot = resolve(rootPath)
 
-    // Why: in dev mode, userData points to orca-dev/ while production uses
-    // orca/. Accounts created by the packaged app store production paths in
-    // settings. A quick prefix check before realpathSync avoids noisy errors
-    // when dev instances encounter production-rooted managed home paths.
-    if (!resolvedCandidate.startsWith(resolvedRoot + sep)) {
-      throw new Error(
-        `Managed Codex home is outside current storage root (expected under ${resolvedRoot}).`
-      )
-    }
-
     if (!existsSync(resolvedCandidate)) {
       throw new Error('Managed Codex home directory does not exist on disk.')
     }
@@ -340,6 +331,21 @@ export class CodexAccountService {
     // canonical on-disk target rather than trusting persisted text blindly.
     const canonicalCandidate = realpathSync(resolvedCandidate)
     const canonicalRoot = realpathSync(resolvedRoot)
+
+    // Why: the prefix check must compare canonical paths on both sides. On
+    // macOS, userData sits under /var/folders/... which realpath resolves to
+    // /private/var/folders/...; comparing a canonical candidate against a
+    // non-canonical root would spuriously reject every managed home. In dev
+    // mode (orca-dev/ vs orca/) this check also filters out production-rooted
+    // paths before downstream sync runs.
+    if (
+      canonicalCandidate !== canonicalRoot &&
+      !canonicalCandidate.startsWith(canonicalRoot + sep)
+    ) {
+      throw new Error(
+        `Managed Codex home is outside current storage root (expected under ${canonicalRoot}).`
+      )
+    }
     const relativePath = relative(canonicalRoot, canonicalCandidate)
     const escaped =
       relativePath === '' || relativePath.startsWith('..') || relativePath.includes(`..${sep}`)
@@ -370,8 +376,11 @@ export class CodexAccountService {
     // just the home/ leaf leaves an empty <uuid>/ directory behind.
     try {
       const parentDir = resolve(managedHomePath, '..')
-      const root = this.getManagedAccountsRoot()
-      if (parentDir.startsWith(root) && parentDir !== root) {
+      // Why: managedHomePath is already canonicalized by assertManagedHomePath,
+      // so the root must be canonicalized too for the prefix check to work on
+      // macOS where userData resolves through /private/var.
+      const root = realpathSync(this.getManagedAccountsRoot())
+      if (parentDir.startsWith(root + sep) && parentDir !== root) {
         rmSync(parentDir, { recursive: true, force: true })
       }
     } catch {
@@ -382,13 +391,17 @@ export class CodexAccountService {
   private async runCodexLogin(managedHomePath: string): Promise<void> {
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const codexCommand = resolveCodexCommand()
-      const child = spawn(codexCommand, ['login'], {
+      // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
+      // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
+      // batch scripts directly without shell:true, but shell:true with an args
+      // array causes DEP0190 because args are concatenated, not escaped.
+      // Fix: detect batch scripts and invoke cmd.exe /c explicitly.
+      const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(codexCommand, ['login'])
+      const child = spawn(spawnCmd, spawnArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        // Why: on Windows, resolveCodexCommand() may return a .cmd/.bat file
-        // (e.g. codex.cmd from npm). Node's child_process.spawn cannot execute
-        // batch scripts directly — it needs cmd.exe as an intermediary. Setting
-        // shell: true on win32 avoids the EINVAL error this would otherwise cause.
-        shell: process.platform === 'win32',
+        // Why: route through cmd.exe for .cmd/.bat entrypoints would otherwise
+        // flash a console window in the packaged GUI app on Windows.
+        windowsHide: true,
         env: {
           ...process.env,
           CODEX_HOME: managedHomePath

@@ -10,18 +10,24 @@ import type {
   UpdateStatus,
   WorktreeCardProperty
 } from '../../../../shared/types'
+import { PER_REPO_FETCH_LIMIT } from '../../../../shared/work-items'
 
-// Why: mirrors the preset→query mapping used by TaskPage's preset buttons.
+// Why: mirrors the preset→query mapping in getTaskPresetQuery (new-workspace.ts).
 // Keeping a local copy here avoids a store ↔ lib circular import while letting
 // openTaskPage warm exactly the cache key the page will read on mount.
+// Must stay in sync with getTaskPresetQuery — see DESIGN-gh-issues-improve.md.
 function presetToQuery(presetId: TaskViewPresetId | null): string {
   switch (presetId) {
+    case 'issues':
+      return 'is:issue is:open'
     case 'my-issues':
-      return 'assignee:@me is:open'
-    case 'review':
-      return 'review-requested:@me is:open'
+      return 'assignee:@me is:issue is:open'
+    case 'prs':
+      return 'is:pr is:open'
     case 'my-prs':
-      return 'author:@me is:open'
+      return 'author:@me is:pr is:open'
+    case 'review':
+      return 'review-requested:@me is:pr is:open'
     default:
       return 'is:open'
   }
@@ -59,6 +65,7 @@ export type UISlice = {
   taskPageData: {
     preselectedRepoId?: string
     prefilledName?: string
+    taskSource?: 'github' | 'linear'
   }
   newWorkspaceDraft: {
     repoId: string | null
@@ -75,6 +82,9 @@ export type UISlice = {
     agent: TuiAgent
     linkedIssue: string
     linkedPR: number | null
+    // Why: repo-scoped start ref selected via the "Start from" picker.
+    // Absent means "use the repo's effective base ref".
+    baseBranch?: string
   } | null
   openTaskPage: (data?: UISlice['taskPageData']) => void
   closeTaskPage: () => void
@@ -92,6 +102,7 @@ export type UISlice = {
       | 'repo'
       | 'agents'
       | 'experimental'
+      | 'ssh'
     repoId: string | null
     sectionId?: string
   } | null
@@ -147,6 +158,10 @@ export type UISlice = {
   dismissedUpdateVersion: string | null
   dismissUpdate: (versionOverride?: string) => void
   clearDismissedUpdateVersion: () => void
+  // Why: ephemeral and renderer-only — never persisted and never crosses IPC.
+  // Resets every session and on every phase transition (see setUpdateStatus).
+  updateCardCollapsed: boolean
+  setUpdateCardCollapsed: (collapsed: boolean) => void
   updateReassuranceSeen: boolean
   markUpdateReassuranceSeen: () => void
   isFullScreen: boolean
@@ -189,7 +204,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     const repo = targetRepoId ? state.repos.find((r) => r.id === targetRepoId) : null
     if (repo?.path) {
       const preset = state.settings?.defaultTaskViewPreset ?? 'all'
-      state.prefetchWorkItems(repo.path, 36, presetToQuery(preset))
+      state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, presetToQuery(preset))
     }
   },
   closeTaskPage: () =>
@@ -344,7 +359,10 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
 
   updateStatus: { state: 'idle' },
   setUpdateStatus: (status) => {
-    const update: Partial<Pick<UISlice, 'updateStatus' | 'updateChangelog'>> = {
+    const prevState = get().updateStatus.state
+    const update: Partial<
+      Pick<UISlice, 'updateStatus' | 'updateChangelog' | 'updateCardCollapsed'>
+    > = {
       updateStatus: status
     }
     if (status.state === 'available') {
@@ -364,6 +382,11 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }
     // For 'downloading', 'downloaded', 'error': leave updateChangelog untouched
     // so the card can keep showing rich content from the original 'available'.
+    if (status.state !== prevState) {
+      // Why: re-surface the card on every phase transition so a prior collapse
+      // of `downloading` doesn't bury the `downloaded`/`error` that follows.
+      update.updateCardCollapsed = false
+    }
     set(update)
   },
   updateChangelog: null,
@@ -391,6 +414,8 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       }
       return { dismissedUpdateVersion }
     }),
+  updateCardCollapsed: false,
+  setUpdateCardCollapsed: (collapsed) => set({ updateCardCollapsed: collapsed }),
   updateReassuranceSeen: false,
   markUpdateReassuranceSeen: () => {
     void window.api.ui.set({ updateReassuranceSeen: true }).catch(console.error)

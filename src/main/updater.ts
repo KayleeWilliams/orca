@@ -11,7 +11,13 @@ import {
   markMacQuitAndInstallInFlight
 } from './updater-mac-install'
 import { registerAutoUpdaterHandlers } from './updater-events'
-import { compareVersions, isBenignCheckFailure, statusesEqual } from './updater-fallback'
+import {
+  compareVersions,
+  isBenignCheckFailure,
+  isPrereleaseVersion,
+  statusesEqual
+} from './updater-fallback'
+import { fetchNewerReleaseTag, getReleaseDownloadUrl } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
 
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -41,6 +47,8 @@ let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
+let _getLastUpdateCheckAt: (() => number | null) | null = null
+let backgroundCheckLaunchPending = false
 let activeUpdateNudgeId: string | null = null
 let awaitingNudgeCheckOutcome = false
 let nudgeCheckInFlight = false
@@ -124,6 +132,10 @@ function sendStatus(status: UpdateStatus): void {
   }
   currentStatus = decoratedStatus
   mainWindowRef?.webContents.send('updater:status', decoratedStatus)
+}
+
+function clearBackgroundCheckLaunchPending(): void {
+  backgroundCheckLaunchPending = false
 }
 
 function sendErrorStatus(message: string, userInitiated?: boolean): void {
@@ -251,9 +263,47 @@ function recordCompletedUpdateCheck(): void {
   persistLastUpdateCheckAt?.(Date.now())
 }
 
+function shouldResolvePrereleaseFeed(): boolean {
+  // Why: if the user Shift-clicked the menu to opt into RC this process, we've
+  // already switched to the native github provider — leave that alone. The
+  // atom-feed resolver only applies to users *running* a prerelease build on
+  // the default generic feed.
+  return !includePrereleaseActive && isPrereleaseVersion(app.getVersion())
+}
+
+async function pinPrereleaseFeed(): Promise<void> {
+  // Why: for prerelease users we mine the atom feed ourselves and pin the
+  // generic feed at /releases/download/<tag>/ so the follow-up manifest fetch
+  // resolves against exactly that release. This handles BOTH RC→newer-RC and
+  // RC→stable, which is what a prerelease user wants. We avoid the native
+  // github provider because GitHubProvider.getLatestVersion() filters the feed
+  // by channel — when currentChannel is "rc", stable releases get skipped and
+  // the user never sees the GA (trapping them on the RC channel).
+  //
+  // If the resolver returns null (no newer release, or fetch failed), we fall
+  // back to the default /releases/latest/download/ URL. In the "no newer"
+  // case that feed will report the latest stable and compareVersions in the
+  // 'update-available' handler will correctly mark it as not-available.
+  const newerTag = await fetchNewerReleaseTag(app.getVersion())
+  if (newerTag) {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: getReleaseDownloadUrl(newerTag)
+    })
+  } else {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: 'https://github.com/stablyai/orca/releases/latest/download'
+    })
+  }
+}
+
 function runBackgroundUpdateCheck(
   nudgeId: string | null = getPersistedPendingUpdateNudgeId()
 ): void {
+  if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
+    return
+  }
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available' })
     return
@@ -264,9 +314,17 @@ function runBackgroundUpdateCheck(
   // the persisted pending id for ordinary background checks so a nudge-driven
   // card can still be dismissed correctly after relaunch or a later 24h check.
   activeUpdateNudgeId = nudgeId
+  // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
+  // arrives on a later tick, so a second focus/resume event can slip in before
+  // currentStatus flips to 'checking'. Track the launch in memory to dedupe
+  // that gap without persisting a successful-check timestamp before the result.
+  backgroundCheckLaunchPending = true
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
-  autoUpdater.checkForUpdates().catch((err) => {
+  const launch = (): Promise<unknown> => autoUpdater.checkForUpdates()
+  const run = shouldResolvePrereleaseFeed() ? pinPrereleaseFeed().then(launch) : launch()
+  void Promise.resolve(run).catch((err) => {
+    backgroundCheckLaunchPending = false
     void sendCheckFailureStatus(String(err?.message ?? err))
   })
 }
@@ -313,7 +371,9 @@ export function checkForUpdatesFromMenu(options?: { includePrerelease?: boolean 
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
 
-  autoUpdater.checkForUpdates().catch((err) => {
+  const launch = (): Promise<unknown> => autoUpdater.checkForUpdates()
+  const run = shouldResolvePrereleaseFeed() ? pinPrereleaseFeed().then(launch) : launch()
+  void Promise.resolve(run).catch((err) => {
     userInitiatedCheck = false
     void sendCheckFailureStatus(String(err?.message ?? err), true)
   })
@@ -428,6 +488,7 @@ export function setupAutoUpdater(
   mainWindowRef = mainWindow
   onBeforeQuitCleanup = opts?.onBeforeQuit ?? null
   persistLastUpdateCheckAt = opts?.setLastUpdateCheckAt ?? null
+  _getLastUpdateCheckAt = opts?.getLastUpdateCheckAt ?? null
   _getPendingUpdateNudgeId = opts?.getPendingUpdateNudgeId ?? null
   _getDismissedUpdateNudgeId = opts?.getDismissedUpdateNudgeId ?? null
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
@@ -465,6 +526,14 @@ export function setupAutoUpdater(
   // latest-linux.yml) from the latest non-prerelease release. This sidesteps
   // the broken /releases/latest API endpoint (returns 406) and automatically
   // excludes RC/prerelease versions without client-side filtering.
+  //
+  // Why: for users already running a prerelease (e.g. 1.3.19-rc.6) we repin
+  // this URL to a specific /releases/download/<tag>/ before each check — see
+  // ensurePrereleaseFeedReady. That handles both RC→newer-RC AND RC→stable.
+  // We keep the generic provider (rather than switching to electron-updater's
+  // native github provider + allowPrerelease) because GitHubProvider filters
+  // the atom feed by channel and would silently skip stable releases when the
+  // running build is an RC — trapping the user on the RC channel.
   autoUpdater.setFeedURL({
     provider: 'generic',
     url: 'https://github.com/stablyai/orca/releases/latest/download'
@@ -488,6 +557,7 @@ export function setupAutoUpdater(
     recordCompletedUpdateCheck,
     sendStatus,
     scheduleAutomaticUpdateCheck,
+    clearBackgroundCheckLaunchPending,
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl
     },
@@ -502,12 +572,25 @@ export function setupAutoUpdater(
   void checkForUpdateNudge()
   scheduleUpdateNudgeCheck()
 
-  powerMonitor.on('resume', () => {
+  const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-  })
-  app.on('browser-window-focus', () => {
-    void checkForUpdateNudge()
-  })
+    if (
+      backgroundCheckLaunchPending ||
+      currentStatus.state === 'checking' ||
+      currentStatus.state === 'downloading'
+    ) {
+      return
+    }
+    const lastCheck = _getLastUpdateCheckAt?.() ?? null
+    const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
+    if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
+      runBackgroundUpdateCheck()
+      scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+    }
+  }
+
+  powerMonitor.on('resume', checkDailyOnWake)
+  app.on('browser-window-focus', checkDailyOnWake)
 
   const lastUpdateCheckAt = opts?.getLastUpdateCheckAt?.() ?? null
   const msSinceLastCheck =

@@ -1,4 +1,5 @@
 import type { PtyTransport } from './pty-transport'
+import type { ReplayingPanesRef } from './replay-guard'
 
 export type PtyConnectionDeps = {
   tabId: string
@@ -9,6 +10,7 @@ export type PtyConnectionDeps = {
   restoredPtyIdByLeafId?: Record<string, string>
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   pendingWritesRef: React.RefObject<Map<number, string>>
+  replayingPanesRef: ReplayingPanesRef
   isActiveRef: React.RefObject<boolean>
   isVisibleRef: React.RefObject<boolean>
   onPtyExitRef: React.RefObject<(ptyId: string) => void>
@@ -20,10 +22,14 @@ export type PtyConnectionDeps = {
   clearRuntimePaneTitle: (tabId: string, paneId: number) => void
   updateTabPtyId: (tabId: string, ptyId: string, options?: { isReattach?: boolean }) => void
   markWorktreeUnread: (worktreeId: string) => void
-  dispatchNotification: (event: {
-    source: 'agent-task-complete' | 'terminal-bell'
-    terminalTitle?: string
-  }) => void
+  markTerminalTabUnread: (tabId: string) => void
+  clearWorktreeUnread: (worktreeId: string) => void
+  clearTerminalTabUnread: (tabId: string) => void
+  // Why: the renderer-side dispatcher only handles BEL-sourced notifications
+  // now. shared/types.ts keeps a wider NotificationEventSource union because
+  // main-process callers can still emit others (e.g. `'test'` for the
+  // settings-pane button).
+  dispatchNotification: (event: { source: 'terminal-bell' }) => void
   setCacheTimerStartedAt: (key: string, ts: number | null) => void
   syncPanePtyLayoutBinding: (paneId: number, ptyId: string | null) => void
 }

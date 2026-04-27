@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">中文</a> · <a href="README.ja.md">日本語</a>
+  <a href="../README.md">English</a> · <a href="README.zh-CN.md">中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.es.md">Español</a>
 </p>
 
 <p align="center">
@@ -68,6 +68,7 @@ Orca は任意の CLI Agent に対応しています（_このリストに限定
 - **内蔵バージョン管理** — AI が生成したコードDiffを確認し、素早く編集を行い、Orca から離れることなく直接コミットできます。
 - **GitHub 連携** — PR、Issue、Actions のチェックは、各ワークツリーに自動的にリンクされます。
 - **通知** — エージェントが作業を完了した際や注意が必要な際にお知らせします。スレッドを未読にして後で確認することも可能です。
+- **SSH サポート** — リモートマシンに接続し、Orca から直接エージェントを実行できます。
 
 ---
 
@@ -75,6 +76,18 @@ Orca は任意の CLI Agent に対応しています（_このリストに限定
 
 - **[onOrca.dev からダウンロード](https://onOrca.dev)**
 - または、**[GitHub Releases ページ](https://github.com/stablyai/orca/releases)**から最新のインストーラーをダウンロードしてください。
+
+---
+
+## [新機能] AI Diff へのコメント
+
+**AI が生成した Diff に直接コメントを追加。**
+
+AI が生成した Diff の任意の行にフィードバックを付け、そのままエージェントに返して修正させましょう。レビューのループを素早く回せます — 行番号をコピーする必要も、コンテキストを切り替える必要もありません。
+
+<p align="center">
+  <img src="docs/assets/annotate-ai-diff.gif" alt="Orca AI Diff コメント — AI が生成した Diff にコメントしてエージェントにフィードバックを送信" width="800" />
+</p>
 
 ---
 
@@ -105,7 +118,7 @@ Orca には、ワークツリー内にブラウザが組み込まれています
 
 **ターミナルからのエージェントオーケストレーション。**
 
-AI Agent に Orca IDE を制御させましょう。AI を使って IDE にリポジトリを追加したり、ワークツリーを立ち上げたり、ターミナルから AI Agent に現在のワークツリーのコメントを直接更新させることができます。Orca IDE に同梱されています（設定からインストール）。
+AI Agent に Orca IDE を制御させましょう。AI を使って IDE にプロジェクトを追加したり、ワークツリーを立ち上げたり、ターミナルから AI Agent に現在のワークツリーのコメントを直接更新させることができます。Orca IDE に同梱されています（設定からインストール）。
 
 ```bash
 npx skills add https://github.com/stablyai/orca --skill orca-cli

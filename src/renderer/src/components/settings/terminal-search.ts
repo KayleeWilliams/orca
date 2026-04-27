@@ -20,6 +20,23 @@ export const TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Line Height',
     description: 'Controls the terminal line height multiplier.',
     keywords: ['terminal', 'typography', 'line height', 'spacing']
+  },
+  {
+    title: 'Font Ligatures',
+    description:
+      'Render programming ligatures (e.g. => → ≠ ≥) for fonts that ship them. "Auto" enables ligatures only for known ligature fonts (Fira Code, JetBrains Mono, Cascadia Code, Iosevka, etc.).',
+    keywords: [
+      'terminal',
+      'typography',
+      'ligatures',
+      'ligature',
+      'fira code',
+      'jetbrains mono',
+      'cascadia code',
+      'iosevka',
+      'calt',
+      'font features'
+    ]
   }
 ]
 
@@ -33,6 +50,11 @@ export const TERMINAL_CURSOR_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Blinking Cursor',
     description: 'Uses the blinking variant of the selected cursor shape.',
     keywords: ['terminal', 'cursor', 'blink']
+  },
+  {
+    title: 'Cursor Opacity',
+    description: 'Opacity of the terminal cursor.',
+    keywords: ['terminal', 'cursor', 'opacity', 'transparency']
   }
 ]
 
@@ -108,6 +130,11 @@ export const TERMINAL_ADVANCED_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Scrollback Size',
     description: 'Maximum terminal scrollback buffer size.',
     keywords: ['terminal', 'scrollback', 'buffer', 'memory']
+  },
+  {
+    title: 'Word Separators',
+    description: 'Characters treated as word boundaries for double-click selection.',
+    keywords: ['word', 'separator', 'boundary', 'double-click', 'selection']
   }
 ]
 
@@ -134,6 +161,47 @@ export const TERMINAL_MAC_OPTION_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const TERMINAL_GHOSTTY_IMPORT_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Import from Ghostty',
+    description: 'One-time import of supported Ghostty terminal settings.',
+    keywords: ['ghostty', 'import', 'terminal', 'config', 'settings']
+  }
+]
+
+export const TERMINAL_WINDOW_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Background Opacity',
+    description: 'Controls the transparency of the terminal background.',
+    keywords: ['opacity', 'transparency', 'background', 'alpha']
+  },
+  {
+    title: 'Window Blur',
+    description: 'Apply background blur to the terminal window. Requires restart.',
+    keywords: ['window', 'blur', 'background', 'transparency', 'vibrancy']
+  },
+  {
+    title: 'Horizontal Padding',
+    description: 'Horizontal padding around the terminal grid in pixels.',
+    keywords: ['padding', 'horizontal', 'spacing', 'margin']
+  },
+  {
+    title: 'Vertical Padding',
+    description: 'Vertical padding around the terminal grid in pixels.',
+    keywords: ['padding', 'vertical', 'spacing', 'margin']
+  },
+  {
+    title: 'Hide Mouse While Typing',
+    description: 'Hide the mouse cursor when typing in the terminal.',
+    keywords: ['mouse', 'hide', 'typing', 'cursor']
+  },
+  {
+    title: 'Color Overrides',
+    description: 'Override individual terminal colors.',
+    keywords: ['color', 'override', 'ansi', 'palette', 'theme']
+  }
+]
+
 export const TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Setup Script Location',
@@ -154,7 +222,28 @@ export const TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const TERMINAL_WINDOWS_SHELL_SEARCH_ENTRY: SettingsSearchEntry[] = [
+  {
+    title: 'Default Shell',
+    description: 'Choose the default shell for new terminal panes on Windows.',
+    keywords: [
+      'terminal',
+      'windows',
+      'shell',
+      'powershell',
+      'cmd',
+      'command prompt',
+      'default',
+      'wsl',
+      'linux',
+      'bash',
+      'ubuntu'
+    ]
+  }
+]
+
 export const TERMINAL_WINDOWS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...TERMINAL_WINDOWS_SHELL_SEARCH_ENTRY,
   {
     title: 'Right-click to paste',
     description:
@@ -163,7 +252,14 @@ export const TERMINAL_WINDOWS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
-export const TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY = TERMINAL_WINDOWS_SEARCH_ENTRIES
+export const TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY: SettingsSearchEntry[] = [
+  {
+    title: 'Right-click to paste',
+    description:
+      'On Windows, right-click pastes the clipboard into the terminal. Use Ctrl+right-click to open the context menu.',
+    keywords: ['terminal', 'windows', 'right click', 'paste', 'context menu']
+  }
+]
 
 export function getTerminalPaneSearchEntries(platform: {
   isWindows: boolean
@@ -179,7 +275,9 @@ export function getTerminalPaneSearchEntries(platform: {
     ...(platform.isWindows ? TERMINAL_WINDOWS_SEARCH_ENTRIES : []),
     ...TERMINAL_DARK_THEME_SEARCH_ENTRIES,
     ...TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
+    ...TERMINAL_WINDOW_SEARCH_ENTRIES,
     ...TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES,
+    ...TERMINAL_GHOSTTY_IMPORT_SEARCH_ENTRIES,
     ...TERMINAL_ADVANCED_SEARCH_ENTRIES,
     ...(platform.isMac ? TERMINAL_MAC_OPTION_SEARCH_ENTRIES : [])
   ]

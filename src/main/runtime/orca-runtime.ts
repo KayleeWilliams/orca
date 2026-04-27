@@ -1,6 +1,8 @@
 /* eslint-disable max-lines -- Why: the Orca runtime is the authoritative live control plane for the CLI, so handle validation, selector resolution, wait state, and summaries are kept together to avoid split-brain behavior. */
 /* eslint-disable unicorn/no-useless-spread -- Why: waiter sets and handle keys are cloned intentionally before mutation so resolution and rejection can safely remove entries while iterating. */
 /* eslint-disable no-control-regex -- Why: terminal normalization must strip ANSI and OSC control sequences from PTY output before returning bounded text to agents. */
+import { extractLastOscTitle, detectAgentStatusFromTitle } from '../../shared/agent-detection'
+import type { AgentStatus } from '../../shared/agent-detection'
 import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
@@ -12,11 +14,17 @@ import type {
   RuntimeGraphStatus,
   RuntimeRepoSearchRefs,
   RuntimeTerminalRead,
+  RuntimeTerminalRename,
   RuntimeTerminalSend,
+  RuntimeTerminalCreate,
+  RuntimeTerminalSplit,
+  RuntimeTerminalFocus,
+  RuntimeTerminalClose,
   RuntimeTerminalListResult,
   RuntimeTerminalState,
   RuntimeStatus,
   RuntimeTerminalWait,
+  RuntimeTerminalWaitCondition,
   RuntimeWorktreePsSummary,
   RuntimeTerminalShow,
   RuntimeTerminalSummary,
@@ -119,7 +127,9 @@ type RuntimeLeafRecord = RuntimeSyncedLeaf & {
   tailBuffer: string[]
   tailPartialLine: string
   tailTruncated: boolean
+  tailLinesTotal: number
   preview: string
+  lastAgentStatus: AgentStatus | null
 }
 
 type RuntimePtyController = {
@@ -131,6 +141,15 @@ type RuntimeNotifier = {
   worktreesChanged(repoId: string): void
   reposChanged(): void
   activateWorktree(repoId: string, worktreeId: string, setup?: CreateWorktreeResult['setup']): void
+  createTerminal(worktreeId: string, opts: { command?: string; title?: string }): void
+  splitTerminal(
+    tabId: string,
+    paneRuntimeId: number,
+    opts: { direction: 'horizontal' | 'vertical'; command?: string }
+  ): void
+  renameTerminal(tabId: string, title: string | null): void
+  focusTerminal(tabId: string, worktreeId: string): void
+  closeTerminal(tabId: string, paneRuntimeId?: number): void
 }
 
 type TerminalHandleRecord = {
@@ -146,6 +165,7 @@ type TerminalHandleRecord = {
 
 type TerminalWaiter = {
   handle: string
+  condition: RuntimeTerminalWaitCondition
   resolve: (result: RuntimeTerminalWait) => void
   reject: (error: Error) => void
   timeout: NodeJS.Timeout | null
@@ -194,6 +214,7 @@ export class OrcaRuntimeService {
   private leaves = new Map<string, RuntimeLeafRecord>()
   private handles = new Map<string, TerminalHandleRecord>()
   private handleByLeafKey = new Map<string, string>()
+  private graphSyncCallbacks: (() => void)[] = []
   private waitersByHandle = new Map<string, Set<TerminalWaiter>>()
   private ptyController: RuntimePtyController | null = null
   private notifier: RuntimeNotifier | null = null
@@ -281,7 +302,9 @@ export class OrcaRuntimeService {
         tailBuffer: existing?.ptyId === leaf.ptyId ? existing.tailBuffer : [],
         tailPartialLine: existing?.ptyId === leaf.ptyId ? existing.tailPartialLine : '',
         tailTruncated: existing?.ptyId === leaf.ptyId ? existing.tailTruncated : false,
-        preview: existing?.ptyId === leaf.ptyId ? existing.preview : ''
+        tailLinesTotal: existing?.ptyId === leaf.ptyId ? existing.tailLinesTotal : 0,
+        preview: existing?.ptyId === leaf.ptyId ? existing.preview : '',
+        lastAgentStatus: existing?.ptyId === leaf.ptyId ? existing.lastAgentStatus : null
       })
 
       if (existing && (existing.ptyId !== leaf.ptyId || existing.ptyGeneration !== ptyGeneration)) {
@@ -298,6 +321,13 @@ export class OrcaRuntimeService {
     this.leaves = nextLeaves
     this.graphStatus = 'ready'
     this.refreshWritableFlags()
+
+    // Why: createTerminal waits for the renderer's graph sync to populate the
+    // new leaf so it can return a handle. Drain callbacks after leaves update.
+    for (const cb of [...this.graphSyncCallbacks]) {
+      cb()
+    }
+
     return this.getStatus()
   }
 
@@ -315,6 +345,13 @@ export class OrcaRuntimeService {
     // tail buffer logic normalizes away the OSC sequences we need.
     this.agentDetector?.onData(ptyId, data, at)
 
+    // Why: extract OSC title from raw PTY data before tail-buffer processing
+    // strips the escape sequences. Agent CLIs (Claude Code, Gemini, etc.)
+    // announce status via OSC 0/1/2 title sequences — this is the same
+    // detection path the renderer uses for notifications and sidebar badges.
+    const oscTitle = extractLastOscTitle(data)
+    const agentStatus = oscTitle ? detectAgentStatusFromTitle(oscTitle) : null
+
     for (const leaf of this.leaves.values()) {
       if (leaf.ptyId !== ptyId) {
         continue
@@ -326,7 +363,20 @@ export class OrcaRuntimeService {
       leaf.tailBuffer = nextTail.lines
       leaf.tailPartialLine = nextTail.partialLine
       leaf.tailTruncated = leaf.tailTruncated || nextTail.truncated
+      leaf.tailLinesTotal += nextTail.newCompleteLines
       leaf.preview = buildPreview(leaf.tailBuffer, leaf.tailPartialLine)
+
+      if (agentStatus !== null) {
+        const prevStatus = leaf.lastAgentStatus
+        leaf.lastAgentStatus = agentStatus
+        // Why: resolve tui-idle waiters only on working→idle, not working→permission.
+        // Permission means the agent is blocked on user approval (e.g. Gemini's
+        // "y/n" prompt) — it hasn't finished its task. Resolving tui-idle here
+        // would cause the CLI consumer to proceed while the agent is still waiting.
+        if (prevStatus === 'working' && agentStatus === 'idle') {
+          this.resolveTuiIdleWaiters(leaf)
+        }
+      }
     }
   }
 
@@ -372,6 +422,41 @@ export class OrcaRuntimeService {
     }
   }
 
+  // Why: when --terminal is omitted, the CLI auto-resolves to the active
+  // terminal in the current worktree — matching browser's implicit active tab.
+  async resolveActiveTerminal(worktreeSelector?: string): Promise<string> {
+    this.assertGraphReady()
+
+    const targetWorktreeId = worktreeSelector
+      ? (await this.resolveWorktreeSelector(worktreeSelector)).id
+      : null
+
+    // Prefer the tab's activeLeafId — this is the pane the user last focused
+    for (const tab of this.tabs.values()) {
+      if (targetWorktreeId && tab.worktreeId !== targetWorktreeId) {
+        continue
+      }
+      if (!tab.activeLeafId) {
+        continue
+      }
+      const leafKey = this.getLeafKey(tab.tabId, tab.activeLeafId)
+      const leaf = this.leaves.get(leafKey)
+      if (leaf) {
+        return this.issueHandle(leaf)
+      }
+    }
+
+    // Fallback: any leaf in the target worktree
+    for (const leaf of this.leaves.values()) {
+      if (targetWorktreeId && leaf.worktreeId !== targetWorktreeId) {
+        continue
+      }
+      return this.issueHandle(leaf)
+    }
+
+    throw new Error('no_active_terminal')
+  }
+
   async showTerminal(handle: string): Promise<RuntimeTerminalShow> {
     const graphEpoch = this.captureReadyGraphEpoch()
     const worktreesById = await this.getResolvedWorktreeMap()
@@ -386,19 +471,43 @@ export class OrcaRuntimeService {
     }
   }
 
-  async readTerminal(handle: string): Promise<RuntimeTerminalRead> {
+  async readTerminal(handle: string, opts: { cursor?: number } = {}): Promise<RuntimeTerminalRead> {
     const { leaf } = this.getLiveLeafForHandle(handle)
-    const tail = buildTailLines(leaf.tailBuffer, leaf.tailPartialLine)
-    return {
-      handle,
-      status: getTerminalState(leaf),
+    const allLines = buildTailLines(leaf.tailBuffer, leaf.tailPartialLine)
+
+    let tail: string[]
+    let truncated: boolean
+
+    if (typeof opts.cursor === 'number' && opts.cursor >= 0) {
+      // Why: the buffer only retains the last MAX_TAIL_LINES lines. If the
+      // caller's cursor points to lines that were already evicted, we can only
+      // return what's still in memory and mark truncated=true to signal the gap.
+      const bufferStart = leaf.tailLinesTotal - leaf.tailBuffer.length
+      const sliceFrom = Math.max(0, opts.cursor - bufferStart)
+      // Why: cursor-based reads return only completed lines, excluding the
+      // trailing partial line. Including the partial would cause duplication:
+      // the consumer sees "hel" now, then "hello\n" on the next read after
+      // the line completes — same content delivered twice.
+      tail = leaf.tailBuffer.slice(sliceFrom)
+      truncated = opts.cursor < bufferStart
+    } else {
+      tail = allLines
       // Why: Orca does not have a truthful main-owned screen model yet,
       // especially for hidden panes. Focused v1 therefore returns the bounded
       // tail lines directly instead of duplicating the same text in a fake
       // screen field that would waste agent tokens.
+      truncated = leaf.tailTruncated
+    }
+
+    return {
+      handle,
+      status: getTerminalState(leaf),
       tail,
-      truncated: leaf.tailTruncated,
-      nextCursor: null
+      truncated,
+      // Why: cursors advance by completed lines only. If we count the current
+      // partial line here, later reads can skip continued output on that same
+      // line because no new complete line was emitted yet.
+      nextCursor: String(leaf.tailLinesTotal)
     }
   }
 
@@ -432,27 +541,54 @@ export class OrcaRuntimeService {
   async waitForTerminal(
     handle: string,
     options?: {
+      condition?: RuntimeTerminalWaitCondition
       timeoutMs?: number
     }
   ): Promise<RuntimeTerminalWait> {
+    const condition = options?.condition ?? 'exit'
     const { leaf } = this.getLiveLeafForHandle(handle)
-    if (getTerminalState(leaf) === 'exited') {
-      return buildTerminalWaitResult(handle, leaf)
+
+    if (condition === 'exit' && getTerminalState(leaf) === 'exited') {
+      return buildTerminalWaitResult(handle, condition, leaf)
+    }
+
+    // Why: if the agent already transitioned to idle (or permission) before the
+    // waiter was registered, resolve immediately. This uses the same OSC title
+    // detection that powers the renderer's "Task complete" notifications.
+    // Why: only 'idle' satisfies tui-idle, not 'permission'. Permission means the
+    // agent is blocked on user approval, not finished with its task.
+    if (condition === 'tui-idle' && leaf.lastAgentStatus === 'idle') {
+      // Why: reset so the next `wait --for tui-idle` blocks until a fresh
+      // working→idle transition instead of resolving instantly from a stale
+      // status left over from a previous agent session.
+      leaf.lastAgentStatus = null
+      return buildTerminalWaitResult(handle, condition, leaf)
     }
 
     return await new Promise<RuntimeTerminalWait>((resolve, reject) => {
+      // Why: tui-idle depends on OSC title transitions from a recognized agent.
+      // If no agent is detected, the waiter would hang forever. Enforce a default
+      // timeout so unsupported CLIs fail predictably instead of silently blocking.
+      const effectiveTimeoutMs =
+        typeof options?.timeoutMs === 'number' && options.timeoutMs > 0
+          ? options.timeoutMs
+          : condition === 'tui-idle'
+            ? TUI_IDLE_DEFAULT_TIMEOUT_MS
+            : 0
+
       const waiter: TerminalWaiter = {
         handle,
+        condition,
         resolve,
         reject,
         timeout: null
       }
 
-      if (typeof options?.timeoutMs === 'number' && options.timeoutMs > 0) {
+      if (effectiveTimeoutMs > 0) {
         waiter.timeout = setTimeout(() => {
           this.removeWaiter(waiter)
           reject(new Error('timeout'))
-        }, options.timeoutMs)
+        }, effectiveTimeoutMs)
       }
 
       let waiters = this.waitersByHandle.get(handle)
@@ -468,7 +604,10 @@ export class OrcaRuntimeService {
       try {
         const live = this.getLiveLeafForHandle(handle)
         if (getTerminalState(live.leaf) === 'exited') {
-          this.resolveWaiter(waiter, buildTerminalWaitResult(handle, live.leaf))
+          this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+        } else if (condition === 'tui-idle' && live.leaf.lastAgentStatus === 'idle') {
+          live.leaf.lastAgentStatus = null
+          this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
         }
       } catch (error) {
         this.removeWaiter(waiter)
@@ -831,6 +970,220 @@ export class OrcaRuntimeService {
     this.notifier?.worktreesChanged(repo.id)
   }
 
+  async renameTerminal(handle: string, title: string | null): Promise<RuntimeTerminalRename> {
+    this.assertGraphReady()
+    const { leaf } = this.getLiveLeafForHandle(handle)
+    this.notifier?.renameTerminal(leaf.tabId, title)
+    return { handle, tabId: leaf.tabId, title }
+  }
+
+  async createTerminal(
+    worktreeSelector?: string,
+    opts: { command?: string; title?: string } = {}
+  ): Promise<RuntimeTerminalCreate> {
+    this.assertGraphReady()
+    const win = this.getAuthoritativeWindow()
+    // Why: mirrors browserTabCreate — when no worktree is specified, pass
+    // undefined so the renderer uses its current active worktree.
+    const worktreeId = worktreeSelector
+      ? (await this.resolveWorktreeSelector(worktreeSelector)).id
+      : undefined
+    const requestId = randomUUID()
+
+    // Why: terminal creation is a renderer-side Zustand store operation (like
+    // browser tab creation). The main process sends a request, the renderer
+    // creates the tab and replies with the tabId so we can resolve the handle.
+    const reply = await new Promise<{ tabId: string; title: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ipcMain.removeListener('terminal:tabCreateReply', handler)
+        reject(new Error('Terminal creation timed out'))
+      }, 10_000)
+
+      const handler = (
+        _event: Electron.IpcMainEvent,
+        r: { requestId: string; tabId?: string; title?: string; error?: string }
+      ): void => {
+        if (r.requestId !== requestId) {
+          return
+        }
+        clearTimeout(timer)
+        ipcMain.removeListener('terminal:tabCreateReply', handler)
+        if (r.error) {
+          reject(new Error(r.error))
+        } else {
+          resolve({ tabId: r.tabId!, title: r.title ?? opts.title ?? '' })
+        }
+      }
+      ipcMain.on('terminal:tabCreateReply', handler)
+      win.webContents.send('terminal:requestTabCreate', {
+        requestId,
+        worktreeId,
+        command: opts.command,
+        title: opts.title
+      })
+    })
+
+    // Why: the renderer created the tab immediately, but the graph sync that
+    // populates this.leaves may not have arrived yet. Wait for the leaf to
+    // appear so we can return a valid handle the caller can use right away.
+    const handle = await this.waitForTerminalHandle(reply.tabId)
+    return { handle, worktreeId: worktreeId ?? '', title: reply.title }
+  }
+
+  private waitForTerminalHandle(tabId: string, timeoutMs = 10_000): Promise<string> {
+    const existing = this.resolveHandleForTab(tabId)
+    if (existing) {
+      return Promise.resolve(existing)
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        reject(new Error('Timed out waiting for terminal handle after creation'))
+      }, timeoutMs)
+
+      const check = (): void => {
+        const handle = this.resolveHandleForTab(tabId)
+        if (handle) {
+          clearTimeout(timer)
+          const idx = this.graphSyncCallbacks.indexOf(check)
+          if (idx !== -1) {
+            this.graphSyncCallbacks.splice(idx, 1)
+          }
+          resolve(handle)
+        }
+      }
+      this.graphSyncCallbacks.push(check)
+      // Why: the graph sync may have fired between the initial check and
+      // callback registration. Re-check immediately to avoid a missed wake-up.
+      check()
+    })
+  }
+
+  // Why: a leaf appears in the graph before its PTY spawns. If we issue a
+  // handle while ptyId is null, the next graph sync after PTY spawn will
+  // change ptyId and invalidate the handle. Wait for a connected PTY so
+  // the handle is stable and immediately usable for send/read/wait.
+  private countLeavesInTab(tabId: string): number {
+    let count = 0
+    for (const leaf of this.leaves.values()) {
+      if (leaf.tabId === tabId) {
+        count++
+      }
+    }
+    return count
+  }
+
+  private resolveHandleForTab(tabId: string): string | null {
+    for (const leaf of this.leaves.values()) {
+      if (leaf.tabId === tabId && leaf.ptyId !== null) {
+        return this.issueHandle(leaf)
+      }
+    }
+    return null
+  }
+
+  async focusTerminal(handle: string): Promise<RuntimeTerminalFocus> {
+    this.assertGraphReady()
+    const { leaf } = this.getLiveLeafForHandle(handle)
+    this.notifier?.focusTerminal(leaf.tabId, leaf.worktreeId)
+    return { handle, tabId: leaf.tabId, worktreeId: leaf.worktreeId }
+  }
+
+  async closeTerminal(handle: string): Promise<RuntimeTerminalClose> {
+    this.assertGraphReady()
+    const { leaf } = this.getLiveLeafForHandle(handle)
+    let ptyKilled = false
+    if (leaf.ptyId) {
+      ptyKilled = this.ptyController?.kill(leaf.ptyId) ?? false
+    }
+    // Why: killing the PTY in a multi-pane tab is sufficient — the renderer's
+    // PTY exit handler already calls PaneManager.closePane() for split layouts.
+    // Sending an additional IPC close would race with the exit handler and
+    // incorrectly close the entire tab (the pane count drops to 1 before the
+    // IPC arrives, triggering the single-pane fallback path).
+    // We only send the notifier close when the PTY wasn't killed (e.g. PTY not
+    // yet spawned) or when this is the only pane in the tab.
+    const siblingCount = this.countLeavesInTab(leaf.tabId)
+    if (!ptyKilled || siblingCount <= 1) {
+      this.notifier?.closeTerminal(leaf.tabId, leaf.paneRuntimeId)
+    }
+    return { handle, tabId: leaf.tabId, ptyKilled }
+  }
+
+  async splitTerminal(
+    handle: string,
+    opts: { direction?: 'horizontal' | 'vertical'; command?: string } = {}
+  ): Promise<RuntimeTerminalSplit> {
+    this.assertGraphReady()
+    const { leaf } = this.getLiveLeafForHandle(handle)
+    const direction = opts.direction ?? 'horizontal'
+
+    // Why: snapshot current leaf keys for this tab so we can detect the new
+    // pane that appears after the split via graph sync delta.
+    const leafKeysBefore = new Set<string>()
+    for (const [key, l] of this.leaves) {
+      if (l.tabId === leaf.tabId) {
+        leafKeysBefore.add(key)
+      }
+    }
+
+    this.notifier?.splitTerminal(leaf.tabId, leaf.paneRuntimeId, {
+      direction,
+      command: opts.command
+    })
+
+    const newHandle = await this.waitForNewLeafInTab(leaf.tabId, leafKeysBefore)
+    return { handle: newHandle, tabId: leaf.tabId, paneRuntimeId: leaf.paneRuntimeId }
+  }
+
+  private waitForNewLeafInTab(
+    tabId: string,
+    existingLeafKeys: Set<string>,
+    timeoutMs = 10_000
+  ): Promise<string> {
+    const tryResolve = (): string | null => {
+      for (const [key, leaf] of this.leaves) {
+        if (leaf.tabId === tabId && !existingLeafKeys.has(key) && leaf.ptyId !== null) {
+          return this.issueHandle(leaf)
+        }
+      }
+      return null
+    }
+
+    const existing = tryResolve()
+    if (existing) {
+      return Promise.resolve(existing)
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        reject(new Error('Timed out waiting for split pane handle'))
+      }, timeoutMs)
+
+      const check = (): void => {
+        const handle = tryResolve()
+        if (handle) {
+          clearTimeout(timer)
+          const idx = this.graphSyncCallbacks.indexOf(check)
+          if (idx !== -1) {
+            this.graphSyncCallbacks.splice(idx, 1)
+          }
+          resolve(handle)
+        }
+      }
+      this.graphSyncCallbacks.push(check)
+      check()
+    })
+  }
+
   async stopTerminalsForWorktree(worktreeSelector: string): Promise<{ stopped: number }> {
     // Why: this mutates live PTYs, so the runtime must reject it while the
     // renderer graph is reloading instead of acting on cached leaf ownership.
@@ -1132,7 +1485,31 @@ export class OrcaRuntimeService {
       return
     }
     for (const waiter of [...waiters]) {
-      this.resolveWaiter(waiter, buildTerminalWaitResult(handle, leaf))
+      if (waiter.condition === 'exit') {
+        this.resolveWaiter(waiter, buildTerminalWaitResult(handle, 'exit', leaf))
+      } else {
+        // Why: if the terminal exited, conditions like tui-idle can never be
+        // satisfied. Reject immediately instead of letting the poll interval
+        // spin until timeout on a dead process.
+        this.removeWaiter(waiter)
+        waiter.reject(new Error('terminal_exited'))
+      }
+    }
+  }
+
+  private resolveTuiIdleWaiters(leaf: RuntimeLeafRecord): void {
+    const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+    if (!handle) {
+      return
+    }
+    const waiters = this.waitersByHandle.get(handle)
+    if (!waiters || waiters.size === 0) {
+      return
+    }
+    for (const waiter of [...waiters]) {
+      if (waiter.condition === 'tui-idle') {
+        this.resolveWaiter(waiter, buildTerminalWaitResult(handle, 'tui-idle', leaf))
+      }
     }
   }
 
@@ -2264,18 +2641,21 @@ function appendToTailBuffer(
   lines: string[]
   partialLine: string
   truncated: boolean
+  newCompleteLines: number
 } {
   const normalizedChunk = normalizeTerminalChunk(chunk)
   if (normalizedChunk.length === 0) {
     return {
       lines: previousLines,
       partialLine: previousPartialLine,
-      truncated: false
+      truncated: false,
+      newCompleteLines: 0
     }
   }
 
   const pieces = `${previousPartialLine}${normalizedChunk}`.split('\n')
   const nextPartialLine = (pieces.pop() ?? '').replace(/[ \t]+$/g, '')
+  const newCompleteLines = pieces.length
   const nextLines = [...previousLines, ...pieces.map((line) => line.replace(/[ \t]+$/g, ''))]
   let truncated = false
 
@@ -2293,7 +2673,8 @@ function appendToTailBuffer(
   return {
     lines: nextLines,
     partialLine: nextPartialLine.slice(-MAX_TAIL_CHARS),
-    truncated
+    truncated,
+    newCompleteLines
   }
 }
 
@@ -2329,10 +2710,20 @@ function buildSendPayload(action: {
   return payload.length > 0 ? payload : null
 }
 
-function buildTerminalWaitResult(handle: string, leaf: RuntimeLeafRecord): RuntimeTerminalWait {
+// Why: tui-idle relies on recognized agent CLIs setting OSC titles. If the
+// terminal runs an unsupported CLI (or a plain shell), no title transition
+// will ever fire. A 5-minute ceiling prevents indefinite hangs while still
+// giving real agent tasks plenty of time to complete.
+const TUI_IDLE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
+
+function buildTerminalWaitResult(
+  handle: string,
+  condition: RuntimeTerminalWaitCondition,
+  leaf: RuntimeLeafRecord
+): RuntimeTerminalWait {
   return {
     handle,
-    condition: 'exit',
+    condition,
     satisfied: true,
     status: getTerminalState(leaf),
     exitCode: leaf.lastExitCode

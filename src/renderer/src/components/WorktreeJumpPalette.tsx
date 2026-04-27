@@ -1,8 +1,9 @@
 /* oxlint-disable max-lines */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Globe, Plus } from 'lucide-react'
+import { Globe, Plus, WifiOff } from 'lucide-react'
 import { useAppStore } from '@/store'
+import { getRepoMapFromState, useAllWorktrees } from '@/store/selectors'
 import {
   CommandDialog,
   CommandInput,
@@ -134,8 +135,14 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const closeModal = useAppStore((s) => s.closeModal)
   const openModal = useAppStore((s) => s.openModal)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
+  const allWorktrees = useAllWorktrees()
   const repos = useAppStore((s) => s.repos)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
+  // Why: getWorktreeStatus needs per-pane titles so split-pane tabs with a
+  // working agent in a non-focused pane still surface as 'working' in the
+  // jump palette. Without this, clicking between panes would desync the
+  // palette's spinner from the sidebar's spinner.
+  const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
   const prCache = useAppStore((s) => s.prCache)
   const issueCache = useAppStore((s) => s.issueCache)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
@@ -143,9 +150,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const activeBrowserTabId = useAppStore((s) => s.activeBrowserTabId)
   const browserTabsByWorktree = useAppStore((s) => s.browserTabsByWorktree)
   const browserPagesByWorkspace = useAppStore((s) => s.browserPagesByWorkspace)
+  const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
 
   const [query, setQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
   const [selectedItemId, setSelectedItemId] = useState('')
   const previousWorktreeIdRef = useRef<string | null>(null)
   const previousActiveTabTypeRef = useRef<'browser' | 'editor' | 'terminal'>('terminal')
@@ -156,27 +164,19 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const prevQueryRef = useRef('')
   const listRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 150)
-    return () => clearTimeout(id)
-  }, [query])
-
   const repoMap = useMemo(() => new Map(repos.map((r) => [r.id, r])), [repos])
   const canCreateWorktree = useMemo(() => repos.some((repo) => isGitRepoKind(repo)), [repos])
 
   const sortedWorktrees = useMemo(() => {
-    const all: Worktree[] = Object.values(worktreesByRepo)
-      .flat()
-      .filter((w) => !w.isArchived)
-    return sortWorktreesSmart(all, tabsByWorktree, repoMap, prCache)
-  }, [worktreesByRepo, tabsByWorktree, repoMap, prCache])
+    const visibleWorktrees = allWorktrees.filter((worktree) => !worktree.isArchived)
+    return sortWorktreesSmart(visibleWorktrees, tabsByWorktree, repoMap, prCache)
+  }, [allWorktrees, tabsByWorktree, repoMap, prCache])
 
   const browserSortedWorktrees = useMemo(() => {
-    const all: Worktree[] = Object.values(worktreesByRepo).flat()
     // Why: browser-tab search is explicitly cross-worktree, so it must keep
     // indexing live browser pages even when their owning worktree is archived.
-    return sortWorktreesSmart(all, tabsByWorktree, repoMap, prCache)
-  }, [worktreesByRepo, tabsByWorktree, repoMap, prCache])
+    return sortWorktreesSmart(allWorktrees, tabsByWorktree, repoMap, prCache)
+  }, [allWorktrees, tabsByWorktree, repoMap, prCache])
 
   // Why: browser rows need worktree lookups for repo badge colors, and browser
   // search intentionally includes archived worktrees. This map must cover all
@@ -195,8 +195,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   )
 
   const worktreeMatches = useMemo(
-    () => searchWorktrees(sortedWorktrees, debouncedQuery.trim(), repoMap, prCache, issueCache),
-    [sortedWorktrees, debouncedQuery, repoMap, prCache, issueCache]
+    () => searchWorktrees(sortedWorktrees, deferredQuery.trim(), repoMap, prCache, issueCache),
+    [sortedWorktrees, deferredQuery, repoMap, prCache, issueCache]
   )
 
   const browserPageEntries = useMemo<SearchableBrowserPage[]>(() => {
@@ -233,8 +233,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   ])
 
   const browserMatches = useMemo(
-    () => searchBrowserPages(browserPageEntries, debouncedQuery.trim()),
-    [browserPageEntries, debouncedQuery]
+    () => searchBrowserPages(browserPageEntries, deferredQuery.trim()),
+    [browserPageEntries, deferredQuery]
   )
 
   const worktreeItems = useMemo<WorktreePaletteItem[]>(
@@ -280,7 +280,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const listEntries = useMemo<PaletteListEntry[]>(() => {
     const entries: PaletteListEntry[] = []
     const bothSectionsPopulated = worktreeItems.length > 0 && browserItems.length > 0
-    const hasQuery = debouncedQuery.trim().length > 0
+    const hasQuery = deferredQuery.trim().length > 0
     const EMPTY_QUERY_BROWSER_PREVIEW = 3
 
     const visibleWorktreeItems = worktreeItems
@@ -306,21 +306,21 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       entries.push(...visibleBrowserItems)
     }
     return entries
-  }, [worktreeItems, browserItems, debouncedQuery])
+  }, [worktreeItems, browserItems, deferredQuery])
 
   const selectableItems = useMemo<PaletteItem[]>(
     () => listEntries.filter((e): e is PaletteItem => e.type !== 'section-header'),
     [listEntries]
   )
 
-  const createWorktreeName = debouncedQuery.trim()
+  const createWorktreeName = deferredQuery.trim()
   const showCreateAction =
     canCreateWorktree && createWorktreeName.length > 0 && worktreeItems.length === 0
 
   const isLoading = repos.length > 0 && Object.keys(worktreesByRepo).length === 0
   const hasAnyWorktrees = sortedWorktrees.length > 0
   const hasAnyBrowserPages = browserPageEntries.length > 0
-  const hasQuery = debouncedQuery.trim().length > 0
+  const hasQuery = deferredQuery.trim().length > 0
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -344,7 +344,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       skipRestoreFocusRef.current = false
       prevQueryRef.current = ''
       setQuery('')
-      setDebouncedQuery('')
       setSelectedItemId('')
     }
 
@@ -355,8 +354,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     if (!visible) {
       return
     }
-    const queryChanged = debouncedQuery !== prevQueryRef.current
-    prevQueryRef.current = debouncedQuery
+    const queryChanged = deferredQuery !== prevQueryRef.current
+    prevQueryRef.current = deferredQuery
 
     const firstSelectableId = showCreateAction ? '__create_worktree__' : null
 
@@ -385,7 +384,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     ) {
       setSelectedItemId(firstSelectableId ?? selectableItems[0].id)
     }
-  }, [debouncedQuery, selectedItemId, showCreateAction, visible, selectableItems])
+  }, [deferredQuery, selectedItemId, showCreateAction, visible, selectableItems])
 
   const focusFallbackSurface = useCallback(() => {
     requestAnimationFrame(() => {
@@ -522,7 +521,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       // is repo-agnostic on the worktree meta side. We don't currently cache a
       // repo-slug map, so slug-matching against a specific repo happens
       // implicitly when we pick a repo for the `gh workItem` lookup below.
-      const allWorktrees = Object.values(state.worktreesByRepo).flat()
       const matches = allWorktrees.filter(
         (w) => !w.isArchived && (w.linkedIssue === number || w.linkedPR === number)
       )
@@ -559,7 +557,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
               url: item.url
             }
             data.linkedWorkItem = linkedWorkItem
-            data.prefilledName = getLinkedWorkItemSuggestedName(item)
+            data.prefilledName = getLinkedWorkItemSuggestedName({ title: item.title })
           } else {
             // Fallback: we couldn't resolve the URL, just seed the name.
             data.prefilledName = `${slug.owner}-${slug.repo}-${number}`
@@ -577,7 +575,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     // Case 2: user typed a raw issue number. Resolve against the active repo.
     if (ghNumber !== null) {
       const state = useAppStore.getState()
-      const allWorktrees = Object.values(state.worktreesByRepo).flat()
       const matches = allWorktrees.filter(
         (w) => !w.isArchived && (w.linkedIssue === ghNumber || w.linkedPR === ghNumber)
       )
@@ -589,8 +586,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       }
 
       const repoForLookup =
-        (state.activeRepoId && state.repos.find((r) => r.id === state.activeRepoId)) ||
-        state.repos.find((r) => isGitRepoKind(r))
+        (state.activeRepoId ? (repoMap.get(state.activeRepoId) ?? null) : null) ||
+        [...getRepoMapFromState(state).values()].find((repo) => isGitRepoKind(repo))
       if (!repoForLookup || !isGitRepoKind(repoForLookup)) {
         openComposer({ prefilledName: trimmed })
         return
@@ -609,7 +606,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
               url: item.url
             }
             data.linkedWorkItem = linkedWorkItem
-            data.prefilledName = getLinkedWorkItemSuggestedName(item)
+            data.prefilledName = getLinkedWorkItemSuggestedName({ title: item.title })
           } else {
             data.prefilledName = trimmed
           }
@@ -628,7 +625,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
 
     // Case 3: plain name — open composer prefilled.
     openComposer(trimmed ? { prefilledName: trimmed } : {})
-  }, [closeModal, createWorktreeName, openModal])
+  }, [allWorktrees, closeModal, createWorktreeName, openModal, repoMap])
 
   const handleCloseAutoFocus = useCallback((e: Event) => {
     e.preventDefault()
@@ -710,10 +707,16 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                 const branch = branchName(worktree.branch)
                 const status = getWorktreeStatus(
                   tabsByWorktree[worktree.id] ?? [],
-                  browserTabsByWorktree[worktree.id] ?? []
+                  browserTabsByWorktree[worktree.id] ?? [],
+                  runtimePaneTitlesByTabId
                 )
                 const statusLabel = getWorktreeStatusLabel(status)
                 const isCurrentWorktree = activeWorktreeId === worktree.id
+                const sshConnectionId = repo?.connectionId ?? null
+                const sshStatus = sshConnectionId
+                  ? (sshConnectionStates.get(sshConnectionId)?.status ?? 'disconnected')
+                  : null
+                const isSshDisconnected = sshStatus != null && sshStatus !== 'connected'
 
                 return (
                   <CommandItem
@@ -734,6 +737,21 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                       <div className="flex items-center justify-between gap-2.5">
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 items-center gap-2">
+                            {sshConnectionId && (
+                              <span
+                                aria-label={isSshDisconnected ? 'SSH disconnected' : 'SSH remote'}
+                                className="shrink-0 inline-flex items-center"
+                              >
+                                {isSshDisconnected ? (
+                                  <WifiOff className="size-3.5 text-red-400" aria-hidden="true" />
+                                ) : (
+                                  <Globe
+                                    className="size-3.5 text-muted-foreground"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </span>
+                            )}
                             <span className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">
                               {entry.match.displayNameRange ? (
                                 <HighlightedText
@@ -921,7 +939,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
         </div>
       </div>
       <div aria-live="polite" className="sr-only">
-        {debouncedQuery.trim()
+        {deferredQuery.trim()
           ? `${resultCount} results found${showCreateAction ? ', create new worktree action available' : ''}`
           : `${resultCount} items available${showCreateAction ? ', create new worktree action available' : ''}`}
       </div>

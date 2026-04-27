@@ -30,7 +30,10 @@ const {
   mockMux: {
     dispose: vi.fn(),
     isDisposed: vi.fn().mockReturnValue(false),
-    onNotification: vi.fn()
+    onNotification: vi.fn(),
+    onDispose: vi.fn().mockReturnValue(() => {}),
+    request: vi.fn().mockResolvedValue({}),
+    notify: vi.fn()
   },
   mockPtyProvider: {
     onData: vi.fn(),
@@ -142,7 +145,7 @@ import type { SshTarget } from '../../shared/ssh-types'
 
 describe('SSH IPC handlers', () => {
   const handlers = new Map<string, (_event: unknown, args: unknown) => unknown>()
-  const mockStore = {} as never
+  const mockStore = { getRepos: () => [] } as never
   const mockWindow = {
     isDestroyed: () => false,
     webContents: { send: vi.fn() }
@@ -174,6 +177,7 @@ describe('SSH IPC handlers', () => {
     mockMux.dispose.mockReset()
     mockMux.isDisposed.mockReset().mockReturnValue(false)
     mockMux.onNotification.mockReset()
+    mockMux.onDispose.mockReset().mockReturnValue(() => {})
     mockPtyProvider.onData.mockReset()
     mockPtyProvider.onExit.mockReset()
     mockPtyProvider.onReplay.mockReset()

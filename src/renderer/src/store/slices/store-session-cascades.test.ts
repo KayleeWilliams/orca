@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { create } from 'zustand'
 import type { AppState } from '../types'
+import type * as AgentStatusModule from '@/lib/agent-status'
 import type {
   BrowserTab,
   TerminalLayoutSnapshot,
@@ -13,9 +14,13 @@ import type {
 vi.mock('sonner', () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }))
 
 // Mock agent-status (imported by terminal-helpers)
-vi.mock('@/lib/agent-status', () => ({
-  detectAgentStatusFromTitle: vi.fn().mockReturnValue(null)
-}))
+vi.mock('@/lib/agent-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentStatusModule>()
+  return {
+    ...actual,
+    detectAgentStatusFromTitle: vi.fn().mockReturnValue(null)
+  }
+})
 
 // Mock window.api before anything uses it
 const mockApi = {
@@ -91,14 +96,19 @@ import { createTabsSlice } from './tabs'
 import { createUISlice } from './ui'
 import { createSettingsSlice } from './settings'
 import { createGitHubSlice } from './github'
+import { createLinearSlice } from './linear'
 import { createEditorSlice } from './editor'
 import { createStatsSlice } from './stats'
+import { createMemorySlice } from './memory'
 import { createClaudeUsageSlice } from './claude-usage'
 import { createCodexUsageSlice } from './codex-usage'
 import { createBrowserSlice } from './browser'
 import { createRateLimitSlice } from './rate-limits'
 import { createSshSlice } from './ssh'
+import { createAgentStatusSlice } from './agent-status'
 import { createDiffCommentsSlice } from './diffComments'
+import { createDetectedAgentsSlice } from './detected-agents'
+import { createWorktreeNavHistorySlice } from './worktree-nav-history'
 
 function createTestStore() {
   return create<AppState>()((...a) => ({
@@ -109,14 +119,19 @@ function createTestStore() {
     ...createUISlice(...a),
     ...createSettingsSlice(...a),
     ...createGitHubSlice(...a),
+    ...createLinearSlice(...a),
     ...createEditorSlice(...a),
     ...createStatsSlice(...a),
+    ...createMemorySlice(...a),
     ...createClaudeUsageSlice(...a),
     ...createCodexUsageSlice(...a),
     ...createBrowserSlice(...a),
     ...createRateLimitSlice(...a),
     ...createSshSlice(...a),
-    ...createDiffCommentsSlice(...a)
+    ...createAgentStatusSlice(...a),
+    ...createDiffCommentsSlice(...a),
+    ...createDetectedAgentsSlice(...a),
+    ...createWorktreeNavHistorySlice(...a)
   }))
 }
 
@@ -133,6 +148,7 @@ function makeWorktree(overrides: Partial<Worktree> & { id: string; repoId: strin
     comment: '',
     linkedIssue: null,
     linkedPR: null,
+    linkedLinearIssue: null,
     isArchived: false,
     isUnread: false,
     isPinned: false,

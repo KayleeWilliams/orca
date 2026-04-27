@@ -22,16 +22,24 @@ import {
 } from '../updater'
 import { scheduleHistoryGc } from '../terminal-history'
 import { listRepoWorktrees } from '../repo-worktrees'
+import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 
 export function attachMainWindowServices(
   mainWindow: BrowserWindow,
   store: Store,
   runtime: OrcaRuntimeService,
-  getSelectedCodexHomePath?: () => string | null
+  getSelectedCodexHomePath?: () => string | null,
+  prepareClaudeAuth?: () => Promise<ClaudeRuntimeAuthPreparation>
 ): void {
   registerRepoHandlers(mainWindow, store)
   registerWorktreeHandlers(mainWindow, store)
-  registerPtyHandlers(mainWindow, runtime, getSelectedCodexHomePath, () => store.getSettings())
+  registerPtyHandlers(
+    mainWindow,
+    runtime,
+    getSelectedCodexHomePath,
+    () => store.getSettings(),
+    prepareClaudeAuth
+  )
   // Why: GC runs on a 10s delay so live worktree enumeration completes first.
   // Uses git worktree list (not store.getWorktreeMeta) because untouched
   // worktrees have no metadata entries — see design doc §7.6.
@@ -143,6 +151,40 @@ function registerRuntimeWindowLifecycle(
     activateWorktree: (repoId, worktreeId, setup?: CreateWorktreeResult['setup']) => {
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId, setup })
+      }
+    },
+    createTerminal: (worktreeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:createTerminal', {
+          worktreeId,
+          command: opts.command,
+          title: opts.title
+        })
+      }
+    },
+    splitTerminal: (tabId, paneRuntimeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:splitTerminal', {
+          tabId,
+          paneRuntimeId,
+          direction: opts.direction,
+          command: opts.command
+        })
+      }
+    },
+    renameTerminal: (tabId, title) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:renameTerminal', { tabId, title })
+      }
+    },
+    focusTerminal: (tabId, worktreeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:focusTerminal', { tabId, worktreeId })
+      }
+    },
+    closeTerminal: (tabId, paneRuntimeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:closeTerminal', { tabId, paneRuntimeId })
       }
     }
   })

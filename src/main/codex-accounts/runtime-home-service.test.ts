@@ -43,6 +43,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalFontFamily: 'JetBrains Mono',
     terminalFontWeight: 500,
     terminalLineHeight: 1,
+    terminalLigatures: 'auto',
     terminalCursorStyle: 'block',
     terminalCursorBlink: false,
     terminalThemeDark: 'orca-dark',
@@ -57,11 +58,13 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalRightClickToPaste: false,
     terminalFocusFollowsMouse: false,
     terminalClipboardOnSelect: false,
+    terminalAllowOsc52Clipboard: false,
     setupScriptLaunchMode: 'split-vertical',
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: false,
     rightSidebarOpenByDefault: true,
     showTitlebarAgentActivity: true,
+    showTaskProviderIcons: true,
     diffDefaultView: 'inline',
     notifications: {
       enabled: true,
@@ -73,14 +76,22 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     promptCacheTtlMs: 300_000,
     codexManagedAccounts: [],
     activeCodexManagedAccountId: null,
+    claudeManagedAccounts: [],
+    activeClaudeManagedAccountId: null,
     terminalScopeHistoryByWorktree: true,
     defaultTuiAgent: null,
     skipDeleteWorktreeConfirm: false,
     defaultTaskViewPreset: 'all',
+    defaultTaskSource: 'github',
+    defaultRepoSelection: null,
+    defaultLinearTeamSelection: null,
     agentCmdOverrides: {},
     terminalMacOptionAsAlt: 'false',
+    terminalMacOptionAsAltMigrated: true,
     experimentalTerminalDaemon: false,
     experimentalTerminalDaemonNoticeShown: false,
+    terminalWindowsShell: 'powershell.exe',
+    enableGitHubAttribution: true,
     ...overrides
   }
 }
@@ -310,9 +321,9 @@ describe('CodexRuntimeHomeService', () => {
     expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"system"}\n')
 
     // External tool changes auth — subsequent syncs must not overwrite
-    writeFileSync(runtimeAuthPath, '{"account":"cc-switch"}\n', 'utf-8')
+    writeFileSync(runtimeAuthPath, '{"account":"external-tool"}\n', 'utf-8')
     service.syncForCurrentSelection()
-    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"cc-switch"}\n')
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe('{"account":"external-tool"}\n')
   })
 
   it('restores system default on restart when persisted active account is invalid', async () => {
