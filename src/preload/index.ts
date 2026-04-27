@@ -10,7 +10,8 @@ import type {
   FsChangedPayload,
   GhosttyImportPreview,
   MemorySnapshot,
-  NotificationDispatchResult
+  NotificationDispatchResult,
+  SearchResult
 } from '../shared/types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../shared/runtime-types'
 import type { RateLimitState } from '../shared/rate-limit-types'
@@ -1072,15 +1073,7 @@ const api = {
       excludePattern?: string
       maxResults?: number
       connectionId?: string
-    }): Promise<{
-      files: {
-        filePath: string
-        relativePath: string
-        matches: { line: number; column: number; matchLength: number; lineContent: string }[]
-      }[]
-      totalMatches: number
-      truncated: boolean
-    }> => ipcRenderer.invoke('fs:search', args),
+    }): Promise<SearchResult> => ipcRenderer.invoke('fs:search', args),
     importExternalPaths: (args: {
       sourcePaths: string[]
       destDir: string

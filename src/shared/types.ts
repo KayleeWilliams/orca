@@ -1163,6 +1163,8 @@ export type SearchMatch = {
   column: number
   matchLength: number
   lineContent: string
+  displayColumn?: number
+  displayMatchLength?: number
 }
 
 export type SearchFileResult = {
