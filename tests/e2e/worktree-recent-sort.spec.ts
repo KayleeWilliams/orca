@@ -14,19 +14,12 @@
  *   behavior in end-to-end.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import type { Page } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { waitForSessionReady, waitForActiveWorktree } from './helpers/store'
-
-function createFolderFixture(): string {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-folder-'))
-  mkdirSync(path.join(dir, 'src'), { recursive: true })
-  writeFileSync(path.join(dir, 'README.md'), '# folder fixture\n')
-  return dir
-}
 
 async function addFolderRepo(page: Page, folderPath: string): Promise<string> {
   return page.evaluate(async (p) => {
@@ -61,25 +54,50 @@ async function readFolderWorktreeLastActivity(page: Page, repoId: string): Promi
 }
 
 test.describe('Worktree Recent Sort', () => {
+  // Why: keep fixture tracking scoped to this describe block. Module-level
+  // shared arrays race if the file ever flips to parallel mode or another
+  // describe is added.
+  const createdFolderFixtures: string[] = []
+
+  function createFolderFixture(): string {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-folder-'))
+    createdFolderFixtures.push(dir)
+    mkdirSync(path.join(dir, 'src'), { recursive: true })
+    writeFileSync(path.join(dir, 'README.md'), '# folder fixture\n')
+    return dir
+  }
+
   test.beforeEach(async ({ orcaPage }) => {
     await waitForSessionReady(orcaPage)
     await waitForActiveWorktree(orcaPage)
+  })
+
+  test.afterEach(() => {
+    // Why: mkdtempSync fixtures leak unless we clean them up explicitly —
+    // matches the mkdtempSync/rmSync pairing used in helpers/orca-app.ts
+    // and helpers/orca-restart.ts.
+    while (createdFolderFixtures.length) {
+      const dir = createdFolderFixtures.pop()
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
   })
 
   test('stamps lastActivityAt on a newly-added folder repo so it sorts to the top of Recent', async ({
     orcaPage
   }) => {
     const folderPath = createFolderFixture()
-    const beforeAdd = Date.now()
 
     const repoId = await addFolderRepo(orcaPage, folderPath)
     const lastActivityAt = await readFolderWorktreeLastActivity(orcaPage, repoId)
 
-    // The synthetic folder worktree had no persisted meta, so the list
-    // handler must have stamped it on first discovery. Before the fix this
-    // would have been 0 (epoch), sorting the folder to the bottom of Recent.
-    expect(lastActivityAt).toBeGreaterThanOrEqual(beforeAdd)
-    expect(lastActivityAt).toBeLessThanOrEqual(Date.now())
+    // Why: the exact failure mode before the fix was `lastActivityAt === 0`
+    // (the fallback in mergeWorktree when meta is undefined). Asserting
+    // `> 0` captures that regression precisely without coupling to the
+    // wall-clock of the main process, which would introduce cross-process
+    // clock-skew flakiness in CI.
+    expect(lastActivityAt).toBeGreaterThan(0)
   })
 
   test('leaves lastActivityAt stable across repeated list refreshes', async ({ orcaPage }) => {

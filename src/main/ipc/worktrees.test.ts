@@ -415,6 +415,37 @@ describe('registerWorktreeHandlers', () => {
     )
   })
 
+  it('stamps lastActivityAt on first discovery via worktrees:listAll', async () => {
+    // Why: the stamping logic lives in both worktrees:list and worktrees:listAll.
+    // Without a dedicated test, a regression in the listAll loop would silently
+    // bury newly-discovered worktrees from the multi-repo sidebar view.
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/discovered-wt',
+        head: 'abc123',
+        branch: 'refs/heads/feature',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    store.getWorktreeMeta.mockReturnValue(undefined)
+    store.setWorktreeMeta.mockReturnValue({ lastActivityAt: 1_700_000_000_000 })
+
+    const listed = (await handlers['worktrees:listAll'](null, undefined)) as {
+      id: string
+      lastActivityAt: number
+    }[]
+
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/discovered-wt',
+      expect.objectContaining({ lastActivityAt: expect.any(Number) })
+    )
+    expect(listed[0]).toMatchObject({
+      id: 'repo-1::/workspace/discovered-wt',
+      lastActivityAt: 1_700_000_000_000
+    })
+  })
+
   it('skips past a suffix that already belongs to a PR after an initial branch conflict', async () => {
     // Why: `gh pr list` is network-bound and previously fired on every single
     // create, adding 1–3s to the happy path. We now only probe PR conflicts

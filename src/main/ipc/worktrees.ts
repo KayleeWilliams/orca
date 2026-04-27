@@ -38,10 +38,7 @@ import { rebuildAuthorizedRootsCache, ensureAuthorizedRootsCache } from './files
 // added the repo / folder. Stamp discovery time the first time we see a
 // worktree so its very existence counts as a recency signal. Subsequent
 // list calls find the persisted meta and skip the stamp.
-function resolveWorktreeMetaWithDiscoveryStamp(
-  store: Store,
-  worktreeId: string
-): ReturnType<Store['getWorktreeMeta']> {
+function resolveWorktreeMetaWithDiscoveryStamp(store: Store, worktreeId: string): WorktreeMeta {
   const existing = store.getWorktreeMeta(worktreeId)
   if (existing) {
     return existing
