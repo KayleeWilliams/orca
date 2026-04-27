@@ -64,8 +64,7 @@ function collectFixtureRuleActions(source: string): string[] {
     { line: 9, state: 'svelteBlockExpressionEnter', pattern: '}' },
     { line: 11, state: 'markup', pattern: '{/if}' },
     { line: 13, state: 'markup', pattern: '{' },
-    { line: 13, state: 'svelteExpression', pattern: '{' },
-    { line: 13, state: 'svelteExpressionNestedBrace', pattern: '}' },
+    { line: 13, state: 'svelteExpression', pattern: '}' },
     { line: 14, state: 'markup', pattern: '{@html' },
     { line: 14, state: 'svelteExpression', pattern: '}' },
     { line: 16, state: 'markup', pattern: '<style' },
@@ -150,7 +149,7 @@ describe('svelte tokenizer transitions', () => {
   <p>not yet</p>
 {/if}
 
-<div class={{ active: count > 0 }}>{count}</div>
+<button on:click={increment}>{count}</button>
 {@html '<em>raw</em>'}
 
 <style>
@@ -173,8 +172,7 @@ describe('svelte tokenizer transitions', () => {
         "9:svelteBlockExpressionEnter:} -> next=pop, embedded=-, switch=-",
         "11:markup:{/if} -> next=-, embedded=-, switch=-",
         "13:markup:{ -> next=svelteExpressionEnter, embedded=@pop, switch=-",
-        "13:svelteExpression:{ -> next=svelteExpressionNestedBrace, embedded=-, switch=-",
-        "13:svelteExpressionNestedBrace:} -> next=pop, embedded=-, switch=-",
+        "13:svelteExpression:} -> next=pop, embedded=@pop, switch=-",
         "14:markup:{@html -> next=svelteExpressionEnter, embedded=@pop, switch=-",
         "14:svelteExpression:} -> next=pop, embedded=@pop, switch=-",
         "16:markup:<style -> next=styleOpen.css, embedded=@pop, switch=-",
@@ -234,12 +232,6 @@ describe('svelte embedded language attributes', () => {
     expect(findRuleAction('svelteBlockExpressionEnter', 'count > 0}')).toMatchObject({
       nextEmbedded: 'typescript',
       switchTo: '@svelteBlockExpression'
-    })
-    expect(findRuleAction('svelteExpression', '{ active: true }')).toMatchObject({
-      next: '@svelteExpressionNestedBrace'
-    })
-    expect(findRuleAction('svelteExpressionNestedBrace', '}')).toMatchObject({
-      next: '@pop'
     })
     expect(findRuleAction('scriptLangValue.typescript', '"js"')).toMatchObject({
       switchTo: '@scriptOpen.javascript'

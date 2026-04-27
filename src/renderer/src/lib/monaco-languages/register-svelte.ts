@@ -70,26 +70,23 @@ export const svelteMonarchLanguage: Monaco.languages.IMonarchLanguage = {
       [/[^-]+/, 'comment'],
       [/./, 'comment']
     ],
+    // Once the typescript embed is active inside an expression, Monaco only
+    // consults parent rules whose action ends the embed. That means a brace
+    // counter cannot run from inside the embed, so expressions containing
+    // nested braces (e.g. `class={{ active: foo }}` or `{foo({ bar: 1 })}`)
+    // close at the first inner `}` and the trailing `}` falls into markup.
+    // Matches the RFC's note that regex-based grammars have edge cases;
+    // the common single-brace case `{count}` works correctly.
     svelteExpressionEnter: [
       [/\}/, { token: 'delimiter.curly', next: '@pop' }],
       [/(?=.)/, { token: '', switchTo: '@svelteExpression', nextEmbedded: 'typescript' }]
     ],
-    svelteExpression: [
-      // Nested braces keep object literals inside {expr} from closing the
-      // Svelte expression at the first inner `}`.
-      [/\{/, 'delimiter.curly', '@svelteExpressionNestedBrace'],
-      [/\}/, { token: 'delimiter.curly', next: '@pop', nextEmbedded: '@pop' }]
-    ],
-    svelteExpressionNestedBrace: [
-      [/\{/, 'delimiter.curly', '@push'],
-      [/\}/, 'delimiter.curly', '@pop']
-    ],
+    svelteExpression: [[/\}/, { token: 'delimiter.curly', next: '@pop', nextEmbedded: '@pop' }]],
     svelteBlockExpressionEnter: [
       [/\}/, { token: 'keyword.control', next: '@pop' }],
       [/(?=.)/, { token: '', switchTo: '@svelteBlockExpression', nextEmbedded: 'typescript' }]
     ],
     svelteBlockExpression: [
-      [/\{/, 'delimiter.curly', '@svelteExpressionNestedBrace'],
       [/\}/, { token: 'keyword.control', next: '@pop', nextEmbedded: '@pop' }]
     ],
     scriptOpen: [
