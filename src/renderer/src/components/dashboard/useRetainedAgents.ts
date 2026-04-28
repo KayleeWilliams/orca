@@ -33,6 +33,15 @@ export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
     // App.tsx) makes the hook self-contained and safe to call unconditionally
     // from any site.
     if (!dashboardEnabled) {
+      // Why: reset the previous-agents snapshot while the flag is off so a
+      // later off->on toggle (same session, no restart) does not resurrect
+      // pre-disable state. Without this, the first post-re-enable run would
+      // diff current liveGroups against a stale map captured before the flag
+      // flipped off, and collectRetainedAgentsOnDisappear could retroactively
+      // retain agents that finished / had their paneKeys reused during the
+      // off window — an "agent disappeared while the dashboard was hidden"
+      // case must NOT produce a retained row on re-enable.
+      prevAgentsRef.current = new Map()
       return
     }
     const current = new Map<string, { row: DashboardAgentRow; worktreeId: string }>()

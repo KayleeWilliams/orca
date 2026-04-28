@@ -23,6 +23,18 @@ const AGENT_DASHBOARD_SUPPORTED_AGENTS: readonly TuiAgent[] = [
   'opencode'
 ] as const
 
+// Why: both AGENT_DASHBOARD_SUPPORTED_AGENTS and AGENT_CATALOG are static
+// module-level constants, so the resolved {id, label} pairs never change at
+// runtime. Computing this inside SupportedAgentsDisclaimer was O(N×M) work on
+// every parent re-render — notably on every keystroke in the settings search —
+// for a list that can only change at build time. Hoisting it makes the cost
+// a one-time module-load expense.
+const SUPPORTED_AGENT_ENTRIES: readonly { id: TuiAgent; label: string }[] =
+  AGENT_DASHBOARD_SUPPORTED_AGENTS.map((id) => {
+    const entry = AGENT_CATALOG.find((a) => a.id === id)
+    return { id, label: entry?.label ?? id }
+  })
+
 export { EXPERIMENTAL_PANE_SEARCH_ENTRIES }
 
 const ORCHESTRATION_SKILL_INSTALL_COMMAND =
@@ -362,15 +374,11 @@ export function ExperimentalPane({
 }
 
 function SupportedAgentsDisclaimer(): React.JSX.Element {
-  const supported = AGENT_DASHBOARD_SUPPORTED_AGENTS.map((id) => {
-    const entry = AGENT_CATALOG.find((a) => a.id === id)
-    return { id, label: entry?.label ?? id }
-  })
   return (
     <div className="space-y-1 pt-0.5 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <span>Supported agents:</span>
-        {supported.map(({ id, label }) => (
+        {SUPPORTED_AGENT_ENTRIES.map(({ id, label }) => (
           <span
             key={id}
             className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5"

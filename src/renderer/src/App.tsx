@@ -719,14 +719,18 @@ function App(): React.JSX.Element {
       // mechanism (same pattern as Cmd+Shift+G above). xterm-helper-textarea
       // is the focus target the terminal handler itself uses to detect
       // terminal focus (see keyboard-handlers.ts isEditableTarget).
-      // Why: read the experimental toggle at keypress time via getState() so
-      // flipping the setting takes effect immediately without re-binding the
-      // window-level listener (which would require adding `settings` to the
-      // effect deps and tearing down/rebinding on every unrelated settings
-      // change, like theme or font adjustments).
-      const dashboardExperimentEnabled =
-        useAppStore.getState().settings?.experimentalAgentDashboard === true
-      if (dashboardExperimentEnabled && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+        // Why: read the experimental toggle at keypress time via getState() so
+        // flipping the setting takes effect immediately without re-binding the
+        // window-level listener (which would require adding `settings` to the
+        // effect deps and tearing down/rebinding on every unrelated settings
+        // change, like theme or font adjustments). Gated behind the key/modifier
+        // check so getState() isn't invoked on every unrelated keystroke.
+        const dashboardExperimentEnabled =
+          useAppStore.getState().settings?.experimentalAgentDashboard === true
+        if (!dashboardExperimentEnabled) {
+          return
+        }
         const active = document.activeElement as HTMLElement | null
         if (active?.classList.contains('xterm-helper-textarea')) {
           return
