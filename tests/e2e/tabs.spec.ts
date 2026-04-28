@@ -292,27 +292,23 @@ test.describe('Tabs', () => {
 
     // Reorder via the same store call drag/drop uses: move the first tab to
     // the end so the visible order becomes [b, c, a].
-    await orcaPage.evaluate(
-      ({ targetWorktreeId, newOrderTail }) => {
-        const store = window.__store
-        if (!store) {
-          return
-        }
-        const state = store.getState()
-        const groups = state.groupsByWorktree[targetWorktreeId] ?? []
-        const activeGroupId = state.activeGroupIdByWorktree[targetWorktreeId]
-        const activeGroup = activeGroupId
-          ? groups.find((group) => group.id === activeGroupId)
-          : groups[0]
-        if (!activeGroup) {
-          return
-        }
-        const [first, ...rest] = activeGroup.tabOrder
-        state.reorderUnifiedTabs(activeGroup.id, [...rest, first])
-        void newOrderTail
-      },
-      { targetWorktreeId: worktreeId, newOrderTail: [b, c, a] }
-    )
+    await orcaPage.evaluate((targetWorktreeId) => {
+      const store = window.__store
+      if (!store) {
+        return
+      }
+      const state = store.getState()
+      const groups = state.groupsByWorktree[targetWorktreeId] ?? []
+      const activeGroupId = state.activeGroupIdByWorktree[targetWorktreeId]
+      const activeGroup = activeGroupId
+        ? groups.find((group) => group.id === activeGroupId)
+        : groups[0]
+      if (!activeGroup) {
+        return
+      }
+      const [first, ...rest] = activeGroup.tabOrder
+      state.reorderUnifiedTabs(activeGroup.id, [...rest, first])
+    }, worktreeId)
     await expect
       .poll(async () => getTabBarOrder(orcaPage, worktreeId), { timeout: 3_000 })
       .toEqual([b, c, a])
