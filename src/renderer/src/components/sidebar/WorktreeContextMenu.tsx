@@ -25,6 +25,7 @@ import { useRepoById } from '@/store/selectors'
 import type { Worktree } from '../../../../shared/types'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { runWorktreeDeleteWithToast } from './delete-worktree-flow'
+import { runSleepWorktree } from './sleep-worktree-flow'
 
 type Props = {
   worktree: Worktree
@@ -38,9 +39,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   const openModal = useAppStore((s) => s.openModal)
   const repo = useRepoById(worktree.repoId)
   const skipDeleteConfirm = useAppStore((s) => s.settings?.skipDeleteWorktreeConfirm ?? false)
-  const shutdownWorktreeTerminals = useAppStore((s) => s.shutdownWorktreeTerminals)
-  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const clearWorktreeDeleteState = useAppStore((s) => s.clearWorktreeDeleteState)
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -101,18 +99,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({ worktree, 
   }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
   const handleCloseTerminals = useCallback(async () => {
-    // Why: shutting down the currently active worktree while its TerminalPane
-    // is still visible causes a visible "reboot" flicker and can crash the
-    // pane. clearTransientTerminalState nulls each tab's ptyId in place
-    // without bumping generation, so TerminalPane stays mounted while its
-    // PTYs are being killed; PTY exit callbacks then race against the live
-    // xterm instance. Boot the user to the landing page FIRST so the visible
-    // surface is detached before the async teardown runs.
-    if (activeWorktreeId === worktree.id) {
-      setActiveWorktree(null)
-    }
-    await shutdownWorktreeTerminals(worktree.id)
-  }, [worktree.id, shutdownWorktreeTerminals, activeWorktreeId, setActiveWorktree])
+    await runSleepWorktree(worktree.id)
+  }, [worktree.id])
 
   const handleDelete = useCallback(() => {
     setMenuOpen(false)
