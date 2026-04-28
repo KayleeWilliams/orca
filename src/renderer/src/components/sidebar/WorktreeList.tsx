@@ -15,7 +15,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import {
   buildExplicitEntriesByTabId,
   buildWorktreeComparator,
@@ -566,7 +565,13 @@ const WorktreeList = React.memo(function WorktreeList() {
     // Combined: O(E) index + O(N×T) scoring + O(N log N) sort, instead of
     // O(N × E × T) per sortEpoch bump. Only smart mode uses the score map;
     // other modes ignore it.
-    const agentStatusForSort = AGENT_DASHBOARD_ENABLED ? state.agentStatusByPaneKey : undefined
+    // Why: smart-sort only weighs live agent status when the experimental
+    // Agent Dashboard is opted in — that's the surface that populates
+    // agentStatusByPaneKey via hooks. With the setting off, pass undefined
+    // so the comparator falls back to the persisted-sortOrder + title
+    // heuristics instead of scoring against an empty map.
+    const agentStatusForSort =
+      state.settings?.experimentalAgentDashboard === true ? state.agentStatusByPaneKey : undefined
     const explicitByTabId =
       sortBy === 'smart' ? buildExplicitEntriesByTabId(agentStatusForSort) : undefined
     const precomputedScores =

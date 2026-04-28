@@ -268,6 +268,7 @@ export type CodexUsageApi = {
 
 export type AppRuntimeFlags = {
   daemonEnabledAtStartup: boolean
+  agentDashboardEnabledAtStartup: boolean
 }
 
 export type DaemonTransitionNotice = {

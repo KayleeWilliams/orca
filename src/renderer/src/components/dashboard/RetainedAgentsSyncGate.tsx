@@ -8,8 +8,8 @@ import { useRetainedAgentsSync } from './useRetainedAgents'
 // level — if it only ran when the dashboard is mounted, "done" agents would
 // vanish from the sidebar hovercard whenever the panel is collapsed.
 //
-// The hooks inside still early-return when AGENT_DASHBOARD_ENABLED is false,
-// so this gate is cheap when the feature is off.
+// The hooks inside still early-return when the experimentalAgentDashboard
+// setting is off, so this gate is cheap when the feature is disabled.
 export default function RetainedAgentsSyncGate(): null {
   const dashboardLiveGroups = useDashboardData()
   useRetainedAgentsSync(dashboardLiveGroups)

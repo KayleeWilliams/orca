@@ -16,7 +16,6 @@ import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab, handleSwitchTerminalTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
 import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
-import { AGENT_DASHBOARD_ENABLED } from '../../../shared/constants'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
@@ -706,43 +705,47 @@ export function useIpcEvents(): void {
     // Why: agent status arrives from native hook receivers in the main process.
     // Re-parse it here so the renderer enforces the same normalization rules
     // (state enum, field truncation) regardless of whether the source was a
-    // hook callback or an OSC fallback path.
-    if (AGENT_DASHBOARD_ENABLED) {
-      unsubs.push(
-        window.api.agentStatus.onSet((data) => {
-          // Why: the IPC payload is already a structured object — pass it
-          // straight to the object-input normalizer instead of round-tripping
-          // through JSON.stringify/JSON.parse. Hook events can fire many times
-          // per second during a tool-use run, so this avoids the per-event
-          // serialization cost.
-          const payload = normalizeAgentStatusPayload({
-            state: data.state,
-            prompt: data.prompt,
-            agentType: data.agentType,
-            toolName: data.toolName,
-            toolInput: data.toolInput,
-            lastAssistantMessage: data.lastAssistantMessage,
-            interrupted: data.interrupted
-          })
-          if (!payload) {
-            return
-          }
-          const store = useAppStore.getState()
-          // Why: resolve tab existence and terminal title in a single pass.
-          // Previously the code walked store.tabsByWorktree twice — once to
-          // look up the tab-level title (when the pane-level title was
-          // missing) and again for the explicit tabExists check. A paneKey
-          // that no longer resolves to a live tab belongs to a pane that has
-          // already been torn down; dropping here prevents orphan entries
-          // from accumulating in agentStatusByPaneKey.
-          const { exists, title } = resolvePaneKey(store, data.paneKey)
-          if (!exists) {
-            return
-          }
-          store.setAgentStatus(data.paneKey, payload, title)
+    // hook callback or an OSC fallback path. The subscription itself is
+    // unconditional so flipping the experimental dashboard setting takes
+    // effect without re-running this App-mount effect; the per-event guard
+    // inside the handler drops payloads when the setting is off.
+    unsubs.push(
+      window.api.agentStatus.onSet((data) => {
+        const store = useAppStore.getState()
+        if (store.settings?.experimentalAgentDashboard !== true) {
+          return
+        }
+        // Why: the IPC payload is already a structured object — pass it
+        // straight to the object-input normalizer instead of round-tripping
+        // through JSON.stringify/JSON.parse. Hook events can fire many times
+        // per second during a tool-use run, so this avoids the per-event
+        // serialization cost.
+        const payload = normalizeAgentStatusPayload({
+          state: data.state,
+          prompt: data.prompt,
+          agentType: data.agentType,
+          toolName: data.toolName,
+          toolInput: data.toolInput,
+          lastAssistantMessage: data.lastAssistantMessage,
+          interrupted: data.interrupted
         })
-      )
-    }
+        if (!payload) {
+          return
+        }
+        // Why: resolve tab existence and terminal title in a single pass.
+        // Previously the code walked store.tabsByWorktree twice — once to
+        // look up the tab-level title (when the pane-level title was
+        // missing) and again for the explicit tabExists check. A paneKey
+        // that no longer resolves to a live tab belongs to a pane that has
+        // already been torn down; dropping here prevents orphan entries
+        // from accumulating in agentStatusByPaneKey.
+        const { exists, title } = resolvePaneKey(store, data.paneKey)
+        if (!exists) {
+          return
+        }
+        store.setAgentStatus(data.paneKey, payload, title)
+      })
+    )
 
     return () => unsubs.forEach((fn) => fn())
   }, [])

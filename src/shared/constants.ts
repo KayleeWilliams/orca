@@ -12,13 +12,6 @@ import { DEFAULT_TERMINAL_FONT_WEIGHT } from './terminal-fonts'
 
 export const SCHEMA_VERSION = 1
 
-// Why: temporary compile-time gate for the agent status dashboard feature.
-// Flip to `true` only when every dashboard PR has landed; the follow-up cleanup
-// PR will delete this constant and every `if (!AGENT_DASHBOARD_ENABLED)` branch
-// entirely, making the feature permanent. Not user-facing — do not read from
-// settings, env, or IPC.
-export const AGENT_DASHBOARD_ENABLED = false
-
 export const ORCA_BROWSER_PARTITION = 'persist:orca-browser'
 // Why: blank browser tabs must start from an inert guest URL that does not
 // navigate the privileged main window to about:blank. Renderer and main both
@@ -187,7 +180,11 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalMacOptionAsAlt: 'auto',
     terminalMacOptionAsAltMigrated: false,
     experimentalTerminalDaemon: false,
-    experimentalTerminalDaemonNoticeShown: false
+    experimentalTerminalDaemonNoticeShown: false,
+    // Why: opt-in preview — default off so managed-hook installation
+    // (Claude/Codex/Gemini) stays dormant for existing users and upgraders
+    // (persistence.ts merges defaults first, so upgraders inherit this).
+    experimentalAgentDashboard: false
   }
 }
 

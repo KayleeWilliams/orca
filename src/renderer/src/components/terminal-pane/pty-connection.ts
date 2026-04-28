@@ -5,7 +5,6 @@ import { isGeminiTerminalTitle, isClaudeAgent } from '@/lib/agent-status'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
 import { toast } from 'sonner'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import type { PtyConnectResult } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
@@ -306,17 +305,20 @@ export function connectPanePty(
     // Without this, the OSC parser in pty-transport strips sequences from xterm
     // output but the status never reaches the store or dashboard/hover UI.
     onAgentStatus: (payload) => {
-      if (!AGENT_DASHBOARD_ENABLED) {
-        return
-      }
       // Why: capture the store snapshot once so the title lookup and the
       // setAgentStatus call observe the same state. Re-reading getState()
       // between the two lines opens a brief window where the title could
       // shift (OSC title update landing in between) and the status would be
-      // stored against a title that was never paired with it.
-      const state = useAppStore.getState()
-      const title = state.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
-      state.setAgentStatus(cacheKey, payload, title)
+      // stored against a title that was never paired with it. The same
+      // snapshot also gates on the experimental dashboard setting — without
+      // the opt-in, OSC 9999 status payloads are dropped before they reach
+      // the store.
+      const currentState = useAppStore.getState()
+      if (currentState.settings?.experimentalAgentDashboard !== true) {
+        return
+      }
+      const title = currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
+      currentState.setAgentStatus(cacheKey, payload, title)
     }
   })
   const hasExistingPaneTransport = deps.paneTransportsRef.current.size > 0

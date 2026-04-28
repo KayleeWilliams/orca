@@ -14,7 +14,6 @@ import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { getWorktreeStatus, type WorktreeStatus } from '@/lib/worktree-status'
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
@@ -49,6 +48,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
   const fetchIssue = useAppStore((s) => s.fetchIssue)
   const cardProps = useAppStore((s) => s.worktreeCardProperties)
+  const dashboardExperimentEnabled = useAppStore(
+    (s) => s.settings?.experimentalAgentDashboard === true
+  )
   const handleEditIssue = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -362,7 +364,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
           {(cardProps.includes('status') || cardProps.includes('unread')) && (
             <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
               {cardProps.includes('status') &&
-                (AGENT_DASHBOARD_ENABLED ? (
+                (dashboardExperimentEnabled ? (
                   <AgentStatusHover worktreeId={worktree.id}>
                     {/* Why: make the hover trigger keyboard-focusable so
                         keyboard-only users can open the hover panel (Radix

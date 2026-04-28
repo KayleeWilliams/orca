@@ -209,7 +209,8 @@ describe('useIpcEvents updater integration', () => {
             credentialResolvedListenerRef.current = listener
             return () => {}
           }
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -392,7 +393,8 @@ describe('useIpcEvents updater integration', () => {
           onCredentialResolved: () => () => {},
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -573,7 +575,8 @@ describe('useIpcEvents updater integration', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -769,7 +772,8 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -950,7 +954,8 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1126,7 +1131,8 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1311,7 +1317,8 @@ describe('useIpcEvents shortcut hint clearing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1503,7 +1510,8 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
