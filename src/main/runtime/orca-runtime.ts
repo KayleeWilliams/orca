@@ -1923,15 +1923,29 @@ export class OrcaRuntimeService {
 
     const payload = formatMessagesForInjection(unread)
     const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
-    if (wrote) {
-      this._orchestrationDb.markAsRead(unread.map((m) => m.id))
-      // Why: Claude Code treats large single PTY writes as paste events and
-      // swallows a \r included in the same write. Send Enter separately after
-      // a delay so the agent processes the pasted message first.
-      setTimeout(() => {
-        this.ptyController?.write(leaf.ptyId, '\r')
-      }, 500)
+    if (!wrote) {
+      return
     }
+
+    // Why: Claude Code treats large single PTY writes as paste events and
+    // swallows a \r included in the same write. Send Enter separately after
+    // a delay so the agent processes the pasted message first. Mark messages
+    // as read only after \r is confirmed, so failed deliveries stay queued.
+    const ptyId = leaf.ptyId
+    setTimeout(() => {
+      try {
+        if (!leaf.writable) {
+          return
+        }
+        const submitted = this.ptyController?.write(ptyId, '\r') ?? false
+        if (submitted) {
+          this._orchestrationDb?.markAsRead(unread.map((m) => m.id))
+        }
+      } catch {
+        // Terminal may have closed during the delay — messages stay unread
+        // and will be re-delivered on the next idle transition.
+      }
+    }, 500)
   }
 
   private resolveWaiter(waiter: TerminalWaiter, result: RuntimeTerminalWait): void {
