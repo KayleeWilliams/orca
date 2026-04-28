@@ -89,6 +89,10 @@ type PtyApi = {
   listSessions: () => Promise<{ id: string; cwd: string; title: string }[]>
   onData: (callback: (data: { id: string; data: string }) => void) => () => void
   onExit: (callback: (data: { id: string; code: number }) => void) => () => void
+  onSerializeBufferRequest: (
+    callback: (data: { requestId: string; ptyId: string }) => void
+  ) => () => void
+  sendSerializedBuffer: (requestId: string, data: string | null) => void
 }
 
 type GhApi = {
@@ -222,6 +226,18 @@ type AgentStatusApi = {
 // hooks, cache, session, updater, fs, git, ui, and runtime are inherited via
 // the PreloadApi intersection (see ./api-types), so re-declaring them would
 // reference undefined type names and risk drifting from the canonical surface.
+type MobileApi = {
+  getPairingQR: () => Promise<
+    | { available: false }
+    | { available: true; qrDataUrl: string; endpoint: string; deviceId: string }
+  >
+  listDevices: () => Promise<{
+    devices: { deviceId: string; name: string; pairedAt: number; lastSeenAt: number }[]
+  }>
+  revokeDevice: (args: { deviceId: string }) => Promise<{ revoked: boolean }>
+  isWebSocketReady: () => Promise<{ ready: boolean; endpoint: string | null }>
+}
+
 type Api = PreloadApi & {
   repos: ReposApi
   worktrees: WorktreesApi
@@ -234,6 +250,7 @@ type Api = PreloadApi & {
   shell: ShellApi
   agentStatus: AgentStatusApi
   wsl: WslApi
+  mobile: MobileApi
 }
 
 declare global {
