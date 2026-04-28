@@ -367,11 +367,17 @@ const WorktreeCard = React.memo(function WorktreeCard({
                     {/* Why: make the hover trigger keyboard-focusable so
                         keyboard-only users can open the hover panel (Radix
                         HoverCardTrigger asChild does not promote a
-                        non-interactive child to focusable). */}
+                        non-interactive child to focusable).
+                        Why inline-flex: a default `display: inline` span
+                        contains the inline-flex StatusIndicator on the text
+                        baseline, pushing the dot ~2px down inside the card's
+                        flex-column container. `inline-flex` removes the line
+                        box so the dot stays top-aligned with the title. */}
                     <span
                       tabIndex={0}
                       role="button"
                       aria-label={`Worktree status: ${status}. Show running agents.`}
+                      className="inline-flex"
                     >
                       <StatusIndicator status={status} />
                     </span>
