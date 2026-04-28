@@ -1,6 +1,9 @@
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { app, ipcMain } from 'electron'
 import { isWslAvailable } from '../wsl'
+
+const execFileAsync = promisify(execFile)
 
 export type AppRuntimeFlags = {
   /** Whether the persistent terminal daemon was actually started this session.
@@ -62,20 +65,25 @@ export function registerAppHandlers(): void {
   // observed to return null even when the preference is set. The `defaults`
   // CLI reads any domain and is the same mechanism Apple documents for
   // this value.
-  ipcMain.handle('app:getKeyboardInputSourceId', (): string | null => {
+  ipcMain.handle('app:getKeyboardInputSourceId', async (): Promise<string | null> => {
     if (process.platform !== 'darwin') {
       return null
     }
     try {
-      const stdout = execFileSync(
+      // Why: async so the probe never blocks the main-process event loop.
+      // The probe re-runs on every window focus-in (see option-as-alt-probe.ts),
+      // and a blocking execFileSync would briefly stall unrelated IPC each
+      // time the user Alt-Tabbed back into the app.
+      const { stdout } = await execFileAsync(
         '/usr/bin/defaults',
         ['read', 'com.apple.HIToolbox', 'AppleCurrentKeyboardLayoutInputSourceID'],
         // Why: short timeout so a wedged defaults binary (corporate-managed
-        // config, sandbox policy, …) never stalls the renderer's probe.
+        // config, sandbox policy, …) never holds the handle indefinitely.
         // Fall through to the fingerprint on timeout.
-        { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'] }
-      ).trim()
-      return stdout.length > 0 ? stdout : null
+        { encoding: 'utf8', timeout: 500 }
+      )
+      const trimmed = stdout.trim()
+      return trimmed.length > 0 ? trimmed : null
     } catch {
       // Why: defaults exits non-zero when the key is absent (first boot
       // before any input-source interaction), or when sandboxed. Treat
