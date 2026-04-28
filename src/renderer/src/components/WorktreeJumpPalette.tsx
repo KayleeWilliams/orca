@@ -1,7 +1,7 @@
 /* oxlint-disable max-lines */
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Globe, Plus, WifiOff } from 'lucide-react'
+import { Globe, Plus, Server, ServerOff } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { getRepoMapFromState, useAllWorktrees } from '@/store/selectors'
 import {
@@ -775,9 +775,9 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                                 className="shrink-0 inline-flex items-center"
                               >
                                 {isSshDisconnected ? (
-                                  <WifiOff className="size-3.5 text-red-400" aria-hidden="true" />
+                                  <ServerOff className="size-3.5 text-red-400" aria-hidden="true" />
                                 ) : (
-                                  <Globe
+                                  <Server
                                     className="size-3.5 text-muted-foreground"
                                     aria-hidden="true"
                                   />
