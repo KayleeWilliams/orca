@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
+import { findPrevLiveWorktreeHistoryIndex } from './worktree-nav-history'
 import type {
   ChangelogData,
   PersistedUIState,
@@ -187,6 +188,13 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   taskPageData: {},
   newWorkspaceDraft: null,
   openTaskPage: (data = {}) => {
+    // Why: record a Tasks visit in the shared back/forward history so the
+    // titlebar Back/Forward buttons can return to Tasks. All task-source
+    // variants (github/linear presets) collapse to a single 'tasks' entry;
+    // the slice's adjacent-entry dedupe drops re-opens. No isNavigatingHistory
+    // guard needed — back-to-Tasks routes through setActiveView('tasks') and
+    // never re-enters openTaskPage.
+    get().recordViewVisit('tasks')
     set((state) => ({
       activeView: 'tasks',
       previousViewBeforeTasks:
@@ -208,10 +216,30 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }
   },
   closeTaskPage: () =>
-    set((state) => ({
-      activeView: state.previousViewBeforeTasks,
-      taskPageData: {}
-    })),
+    set((state) => {
+      // Why: Esc-close from Tasks must rewind the history index if we're
+      // currently parked on a 'tasks' entry. Without this, A → Tasks → Esc
+      // leaves the index at the 'tasks' entry, making Back a visual no-op
+      // (activator re-activates A) and Forward re-opens Tasks. If there is no
+      // earlier live entry (e.g. history is just ['tasks']), leave the index
+      // at 0 — setting it to -1 would lose the only forward target, while the
+      // resulting Back visual no-op self-heals as soon as a real visit records
+      // a new entry. closeTaskPage never runs from the history-nav path, so no
+      // isNavigatingHistory guard is needed.
+      const currentEntry = state.worktreeNavHistory[state.worktreeNavHistoryIndex]
+      let nextHistoryIndex = state.worktreeNavHistoryIndex
+      if (currentEntry === 'tasks') {
+        const prev = findPrevLiveWorktreeHistoryIndex(state)
+        if (prev !== null) {
+          nextHistoryIndex = prev
+        }
+      }
+      return {
+        activeView: state.previousViewBeforeTasks,
+        taskPageData: {},
+        worktreeNavHistoryIndex: nextHistoryIndex
+      }
+    }),
   setNewWorkspaceDraft: (draft) => set({ newWorkspaceDraft: draft }),
   clearNewWorkspaceDraft: () => set({ newWorkspaceDraft: null }),
   openSettingsPage: () =>
