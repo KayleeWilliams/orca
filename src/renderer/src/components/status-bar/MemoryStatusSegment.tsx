@@ -754,7 +754,17 @@ export function MemoryStatusSegment({
         </TooltipContent>
       </Tooltip>
 
-      <PopoverContent side="top" align="end" sideOffset={8} className="w-[26rem] p-0">
+      <PopoverContent
+        side="top"
+        align="end"
+        sideOffset={8}
+        className="w-[26rem] p-0"
+        // Why: the first focusable element inside is the CPU/memory/% span
+        // (tabIndex=0 so the tooltip is keyboard-reachable). Without this,
+        // Radix auto-focuses that span on open, which triggers its tooltip
+        // and leaves it stuck until the user mouses over something else.
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
         {/* Why: the popover trigger already announces "Memory & CPU", so a
             heading row is redundant. We lead with the totals — which is what
             most people open this for — on a single compact line. */}
