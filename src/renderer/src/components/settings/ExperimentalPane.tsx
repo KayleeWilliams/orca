@@ -234,8 +234,11 @@ export function ExperimentalPane({
               <Label>Agent dashboard</Label>
               <p className="text-xs text-muted-foreground">
                 Adds a cross-worktree dashboard and hover cards showing each agent&apos;s live
-                status. Requires an app restart, and tracks agents started in new terminals opened
-                after the restart.
+                status. Requires an app restart
+                {settings.experimentalTerminalDaemon
+                  ? ', and tracks agents started in new terminals opened after the restart'
+                  : ''}
+                .
               </p>
               <SupportedAgentsDisclaimer />
             </div>
