@@ -409,6 +409,57 @@ Tradeoff: likely flaky. The next desktop fit pass can resize the PTY back to des
 - What exact mobile font size should define the fit grid?
 - ~~Should the desktop indicator live in terminal tab chrome, pane chrome, or a subtle in-terminal overlay?~~ Resolved: dismissible banner in the terminal pane (Section 4).
 
+## Implementation Notes — Mobile WebView Touch & Display (April 2026)
+
+### CSS Scale Fit
+- `computeFitScale()` measures xterm's rendered width vs viewport width
+- Scale snaps to 1.0 when >= 0.95 (avoids sub-pixel gaps in fit-to-phone mode)
+- Transform origin is top-left for predictable positioning
+
+### Row Fill
+- After scaling, xterm may have fewer rows than needed to fill the phone viewport vertically
+- `adjustRowsForViewport()` resizes xterm's row count to fill the available height
+- This is display-only — the PTY is not resized
+- Never shrinks below `initRows` to avoid clipping active terminal content
+
+### Custom Touch Handling
+All touch gestures are intercepted in the capture phase (before xterm sees them):
+
+- **Single-finger at 1x zoom → xterm scrollback**: Scroll speed is compensated for CSS scale (`pixelDelta / (cellHeight * scale)`) so it matches the visual line height. Includes momentum/inertia scrolling.
+- **Single-finger when zoomed in → pan**: Moves the viewport around the zoomed content. Pan is clamped to content bounds.
+- **Two-finger → pinch-to-zoom**: Zooms the terminal surface CSS transform directly (1x–5x range). Zoom is centered on the pinch midpoint. Snaps back to 1x when released below 1.05x.
+- **Tap suppression**: `mousedown` and `click` are suppressed to prevent cursor jumping in the TUI.
+
+### Why Custom Touch Over Native WebView Gestures
+- Native WebView scroll competed with xterm's internal scrollback (two scroll layers)
+- Native WebView zoom operates on HTML page boundaries — can't zoom on content near the bottom edge
+- CSS scale makes touch coordinates misaligned with visual positions — custom handlers compensate
+
+### Keyboard-Aware Terminal Resizing — NOT WORKING (Attempts Documented)
+When the soft keyboard appears, the terminal content should push up so the latest output stays visible above the keyboard. We tried several approaches, none worked:
+
+1. **`window.resize` event in WebView**: The HTML `resize` event doesn't fire reliably when KeyboardAvoidingView (behavior: 'padding') reshapes the layout. The WebView's `window.innerHeight` may not update.
+
+2. **`onLayout` on the WebView**: Added `onLayout` directly on the `<WebView>` component to detect frame changes. Did not fire when the keyboard appeared.
+
+3. **`onLayout` on the parent `terminalFrame` View**: The `terminalFrame` has `flex: 1` and should shrink when KeyboardAvoidingView adds bottom padding. Added `onLayout` to measure the new height and send it to the WebView JS via `postMessage`. Did not fire with a different height value.
+
+4. **React Native `Keyboard` API**: Used `Keyboard.addListener('keyboardWillShow')` to get the keyboard height directly. Computed `reducedHeight = fullHeight - keyboardHeight` and sent it to the WebView via `postMessage`. The message was sent but the terminal did not resize.
+
+### Possible Root Causes (Uninvestigated)
+- The `postMessage` from React Native to the WebView may have timing issues or may not be received during keyboard animation
+- `adjustRowsForViewport()` may need to handle the case where `neededRows < initRows` (keyboard takes enough space that fewer rows are needed than the PTY's original count)
+- KeyboardAvoidingView with `behavior: 'padding'` may not actually cause flex children to re-layout — could try `behavior: 'height'`
+- The WebView's internal viewport may be decoupled from its native frame size
+- May need to use `injectJavaScript` instead of `postMessage` for more direct execution
+- Could expose functions on `window` object and call them via `injectJavaScript` to bypass the message queue entirely
+
+### Future Approach Ideas
+- Try `behavior: 'height'` on KeyboardAvoidingView
+- Use `injectJavaScript` with a `window`-exposed function for immediate execution
+- Add debug logging to verify each step of the chain (keyboard event → message sent → message received → rows calculated → resize called)
+- Consider `react-native-keyboard-controller` for more granular control
+
 ## Recommendation
 
 Implement explicit mobile-fit mode with runtime-owned PTY resize and desktop auto-fit suppression.
