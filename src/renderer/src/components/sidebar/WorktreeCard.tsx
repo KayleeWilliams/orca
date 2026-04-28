@@ -154,10 +154,16 @@ const WorktreeCard = React.memo(function WorktreeCard({
   // consulted too so the sky dot keeps glowing after the agent process exits,
   // matching the dashboard's retention behavior.
   //
-  // Priority (highest first): permission (blocked/waiting) > done > heuristic.
-  // permission wins over done because a newer blocked agent in the same
+  // Priority (highest first): permission (blocked/waiting) > heuristic
+  // 'working' > done > other heuristic ('active'/'inactive').
+  // permission wins over everything because a newer blocked agent in the same
   // worktree means the user needs to act now, not admire a previous
   // completion.
+  // heuristic 'working' wins over done because a spinner means the user has
+  // already re-prompted the agent after it reported done — the newer "work
+  // in progress" signal is more informative than a retained completion dot.
+  // Only the 'working' heuristic earns this precedence; 'active'/'inactive'
+  // mean "quiet terminal", which shouldn't drown out a recent done.
   // Why: collapse live hook entries to booleans inside the selector so the
   // snapshot is a stable scalar (useShallow compares element identity — an
   // array of freshly-constructed {state,updatedAt} objects would never hit
@@ -217,10 +223,16 @@ const WorktreeCard = React.memo(function WorktreeCard({
     if (hasPermission) {
       return 'permission'
     }
+    // Compute the heuristic once so we can let 'working' beat done without
+    // letting quieter heuristic states ('active'/'inactive') erase a done.
+    const heuristic = getWorktreeStatus(tabs, browserTabs, runtimePaneTitlesForWorktree)
+    if (heuristic === 'working') {
+      return 'working'
+    }
     if (hasLiveDone || hasRetainedDone) {
       return 'done'
     }
-    return getWorktreeStatus(tabs, browserTabs, runtimePaneTitlesForWorktree)
+    return heuristic
   }, [tabs, browserTabs, runtimePaneTitlesForWorktree, hasPermission, hasLiveDone, hasRetainedDone])
 
   const showPR = cardProps.includes('pr')
