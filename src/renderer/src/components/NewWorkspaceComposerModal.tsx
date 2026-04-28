@@ -123,12 +123,13 @@ function ComposerModalBody({
         // it fine. Animating between widths was jarring and made the modal
         // feel unstable every time the user toggled tabs.
         //
-        // Height sizes to content. AnimatedTabPanels keeps only the active
-        // panel in flow, so scrollHeight never exceeds the dialog's own
-        // client height and the host dialog doesn't grow a scrollbar. We
-        // cap at 100vh-2rem purely as a safety net for unusually tall
-        // content (e.g. expanded Advanced drawer on a short viewport).
-        className="flex max-h-[calc(100vh-2rem)] flex-col sm:max-w-lg"
+        // Height sizes to content with no viewport cap — a max-h here would
+        // hand the dialog to flex-col, which squashes the AnimatedTabPanels
+        // wrapper (overflow-hidden + inline height) and clips the Create
+        // Workspace button on short viewports. The user wants no scrollbar
+        // on the modal itself, so content that would otherwise overflow just
+        // extends past the viewport instead of scrolling.
+        className="flex flex-col sm:max-w-lg"
         onOpenAutoFocus={(event) => {
           // Why: Radix's FocusScope fires this once the dialog has mounted and
           // the DOM is ready. preventDefault stops it from focusing the first
