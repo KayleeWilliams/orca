@@ -52,7 +52,8 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
     setRemoteError,
     resetRemoteState,
     handleOpenRemoteStep,
-    handleAddRemoteRepo
+    handleAddRemoteRepo,
+    handleConnectTarget
   } = useRemoteRepo(fetchWorktrees, setStep, setAddedRepo, closeModal)
   useEffect(() => {
     if (!isCloning) {
@@ -321,6 +322,7 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
               openSettingsTarget({ pane: 'ssh', repoId: null, sectionId: 'ssh' })
               openSettingsPage()
             }}
+            onConnectTarget={handleConnectTarget}
           />
         ) : step === 'clone' ? (
           <CloneStep
