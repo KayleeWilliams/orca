@@ -221,6 +221,11 @@ export class OrcaRuntimeService {
   private agentBrowserBridge: AgentBrowserBridge | null = null
   private resolvedWorktreeCache: ResolvedWorktreeCache | null = null
   private agentDetector: AgentDetector | null = null
+  // Why: mobile clients subscribe to terminal output via terminal.subscribe.
+  // These listeners fire on every onPtyData call, enabling real-time streaming
+  // without polling. Keyed by ptyId for O(1) lookup per data event.
+  private dataListeners = new Map<string, Set<(data: string) => void>>()
+  private subscriptionCleanups = new Map<string, () => void>()
 
   constructor(store: RuntimeStore | null = null, stats?: StatsCollector) {
     this.store = store
@@ -377,6 +382,52 @@ export class OrcaRuntimeService {
           this.resolveTuiIdleWaiters(leaf)
         }
       }
+    }
+
+    const listeners = this.dataListeners.get(ptyId)
+    if (listeners) {
+      for (const listener of listeners) {
+        listener(data)
+      }
+    }
+  }
+
+  subscribeToTerminalData(ptyId: string, listener: (data: string) => void): () => void {
+    let listeners = this.dataListeners.get(ptyId)
+    if (!listeners) {
+      listeners = new Set()
+      this.dataListeners.set(ptyId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        this.dataListeners.delete(ptyId)
+      }
+    }
+  }
+
+  resolveLeafForHandle(handle: string): { ptyId: string | null } | null {
+    const record = this.handles.get(handle)
+    if (!record) {
+      return null
+    }
+    const leaf = this.leaves.get(this.getLeafKey(record.tabId, record.leafId))
+    if (!leaf) {
+      return null
+    }
+    return { ptyId: leaf.ptyId }
+  }
+
+  registerSubscriptionCleanup(subscriptionId: string, cleanup: () => void): void {
+    this.subscriptionCleanups.set(subscriptionId, cleanup)
+  }
+
+  cleanupSubscription(subscriptionId: string): void {
+    const cleanup = this.subscriptionCleanups.get(subscriptionId)
+    if (cleanup) {
+      this.subscriptionCleanups.delete(subscriptionId)
+      cleanup()
     }
   }
 

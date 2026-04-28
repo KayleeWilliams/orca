@@ -19,6 +19,7 @@ import {
 import { recordPendingDaemonTransitionNotice, setAppRuntimeFlags } from './ipc/app'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
+import { registerMobileHandlers } from './ipc/mobile'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService } from './runtime/orca-runtime'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
@@ -389,6 +390,7 @@ app.whenReady().then(async () => {
     runtime,
     userDataPath: app.getPath('userData')
   })
+  registerMobileHandlers(runtimeRpc)
 
   // Why: persistent terminal sessions (the out-of-process daemon) are gated
   // behind an experimental setting that defaults to OFF. Users on v1.3.0 had
