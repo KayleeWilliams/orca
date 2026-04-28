@@ -1925,6 +1925,12 @@ export class OrcaRuntimeService {
     const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
     if (wrote) {
       this._orchestrationDb.markAsRead(unread.map((m) => m.id))
+      // Why: Claude Code treats large single PTY writes as paste events and
+      // swallows a \r included in the same write. Send Enter separately after
+      // a delay so the agent processes the pasted message first.
+      setTimeout(() => {
+        this.ptyController?.write(leaf.ptyId, '\r')
+      }, 500)
     }
   }
 
