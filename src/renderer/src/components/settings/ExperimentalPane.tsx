@@ -205,8 +205,8 @@ export function ExperimentalPane({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {settings.experimentalAgentDashboard
-                    ? 'Restart Orca to install Claude/Codex/Gemini hooks and enable the dashboard.'
-                    : 'Restart Orca to stop receiving Claude/Codex/Gemini hook events. The dashboard will be hidden.'}
+                    ? 'Restart Orca to finish enabling the agent dashboard.'
+                    : 'Restart Orca to finish disabling the agent dashboard.'}
                 </p>
               </div>
               <Button
