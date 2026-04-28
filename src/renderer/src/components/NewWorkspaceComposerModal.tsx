@@ -122,13 +122,6 @@ function ComposerModalBody({
         // extra horizontal room for PR titles + branch names; Quick tolerates
         // it fine. Animating between widths was jarring and made the modal
         // feel unstable every time the user toggled tabs.
-        //
-        // Height sizes to content with no viewport cap — a max-h here would
-        // hand the dialog to flex-col, which squashes the AnimatedTabPanels
-        // wrapper (overflow-hidden + inline height) and clips the Create
-        // Workspace button on short viewports. The user wants no scrollbar
-        // on the modal itself, so content that would otherwise overflow just
-        // extends past the viewport instead of scrolling.
         className="flex flex-col sm:max-w-lg"
         onOpenAutoFocus={(event) => {
           // Why: Radix's FocusScope fires this once the dialog has mounted and
@@ -398,13 +391,24 @@ function AnimatedTabPanels({
   // first (capturing the outgoing height), then this observer swings the
   // wrapper height toward the new active panel's height via the CSS
   // transition on `height`.
+  //
+  // Why offsetHeight and not getBoundingClientRect().height: Radix's
+  // dialog open animation (`data-[state=open]:zoom-in-95`) scales the
+  // dialog from 0.95 → 1.0 over 200ms. getBoundingClientRect reports the
+  // *visual* (transformed) height, so the very first measurement lands at
+  // ~95 % of the real layout size and pins that into the inline height.
+  // The ResizeObserver never refires because actual layout size didn't
+  // change — only the transform did — so the wrapper stays permanently
+  // ~16 px short and clips the Create Workspace button at the bottom.
+  // offsetHeight returns the un-transformed layout box, which is what the
+  // wrapper should match.
   useLayoutEffect(() => {
     const target = active === 'quick' ? quickRef.current : createFromRef.current
     if (!target) {
       return
     }
     const update = (): void => {
-      const next = target.getBoundingClientRect().height
+      const next = target.offsetHeight
       if (next > 0) {
         setWrapperHeight(next)
       }
@@ -429,7 +433,11 @@ function AnimatedTabPanels({
     if (!wrapper) {
       return
     }
-    const from = wrapper.getBoundingClientRect().height
+    // Why: offsetHeight, not getBoundingClientRect — see comment on the
+    // observer effect above. Same transform-scale trap applies to this
+    // FLIP capture if a tab swap happens while any ancestor transform is
+    // still animating.
+    const from = wrapper.offsetHeight
     if (from > 0) {
       setWrapperHeight(from)
       setIsAnimating(true)
