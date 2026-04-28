@@ -462,14 +462,20 @@ function AnimatedTabPanels({
   return (
     <div
       ref={wrapperRef}
-      // Why: `overflow-hidden` isolates the absolutely-positioned inactive
-      // panel. Without it, the inactive panel's (still-rendered,
-      // invisible) height extends beyond the wrapper and leaks into the
-      // DialogContent's scrollHeight — which would make the host dialog
-      // grow a scrollbar when the inactive panel is taller than the
-      // active one.
-      className="relative overflow-hidden transition-[height] duration-200 ease-out"
-      style={wrapperHeight !== null ? { height: wrapperHeight } : undefined}
+      // Why: `overflow: clip` isolates the absolutely-positioned inactive
+      // panel so the wrapper's measured height drives the dialog (not the
+      // stacked panel heights). We avoid plain `overflow: hidden` because
+      // that also clips the 3px focus rings painted by nested inputs
+      // (RepoCombobox, workspace name field, etc.) — the inner panels are
+      // `inset-x-0` so their triggers sit flush against the wrapper edges,
+      // leaving no room for a ring to paint. `overflow-clip-margin` gives
+      // the ring breathing room on every side without re-introducing scroll
+      // containers or letting the inactive panel leak layout.
+      className="relative overflow-clip transition-[height] duration-200 ease-out"
+      style={{
+        ...(wrapperHeight !== null ? { height: wrapperHeight } : null),
+        overflowClipMargin: '8px'
+      }}
     >
       <div
         ref={quickRef}
