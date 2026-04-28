@@ -381,7 +381,9 @@ function SupportedAgentsDisclaimer(): React.JSX.Element {
           </span>
         ))}
       </div>
-      <p className="text-[11px] italic">Currently working on support for more agent CLIs.</p>
+      <p className="text-[11px] italic">
+        We&apos;re currently working on support for more agent CLIs.
+      </p>
     </div>
   )
 }
