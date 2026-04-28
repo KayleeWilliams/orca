@@ -55,6 +55,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Why: postinstall rebuilds better-sqlite3 for Electron's ABI via
+      # @electron/rebuild, but vitest runs under system Node.js. Rebuild
+      # it for Node so orchestration tests can load the native module.
+      - name: Rebuild better-sqlite3 for Node
+        run: pnpm rebuild better-sqlite3
+
       - name: Test
         run: pnpm test
 

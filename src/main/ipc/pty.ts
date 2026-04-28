@@ -188,6 +188,13 @@ export function buildPtyHostEnv(
   // Orca's own PTYs. Injecting lightweight PATH shims at spawn-time keeps
   // the behavior local to Orca instead of rewriting user git config or
   // touching external shells.
+  if (!opts.githubAttributionEnabled) {
+    delete baseEnv.ORCA_ENABLE_GIT_ATTRIBUTION
+    delete baseEnv.ORCA_GIT_COMMIT_TRAILER
+    delete baseEnv.ORCA_GH_PR_FOOTER
+    delete baseEnv.ORCA_GH_ISSUE_FOOTER
+    delete baseEnv.ORCA_ATTRIBUTION_SHIM_DIR
+  }
   applyTerminalAttributionEnv(baseEnv, {
     enabled: opts.githubAttributionEnabled,
     userDataPath: opts.userDataPath
@@ -339,13 +346,21 @@ export function registerPtyHandlers(
     localProvider.configure({
       isHistoryEnabled: () => getSettings?.()?.terminalScopeHistoryByWorktree ?? true,
       getWindowsShell: () => getSettings?.()?.terminalWindowsShell,
-      buildSpawnEnv: (id, baseEnv) =>
-        buildPtyHostEnv(id, baseEnv, {
+      buildSpawnEnv: (id, baseEnv) => {
+        const env = buildPtyHostEnv(id, baseEnv, {
           isPackaged: app.isPackaged,
           userDataPath: app.getPath('userData'),
           selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
           githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
-        }),
+        })
+        // Why: agents need their own terminal handle at process start so they
+        // can self-identify in orchestration messages without an extra RPC.
+        const preAllocatedHandle = runtime?.preAllocateHandleForPty(id)
+        if (preAllocatedHandle) {
+          env.ORCA_TERMINAL_HANDLE = preAllocatedHandle
+        }
+        return env
+      },
       onSpawned: (id) => runtime?.onPtySpawned(id),
       onExit: (id, code) => {
         clearProviderPtyState(id)
@@ -380,6 +395,12 @@ export function registerPtyHandlers(
     pendingData.clear()
   }
 
+  // Why: LocalPtyProvider routes data to the runtime via configure().onData,
+  // but daemon-backed providers don't have configure(). Without this, daemon
+  // PTY data never reaches the runtime's tail buffer, so terminal.read returns
+  // empty and agent-detection from raw data never fires.
+  const isLocalProvider = localProvider instanceof LocalPtyProvider
+
   localDataUnsub = localProvider.onData((payload) => {
     if (mainWindow.isDestroyed()) {
       // Why: clear the pending flush timer so it doesn't fire after the window
@@ -392,6 +413,9 @@ export function registerPtyHandlers(
       pendingData.clear()
       return
     }
+    if (!isLocalProvider) {
+      runtime?.onPtyData(payload.id, payload.data, Date.now())
+    }
     const existing = pendingData.get(payload.id)
     pendingData.set(payload.id, existing ? existing + payload.data : payload.data)
     if (!flushTimer) {
@@ -399,6 +423,12 @@ export function registerPtyHandlers(
     }
   })
   localExitUnsub = localProvider.onExit((payload) => {
+    if (!isLocalProvider) {
+      clearProviderPtyState(payload.id)
+      ptyOwnership.delete(payload.id)
+      markClaudePtyExited(payload.id)
+      runtime?.onPtyExit(payload.id, payload.code)
+    }
     if (!mainWindow.isDestroyed()) {
       // Why: flush any batched data for this PTY before sending the exit event,
       // otherwise the last ≤8ms of output is silently lost because the renderer
@@ -456,6 +486,13 @@ export function registerPtyHandlers(
       markClaudePtyExited(ptyId)
       runtime?.onPtyExit(ptyId, -1)
       return true
+    },
+    getForegroundProcess: async (ptyId) => {
+      try {
+        return await getProviderForPty(ptyId).getForegroundProcess(ptyId)
+      } catch {
+        return null
+      }
     }
   })
 
@@ -528,6 +565,10 @@ export function registerPtyHandlers(
         args.sessionId ?? (isDaemonHostSpawn ? mintPtySessionId(args.worktreeId) : undefined)
       const baseEnv = claudeAuth ? { ...args.env, ...claudeAuth.envPatch } : args.env
       let env: Record<string, string> | undefined = baseEnv
+      const preAllocatedHandle =
+        runtime && !(provider instanceof LocalPtyProvider)
+          ? runtime.createPreAllocatedTerminalHandle()
+          : null
       if (isDaemonHostSpawn) {
         if (effectiveSessionId === undefined) {
           // Should be unreachable: the expression above returns a string when
@@ -569,6 +610,9 @@ export function registerPtyHandlers(
           throw err
         }
       }
+      const spawnEnv = preAllocatedHandle
+        ? { ...env, ORCA_TERMINAL_HANDLE: preAllocatedHandle }
+        : env
       const envToDelete = claudeAuth?.stripAuthEnv
         ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
         : undefined
@@ -576,7 +620,7 @@ export function registerPtyHandlers(
         cols: args.cols,
         rows: args.rows,
         cwd: args.cwd,
-        env
+        env: spawnEnv
       }
       if (envToDelete) {
         spawnOptions.envToDelete = envToDelete
@@ -625,6 +669,9 @@ export function registerPtyHandlers(
         throw err
       }
       ptyOwnership.set(result.id, args.connectionId ?? null)
+      if (preAllocatedHandle) {
+        runtime?.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+      }
       if (isClaudeLaunch) {
         markClaudePtySpawned(result.id)
       }

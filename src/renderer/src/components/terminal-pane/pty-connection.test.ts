@@ -1,6 +1,8 @@
 /* oxlint-disable max-lines */
+import type * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { POST_REPLAY_FOCUS_REPORTING_RESET, POST_REPLAY_MODE_RESET } from './layout-serialization'
+import type * as UseNotificationDispatchModule from './use-notification-dispatch'
 
 const toastInfo = vi.fn()
 
@@ -80,6 +82,24 @@ vi.mock('sonner', () => ({
     info: toastInfo
   }
 }))
+
+// Why: the working→idle test imports the real useNotificationDispatch to
+// verify producer → IPC end-to-end. useCallback is pure memoization for
+// that hook, so pass-through here lets it be invoked outside React.
+//
+// Scope note: this mock applies to every test in this file, not just the
+// working→idle test. It is safe today because no other test in this file
+// depends on useCallback identity stability — the suite does not render
+// React components. If that ever changes, either narrow this with
+// vi.doMock inside the it() block or extract the hook body into a plain
+// non-hook function so the test does not need to bypass React at all.
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof React>()
+  return {
+    ...actual,
+    useCallback: <T extends (...args: unknown[]) => unknown>(fn: T): T => fn
+  }
+})
 
 vi.mock('./pty-transport', () => ({
   createIpcPtyTransport: vi.fn((options: Record<string, unknown>) => {
@@ -217,6 +237,9 @@ describe('connectPanePty', () => {
         pty: {
           signal: vi.fn(),
           ackColdRestore: vi.fn()
+        },
+        notifications: {
+          dispatch: vi.fn()
         }
       }
     }
@@ -983,14 +1006,33 @@ describe('connectPanePty', () => {
   // unread — those stay BEL-only so non-agent long-running tasks remain
   // first-class attention sources. Double-firing with a concurrent BEL is
   // collapsed by the per-worktree dedupe in main/ipc/notifications.ts.
+  //
+  // This test deliberately wires the real useNotificationDispatch hook into
+  // connectPanePty instead of a vi.fn() stub. A stub would let the producer
+  // be silently deleted and the test still pass by asserting "not called";
+  // routing through the real hook to window.api.notifications.dispatch means
+  // removing the producer breaks the IPC assertion, which is the user-facing
+  // contract.
   it('dispatches agent-task-complete on working→idle but does not raise tab/worktree unread', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    const { useNotificationDispatch } = await vi.importActual<typeof UseNotificationDispatchModule>(
+      './use-notification-dispatch'
+    )
     const transport = createMockTransport()
     transportFactoryQueue.push(transport)
 
+    // Why: useNotificationDispatch uses useCallback internally; bypass the
+    // React machinery by invoking its body directly through a module call.
+    // Safe here because useCallback is pure memoization — the returned
+    // function has the same behavior as the callback passed in.
+    // Depends on the file-level vi.mock('react', ...) near the top of this
+    // file that replaces useCallback with a pass-through. Removing that
+    // mock breaks this test with a rules-of-hooks error.
+    const dispatchNotification = useNotificationDispatch('wt-1')
+
     const pane = createPane(1)
     const manager = createManager(1)
-    const deps = createDeps()
+    const deps = createDeps({ dispatchNotification })
 
     connectPanePty(pane as never, manager as never, deps as never)
 
@@ -1005,10 +1047,13 @@ describe('connectPanePty', () => {
 
     expect(deps.markWorktreeUnread).not.toHaveBeenCalled()
     expect(deps.markTerminalTabUnread).not.toHaveBeenCalled()
-    expect(deps.dispatchNotification).toHaveBeenCalledWith({
-      source: 'agent-task-complete',
-      terminalTitle: '* Claude done'
-    })
+    expect(window.api.notifications.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'agent-task-complete',
+        worktreeId: 'wt-1',
+        terminalTitle: '* Claude done'
+      })
+    )
   })
 
   // Why: onAgentExited must clear any running prompt-cache countdown so the

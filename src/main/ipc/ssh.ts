@@ -17,6 +17,7 @@ import type {
 import { isAuthError } from '../ssh/ssh-connection-utils'
 import { registerSshBrowseHandler } from './ssh-browse'
 import { requestCredential, registerCredentialHandler } from './ssh-passphrase'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 
 let sshStore: SshConnectionStore | null = null
 let connectionManager: SshConnectionManager | null = null
@@ -146,7 +147,8 @@ async function restorePortForwards(
 
 export function registerSshHandlers(
   store: Store,
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  runtime?: OrcaRuntimeService
 ): { connectionManager: SshConnectionManager; sshStore: SshConnectionStore } {
   // Why: on macOS, app re-activation creates a new BrowserWindow and re-calls
   // this function. ipcMain.handle() throws if a handler is already registered,
@@ -297,6 +299,7 @@ export function registerSshHandlers(
       getMainWindow,
       store,
       portForwardManager!,
+      runtime,
       (tid, ports, _platform) => {
         broadcastDetectedPorts(getMainWindow, tid, ports)
       }
