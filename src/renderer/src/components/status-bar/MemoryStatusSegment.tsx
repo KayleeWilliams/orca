@@ -12,7 +12,6 @@ import { useAppStore } from '../../store'
 import { useWorktreeMap } from '../../store/selectors'
 import { runWorktreeDelete } from '../sidebar/delete-worktree-flow'
 import { runSleepWorktree } from '../sidebar/sleep-worktree-flow'
-import WorktreeContextMenu from '../sidebar/WorktreeContextMenu'
 import type {
   AppMemory,
   SessionMemory,
@@ -361,10 +360,9 @@ function WorktreeSection({
 
   // Why: WorktreeMemory is a lightweight snapshot; we look the real Worktree
   // record up from the store so rows can (a) disable Delete for the main
-  // worktree, (b) hand the full record to WorktreeContextMenu for the
-  // shared right-click menu, and (c) render the user-editable displayName
-  // instead of the dirname. Use the shared cached selector so we don't
-  // duplicate the WeakMap-cached Map the rest of the app already shares.
+  // worktree, and (b) render the user-editable displayName instead of the
+  // dirname. Use the shared cached selector so we don't duplicate the
+  // WeakMap-cached Map the rest of the app already shares.
   const worktreeById = useWorktreeMap()
 
   // Shared label resolver: prefer displayName, fall back to the dirname
@@ -473,8 +471,7 @@ function WorktreeRow({
 }): React.JSX.Element {
   const hasSessions = worktree.sessions.length > 0
   // Why: actions are only meaningful for real worktrees — orphan/unknown
-  // rows are synthetic buckets with no row to act on. Same condition gates
-  // the WorktreeContextMenu wrapper below.
+  // rows are synthetic buckets with no row to act on.
   const showActions = worktree.worktreeId !== ORPHAN_WORKTREE_ID && storeRecord !== null
   const isMainWorktree = storeRecord?.isMainWorktree ?? false
   // Why: Worktree.displayName is the user-editable workspace name (set via
@@ -482,7 +479,7 @@ function WorktreeRow({
   // snapshot for orphan/unresolved rows that have no store record.
   const rowLabel = storeRecord?.displayName?.trim() || worktree.worktreeName
 
-  const rowBody = (
+  return (
     <div className="border-b border-border/20 last:border-b-0">
       <div className="group/wtrow flex items-center ml-2 transition-colors hover:bg-muted/60">
         {hasSessions ? (
@@ -612,22 +609,6 @@ function WorktreeRow({
   )
 
   // Why: wrap real rows in the shared context menu so right-click exposes
-  // the same actions users get in the sidebar (Pin, Rename, Link issue, …).
-  // Orphan and unresolved rows don't have a backing Worktree record and
-  // would fail the menu's store lookups, so they render without it.
-  //
-  // Why contentClassName="z-[70]": PopoverContent renders at z-[60] and the
-  // default DropdownMenuContent stacks at z-50, so without a bump the
-  // right-click menu would render *under* the surrounding popover. Matches
-  // the z-[70] used for tooltips elsewhere in this file.
-  if (storeRecord) {
-    return (
-      <WorktreeContextMenu worktree={storeRecord} contentClassName="z-[70]">
-        {rowBody}
-      </WorktreeContextMenu>
-    )
-  }
-  return rowBody
 }
 
 // ─── Segment (top-level) ────────────────────────────────────────────
