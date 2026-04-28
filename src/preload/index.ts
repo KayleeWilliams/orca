@@ -176,7 +176,14 @@ const api = {
       ipcRenderer.invoke('app:getRuntimeFlags'),
     consumeDaemonTransitionNotice: (): Promise<{ killedCount: number } | null> =>
       ipcRenderer.invoke('app:consumeDaemonTransitionNotice'),
-    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch')
+    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
+    // Why: on macOS this returns AppleCurrentKeyboardLayoutInputSourceID so
+    // the renderer's keyboard-layout probe can distinguish Polish Pro / US
+    // Extended / ABC Extended / IME Roman modes from plain US QWERTY (see
+    // src/renderer/src/lib/keyboard-layout/input-source-id.ts, issue #1205).
+    // Returns null on non-Darwin or when the defaults read fails.
+    getKeyboardInputSourceId: (): Promise<string | null> =>
+      ipcRenderer.invoke('app:getKeyboardInputSourceId')
   },
 
   wsl: {

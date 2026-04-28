@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, systemPreferences } from 'electron'
 import { isWslAvailable } from '../wsl'
 
 export type AppRuntimeFlags = {
@@ -41,6 +41,36 @@ export function registerAppHandlers(): void {
   })
 
   ipcMain.handle('wsl:isAvailable', (): boolean => isWslAvailable())
+
+  // Why: Polish Pro, US Extended, ABC Extended, and the Japanese/Chinese/Korean
+  // Roman IMEs all report a US-QWERTY base layer to navigator.keyboard
+  // .getLayoutMap() — the layout-fingerprint probe in the renderer therefore
+  // classifies them as 'us' and flips macOptionIsMeta=true, which swallows
+  // Option+letter compositions (issue #1205: Polish diacritics fail to type).
+  // macOS's AppleCurrentKeyboardLayoutInputSourceID distinguishes these from
+  // plain com.apple.keylayout.US, so we surface it to the renderer as an
+  // authoritative override. Non-Darwin platforms have no equivalent and
+  // return null so the fingerprint stays the only signal.
+  ipcMain.handle('app:getKeyboardInputSourceId', (): string | null => {
+    if (process.platform !== 'darwin') {
+      return null
+    }
+    try {
+      const value = systemPreferences.getUserDefault(
+        'AppleCurrentKeyboardLayoutInputSourceID',
+        'string'
+      )
+      if (typeof value !== 'string' || value.length === 0) {
+        return null
+      }
+      return value
+    } catch {
+      // Why: defaults may be unreadable in sandboxed or corporate-managed
+      // environments; treat that as "no signal" rather than crashing the
+      // renderer. The layout fingerprint still runs as a fallback.
+      return null
+    }
+  })
 
   ipcMain.handle('app:relaunch', () => {
     // Why: small delay lets the renderer finish painting any "Restarting…"

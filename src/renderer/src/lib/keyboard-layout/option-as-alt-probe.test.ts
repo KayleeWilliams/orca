@@ -170,4 +170,71 @@ describe('createOptionAsAltProbe', () => {
     // No further calls after dispose.
     expect(listener).not.toHaveBeenCalled()
   })
+
+  it('forces non-us when the macOS input source ID is on the compose denylist (#1205)', async () => {
+    // Polish Pro reports a US-identical base layer to getLayoutMap(); without
+    // the input-source override it would classify as 'us' → macOptionIsMeta=true
+    // and swallow every Option+letter composition (ą, ć, ę, …).
+    const win = makeMockWindow(US_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId: async () => 'com.apple.keylayout.PolishPro'
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('non-us')
+    probe.dispose()
+  })
+
+  it('lets the fingerprint decide when the input source ID is plain US', async () => {
+    const win = makeMockWindow(US_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId: async () => 'com.apple.keylayout.US'
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('us')
+    probe.dispose()
+  })
+
+  it('falls back to the fingerprint when the input-source reader returns null (non-Darwin)', async () => {
+    const win = makeMockWindow(US_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId: async () => null
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('us')
+    probe.dispose()
+  })
+
+  it('falls back to the fingerprint when the input-source reader throws', async () => {
+    const win = makeMockWindow(TURKISH_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId: async () => {
+        throw new Error('ipc unavailable')
+      }
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('non-us')
+    probe.dispose()
+  })
+
+  it('re-probes the input source ID on focus-in so mid-session layout switches are picked up', async () => {
+    // Simulate: user boots on US, flips to Polish Pro via the Input Source
+    // menu, Orca regains focus. Fingerprint stays US the whole time; the
+    // input-source override is what notices the switch.
+    let activeInputSourceId: string | null = 'com.apple.keylayout.US'
+    const win = makeMockWindow(US_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId: async () => activeInputSourceId
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('us')
+
+    activeInputSourceId = 'com.apple.keylayout.PolishPro'
+    win.fireFocus()
+    // Let the focus-triggered probe resolve.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('non-us')
+    probe.dispose()
+  })
 })
