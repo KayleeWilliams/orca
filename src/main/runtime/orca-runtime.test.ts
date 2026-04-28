@@ -466,6 +466,7 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('delivers pending orchestration messages to an already-idle agent', async () => {
+    vi.useFakeTimers()
     const runtime = new OrcaRuntimeService(store)
     const db = new OrchestrationDb(':memory:')
     const write = vi.fn().mockReturnValue(true)
@@ -485,8 +486,13 @@ describe('OrcaRuntimeService', () => {
     runtime.deliverPendingMessagesForHandle(terminal.handle)
 
     expect(write).toHaveBeenCalledWith('pty-1', expect.stringContaining('Subject: hello'))
+    // Why: markAsRead is deferred until the 500ms delayed Enter is confirmed,
+    // so we must advance timers past the split-write delay.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(write).toHaveBeenCalledWith('pty-1', '\r')
     expect(db.getUnreadMessages(terminal.handle)).toHaveLength(0)
     db.close()
+    vi.useRealTimers()
   })
 
   it('adopts preallocated ORCA_TERMINAL_HANDLE as a valid runtime handle', async () => {
