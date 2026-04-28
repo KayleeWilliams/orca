@@ -12,6 +12,13 @@ import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { grantDirAcl, isPermissionError } from '../win32-utils'
 
+// Why: single source of truth for the agent-hooks directory name so
+// `getAgentHooksDir` (the dir where the endpoint file + managed scripts
+// live) and `createManagedCommandMatcher` (which sweeps stale entries
+// by matching this substring) cannot drift apart. Renaming the dir
+// means updating exactly one place.
+const AGENT_HOOKS_DIR_NAME = 'agent-hooks'
+
 // CRITICAL INVARIANT: the managed hook scripts and the endpoint file MUST
 // live in the same directory on disk.
 //
@@ -29,7 +36,7 @@ import { grantDirAcl, isPermissionError } from '../win32-utils'
 // `getAgentHooksDir` to find every caller; the invariant test in
 // `installer-utils.test.ts` asserts script and endpoint share a dirname.
 export function getAgentHooksDir(userDataPath: string): string {
-  return join(userDataPath, 'agent-hooks')
+  return join(userDataPath, AGENT_HOOKS_DIR_NAME)
 }
 
 // Why: the endpoint file lives under userData so each Orca install (dev vs.
@@ -109,9 +116,14 @@ export function getEndpointDiscoveryCmdSnippet(): string[] {
   // script posting to the dead port. Gating on "env-var branch did not
   // successfully source a file" mirrors the POSIX `if/elif` semantics and
   // fires whenever the env-var branch was skipped or its file was missing.
+  //
+  // We use `&&` (not `&`) so the flag fires only when the `call` itself
+  // returned 0; a parse error inside the endpoint file then correctly falls
+  // through to the script-adjacent endpoint rather than being masked by an
+  // unconditional `_orca_loaded=1`.
   return [
     'set _orca_loaded=',
-    'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" (call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul & set _orca_loaded=1)',
+    'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" (call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul && set _orca_loaded=1)',
     `if not defined _orca_loaded if exist "%~dp0${getEndpointFileName()}" call "%~dp0${getEndpointFileName()}" 2>nul`,
     'set _orca_loaded='
   ]
@@ -159,15 +171,15 @@ export function readHooksJson(configPath: string): HooksConfig | null {
 // (under any `agent-hooks/` directory) lets a fresh install sweep those
 // without touching unrelated user-authored hooks.
 //
-// NOTE: the `agent-hooks/` literal here deliberately mirrors the directory
-// name returned by `getAgentHooksDir`. These must stay in sync — if the
-// directory is ever renamed, this matcher also needs to recognize the old
-// name during a transition window so a fresh install can still sweep
-// pre-rename entries out of the user's hook config.
+// NOTE: the directory segment comes from `AGENT_HOOKS_DIR_NAME` so a rename
+// cannot desync the matcher from `getAgentHooksDir`. If the directory is
+// ever renamed, this matcher also needs to recognize the old name during a
+// transition window so a fresh install can still sweep pre-rename entries
+// out of the user's hook config.
 export function createManagedCommandMatcher(
   scriptFileName: string
 ): (command: string | undefined) => boolean {
-  const needle = `agent-hooks/${scriptFileName}`
+  const needle = `${AGENT_HOOKS_DIR_NAME}/${scriptFileName}`
   return (command) => {
     if (!command) {
       return false
