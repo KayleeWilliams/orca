@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react'
 import { RotateCw } from 'lucide-react'
-import type { GlobalSettings } from '../../../../shared/types'
+import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { useAppStore } from '../../store'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { EXPERIMENTAL_PANE_SEARCH_ENTRIES } from './experimental-search'
+import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
+
+// Why: agents with a per-agent hook-service module under src/main that posts
+// status to the shared agent-hooks server. Keep this list in sync with the
+// hook-service.ts files — any agent without one will not light up the
+// dashboard even when the experimental setting is on.
+const AGENT_DASHBOARD_SUPPORTED_AGENTS: readonly TuiAgent[] = [
+  'claude',
+  'codex',
+  'gemini',
+  'cursor',
+  'opencode'
+] as const
 
 export { EXPERIMENTAL_PANE_SEARCH_ENTRIES }
 
@@ -169,13 +182,14 @@ export function ExperimentalPane({
           className="space-y-3 px-1 py-2"
         >
           <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 shrink space-y-0.5">
+            <div className="min-w-0 shrink space-y-1.5">
               <Label>Agent dashboard</Label>
               <p className="text-xs text-muted-foreground">
                 Adds a cross-worktree dashboard and hover cards showing each agent&apos;s live
                 status. Requires an app restart, and tracks agents started in new terminals opened
                 after the restart.
               </p>
+              <SupportedAgentsDisclaimer />
             </div>
             <button
               type="button"
@@ -226,6 +240,31 @@ export function ExperimentalPane({
       ) : null}
 
       {hiddenExperimentalUnlocked ? <HiddenExperimentalGroup /> : null}
+    </div>
+  )
+}
+
+function SupportedAgentsDisclaimer(): React.JSX.Element {
+  const supported = AGENT_DASHBOARD_SUPPORTED_AGENTS.map((id) => {
+    const entry = AGENT_CATALOG.find((a) => a.id === id)
+    return { id, label: entry?.label ?? id }
+  })
+  return (
+    <div className="space-y-1 pt-0.5 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <span>Supported agents:</span>
+        {supported.map(({ id, label }) => (
+          <span
+            key={id}
+            className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5"
+            title={label}
+          >
+            <AgentIcon agent={id} size={12} />
+            <span className="text-[11px] leading-none text-foreground/80">{label}</span>
+          </span>
+        ))}
+      </div>
+      <p className="text-[11px] italic">Currently working on support for more agent CLIs.</p>
     </div>
   )
 }
