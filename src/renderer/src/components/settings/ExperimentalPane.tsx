@@ -177,14 +177,14 @@ export function ExperimentalPane({
 
       {showOrchestration ? (
         <SearchableSetting
-          title="Inter-Agent Orchestration"
-          description="Coordinate multiple coding agents via inter-agent messaging, task DAGs, dispatch, and decision gates."
+          title="Agent Orchestration"
+          description="Coordinate multiple coding agents via messaging, task DAGs, dispatch, and decision gates."
           keywords={EXPERIMENTAL_PANE_SEARCH_ENTRIES[1].keywords}
           className="space-y-3 px-1 py-2"
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 shrink space-y-0.5">
-              <Label>Inter-Agent Orchestration</Label>
+              <Label>Agent Orchestration</Label>
               <p className="text-xs text-muted-foreground">
                 Coordinate multiple coding agents with messaging, task DAGs, dispatch with preamble
                 injection, decision gates, and coordinator loops. Experimental — APIs may change.
