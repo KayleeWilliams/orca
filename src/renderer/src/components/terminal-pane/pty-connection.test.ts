@@ -86,6 +86,13 @@ vi.mock('sonner', () => ({
 // Why: the working→idle test imports the real useNotificationDispatch to
 // verify producer → IPC end-to-end. useCallback is pure memoization for
 // that hook, so pass-through here lets it be invoked outside React.
+//
+// Scope note: this mock applies to every test in this file, not just the
+// working→idle test. It is safe today because no other test in this file
+// depends on useCallback identity stability — the suite does not render
+// React components. If that ever changes, either narrow this with
+// vi.doMock inside the it() block or extract the hook body into a plain
+// non-hook function so the test does not need to bypass React at all.
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
   return {
@@ -1018,6 +1025,9 @@ describe('connectPanePty', () => {
     // React machinery by invoking its body directly through a module call.
     // Safe here because useCallback is pure memoization — the returned
     // function has the same behavior as the callback passed in.
+    // Depends on the file-level vi.mock('react', ...) near the top of this
+    // file that replaces useCallback with a pass-through. Removing that
+    // mock breaks this test with a rules-of-hooks error.
     const dispatchNotification = useNotificationDispatch('wt-1')
 
     const pane = createPane(1)
