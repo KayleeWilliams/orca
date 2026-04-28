@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
+import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { buildWorktreeComparator } from './smart-sort'
 import {
   type GroupHeaderRow,
@@ -530,7 +531,7 @@ const WorktreeList = React.memo(function WorktreeList() {
         state.prCache,
         Date.now(),
         null,
-        state.agentStatusByPaneKey
+        AGENT_DASHBOARD_ENABLED ? state.agentStatusByPaneKey : undefined
       )
     )
     return nonArchivedWorktrees.map((w) => w.id)

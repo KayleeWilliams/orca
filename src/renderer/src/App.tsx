@@ -1,6 +1,10 @@
 /* eslint-disable max-lines */
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
+import {
+  AGENT_DASHBOARD_ENABLED,
+  DEFAULT_STATUS_BAR_ITEMS,
+  DEFAULT_WORKTREE_CARD_PROPERTIES
+} from '../../shared/constants'
 
 import { ChevronLeft, ChevronRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
 import { FOCUS_TERMINAL_PANE_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
@@ -145,8 +149,14 @@ function App(): React.JSX.Element {
   // the sidebar hovercard also reads retained entries. If retention only ran
   // when the dashboard is mounted, "done" agents would vanish from the hover
   // any time the user collapses the dashboard panel.
-  const dashboardLiveGroups = useDashboardData()
-  useRetainedAgentsSync(dashboardLiveGroups)
+  // AGENT_DASHBOARD_ENABLED is a compile-time constant, so rules-of-hooks is
+  // not violated — the branch is static for the lifetime of the build.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const dashboardLiveGroups = AGENT_DASHBOARD_ENABLED ? useDashboardData() : []
+  if (AGENT_DASHBOARD_ENABLED) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useRetainedAgentsSync(dashboardLiveGroups)
+  }
   // Why: git conflict-operation state also drives the worktree cards. Polling
   // cannot live under RightSidebar because App unmounts that subtree when the
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
@@ -602,7 +612,7 @@ function App(): React.JSX.Element {
 
       // Cmd/Ctrl+Shift+D — open right sidebar (agent dashboard is now
       // docked at the sidebar bottom, so only toggle visibility).
-      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      if (AGENT_DASHBOARD_ENABLED && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
         actions.setRightSidebarOpen(true)
       }

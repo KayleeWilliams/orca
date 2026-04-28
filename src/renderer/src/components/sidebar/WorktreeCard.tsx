@@ -14,6 +14,7 @@ import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { type WorktreeStatus } from '@/lib/worktree-status'
 import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../../../shared/agent-status-types'
+import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import type { Worktree, Repo, PRInfo, IssueInfo } from '../../../../shared/types'
 import {
@@ -140,27 +141,29 @@ const WorktreeCard = React.memo(function WorktreeCard({
       return 'inactive'
     }
 
-    // Why: explicit status only wins while it is fresh. Once it gets stale, the
-    // design doc says the coarse icon should fall back to live title heuristics
-    // so an old "done" report does not mask a new permission prompt.
-    const explicitEntries = Object.values(agentStatusByPaneKey).filter((e) =>
-      liveTabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
-    )
-    const freshEntries = explicitEntries.filter((entry) =>
-      isExplicitAgentStatusFresh(entry, Date.now(), AGENT_STATUS_STALE_AFTER_MS)
-    )
-    if (freshEntries.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
-      return 'permission'
-    }
-    if (freshEntries.some((e) => e.state === 'working')) {
-      return 'working'
-    }
-    // Why: surface 'done' as its own status so the sidebar dot turns blue
-    // (sky-500/80) — matching the dashboard's done color. A completed agent
-    // still has a live terminal, so 'inactive' would be misleading; calling
-    // it 'done' keeps the two surfaces in agreement on what the agent is.
-    if (freshEntries.some((e) => e.state === 'done')) {
-      return 'done'
+    if (AGENT_DASHBOARD_ENABLED) {
+      // Why: explicit status only wins while it is fresh. Once it gets stale, the
+      // design doc says the coarse icon should fall back to live title heuristics
+      // so an old "done" report does not mask a new permission prompt.
+      const explicitEntries = Object.values(agentStatusByPaneKey).filter((e) =>
+        liveTabs.some((t) => e.paneKey.startsWith(`${t.id}:`))
+      )
+      const freshEntries = explicitEntries.filter((entry) =>
+        isExplicitAgentStatusFresh(entry, Date.now(), AGENT_STATUS_STALE_AFTER_MS)
+      )
+      if (freshEntries.some((e) => e.state === 'blocked' || e.state === 'waiting')) {
+        return 'permission'
+      }
+      if (freshEntries.some((e) => e.state === 'working')) {
+        return 'working'
+      }
+      // Why: surface 'done' as its own status so the sidebar dot turns blue
+      // (sky-500/80) — matching the dashboard's done color. A completed agent
+      // still has a live terminal, so 'inactive' would be misleading; calling
+      // it 'done' keeps the two surfaces in agreement on what the agent is.
+      if (freshEntries.some((e) => e.state === 'done')) {
+        return 'done'
+      }
     }
 
     // Fall through to heuristic title-based detection
@@ -303,13 +306,16 @@ const WorktreeCard = React.memo(function WorktreeCard({
           {/* Status indicator on the left */}
           {(cardProps.includes('status') || cardProps.includes('unread')) && (
             <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
-              {cardProps.includes('status') && (
-                <AgentStatusHover worktreeId={worktree.id}>
-                  <span>
-                    <StatusIndicator status={status} />
-                  </span>
-                </AgentStatusHover>
-              )}
+              {cardProps.includes('status') &&
+                (AGENT_DASHBOARD_ENABLED ? (
+                  <AgentStatusHover worktreeId={worktree.id}>
+                    <span>
+                      <StatusIndicator status={status} />
+                    </span>
+                  </AgentStatusHover>
+                ) : (
+                  <StatusIndicator status={status} />
+                ))}
 
               {cardProps.includes('unread') && (
                 <Tooltip>

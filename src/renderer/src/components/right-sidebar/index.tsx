@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import type { RightSidebarTab, ActivityBarPosition } from '@/store/slices/editor'
 import type { CheckStatus } from '../../../../shared/types'
+import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
@@ -164,7 +165,7 @@ function RightSidebarInner(): React.JSX.Element {
         {effectiveTab === 'source-control' && <SourceControl />}
         {effectiveTab === 'checks' && <ChecksPanel />}
       </div>
-      {showAgentDashboard && <DashboardBottomPanel />}
+      {AGENT_DASHBOARD_ENABLED && showAgentDashboard && <DashboardBottomPanel />}
     </div>
   )
 

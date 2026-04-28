@@ -19,6 +19,7 @@ import { resolveZoomTarget } from './resolve-zoom-target'
 import { handleSwitchTab } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
 import { parseAgentStatusPayload } from '../../../shared/agent-status-types'
+import { AGENT_DASHBOARD_ENABLED } from '../../../shared/constants'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
@@ -660,67 +661,69 @@ export function useIpcEvents(): void {
     // Re-parse it here so the renderer enforces the same normalization rules
     // (state enum, field truncation) regardless of whether the source was a
     // hook callback or an OSC fallback path.
-    unsubs.push(
-      window.api.agentStatus.onSet((data) => {
-        console.log('[agent-hooks:renderer] received IPC', {
-          paneKey: data.paneKey,
-          state: data.state,
-          promptLen: data.prompt?.length ?? 0,
-          promptPreview: data.prompt?.slice(0, 80) ?? null,
-          agentType: data.agentType,
-          toolName: data.toolName,
-          toolInputLen: data.toolInput?.length ?? 0,
-          lastAssistantMessageLen: data.lastAssistantMessage?.length ?? 0
-        })
-        const payload = parseAgentStatusPayload(
-          JSON.stringify({
+    if (AGENT_DASHBOARD_ENABLED) {
+      unsubs.push(
+        window.api.agentStatus.onSet((data) => {
+          console.log('[agent-hooks:renderer] received IPC', {
+            paneKey: data.paneKey,
             state: data.state,
-            prompt: data.prompt,
+            promptLen: data.prompt?.length ?? 0,
+            promptPreview: data.prompt?.slice(0, 80) ?? null,
             agentType: data.agentType,
             toolName: data.toolName,
-            toolInput: data.toolInput,
-            lastAssistantMessage: data.lastAssistantMessage
+            toolInputLen: data.toolInput?.length ?? 0,
+            lastAssistantMessageLen: data.lastAssistantMessage?.length ?? 0
           })
-        )
-        if (!payload) {
-          console.log('[agent-hooks:renderer] drop (parse failed)', data)
-          return
-        }
-        const store = useAppStore.getState()
-        // Why: look up the terminal title for agent type inference — hook
-        // payloads do not include the current title, but the store may already
-        // know it from OSC title tracking.
-        const currentTitle = findTerminalTitleForPaneKey(store, data.paneKey)
-        // Why: a paneKey that no longer resolves to a live tab belongs to a pane
-        // that has already been torn down. Dropping here prevents orphan entries
-        // from accumulating in agentStatusByPaneKey.
-        const [tabId] = data.paneKey.split(':')
-        if (!tabId) {
-          console.log('[agent-hooks:renderer] drop (no tabId)', data)
-          return
-        }
-        const tabExists = Object.values(store.tabsByWorktree).some((tabs) =>
-          tabs.some((t) => t.id === tabId)
-        )
-        if (!tabExists) {
-          console.log('[agent-hooks:renderer] drop (tab not found)', {
+          const payload = parseAgentStatusPayload(
+            JSON.stringify({
+              state: data.state,
+              prompt: data.prompt,
+              agentType: data.agentType,
+              toolName: data.toolName,
+              toolInput: data.toolInput,
+              lastAssistantMessage: data.lastAssistantMessage
+            })
+          )
+          if (!payload) {
+            console.log('[agent-hooks:renderer] drop (parse failed)', data)
+            return
+          }
+          const store = useAppStore.getState()
+          // Why: look up the terminal title for agent type inference — hook
+          // payloads do not include the current title, but the store may already
+          // know it from OSC title tracking.
+          const currentTitle = findTerminalTitleForPaneKey(store, data.paneKey)
+          // Why: a paneKey that no longer resolves to a live tab belongs to a pane
+          // that has already been torn down. Dropping here prevents orphan entries
+          // from accumulating in agentStatusByPaneKey.
+          const [tabId] = data.paneKey.split(':')
+          if (!tabId) {
+            console.log('[agent-hooks:renderer] drop (no tabId)', data)
+            return
+          }
+          const tabExists = Object.values(store.tabsByWorktree).some((tabs) =>
+            tabs.some((t) => t.id === tabId)
+          )
+          if (!tabExists) {
+            console.log('[agent-hooks:renderer] drop (tab not found)', {
+              paneKey: data.paneKey,
+              tabId
+            })
+            return
+          }
+          console.log('[agent-hooks:renderer] setAgentStatus', {
             paneKey: data.paneKey,
-            tabId
+            state: payload.state,
+            promptLen: payload.prompt.length,
+            promptPreview: payload.prompt.slice(0, 80),
+            toolName: payload.toolName,
+            toolInputLen: payload.toolInput?.length ?? 0,
+            lastAssistantMessageLen: payload.lastAssistantMessage?.length ?? 0
           })
-          return
-        }
-        console.log('[agent-hooks:renderer] setAgentStatus', {
-          paneKey: data.paneKey,
-          state: payload.state,
-          promptLen: payload.prompt.length,
-          promptPreview: payload.prompt.slice(0, 80),
-          toolName: payload.toolName,
-          toolInputLen: payload.toolInput?.length ?? 0,
-          lastAssistantMessageLen: payload.lastAssistantMessage?.length ?? 0
+          store.setAgentStatus(data.paneKey, payload, currentTitle)
         })
-        store.setAgentStatus(data.paneKey, payload, currentTitle)
-      })
-    )
+      )
+    }
 
     return () => unsubs.forEach((fn) => fn())
   }, [])

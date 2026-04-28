@@ -97,10 +97,20 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   // on it would otherwise bubble to the row's activate handler and navigate
   // away the instant the user tried to reveal the full text. Stop mousedown
   // too so focus-based navigation on the parent role=button can't fire first.
-  const handleToggleExpand = useCallback((e: React.MouseEvent) => {
+  //
+  // After a pointer click we also blur the chevron: `group-focus-within` on
+  // the row drives the timestamp→X crossfade, so retained focus on the
+  // chevron after a mouse click would keep the X visible and the "Xm ago"
+  // label hidden even after the pointer leaves — reading as a stuck hover.
+  // `event.detail === 0` means the click came from keyboard activation
+  // (Enter/Space), in which case we preserve focus for tab users.
+  const handleToggleExpand = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setExpanded((prev) => !prev)
+    if (e.detail !== 0) {
+      e.currentTarget.blur()
+    }
   }, [])
   const stopMouseDown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
