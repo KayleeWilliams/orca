@@ -313,12 +313,12 @@ export function connectPanePty(
       // snapshot also gates on the experimental dashboard setting — without
       // the opt-in, OSC 9999 status payloads are dropped before they reach
       // the store.
-      const state = useAppStore.getState()
-      if (state.settings?.experimentalAgentDashboard !== true) {
+      const currentState = useAppStore.getState()
+      if (currentState.settings?.experimentalAgentDashboard !== true) {
         return
       }
-      const title = state.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
-      state.setAgentStatus(cacheKey, payload, title)
+      const title = currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
+      currentState.setAgentStatus(cacheKey, payload, title)
     }
   })
   const hasExistingPaneTransport = deps.paneTransportsRef.current.size > 0

@@ -24,11 +24,14 @@ export function ExperimentalPane({
   hiddenExperimentalUnlocked = false
 }: ExperimentalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
-  // Why: "daemon enabled at startup" is the effective runtime state, read
-  // directly from main once on mount. The banner compares the user's current
+  // Why: the "enabled at startup" flags are the effective runtime state, read
+  // directly from main once on mount. Each banner compares the user's current
   // setting against this snapshot to tell them a restart is still required.
   // null = not yet fetched (banner stays hidden to avoid a flash).
   const [daemonEnabledAtStartup, setDaemonEnabledAtStartup] = useState<boolean | null>(null)
+  const [agentDashboardEnabledAtStartup, setAgentDashboardEnabledAtStartup] = useState<
+    boolean | null
+  >(null)
   const [relaunching, setRelaunching] = useState(false)
 
   useEffect(() => {
@@ -38,6 +41,7 @@ export function ExperimentalPane({
       .then((flags) => {
         if (!cancelled) {
           setDaemonEnabledAtStartup(flags.daemonEnabledAtStartup)
+          setAgentDashboardEnabledAtStartup(flags.agentDashboardEnabledAtStartup)
         }
       })
       .catch(() => {
@@ -52,9 +56,12 @@ export function ExperimentalPane({
   const showAgentDashboard = matchesSettingsSearch(searchQuery, [
     EXPERIMENTAL_PANE_SEARCH_ENTRIES[1]
   ])
-  const pendingRestart =
+  const pendingDaemonRestart =
     daemonEnabledAtStartup !== null &&
     settings.experimentalTerminalDaemon !== daemonEnabledAtStartup
+  const pendingAgentDashboardRestart =
+    agentDashboardEnabledAtStartup !== null &&
+    settings.experimentalAgentDashboard !== agentDashboardEnabledAtStartup
 
   const handleRelaunch = async (): Promise<void> => {
     if (relaunching) {
@@ -115,7 +122,7 @@ export function ExperimentalPane({
             </button>
           </div>
 
-          {pendingRestart ? (
+          {pendingDaemonRestart ? (
             <div className="flex items-center justify-between gap-3 rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2.5">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
@@ -189,6 +196,31 @@ export function ExperimentalPane({
               />
             </button>
           </div>
+
+          {pendingAgentDashboardRestart ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2.5">
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
+                  Restart required
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {settings.experimentalAgentDashboard
+                    ? 'Restart Orca to install Claude/Codex/Gemini hooks and enable the dashboard.'
+                    : 'Restart Orca to stop receiving Claude/Codex/Gemini hook events. The dashboard will be hidden.'}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="default"
+                className="shrink-0 gap-1.5"
+                disabled={relaunching}
+                onClick={handleRelaunch}
+              >
+                <RotateCw className={`size-3 ${relaunching ? 'animate-spin' : ''}`} />
+                {relaunching ? 'Restarting…' : 'Restart now'}
+              </Button>
+            </div>
+          ) : null}
         </SearchableSetting>
       ) : null}
 

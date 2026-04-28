@@ -181,6 +181,9 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalMacOptionAsAltMigrated: false,
     experimentalTerminalDaemon: false,
     experimentalTerminalDaemonNoticeShown: false,
+    // Why: opt-in preview — default off so managed-hook installation
+    // (Claude/Codex/Gemini) stays dormant for existing users and upgraders
+    // (persistence.ts merges defaults first, so upgraders inherit this).
     experimentalAgentDashboard: false
   }
 }

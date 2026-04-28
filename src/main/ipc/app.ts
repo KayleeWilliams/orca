@@ -10,6 +10,12 @@ export type AppRuntimeFlags = {
    *  The renderer compares this against the current setting to decide whether
    *  a "restart required" banner needs to be shown on the Experimental pane. */
   daemonEnabledAtStartup: boolean
+  /** Whether the experimental agent dashboard was enabled at startup — i.e.
+   *  whether Claude/Codex/Gemini managed hooks were installed for this
+   *  session. Toggling the setting only flips hook installation on the next
+   *  launch, so the renderer compares this against the current setting to
+   *  decide whether a "restart required" banner needs to be shown. */
+  agentDashboardEnabledAtStartup: boolean
 }
 
 export type DaemonTransitionNotice = {
@@ -20,7 +26,10 @@ export type DaemonTransitionNotice = {
   killedCount: number
 }
 
-let runtimeFlags: AppRuntimeFlags = { daemonEnabledAtStartup: false }
+let runtimeFlags: AppRuntimeFlags = {
+  daemonEnabledAtStartup: false,
+  agentDashboardEnabledAtStartup: false
+}
 let pendingDaemonTransitionNotice: DaemonTransitionNotice | null = null
 
 export function setAppRuntimeFlags(flags: AppRuntimeFlags): void {

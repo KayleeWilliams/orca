@@ -353,7 +353,8 @@ app.whenReady().then(async () => {
   // path for it — there is no "pre-dashboard" fallback to degrade to the
   // way Claude/Codex have. Toggling the setting takes effect on next launch
   // because the hook scripts are installed once per boot.
-  if (store.getSettings().experimentalAgentDashboard === true) {
+  const agentDashboardEnabled = store.getSettings().experimentalAgentDashboard === true
+  if (agentDashboardEnabled) {
     for (const installManagedHooks of [
       () => claudeHookService.install(),
       () => codexHookService.install(),
@@ -427,7 +428,10 @@ app.whenReady().then(async () => {
       console.error('[daemon] Failed to clean up orphaned daemon:', error)
     }
   }
-  setAppRuntimeFlags({ daemonEnabledAtStartup: daemonStarted })
+  setAppRuntimeFlags({
+    daemonEnabledAtStartup: daemonStarted,
+    agentDashboardEnabledAtStartup: agentDashboardEnabled
+  })
 
   // Why: the hook server runs unconditionally so cursor-agent panes can reach
   // it. Claude/Codex/Gemini hook scripts stay uninstalled while the

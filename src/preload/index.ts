@@ -174,8 +174,10 @@ document.addEventListener(
 // Custom APIs for renderer
 const api = {
   app: {
-    getRuntimeFlags: (): Promise<{ daemonEnabledAtStartup: boolean }> =>
-      ipcRenderer.invoke('app:getRuntimeFlags'),
+    getRuntimeFlags: (): Promise<{
+      daemonEnabledAtStartup: boolean
+      agentDashboardEnabledAtStartup: boolean
+    }> => ipcRenderer.invoke('app:getRuntimeFlags'),
     consumeDaemonTransitionNotice: (): Promise<{ killedCount: number } | null> =>
       ipcRenderer.invoke('app:consumeDaemonTransitionNotice'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
