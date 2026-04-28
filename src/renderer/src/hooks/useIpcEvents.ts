@@ -21,6 +21,7 @@ import { dispatchClearModifierHints } from './useModifierHint'
 import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
 import { AGENT_DASHBOARD_ENABLED } from '../../../shared/constants'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -740,6 +741,18 @@ export function useIpcEvents(): void {
         })
       )
     }
+
+    // Why: hydrate mobile-fit overrides before terminal panes run their first
+    // attach/fit logic, so a renderer reload doesn't undo active mobile fits.
+    void window.api.runtime.getTerminalFitOverrides().then((overrides) => {
+      hydrateOverrides(overrides)
+    })
+
+    unsubs.push(
+      window.api.runtime.onTerminalFitOverrideChanged((event) => {
+        setFitOverride(event.ptyId, event.mode, event.cols, event.rows)
+      })
+    )
 
     return () => unsubs.forEach((fn) => fn())
   }, [])
