@@ -14,12 +14,12 @@ This document covers the **communication architecture and infrastructure** neede
 - Phased implementation plan for the communication layer
 
 **What this document does NOT cover:**
-- Mobile app UI/UX design (screens, navigation flow, visual design)
+- Detailed mobile app UI/UX design (screen-by-screen layout specs, final copy, and interaction polish)
 - Feature spec (what the app does, user stories, interaction patterns)
 - Desktop-side UI changes (QR code display, pairing settings)
 - Agent protocol details (how agent messages are structured beyond transport)
 
-A separate design doc should cover the app's actual product design — what screens exist, what users can do, how information is presented on a phone form factor.
+A separate design doc should cover the app's full product design. This document records the baseline design direction where it affects architecture, protocol shape, and implementation priorities.
 
 ---
 
@@ -776,6 +776,52 @@ The mobile app reads the version field and handles each format. Self-hosted rela
 3. **Session view** — live agent output (optimized for readability on small screens), agent status. **Data source:** the session view is built on terminal subscriptions (`terminal.subscribe`), not a separate agent API. In Orca, agent sessions flow through terminal PTYs — the terminal output IS the agent output. Agent status detection already exists in the codebase via terminal title parsing (`extractLastOscTitle` / `detectAgentStatusFromTitle`), which reads OSC escape sequences that agents emit to signal their current state (thinking, executing, idle, etc.). The session view therefore displays two things: (1) the live terminal output stream from `terminal.subscribe`, and (2) the detected agent status derived from terminal title changes. No new agent-specific RPC methods are needed for MVP — `terminal.subscribe` covers the streaming output, and agent status comes from parsing the terminal title in the existing output stream.
 4. **Input bar** — voice dictation button (primary) + text field (secondary) for follow-up messages
 5. **Devices screen** — list paired devices, revoke access (desktop-side, but mobile should show its own pairing status)
+
+#### Mobile Design Direction
+
+The current mobile UI should be treated as placeholder. The production direction is "Orca desktop, compressed for phone": quiet, dark, utilitarian, and information-dense. It should not feel like a generic Expo demo app.
+
+**Visual language:**
+- Use near-black and graphite backgrounds with low-contrast grey surfaces.
+- Use muted grey text for secondary metadata and off-white text for primary content.
+- Reserve blue for active tabs, selected rows, focus rings, and primary actions.
+- Avoid saturated navy/purple panels, decorative gradients, large marketing-style cards, and oversized rounded rectangles.
+- Keep borders subtle and consistent with desktop Orca's restrained tooling aesthetic.
+- Prefer compact rows, tabs, and control strips over large cards.
+
+**Typography and layout:**
+- Screen headers should be compact and meaningful. Never show route placeholders like `h/[hostId]/session/[worktreeId]`.
+- Host and worktree screens should use dense list rows with repo/worktree name, branch, terminal count, unread/activity state, and one-line preview.
+- Session screens should be terminal-first: minimal chrome, compact terminal tabs, and no explanatory text competing with output.
+- Empty/error states should be plain and functional, not decorative.
+
+**Terminal viewport behavior:**
+- Mobile terminal rendering mirrors the desktop xterm buffer rather than reflowing terminal output for phone width.
+- The initial scale should fit the full desktop terminal width in the phone viewport.
+- Users must be able to vertically scroll, horizontally pan, and pinch zoom.
+- The terminal scrollable area must end above the input/accessory area so the final line is not hidden behind the input bar.
+
+#### Terminal Input On Mobile
+
+The phone keyboard is only a text-entry fallback. It cannot reliably express terminal control keys such as Ctrl+C, Ctrl+D, Escape, Tab, or arrow keys, and it should not be the only way to control a TUI.
+
+**MVP terminal controls:**
+- Add a compact accessory bar above the text input.
+- Include `Esc`, `Tab`, `↑`, `↓`, `←`, `→`, `Ctrl+C`, and `Ctrl+D`.
+- Label `Ctrl+C` as `Interrupt` where space allows, because that is the user intent for agent CLIs.
+- Style the bar as low-contrast grey controls, not prominent blue buttons.
+
+**Wire protocol:**
+- Text input remains line-oriented: Send transmits text plus Enter.
+- Accessory keys send raw control bytes immediately through `terminal.send` without appending Enter:
+  - `Ctrl+C` → `\x03`
+  - `Ctrl+D` → `\x04`
+  - `Esc` → `\x1b`
+  - `Tab` → `\t`
+  - arrows → `\x1b[A`, `\x1b[B`, `\x1b[D`, `\x1b[C`
+- Accessory key presses must not mutate the text field.
+
+This keeps the mobile app useful for agent control and terminal recovery without turning the phone into a full mobile terminal emulator.
 
 **Estimated effort for Phase 0b:** 2-3 weeks (depends on Phase 0a being stable)
 

@@ -343,6 +343,22 @@ This checklist covers Phase 0 only: transport abstraction, TLS + per-device toke
 
 ## 0h. Mobile App — Screens
 
+### Design language
+
+- [ ] **Replace placeholder mobile styling with Orca desktop-aligned design**
+  - Use a graphite/near-black palette, not saturated navy/purple backgrounds
+  - Centralize colors, spacing, borders, and typography in a small mobile theme module
+  - Prefer dense rows and compact panels over large decorative cards
+  - Use subtle grey borders and muted text; reserve blue for active/focused states only
+  - Use smaller, tool-like typography that mirrors the desktop app's restrained UI
+  - Verify: home, host, worktree, and session screens all read as "Orca on mobile", not an Expo placeholder
+
+- [ ] **Clean up route/header chrome**
+  - Do not display raw expo-router paths like `h/[hostId]/session/[worktreeId]`
+  - Headers should show meaningful host/worktree/session names
+  - Keep headers compact so terminal/session content remains the primary surface
+  - Verify: screenshots have no placeholder route names or demo labels
+
 ### Home / host list
 
 - [x] **Create home screen** at `mobile/app/index.tsx`
@@ -361,6 +377,12 @@ This checklist covers Phase 0 only: transport abstraction, TLS + per-device toke
   - Each worktree shows: repo name, branch, preview, terminal count, unread dot
   - Tap worktree → navigate to session view
 
+- [ ] **Restyle worktree list as compact desktop-like rows**
+  - Show repo/worktree name, branch, terminal count, unread/activity indicator, and one-line preview
+  - Avoid oversized card padding; rows should be scannable and information-dense
+  - Use subtle hover/pressed states and low-contrast dividers
+  - Verify: at least 6 worktrees fit comfortably on a modern phone viewport
+
 ### Session / terminal view
 
 - [x] **Create session view** at `mobile/app/h/[hostId]/session/[worktreeId].tsx`
@@ -370,6 +392,12 @@ This checklist covers Phase 0 only: transport abstraction, TLS + per-device toke
   - Tab bar for switching between multiple terminals
   - Auto-scrolls to bottom on new output
 
+- [ ] **Polish terminal viewport behavior**
+  - Terminal content should end exactly above the input/accessory area, with no hidden bottom content
+  - Support vertical scroll, horizontal pan, and pinch zoom for desktop-sized xterm snapshots
+  - Initial terminal scale should show the full desktop width, with user-controlled zoom for readability
+  - Verify: Claude Code and Codex TUI output remain coherent after tab switches, zoom, and scroll
+
 ### Input bar
 
 - [x] **Add input bar** to session view
@@ -378,6 +406,24 @@ This checklist covers Phase 0 only: transport abstraction, TLS + per-device toke
   - `KeyboardAvoidingView` moves input bar above keyboard
   - Submit via keyboard return key or Send button
   - Voice dictation placeholder deferred to separate branch
+
+- [ ] **Add terminal key accessory bar**
+  - Add a compact row above the text input for terminal-only keys that phone keyboards cannot express reliably
+  - MVP keys: `Esc`, `Tab`, `↑`, `↓`, `←`, `→`, `Ctrl+C`, `Ctrl+D`
+  - Send raw bytes through `terminal.send` without appending Enter:
+    - `Ctrl+C` → `\x03`
+    - `Ctrl+D` → `\x04`
+    - `Esc` → `\x1b`
+    - `Tab` → `\t`
+    - arrows → `\x1b[A`, `\x1b[B`, `\x1b[D`, `\x1b[C`
+  - Use compact grey buttons; label `Ctrl+C` as `Interrupt` where space allows
+  - Verify: can interrupt Claude/Codex, navigate history/menus, and tab-complete from the phone
+
+- [ ] **Separate line-send and raw-key behaviors**
+  - Text field remains line-oriented: Send transmits text plus Enter
+  - Accessory keys transmit immediately and do not mutate the text field
+  - Long-term: add a dedicated "Keys" or "Terminal control" mode only if the accessory bar is insufficient
+  - Verify: pressing accessory keys does not accidentally submit partially typed text
 
 ---
 

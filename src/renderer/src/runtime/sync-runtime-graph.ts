@@ -103,7 +103,8 @@ async function syncRuntimeGraph(): Promise<void> {
         worktreeId: registeredTab.worktreeId,
         leafId,
         paneRuntimeId: pane.id,
-        ptyId
+        ptyId,
+        title: state.runtimePaneTitlesByTabId[tabId]?.[pane.id] ?? tab.customTitle ?? tab.title
       })
     }
   }
