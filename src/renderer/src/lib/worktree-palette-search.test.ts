@@ -134,7 +134,7 @@ describe('worktree-palette-search', () => {
     expect(results[2].worktreeId).toBe('wt-main')
   })
 
-  it('supports "repo/branch" composite queries and highlights both segments', () => {
+  it('supports "repo/worktree" composite queries and highlights both segments', () => {
     const worktrees = [
       makeWorktree({
         id: 'wt-main',

@@ -714,7 +714,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       }}
     >
       <CommandInput
-        placeholder={'Jump to worktree or browser tab\u2026  try "repo/branch"'}
+        placeholder={'Jump to worktree or browser tab\u2026  try "repo/worktree"'}
         value={query}
         onValueChange={setQuery}
         wrapperClassName="mx-3 mt-3 rounded-lg border border-border/55 bg-muted/28 px-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"

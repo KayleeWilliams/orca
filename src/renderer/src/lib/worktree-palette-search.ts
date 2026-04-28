@@ -86,10 +86,12 @@ export function searchWorktrees(
   const numericQuery = q.startsWith('#') ? q.slice(1) : q
   const results: PaletteSearchResult[] = []
 
-  // Support "repo/branch" composite queries (e.g. "orca/main") so users can
-  // narrow by repo and branch in a single token. We split on the FIRST slash
-  // only — branch names themselves contain slashes (e.g. "feature/foo"), and
-  // we still want the right-hand side to match those in full.
+  // Support "repo/worktree" composite queries (e.g. "orca/main") so users can
+  // narrow by repo and worktree in a single token. Worktrees are identified by
+  // their branch name here, so the right-hand side is matched against the
+  // branch. We split on the FIRST slash only — branch names themselves contain
+  // slashes (e.g. "feature/foo"), and we still want the right-hand side to
+  // match those in full.
   const slashIndex = q.indexOf('/')
   const composite =
     slashIndex > 0 && slashIndex < q.length - 1
