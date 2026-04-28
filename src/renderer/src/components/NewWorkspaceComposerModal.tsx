@@ -121,11 +121,14 @@ function ComposerModalBody({
         // Why: pin a single width across both tabs. Create-from needs the
         // extra horizontal room for PR titles + branch names; Quick tolerates
         // it fine. Animating between widths was jarring and made the modal
-        // feel unstable every time the user toggled tabs. The height cap
-        // keeps the modal inside the viewport on short windows — without it
-        // the 320px result list plus header/chrome can push the bottom
-        // (including the Create button) below the fold.
-        className="flex max-h-[85vh] flex-col sm:max-w-lg"
+        // feel unstable every time the user toggled tabs.
+        //
+        // Height sizes to content. AnimatedTabPanels keeps only the active
+        // panel in flow, so scrollHeight never exceeds the dialog's own
+        // client height and the host dialog doesn't grow a scrollbar. We
+        // cap at 100vh-2rem purely as a safety net for unusually tall
+        // content (e.g. expanded Advanced drawer on a short viewport).
+        className="flex max-h-[calc(100vh-2rem)] flex-col sm:max-w-lg"
         onOpenAutoFocus={(event) => {
           // Why: Radix's FocusScope fires this once the dialog has mounted and
           // the DOM is ready. preventDefault stops it from focusing the first
@@ -156,17 +159,12 @@ function ComposerModalBody({
         <Tabs
           value={activeTab}
           onValueChange={(next) => setActiveTab(next as 'quick' | 'create-from')}
-          // Why: min-h-0 lets this flex child shrink below its intrinsic
-          // content height so the modal's max-h-[85vh] cap can actually
-          // engage on short viewports. Without it the tabs panel insists
-          // on its content height and the modal grows past the cap.
-          //
-          // Both panels are force-mounted so switching tabs preserves their
-          // local state (typed query on Create-from, repo pick / workspace
-          // name on Quick) instead of remounting each time. The AnimatedTabPanels
-          // wrapper animates the height delta between the two panels so the
-          // modal gently resizes rather than popping.
-          className="flex min-h-0 flex-1 flex-col gap-0"
+          // Why: both panels are force-mounted so switching tabs preserves
+          // their local state (typed query on Create-from, repo pick /
+          // workspace name on Quick) instead of remounting each time.
+          // Height is driven by the active panel's intrinsic size — the
+          // DialogContent handles overflow if the viewport is too short.
+          className="flex flex-col gap-0"
         >
           {/* Why: use the shared underline variant so both levels of tabs
               read as "tabs" — the default pill variant fought the sub-tabs
@@ -361,16 +359,23 @@ function QuickTabBody({
 type TabKey = 'quick' | 'create-from'
 
 /**
- * Keeps both tab panels mounted so their local state survives a tab swap,
- * and animates the container's height to the active panel's intrinsic
- * height so the modal resizes smoothly instead of popping.
+ * Keeps both tab panels mounted so their local state (typed query on
+ * Create-from, repo pick / workspace name on Quick) survives a tab swap.
+ * Only the active panel is in normal flow; the inactive panel is
+ * absolutely positioned + `visibility: hidden` + `pointer-events-none`
+ * so it
+ *   (a) doesn't contribute to DialogContent's scrollHeight (otherwise the
+ *       host dialog grows a scrollbar whenever the inactive panel is
+ *       taller than the active one), and
+ *   (b) keeps its React subtree mounted (no remount, so input focus,
+ *       typed query, and selection survive).
  *
- * Both panels are absolutely positioned so the wrapper is free to animate
- * its own height between their intrinsic sizes. We measure each panel's
- * natural height via an inner wrapper (ref-captured) whose size doesn't
- * depend on the outer wrapper's height. ResizeObserver keeps the
- * measurement fresh when content inside a panel changes (Advanced drawer
- * expanding, search results filling in).
+ * The wrapper's height is JS-driven: a ResizeObserver on the active
+ * panel's inner node keeps wrapper height in sync with content so the
+ * wrapper never clips. On tab change we capture the pre-swap wrapper
+ * height and transition to the new active panel's measured height — a
+ * FLIP-style animation so the modal resizes smoothly rather than
+ * snapping.
  */
 function AnimatedTabPanels({
   active,
@@ -379,76 +384,107 @@ function AnimatedTabPanels({
   active: TabKey
   children: Record<TabKey, React.ReactNode>
 }): React.JSX.Element {
-  const quickInnerRef = useRef<HTMLDivElement | null>(null)
-  const createFromInnerRef = useRef<HTMLDivElement | null>(null)
-  const [quickH, setQuickH] = useState<number | null>(null)
-  const [createFromH, setCreateFromH] = useState<number | null>(null)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const quickRef = useRef<HTMLDivElement | null>(null)
+  const createFromRef = useRef<HTMLDivElement | null>(null)
+  const previousActiveRef = useRef<TabKey>(active)
+  const [wrapperHeight, setWrapperHeight] = useState<number | null>(null)
+  const [isAnimating, setIsAnimating] = useState(false)
 
+  // Why: track the active panel's intrinsic height via ResizeObserver so
+  // the wrapper follows content (Advanced drawer open/close, async search
+  // results landing). When active changes, the FLIP effect below runs
+  // first (capturing the outgoing height), then this observer swings the
+  // wrapper height toward the new active panel's height via the CSS
+  // transition on `height`.
   useLayoutEffect(() => {
-    const observe = (
-      el: HTMLElement | null,
-      setter: (n: number) => void
-    ): (() => void) | undefined => {
-      if (!el) {
-        return undefined
-      }
-      const update = (): void => {
-        const next = el.getBoundingClientRect().height
-        if (next > 0) {
-          setter(next)
-        }
-      }
-      update()
-      const observer = new ResizeObserver(update)
-      observer.observe(el)
-      return () => observer.disconnect()
+    const target = active === 'quick' ? quickRef.current : createFromRef.current
+    if (!target) {
+      return
     }
-    const cleanupQuick = observe(quickInnerRef.current, setQuickH)
-    const cleanupCf = observe(createFromInnerRef.current, setCreateFromH)
-    return () => {
-      cleanupQuick?.()
-      cleanupCf?.()
+    const update = (): void => {
+      const next = target.getBoundingClientRect().height
+      if (next > 0) {
+        setWrapperHeight(next)
+      }
     }
-  }, [])
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [active])
 
-  const targetHeight = active === 'quick' ? quickH : createFromH
+  // Why: on tab swap, override the observer-driven height for one frame
+  // so the transition starts from the outgoing panel's size. Without this
+  // the wrapper would snap to the new panel's height before the ResizeObserver
+  // could read it.
+  useLayoutEffect(() => {
+    const prev = previousActiveRef.current
+    previousActiveRef.current = active
+    if (prev === active) {
+      return
+    }
+    const wrapper = wrapperRef.current
+    if (!wrapper) {
+      return
+    }
+    const from = wrapper.getBoundingClientRect().height
+    if (from > 0) {
+      setWrapperHeight(from)
+      setIsAnimating(true)
+    }
+  }, [active])
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current
+    if (!wrapper || !isAnimating) {
+      return
+    }
+    const onEnd = (event: TransitionEvent): void => {
+      if (event.propertyName !== 'height') {
+        return
+      }
+      setIsAnimating(false)
+    }
+    wrapper.addEventListener('transitionend', onEnd)
+    return () => wrapper.removeEventListener('transitionend', onEnd)
+  }, [isAnimating])
 
   return (
     <div
-      className="relative min-h-0 overflow-hidden transition-[height] duration-200 ease-out"
-      style={{
-        // Why: fall back to `auto` before the first measurement lands so
-        // the wrapper doesn't paint at 0px on initial render. Once a real
-        // height is known, drive it explicitly so the CSS transition can
-        // animate the change on tab swap.
-        height: targetHeight !== null ? targetHeight : 'auto'
-      }}
+      ref={wrapperRef}
+      // Why: `overflow-hidden` isolates the absolutely-positioned inactive
+      // panel. Without it, the inactive panel's (still-rendered,
+      // invisible) height extends beyond the wrapper and leaks into the
+      // DialogContent's scrollHeight — which would make the host dialog
+      // grow a scrollbar when the inactive panel is taller than the
+      // active one.
+      className="relative overflow-hidden transition-[height] duration-200 ease-out"
+      style={wrapperHeight !== null ? { height: wrapperHeight } : undefined}
     >
       <div
+        ref={quickRef}
         className={cn(
-          'absolute inset-x-0 top-0 transition-opacity duration-150 ease-out',
+          'pt-4',
           active === 'quick'
-            ? 'pointer-events-auto opacity-100'
-            : 'pointer-events-none invisible opacity-0'
+            ? 'pointer-events-auto'
+            : 'pointer-events-none invisible absolute inset-x-0 top-0'
         )}
         aria-hidden={active !== 'quick'}
       >
-        <div ref={quickInnerRef} className="pt-4">
-          {children.quick}
-        </div>
+        {children.quick}
       </div>
       <div
+        ref={createFromRef}
         className={cn(
-          'absolute inset-x-0 top-0 transition-opacity duration-150 ease-out',
+          'pt-3',
           active === 'create-from'
-            ? 'pointer-events-auto opacity-100'
-            : 'pointer-events-none invisible opacity-0'
+            ? 'pointer-events-auto'
+            : 'pointer-events-none invisible absolute inset-x-0 top-0'
         )}
         aria-hidden={active !== 'create-from'}
       >
-        <div ref={createFromInnerRef} className="pt-3">
-          {children['create-from']}
-        </div>
+        {children['create-from']}
       </div>
     </div>
   )

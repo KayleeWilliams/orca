@@ -12,9 +12,11 @@ import {
   LoaderCircle,
   Search
 } from 'lucide-react'
+import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import RepoCombobox from '@/components/repo/RepoCombobox'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { normalizeGitHubLinkQuery } from '@/lib/github-links'
@@ -105,11 +107,43 @@ export default function CreateFromTab({
   // …). A writer-through setter keeps the store in sync whenever the user
   // switches, which persists across composer closes within the same session.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const subTabsListRef = useRef<HTMLDivElement | null>(null)
   const [subTab, setSubTabLocal] = useState<CreateFromSubTab>(rememberedSubTab)
+  // Why: results live in a popover anchored to the search input so the
+  // dialog stays compact while the list sizes to content and can show
+  // async-loading skeletons without reserving a 320px block inside the
+  // modal. The popover opens as soon as the input is focused so users
+  // see their options immediately — opening only on keystroke felt
+  // unresponsive given this flow starts by clicking the field.
+  const [resultsOpen, setResultsOpen] = useState(false)
+  // Why: the results popover auto-opens on focus, but clicking a sub-tab
+  // pulls focus away from the search input and Radix closes the popover
+  // on the pointer-down. Re-open on sub-tab change so the new sub-tab's
+  // results appear immediately rather than forcing the user to click the
+  // input again; also refocus the input so typing continues the flow.
   const setSubTab = useCallback(
     (next: CreateFromSubTab) => {
       setSubTabLocal(next)
       setRememberedSubTab(next)
+      setResultsOpen(true)
+      // Why: preemptively flip the new sub-tab's loading flag so the single
+      // render between sub-tab change and the fetch effect doesn't flash
+      // "No open PRs / No issues / …" while stale state from the previous
+      // sub-tab still claims nothing is loading. The fetch effect sets the
+      // flag to true again on mount, then to false when data resolves — so
+      // this just patches the one-frame gap.
+      if (next === 'prs') {
+        setPrLoading(true)
+      } else if (next === 'issues') {
+        setIssueLoading(true)
+      } else if (next === 'branches') {
+        setBranchesLoading(true)
+      } else if (next === 'linear') {
+        setLinearLoading(true)
+      }
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus({ preventScroll: true })
+      })
     },
     [setRememberedSubTab]
   )
@@ -128,10 +162,17 @@ export default function CreateFromTab({
   }, [query])
 
   // Why: auto-focus the search input when this tab becomes visible — but
-  // only when it's actually visible. Without the `active` guard, the
+  // only when it's actually visible AND the parent tab-panel height
+  // transition has settled. Without the `active` guard, the
   // AnimatedTabPanels wrapper (which keeps both panels mounted for
-  // state-preservation and height measurement) would let the search field
-  // steal focus from the Quick tab's repo combobox on modal open.
+  // state-preservation) would let the search field steal focus from the
+  // Quick tab's repo combobox on modal open. The transition-settle delay
+  // matters because focusing the input fires onFocus → setResultsOpen(true)
+  // → Popover positions against the anchor. If the anchor is still moving
+  // (AnimatedTabPanels animates the wrapper height over ~200ms), Radix
+  // anchors the popover mid-flight and it visibly drifts down as the
+  // layout settles. Waiting past the transition lets Radix place it
+  // against the final input position from the start.
   useEffect(() => {
     if (!active) {
       return
@@ -140,10 +181,18 @@ export default function CreateFromTab({
     if (!el) {
       return
     }
-    // Defer one frame so Radix's FocusScope on the Dialog doesn't
-    // immediately reclaim focus to its first tabbable.
-    const raf = requestAnimationFrame(() => el.focus({ preventScroll: true }))
-    return () => cancelAnimationFrame(raf)
+    const timer = window.setTimeout(() => el.focus({ preventScroll: true }), 220)
+    return () => window.clearTimeout(timer)
+  }, [active])
+
+  // Why: the results popover is portaled outside this panel, so switching
+  // to the Quick tab (via click or the ⌘N hotkey) doesn't unmount or hide
+  // it — users would see the CreateFrom dropdown floating over the Quick
+  // tab. Force-close when this tab goes inactive.
+  useEffect(() => {
+    if (!active) {
+      setResultsOpen(false)
+    }
   }, [active])
 
   const selectedRepo = useMemo(
@@ -648,6 +697,196 @@ export default function CreateFromTab({
 
   const showGhRepoPicker = subTab !== 'linear'
 
+  // Why: each row gets a stable, unique `value` so cmdk's keyboard
+  // navigation can track selection across sub-tab changes. Values also
+  // feed the controlled `commandValue` state below.
+  type RowEntry =
+    | { kind: 'pr'; value: string; item: GitHubWorkItem }
+    | { kind: 'issue'; value: string; item: GitHubWorkItem }
+    | { kind: 'branch'; value: string; refName: string }
+    | { kind: 'linear'; value: string; issue: LinearIssue }
+
+  type ResultState =
+    | { kind: 'empty'; message: React.ReactNode }
+    | { kind: 'loading' }
+    | { kind: 'rows'; rows: RowEntry[] }
+
+  const resultState = useMemo<ResultState>(() => {
+    if (subTab === 'prs') {
+      if (isRemoteRepo) {
+        return { kind: 'empty', message: "PR start points aren't supported for remote repos yet." }
+      }
+      if (normalizedGhQuery.repoMismatch && normalizedGhQuery.directNumber === null) {
+        return {
+          kind: 'empty',
+          message: `URL targets ${normalizedGhQuery.repoMismatch}, not the selected repo.`
+        }
+      }
+      if (prError) {
+        return {
+          kind: 'empty',
+          message: prError.includes('gh') ? 'gh not available — Branches tab still works' : prError
+        }
+      }
+      if ((prLoading || directLoading) && visiblePrItems.length === 0) {
+        return { kind: 'loading' }
+      }
+      if (visiblePrItems.length === 0) {
+        return {
+          kind: 'empty',
+          message:
+            normalizedGhQuery.directNumber !== null
+              ? `No PR #${normalizedGhQuery.directNumber}`
+              : 'No open PRs'
+        }
+      }
+      return {
+        kind: 'rows',
+        rows: visiblePrItems.map((item) => ({
+          kind: 'pr' as const,
+          value: `pr-${item.number}`,
+          item
+        }))
+      }
+    }
+    if (subTab === 'issues') {
+      if (isRemoteRepo) {
+        return {
+          kind: 'empty',
+          message: "Issue start points aren't supported for remote repos yet."
+        }
+      }
+      if (normalizedGhQuery.repoMismatch && normalizedGhQuery.directNumber === null) {
+        return {
+          kind: 'empty',
+          message: `URL targets ${normalizedGhQuery.repoMismatch}, not the selected repo.`
+        }
+      }
+      if (issueError) {
+        return {
+          kind: 'empty',
+          message: issueError.includes('gh')
+            ? 'gh not available — Branches tab still works'
+            : issueError
+        }
+      }
+      if ((issueLoading || directLoading) && visibleIssueItems.length === 0) {
+        return { kind: 'loading' }
+      }
+      if (visibleIssueItems.length === 0) {
+        return {
+          kind: 'empty',
+          message:
+            normalizedGhQuery.directNumber !== null
+              ? `No issue #${normalizedGhQuery.directNumber}`
+              : 'No open issues'
+        }
+      }
+      return {
+        kind: 'rows',
+        rows: visibleIssueItems.map((item) => ({
+          kind: 'issue' as const,
+          value: `issue-${item.number}`,
+          item
+        }))
+      }
+    }
+    if (subTab === 'branches') {
+      if (branchesLoading && branches.length === 0) {
+        return { kind: 'loading' }
+      }
+      if (branches.length === 0) {
+        return {
+          kind: 'empty',
+          message: query.trim() ? 'No branches match' : 'No branches found'
+        }
+      }
+      return {
+        kind: 'rows',
+        rows: branches.map((refName) => ({
+          kind: 'branch' as const,
+          value: `branch-${refName}`,
+          refName
+        }))
+      }
+    }
+    // linear
+    if (!linearStatus.connected) {
+      return {
+        kind: 'empty',
+        message:
+          'Connect Linear from Settings → Integrations to create workspaces from Linear issues.'
+      }
+    }
+    if (linearError) {
+      return { kind: 'empty', message: linearError }
+    }
+    if (linearLoading && linearIssues.length === 0) {
+      return { kind: 'loading' }
+    }
+    if (linearIssues.length === 0) {
+      return {
+        kind: 'empty',
+        message: query.trim() ? 'No Linear issues match' : 'No Linear issues assigned to you'
+      }
+    }
+    return {
+      kind: 'rows',
+      rows: linearIssues.map((issue) => ({
+        kind: 'linear' as const,
+        value: `linear-${issue.id}`,
+        issue
+      }))
+    }
+  }, [
+    branches,
+    branchesLoading,
+    directLoading,
+    isRemoteRepo,
+    issueError,
+    issueLoading,
+    linearError,
+    linearIssues,
+    linearLoading,
+    linearStatus.connected,
+    normalizedGhQuery.directNumber,
+    normalizedGhQuery.repoMismatch,
+    prError,
+    prLoading,
+    query,
+    subTab,
+    visibleIssueItems,
+    visiblePrItems
+  ])
+
+  const handleRowSelect = useCallback(
+    (row: RowEntry) => {
+      if (row.kind === 'pr') {
+        void handlePrSelect(row.item)
+      } else if (row.kind === 'issue') {
+        void handleIssueSelect(row.item)
+      } else if (row.kind === 'branch') {
+        void handleBranchSelect(row.refName)
+      } else {
+        void handleLinearSelect(row.issue)
+      }
+    },
+    [handleBranchSelect, handleIssueSelect, handleLinearSelect, handlePrSelect]
+  )
+
+  // Why: cmdk tracks the highlighted row via a controlled `value`. We
+  // seed it to the first row on list change so Enter works immediately
+  // and the top row has the visible selected style — matching every
+  // shadcn combobox flow.
+  const [commandValue, setCommandValue] = useState<string>('')
+  useEffect(() => {
+    if (resultState.kind === 'rows' && resultState.rows.length > 0) {
+      setCommandValue((prev) =>
+        resultState.rows.some((r) => r.value === prev) ? prev : resultState.rows[0].value
+      )
+    }
+  }, [resultState])
+
   return (
     <div className="flex flex-col gap-3">
       {/* Why: give the Repository selector a stable row above the tabs so
@@ -689,6 +928,7 @@ export default function CreateFromTab({
         className="gap-0"
       >
         <TabsList
+          ref={subTabsListRef}
           variant="line"
           className="h-8 w-full justify-start gap-5 border-b border-border/40 px-0"
         >
@@ -701,137 +941,158 @@ export default function CreateFromTab({
         </TabsList>
 
         <div className="pt-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              ref={searchInputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={placeholderBySubTab[subTab]}
-              className="h-9 pl-8 text-sm"
-            />
-          </div>
+          <Popover open={resultsOpen} onOpenChange={setResultsOpen}>
+            <Command
+              value={commandValue}
+              onValueChange={setCommandValue}
+              shouldFilter={false}
+              // Why: cmdk listens on its root for keyboard nav. Leaving
+              // its wrapper as a flex column keeps the input + popover
+              // rendering in their natural positions while cmdk still
+              // sees the input + list as one logical tree, so arrow
+              // keys move the highlighted row and Enter selects it.
+              className="overflow-visible bg-transparent"
+            >
+              <PopoverAnchor asChild>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value)
+                      setResultsOpen(true)
+                    }}
+                    onFocus={() => setResultsOpen(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape' && resultsOpen) {
+                        // Why: first Escape dismisses the suggestions; only
+                        // if the popover is already closed should Escape
+                        // bubble up to close the dialog.
+                        e.stopPropagation()
+                        setResultsOpen(false)
+                        return
+                      }
+                      if (
+                        e.key === 'ArrowDown' ||
+                        e.key === 'ArrowUp' ||
+                        e.key === 'Home' ||
+                        e.key === 'End'
+                      ) {
+                        if (!resultsOpen) {
+                          setResultsOpen(true)
+                        }
+                        // Why: cmdk handles arrow/Home/End on its root via
+                        // its own listener. The event reaching here already
+                        // got processed; just make sure the popover is open
+                        // so the user sees the movement.
+                      }
+                      if (e.key === 'Enter' && resultsOpen && resultState.kind === 'rows') {
+                        const row = resultState.rows.find((r) => r.value === commandValue)
+                        if (row) {
+                          e.preventDefault()
+                          handleRowSelect(row)
+                        }
+                      }
+                    }}
+                    placeholder={placeholderBySubTab[subTab]}
+                    className="h-9 pl-8 text-sm"
+                  />
+                </div>
+              </PopoverAnchor>
+              <PopoverContent
+                align="start"
+                sideOffset={4}
+                // Why: match the anchor width so results feel "attached"
+                // to the input. `--radix-popover-content-available-height`
+                // is Radix's dynamic measurement of free space on the
+                // chosen side (capped by the viewport); clamping the
+                // popover max-height to it lets the list grow as tall as
+                // it can without spilling outside the viewport whether
+                // the popover opens downward or flips upward.
+                //
+                // `popover-scroll-content` pairs with the wheel-event
+                // handler on PopoverContent so wheel scroll works even
+                // though Radix Dialog applies react-remove-scroll to
+                // everything outside its own subtree. The CommandList
+                // child uses h-full + overflow-y-auto so it owns the
+                // scroll region — nesting it this way means the
+                // shadcn-style `scrollbar-sleek` track lives inside the
+                // popover's rounded border.
+                className="popover-scroll-content flex w-[var(--radix-popover-trigger-width)] flex-col p-0"
+                style={{
+                  maxHeight: 'min(var(--radix-popover-content-available-height,22rem),22rem)'
+                }}
+                onOpenAutoFocus={(event) => {
+                  // Why: the input keeps focus so typing continues to
+                  // filter results. Without preventDefault the popover
+                  // would pull focus to its first child on open.
+                  event.preventDefault()
+                }}
+                onPointerDownOutside={(event) => {
+                  // Why: the search input is the popover's anchor (not its
+                  // trigger), so Radix treats clicks on it as "outside" and
+                  // would close the popover. Sub-tab triggers are also
+                  // outside — clicking them should just switch source and
+                  // keep results visible rather than dismissing the list.
+                  const target = event.target as Node
+                  if (
+                    searchInputRef.current?.contains(target) ||
+                    subTabsListRef.current?.contains(target)
+                  ) {
+                    event.preventDefault()
+                  }
+                }}
+                onFocusOutside={(event) => {
+                  // Why: sub-tab clicks move focus to a tab trigger and we
+                  // refocus the search input on the next frame. Both of
+                  // those focus destinations are "outside" the popover
+                  // content — if we don't suppress them Radix dismisses the
+                  // list and the user has to click the input again to see
+                  // the new sub-tab's results.
+                  const target = event.target as Node
+                  if (
+                    searchInputRef.current?.contains(target) ||
+                    subTabsListRef.current?.contains(target)
+                  ) {
+                    event.preventDefault()
+                  }
+                }}
+              >
+                <CommandList className="!max-h-none min-h-0 flex-1 scrollbar-sleek">
+                  {resultState.kind === 'loading' ? (
+                    <LoadingRows />
+                  ) : resultState.kind === 'empty' ? (
+                    <EmptyMessage>{resultState.message}</EmptyMessage>
+                  ) : (
+                    <CommandGroup className="p-1">
+                      {resultState.rows.map((row) => (
+                        <CommandItem
+                          key={row.value}
+                          value={row.value}
+                          onSelect={() => handleRowSelect(row)}
+                          disabled={launching}
+                          className="group gap-2 px-2 py-1.5 text-xs data-[disabled=true]:opacity-60"
+                        >
+                          {row.kind === 'pr' ? (
+                            <PrItemContent item={row.item} />
+                          ) : row.kind === 'issue' ? (
+                            <IssueItemContent item={row.item} />
+                          ) : row.kind === 'branch' ? (
+                            <BranchItemContent refName={row.refName} />
+                          ) : (
+                            <LinearItemContent issue={row.issue} />
+                          )}
+                          <CornerDownLeft className="ml-auto size-3 shrink-0 text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100" />
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+                </CommandList>
+              </PopoverContent>
+            </Command>
+          </Popover>
         </div>
-
-        <TabsContent value="prs" className="mt-2">
-          <ResultList>
-            {isRemoteRepo ? (
-              <EmptyMessage>
-                PR start points aren&apos;t supported for remote repos yet.
-              </EmptyMessage>
-            ) : normalizedGhQuery.repoMismatch && normalizedGhQuery.directNumber === null ? (
-              <EmptyMessage>
-                URL targets {normalizedGhQuery.repoMismatch}, not the selected repo.
-              </EmptyMessage>
-            ) : prError ? (
-              <EmptyMessage>
-                {prError.includes('gh') ? 'gh not available — Branches tab still works' : prError}
-              </EmptyMessage>
-            ) : (prLoading || directLoading) && visiblePrItems.length === 0 ? (
-              <LoadingRows />
-            ) : visiblePrItems.length === 0 ? (
-              <EmptyMessage>
-                {normalizedGhQuery.directNumber !== null
-                  ? `No PR #${normalizedGhQuery.directNumber}`
-                  : 'No open PRs'}
-              </EmptyMessage>
-            ) : (
-              visiblePrItems.map((item) => (
-                <PrRow
-                  key={`pr-${item.number}`}
-                  item={item}
-                  disabled={launching}
-                  onSelect={() => void handlePrSelect(item)}
-                />
-              ))
-            )}
-          </ResultList>
-        </TabsContent>
-
-        <TabsContent value="issues" className="mt-2">
-          <ResultList>
-            {isRemoteRepo ? (
-              <EmptyMessage>
-                Issue start points aren&apos;t supported for remote repos yet.
-              </EmptyMessage>
-            ) : normalizedGhQuery.repoMismatch && normalizedGhQuery.directNumber === null ? (
-              <EmptyMessage>
-                URL targets {normalizedGhQuery.repoMismatch}, not the selected repo.
-              </EmptyMessage>
-            ) : issueError ? (
-              <EmptyMessage>
-                {issueError.includes('gh')
-                  ? 'gh not available — Branches tab still works'
-                  : issueError}
-              </EmptyMessage>
-            ) : (issueLoading || directLoading) && visibleIssueItems.length === 0 ? (
-              <LoadingRows />
-            ) : visibleIssueItems.length === 0 ? (
-              <EmptyMessage>
-                {normalizedGhQuery.directNumber !== null
-                  ? `No issue #${normalizedGhQuery.directNumber}`
-                  : 'No open issues'}
-              </EmptyMessage>
-            ) : (
-              visibleIssueItems.map((item) => (
-                <IssueRow
-                  key={`issue-${item.number}`}
-                  item={item}
-                  disabled={launching}
-                  onSelect={() => void handleIssueSelect(item)}
-                />
-              ))
-            )}
-          </ResultList>
-        </TabsContent>
-
-        <TabsContent value="branches" className="mt-2">
-          <ResultList>
-            {branchesLoading && branches.length === 0 ? (
-              <LoadingRows />
-            ) : branches.length === 0 ? (
-              <EmptyMessage>
-                {query.trim() ? 'No branches match' : 'No branches found'}
-              </EmptyMessage>
-            ) : (
-              branches.map((refName) => (
-                <BranchRow
-                  key={refName}
-                  refName={refName}
-                  disabled={launching}
-                  onSelect={() => void handleBranchSelect(refName)}
-                />
-              ))
-            )}
-          </ResultList>
-        </TabsContent>
-
-        <TabsContent value="linear" className="mt-2">
-          <ResultList>
-            {!linearStatus.connected ? (
-              <EmptyMessage>
-                Connect Linear from Settings → Integrations to create workspaces from Linear issues.
-              </EmptyMessage>
-            ) : linearError ? (
-              <EmptyMessage>{linearError}</EmptyMessage>
-            ) : linearLoading && linearIssues.length === 0 ? (
-              <LoadingRows />
-            ) : linearIssues.length === 0 ? (
-              <EmptyMessage>
-                {query.trim() ? 'No Linear issues match' : 'No Linear issues assigned to you'}
-              </EmptyMessage>
-            ) : (
-              linearIssues.map((issue) => (
-                <LinearRow
-                  key={issue.id}
-                  issue={issue}
-                  disabled={launching}
-                  onSelect={() => void handleLinearSelect(issue)}
-                />
-              ))
-            )}
-          </ResultList>
-        </TabsContent>
       </Tabs>
 
       {launching ? (
@@ -840,25 +1101,6 @@ export default function CreateFromTab({
           Creating workspace…
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function ResultList({ children }: { children: React.ReactNode }): React.JSX.Element {
-  // Why: two nested containers so the scrollbar stays inside the rounded
-  // border. The outer clips with overflow-hidden and owns the rounded
-  // corners; the inner owns the scroll. If overflow-auto sits on the
-  // rounded element directly, Chromium paints the native scrollbar flush
-  // against the border box, and the track bleeds past the rounded corner —
-  // which is exactly the "scrollbar floating outside the modal" bug.
-  //
-  // The inner flex column lets empty-state / loading content vertically
-  // center when it's the only child; populated lists still render from the
-  // top because their rows exceed the fixed height and the scroller
-  // takes over.
-  return (
-    <div className="h-[320px] overflow-hidden rounded-md border border-border/50">
-      <div className="flex h-full min-h-full flex-col overflow-y-auto p-1">{children}</div>
     </div>
   )
 }
@@ -874,61 +1116,13 @@ function LoadingRows(): React.JSX.Element {
 }
 
 function EmptyMessage({ children }: { children: React.ReactNode }): React.JSX.Element {
-  // Why: flex-1 + centered content means the message floats in the middle
-  // of the 320px result box regardless of how tall the message itself is,
-  // which feels intentional rather than the old "message stuck near the top"
-  // look that accompanied `py-10`.
-  return (
-    <div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-muted-foreground">
-      {children}
-    </div>
-  )
+  return <div className="px-6 py-6 text-center text-xs text-muted-foreground">{children}</div>
 }
 
-function RowShell({
-  onSelect,
-  disabled,
-  children,
-  title
-}: {
-  onSelect: () => void
-  disabled: boolean
-  children: React.ReactNode
-  title?: string
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      title={title}
-      className={cn(
-        'group flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition hover:bg-muted/60',
-        disabled && 'cursor-not-allowed opacity-60 hover:bg-transparent'
-      )}
-    >
-      {children}
-      <CornerDownLeft className="ml-auto size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
-  )
-}
-
-function PrRow({
-  item,
-  disabled,
-  onSelect
-}: {
-  item: GitHubWorkItem
-  disabled: boolean
-  onSelect: () => void
-}): React.JSX.Element {
+function PrItemContent({ item }: { item: GitHubWorkItem }): React.JSX.Element {
   const isFork = item.isCrossRepository === true
   return (
-    <RowShell
-      onSelect={onSelect}
-      disabled={disabled}
-      title={isFork ? 'Fork PR — will branch from a snapshot of the PR head' : undefined}
-    >
+    <>
       <GitPullRequest className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
@@ -942,21 +1136,13 @@ function PrRow({
           </span>
         ) : null}
       </span>
-    </RowShell>
+    </>
   )
 }
 
-function IssueRow({
-  item,
-  disabled,
-  onSelect
-}: {
-  item: GitHubWorkItem
-  disabled: boolean
-  onSelect: () => void
-}): React.JSX.Element {
+function IssueItemContent({ item }: { item: GitHubWorkItem }): React.JSX.Element {
   return (
-    <RowShell onSelect={onSelect} disabled={disabled}>
+    <>
       <CircleDot className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
@@ -969,39 +1155,23 @@ function IssueRow({
           </span>
         ) : null}
       </span>
-    </RowShell>
+    </>
   )
 }
 
-function BranchRow({
-  refName,
-  disabled,
-  onSelect
-}: {
-  refName: string
-  disabled: boolean
-  onSelect: () => void
-}): React.JSX.Element {
+function BranchItemContent({ refName }: { refName: string }): React.JSX.Element {
   return (
-    <RowShell onSelect={onSelect} disabled={disabled}>
+    <>
       <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="truncate font-mono">{refName}</span>
-    </RowShell>
+    </>
   )
 }
 
-function LinearRow({
-  issue,
-  disabled,
-  onSelect
-}: {
-  issue: LinearIssue
-  disabled: boolean
-  onSelect: () => void
-}): React.JSX.Element {
+function LinearItemContent({ issue }: { issue: LinearIssue }): React.JSX.Element {
   return (
-    <RowShell onSelect={onSelect} disabled={disabled}>
-      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+    <>
+      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
         {issue.identifier}
       </span>
       <span className="min-w-0 flex-1">
@@ -1011,6 +1181,6 @@ function LinearRow({
           {issue.team.name ? ` · ${issue.team.name}` : ''}
         </span>
       </span>
-    </RowShell>
+    </>
   )
 }
