@@ -21,6 +21,12 @@ export type LaunchableWorkItem = {
   repoId?: string
   /** Content to paste into the agent's input. Defaults to the URL when omitted. */
   pasteContent?: string
+  /** Linear identifier (e.g. "ENG-123") when the work item originates from
+   *  Linear. Persisted to worktree meta as `linkedLinearIssue` so the sidebar
+   *  and other surfaces can surface the Linear link. Linear issues also pass
+   *  `type: 'issue'` / `number: null` to reuse the GitHub draft-paste flow,
+   *  so this field is the only signal that the worktree is Linear-linked. */
+  linearIdentifier?: string
 }
 
 // Why: bracketed paste markers let modern TUIs treat the inserted text as a
@@ -173,16 +179,25 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     return
   }
 
-  const meta: { linkedIssue?: number; linkedPR?: number } = {}
+  const meta: {
+    linkedIssue?: number
+    linkedPR?: number
+    linkedLinearIssue?: string
+  } = {}
   if (item.type === 'issue' && item.number) {
     meta.linkedIssue = item.number
   } else if (item.type === 'pr' && item.number) {
     meta.linkedPR = item.number
   }
-  try {
-    await store.updateWorktreeMeta(worktreeId, meta)
-  } catch {
-    // Meta update is non-critical for the draft flow — continue.
+  if (item.linearIdentifier) {
+    meta.linkedLinearIssue = item.linearIdentifier
+  }
+  if (Object.keys(meta).length > 0) {
+    try {
+      await store.updateWorktreeMeta(worktreeId, meta)
+    } catch {
+      // Meta update is non-critical for the draft flow — continue.
+    }
   }
 
   store.setSidebarOpen(true)

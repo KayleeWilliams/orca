@@ -479,6 +479,16 @@ export default function CreateFromTab({
   // multiple seconds on cold caches).
   const inflightRef = useRef(0)
   const [launching, setLaunching] = useState(false)
+  // Why: once the user selects a row the popover closes and the search input
+  // would otherwise fall back to the (often empty) query, making the field
+  // look blank while "Creating workspace…" shows below. Pin the selected
+  // row's label into the input for the duration of the launch so the user
+  // still sees what they picked.
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null)
+  const beginLaunch = useCallback((label: string) => {
+    setSelectedLabel(label)
+    setResultsOpen(false)
+  }, [])
 
   const handlePrSelect = useCallback(
     async (item: GitHubWorkItem) => {
@@ -487,6 +497,7 @@ export default function CreateFromTab({
       }
       const token = ++inflightRef.current
       setLaunching(true)
+      beginLaunch(`#${item.number} ${item.title}`)
       try {
         const result = await window.api.worktrees.resolvePrBase({
           repoId: selectedRepo.id,
@@ -543,10 +554,11 @@ export default function CreateFromTab({
       } finally {
         if (token === inflightRef.current) {
           setLaunching(false)
+          setSelectedLabel(null)
         }
       }
     },
-    [onFallbackToQuick, onLaunched, selectedRepo]
+    [beginLaunch, onFallbackToQuick, onLaunched, selectedRepo]
   )
 
   const handleIssueSelect = useCallback(
@@ -556,6 +568,7 @@ export default function CreateFromTab({
       }
       const token = ++inflightRef.current
       setLaunching(true)
+      beginLaunch(`#${item.number} ${item.title}`)
       try {
         await launchWorkItemDirect({
           item: {
@@ -583,10 +596,11 @@ export default function CreateFromTab({
       } finally {
         if (token === inflightRef.current) {
           setLaunching(false)
+          setSelectedLabel(null)
         }
       }
     },
-    [onFallbackToQuick, onLaunched, selectedRepo]
+    [beginLaunch, onFallbackToQuick, onLaunched, selectedRepo]
   )
 
   const handleBranchSelect = useCallback(
@@ -596,6 +610,7 @@ export default function CreateFromTab({
       }
       const token = ++inflightRef.current
       setLaunching(true)
+      beginLaunch(refName)
       try {
         await launchFromBranch({
           repoId: selectedRepo.id,
@@ -608,10 +623,11 @@ export default function CreateFromTab({
       } finally {
         if (token === inflightRef.current) {
           setLaunching(false)
+          setSelectedLabel(null)
         }
       }
     },
-    [onFallbackToQuick, onLaunched, selectedRepo]
+    [beginLaunch, onFallbackToQuick, onLaunched, selectedRepo]
   )
 
   const handleLinearSelect = useCallback(
@@ -627,6 +643,7 @@ export default function CreateFromTab({
       }
       const token = ++inflightRef.current
       setLaunching(true)
+      beginLaunch(`${issue.identifier} ${issue.title}`)
       try {
         const parts = [
           `[${issue.identifier}] ${issue.title}`,
@@ -643,7 +660,8 @@ export default function CreateFromTab({
             url: issue.url,
             type: 'issue',
             number: null,
-            pasteContent
+            pasteContent,
+            linearIdentifier: issue.identifier
           },
           repoId: repoForLaunch.id,
           openModalFallback: () =>
@@ -666,10 +684,11 @@ export default function CreateFromTab({
       } finally {
         if (token === inflightRef.current) {
           setLaunching(false)
+          setSelectedLabel(null)
         }
       }
     },
-    [eligibleRepos, onFallbackToQuick, onLaunched, selectedRepoId]
+    [beginLaunch, eligibleRepos, onFallbackToQuick, onLaunched, selectedRepoId]
   )
 
   // ---------------------------------------------------------------------
@@ -955,16 +974,36 @@ export default function CreateFromTab({
             >
               <PopoverAnchor asChild>
                 <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  {launching ? (
+                    <LoaderCircle className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  )}
                   <Input
                     ref={searchInputRef}
-                    value={query}
+                    // Why: once a row is chosen we pin its label into the input
+                    // so the user still sees what they selected while the
+                    // launch runs. `readOnly` + aria-busy lets keystrokes still
+                    // blur/focus without the text being editable mid-launch.
+                    value={selectedLabel ?? query}
+                    readOnly={launching}
+                    aria-busy={launching}
                     onChange={(e) => {
+                      if (launching) {
+                        return
+                      }
                       setQuery(e.target.value)
                       setResultsOpen(true)
                     }}
-                    onFocus={() => setResultsOpen(true)}
+                    onFocus={() => {
+                      if (!launching) {
+                        setResultsOpen(true)
+                      }
+                    }}
                     onKeyDown={(e) => {
+                      if (launching) {
+                        return
+                      }
                       if (e.key === 'Escape' && resultsOpen) {
                         // Why: first Escape dismisses the suggestions; only
                         // if the popover is already closed should Escape
