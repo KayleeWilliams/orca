@@ -1,6 +1,10 @@
 /* eslint-disable max-lines */
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
+import {
+  AGENT_DASHBOARD_ENABLED,
+  DEFAULT_STATUS_BAR_ITEMS,
+  DEFAULT_WORKTREE_CARD_PROPERTIES
+} from '../../shared/constants'
 
 import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
 import {
@@ -15,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useAppStore } from './store'
 import { useShallow } from 'zustand/react/shallow'
 import { useIpcEvents } from './hooks/useIpcEvents'
+import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
 import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
@@ -145,6 +150,21 @@ function App(): React.JSX.Element {
 
   // Subscribe to IPC push events
   useIpcEvents()
+  // Why: retention must run at App level (not inside AgentDashboard) because
+  // the sidebar hovercard also reads retained entries. If retention only ran
+  // when the dashboard is mounted, "done" agents would vanish from the hover
+  // any time the user collapses the dashboard panel.
+  //
+  // The retention hooks are hosted inside <RetainedAgentsSyncGate /> (a leaf
+  // component that renders null) rather than being called inline here.
+  // Calling useDashboardData() from App.tsx would subscribe the root component
+  // to high-churn slices (agentStatusByPaneKey + agentStatusEpoch tick at PTY
+  // event frequency), re-rendering the entire app tree on every agent status
+  // update. Hosting the subscriptions in a leaf isolates that churn.
+  //
+  // The AGENT_DASHBOARD_ENABLED gate still lives inside the hooks themselves
+  // (useDashboardData early-returns [] from its memo; useRetainedAgentsSync
+  // early-returns from its effect), so the gate component is cheap when off.
   // Why: git conflict-operation state also drives the worktree cards. Polling
   // cannot live under RightSidebar because App unmounts that subtree when the
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
@@ -693,6 +713,26 @@ function App(): React.JSX.Element {
         return
       }
 
+      // Cmd/Ctrl+Shift+D — open right sidebar (agent dashboard is now
+      // docked at the sidebar bottom, so only toggle visibility).
+      // Why: skip when a terminal is focused — that combo is the terminal
+      // split-pane shortcut (see terminal-shortcut-policy.ts). Both listeners
+      // share the window capture phase and registration order can vary with
+      // React effect re-runs, so a DOM check is the reliable coordination
+      // mechanism (same pattern as Cmd+Shift+G above). xterm-helper-textarea
+      // is the focus target the terminal handler itself uses to detect
+      // terminal focus (see keyboard-handlers.ts isEditableTarget).
+      if (AGENT_DASHBOARD_ENABLED && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+        const active = document.activeElement as HTMLElement | null
+        if (active?.classList.contains('xterm-helper-textarea')) {
+          return
+        }
+        dispatchClearModifierHints()
+        e.preventDefault()
+        actions.setRightSidebarOpen(true)
+        return
+      }
+
       // Cmd+Shift+I — toggle right sidebar / ports tab (macOS only).
       // Why: Ctrl+Shift+I is the built-in DevTools accelerator on Windows/Linux;
       // intercepting it would break an essential developer tool.
@@ -968,6 +1008,10 @@ function App(): React.JSX.Element {
       }
     >
       <TooltipProvider delayDuration={400}>
+        {/* Why: leaf-mounted retention sync. Hosts useDashboardData() +
+            useRetainedAgentsSync() so their high-churn store subscriptions
+            re-render a null component rather than the entire App tree. */}
+        <RetainedAgentsSyncGate />
         {/* Why: in workspace view (split groups always enabled), the full-width
             titlebar is removed so tab groups + terminal extend to the top of
             the window. Left titlebar controls move to a header above the sidebar.
