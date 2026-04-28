@@ -92,7 +92,10 @@ type PtyApi = {
   onSerializeBufferRequest: (
     callback: (data: { requestId: string; ptyId: string }) => void
   ) => () => void
-  sendSerializedBuffer: (requestId: string, data: string | null) => void
+  sendSerializedBuffer: (
+    requestId: string,
+    snapshot: { data: string; cols: number; rows: number } | null
+  ) => void
 }
 
 type GhApi = {
