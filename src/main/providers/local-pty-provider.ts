@@ -386,11 +386,19 @@ export class LocalPtyProvider implements IPtyProvider {
   }
 
   async getCwd(id: string): Promise<string> {
-    if (!ptyProcesses.has(id)) {
-      throw new Error(`PTY ${id} not found`)
+    const proc = ptyProcesses.get(id)
+    // Why: return '' (not throw) on unknown id — the renderer treats empty
+    // as "no result, try the next fallback layer". Throwing would surface a
+    // noisy rejection for a non-exceptional case (PTY just exited, pane
+    // still has its old id).
+    if (!proc) {
+      return ''
     }
-    // node-pty doesn't expose cwd; would need /proc on Linux or lsof on macOS
-    return ''
+    // Why: pass '' (not an initialCwd) as fallback so an unresolved cwd
+    // stays empty. Handing back a fabricated initialCwd would lie to the
+    // renderer and short-circuit its own fallback chain.
+    const { resolveProcessCwd } = await import('./process-cwd')
+    return resolveProcessCwd(proc.pid, '')
   }
   async getInitialCwd(_id: string): Promise<string> {
     return ''
