@@ -9,8 +9,18 @@ import {
   writeFileSync
 } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
-import { createManagedCommandMatcher, writeHooksJson, type HooksConfig } from './installer-utils'
+import { dirname, join } from 'path'
+import {
+  createManagedCommandMatcher,
+  getAgentHooksDir,
+  getEndpointDiscoveryCmdSnippet,
+  getEndpointDiscoveryShellSnippet,
+  getEndpointFileName,
+  getEndpointFilePath,
+  getManagedScriptPathForAgent,
+  writeHooksJson,
+  type HooksConfig
+} from './installer-utils'
 
 let tmpDir: string
 let configPath: string
@@ -140,5 +150,79 @@ describe('createManagedCommandMatcher', () => {
 
   it('does not match hooks for a different agent', () => {
     expect(match('/bin/sh "/path/agent-hooks/gemini-hook.sh"')).toBe(false)
+  })
+})
+
+// Why: the discovery snippets are what lets daemon-revived PTYs keep
+// reporting status to Orca across restarts — the snippet has to prefer the
+// PTY's env var (which is how new-terminal spawns pick up the current
+// port/token fast) and fall back to the script-adjacent endpoint file
+// (which is how surviving daemon PTYs recover after their env went stale).
+// If either branch regresses the dashboard silently stops updating for one
+// of the two spawn paths, so assert both branches are wired up.
+describe('getEndpointDiscoveryShellSnippet', () => {
+  it('prefers the env-var endpoint before falling back to the script-adjacent file', () => {
+    const snippet = getEndpointDiscoveryShellSnippet().join('\n')
+    expect(snippet).toContain('$ORCA_AGENT_HOOK_ENDPOINT')
+    // Script-adjacent fallback must reference the platform-specific filename
+    // and resolve the dir from $0 so the script keeps working when invoked
+    // by basename, relative path, or absolute path.
+    expect(snippet).toContain(`$(dirname "$0")/${getEndpointFileName()}`)
+    // Env-var branch must source before the script-adjacent branch so fresh
+    // terminals (which always have a current endpoint env) don't pay the
+    // filesystem-stat cost of the fallback.
+    const envIdx = snippet.indexOf('$ORCA_AGENT_HOOK_ENDPOINT')
+    const adjIdx = snippet.indexOf('dirname "$0"')
+    expect(envIdx).toBeGreaterThan(-1)
+    expect(adjIdx).toBeGreaterThan(envIdx)
+  })
+})
+
+describe('getEndpointDiscoveryCmdSnippet', () => {
+  it('prefers the env-var endpoint before falling back to the script-adjacent file', () => {
+    const snippet = getEndpointDiscoveryCmdSnippet().join('\r\n')
+    expect(snippet).toContain('%ORCA_AGENT_HOOK_ENDPOINT%')
+    // Script-adjacent fallback must use %~dp0 (which already includes a
+    // trailing backslash) + the platform filename.
+    expect(snippet).toContain(`%~dp0${getEndpointFileName()}`)
+    // Why: the fallback must gate on "env-var branch did not successfully
+    // source a file" (tracked via _orca_loaded), NOT on "PORT undefined".
+    // The bug this fallback exists to fix is a daemon-revived pre-#1196 PTY
+    // whose env has a stale ORCA_AGENT_HOOK_PORT baked in — gating on PORT
+    // would short-circuit in exactly that case and leave the script posting
+    // to the dead port.
+    expect(snippet).toContain('if not defined _orca_loaded')
+    expect(snippet).not.toMatch(/if not defined ORCA_AGENT_HOOK_PORT/)
+    // Env-var branch sets the flag only on successful source so the
+    // fallback correctly skips when a fresh PTY already loaded the file.
+    expect(snippet).toContain('set _orca_loaded=1')
+    // Flag must be cleared before and after so a surrounding script that
+    // somehow inherited _orca_loaded cannot skew the gate, and our own
+    // flag does not leak to anything the agent runs afterwards.
+    const lines = snippet.split('\r\n')
+    expect(lines.at(0)).toBe('set _orca_loaded=')
+    expect(lines.at(-1)).toBe('set _orca_loaded=')
+  })
+})
+
+// Why: the endpoint file and every managed hook script MUST share a
+// directory so that hook scripts can discover the endpoint file at runtime
+// via `$(dirname "$0")` (POSIX) or `%~dp0` (Windows). That discovery is
+// the only recovery path for daemon-revived PTYs whose PTY env has gone
+// stale across an Orca restart — if the two files ever drift apart, every
+// pre-#1196 daemon-revived PTY silently stops reporting. Lock the
+// invariant in a test so a refactor that renames the dir in one call site
+// but not another fails loudly here instead of quietly in production.
+describe('agent-hooks directory co-location invariant', () => {
+  it('endpoint file and a representative managed script share a dirname', () => {
+    const userData = '/fake/userData'
+    const endpointPath = getEndpointFilePath(userData)
+    // Representative agent — if any one agent's script path drifts from the
+    // endpoint file's directory, the test fails. The hook-services all go
+    // through `getManagedScriptPathForAgent`, so asserting one is enough.
+    const scriptPath = getManagedScriptPathForAgent(userData, 'claude-hook.sh')
+    expect(dirname(endpointPath)).toBe(getAgentHooksDir(userData))
+    expect(dirname(scriptPath)).toBe(getAgentHooksDir(userData))
+    expect(dirname(endpointPath)).toBe(dirname(scriptPath))
   })
 })

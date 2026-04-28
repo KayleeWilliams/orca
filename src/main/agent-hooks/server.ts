@@ -19,6 +19,7 @@ import {
   type ParsedAgentStatusPayload
 } from '../../shared/agent-status-types'
 import { ORCA_HOOK_PROTOCOL_VERSION } from '../../shared/agent-hook-types'
+import { getAgentHooksDir, getEndpointFilePath } from './installer-utils'
 
 // Why: Pi is intentionally absent. Pi has no shell-command hook surface —
 // its extensibility is an in-process TypeScript extension API (pi.on(...)
@@ -1050,15 +1051,12 @@ function normalizeHookPayload(
   return payload ? { paneKey, tabId, worktreeId, payload } : null
 }
 
-// Why: the endpoint file lives under userData so each Orca install (dev vs.
-// packaged) has its own path and the two cannot clobber each other. Using a
-// per-platform extension (`.env` on POSIX, `.cmd` on Windows) lets the hook
-// scripts source the file with their platform-native syntax (`.` on POSIX,
-// `call` on Windows); the OpenCode plugin's regex accepts both shapes so no
-// platform detection is needed inside the plugin source either.
-function getEndpointFileName(): string {
-  return process.platform === 'win32' ? 'endpoint.cmd' : 'endpoint.env'
-}
+// Endpoint file path construction lives in installer-utils
+// (getAgentHooksDir / getEndpointFilePath / getEndpointFileName) so the
+// hook server (which writes the file) and the managed-script generators
+// (which source it from the script) share one source of truth for the
+// directory + filename convention. The co-location invariant is what
+// makes the `$0`/`%~dp0` discovery in the hook scripts work.
 
 // Why: every value in the endpoint file is sourced as shell. Reject any
 // value that contains shell/cmd metacharacters so a future field whose
@@ -1123,8 +1121,12 @@ export class AgentHookServer {
       this.env = options.env
     }
     if (options?.userDataPath) {
-      this.endpointDir = join(options.userDataPath, 'agent-hooks')
-      this.endpointFilePathCache = join(this.endpointDir, getEndpointFileName())
+      // Why: route through the shared helpers so the server's endpoint file
+      // stays in the same directory as the managed hook scripts. Scripts
+      // rely on that co-location to discover the endpoint file via
+      // `$0`/`%~dp0` when their env var is stale; see `getAgentHooksDir`.
+      this.endpointDir = getAgentHooksDir(options.userDataPath)
+      this.endpointFilePathCache = getEndpointFilePath(options.userDataPath)
     }
     this.token = randomUUID()
     this.endpointFileWritten = false
