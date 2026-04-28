@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 
 /**
@@ -18,5 +19,14 @@ export async function runSleepWorktree(worktreeId: string): Promise<void> {
   if (activeWorktreeId === worktreeId) {
     setActiveWorktree(null)
   }
-  await shutdownWorktreeTerminals(worktreeId)
+  try {
+    await shutdownWorktreeTerminals(worktreeId)
+  } catch (err) {
+    // Why: callers are fire-and-forget; surface the failure as a toast and
+    // otherwise continue — the active-worktree reset already happened so we
+    // don't leave the UI in a stale state.
+    toast.error('Failed to sleep workspace', {
+      description: err instanceof Error ? err.message : String(err)
+    })
+  }
 }

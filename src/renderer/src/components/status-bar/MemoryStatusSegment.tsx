@@ -9,7 +9,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useAppStore } from '../../store'
-import { runWorktreeDeleteWithToast } from '../sidebar/delete-worktree-flow'
+import { useWorktreeMap } from '../../store/selectors'
+import { runWorktreeDelete } from '../sidebar/delete-worktree-flow'
 import { runSleepWorktree } from '../sidebar/sleep-worktree-flow'
 import WorktreeContextMenu from '../sidebar/WorktreeContextMenu'
 import type {
@@ -357,22 +358,14 @@ function WorktreeSection({
   // re-rendering the always-mounted status-bar segment.
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
 
   // Why: WorktreeMemory is a lightweight snapshot; we look the real Worktree
   // record up from the store so rows can (a) disable Delete for the main
   // worktree, (b) hand the full record to WorktreeContextMenu for the
   // shared right-click menu, and (c) render the user-editable displayName
-  // instead of the dirname.
-  const worktreeById = useMemo(() => {
-    const map = new Map<string, Worktree>()
-    for (const list of Object.values(worktreesByRepo)) {
-      for (const wt of list) {
-        map.set(wt.id, wt)
-      }
-    }
-    return map
-  }, [worktreesByRepo])
+  // instead of the dirname. Use the shared cached selector so we don't
+  // duplicate the WeakMap-cached Map the rest of the app already shares.
+  const worktreeById = useWorktreeMap()
 
   // Shared label resolver: prefer displayName, fall back to the dirname
   // carried on the memory snapshot. Used for both rendering and alpha-sort.
@@ -506,8 +499,11 @@ function WorktreeRow({
             )}
           </button>
         ) : (
+          // Why this width: matches the chevron button's pl-2 + w-3 + pr-0.5
+          // footprint so rows without sessions don't shift horizontally
+          // relative to rows with sessions.
           <span
-            className="pl-2 py-2 pr-0.5 shrink-0 w-[calc(0.75rem+0.25rem+0.125rem)]"
+            className="pl-2 py-2 pr-0.5 shrink-0 w-[calc(0.5rem+0.75rem+0.125rem)]"
             aria-hidden
           />
         )}
@@ -529,14 +525,18 @@ function WorktreeRow({
             <span
               className={cn(
                 'block transition-opacity',
-                showActions && 'group-hover/wtrow:opacity-0 focus-within:group-[]/wtrow:opacity-0'
+                showActions &&
+                  'group-hover/wtrow:opacity-0 group-hover/wtrow:pointer-events-none group-focus-within/wtrow:opacity-0 group-focus-within/wtrow:pointer-events-none'
               )}
               aria-hidden={showActions ? undefined : true}
             >
               <Sparkline samples={worktree.history} />
             </span>
             {showActions && (
-              <div className="absolute inset-0 flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/wtrow:opacity-100 focus-within:opacity-100">
+              // Why pointer-events pairing: opacity alone leaves the buttons
+              // clickable when invisible (touch devices have no hover state),
+              // so the Delete button can fire on an accidental tap.
+              <div className="absolute inset-0 flex items-center justify-end gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover/wtrow:opacity-100 group-hover/wtrow:pointer-events-auto group-focus-within/wtrow:opacity-100 group-focus-within/wtrow:pointer-events-auto">
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>
                     <button
@@ -615,8 +615,17 @@ function WorktreeRow({
   // the same actions users get in the sidebar (Pin, Rename, Link issue, …).
   // Orphan and unresolved rows don't have a backing Worktree record and
   // would fail the menu's store lookups, so they render without it.
+  //
+  // Why contentClassName="z-[70]": PopoverContent renders at z-[60] and the
+  // default DropdownMenuContent stacks at z-50, so without a bump the
+  // right-click menu would render *under* the surrounding popover. Matches
+  // the z-[70] used for tooltips elsewhere in this file.
   if (storeRecord) {
-    return <WorktreeContextMenu worktree={storeRecord}>{rowBody}</WorktreeContextMenu>
+    return (
+      <WorktreeContextMenu worktree={storeRecord} contentClassName="z-[70]">
+        {rowBody}
+      </WorktreeContextMenu>
+    )
   }
   return rowBody
 }
@@ -634,10 +643,13 @@ export function MemoryStatusSegment({
 }): React.JSX.Element {
   const snapshot = useAppStore((s) => s.memorySnapshot)
   const fetchSnapshot = useAppStore((s) => s.fetchMemorySnapshot)
-  const clearWorktreeDeleteState = useAppStore((s) => s.clearWorktreeDeleteState)
-  const openModal = useAppStore((s) => s.openModal)
-  const skipDeleteConfirm = useAppStore((s) => s.settings?.skipDeleteWorktreeConfirm ?? false)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
+  // Why: worktree metadata (map, skipDeleteWorktreeConfirm,
+  // clearWorktreeDeleteState, openModal) is only needed at click time inside
+  // `deleteWorktree`. This segment is always mounted in the status bar, so
+  // subscribing to those slices at the top level would cause it (and every
+  // descendant) to re-render on unrelated worktree metadata churn
+  // (pin/rename/unread/session). The shared `runWorktreeDelete` helper pulls
+  // them imperatively via `useAppStore.getState()` instead.
 
   const [open, setOpen] = useState(false)
   const [sortOption, setSortOption] = useState<SortOption>('memory')
@@ -677,7 +689,11 @@ export function MemoryStatusSegment({
     }
   }, [snapshot])
 
-  const toggleRepo = (repoId: string): void => {
+  // Why empty deps: these callbacks only call the state setter returned by
+  // useState, which React guarantees is stable across renders — so we don't
+  // need to list it. Wrapping in useCallback keeps the reference stable across
+  // the 2s polling re-renders so descendants can be memoized downstream.
+  const toggleRepo = useCallback((repoId: string): void => {
     setCollapsedRepos((prev) => {
       const next = new Set(prev)
       if (next.has(repoId)) {
@@ -687,9 +703,9 @@ export function MemoryStatusSegment({
       }
       return next
     })
-  }
+  }, [])
 
-  const toggleWorktree = (worktreeId: string): void => {
+  const toggleWorktree = useCallback((worktreeId: string): void => {
     setCollapsedWorktrees((prev) => {
       const next = new Set(prev)
       if (next.has(worktreeId)) {
@@ -699,9 +715,11 @@ export function MemoryStatusSegment({
       }
       return next
     })
-  }
+  }, [])
 
-  const navigateToWorktree = (worktreeId: string): void => {
+  // Deps intentionally empty: only uses the stable setOpen setter and
+  // module-level imports (ORPHAN_WORKTREE_ID, activateAndRevealWorktree).
+  const navigateToWorktree = useCallback((worktreeId: string): void => {
     // Orphan bucket has a synthetic id with no real worktree to reveal.
     if (worktreeId === ORPHAN_WORKTREE_ID) {
       setOpen(false)
@@ -715,33 +733,21 @@ export function MemoryStatusSegment({
       return
     }
     setOpen(false)
-  }
+  }, [])
 
-  const deleteWorktree = (worktreeId: string): void => {
-    // Why: `worktreesByRepo` is the authoritative source for isMainWorktree
-    // and the current displayName — the memory snapshot only carries the
-    // lightweight worktreeName.
-    let target: { isMain: boolean; displayName: string } | null = null
-    for (const list of Object.values(worktreesByRepo)) {
-      const wt = list.find((w) => w.id === worktreeId)
-      if (wt) {
-        target = { isMain: wt.isMainWorktree, displayName: wt.displayName }
-        break
-      }
-    }
-    if (!target || target.isMain) {
-      return
-    }
-    clearWorktreeDeleteState(worktreeId)
-    // Why: close the popover before surfacing the confirm dialog / toast so
-    // the popover's outside-click dismiss doesn't close the dialog too.
+  // Why this thin wrapper: the popover needs to close before the modal/toast
+  // appears (Radix's outside-pointerdown would otherwise dismiss the dialog).
+  // The actual decision tree lives in `runWorktreeDelete` so both the popover
+  // and the sidebar context menu stay in sync.
+  const deleteWorktree = useCallback((worktreeId: string): void => {
     setOpen(false)
-    if (skipDeleteConfirm) {
-      runWorktreeDeleteWithToast(worktreeId, target.displayName)
-      return
-    }
-    openModal('delete-worktree', { worktreeId })
-  }
+    runWorktreeDelete(worktreeId)
+  }, [])
+
+  // Stable callback so onSleep prop identity doesn't churn across polls.
+  const handleSleep = useCallback((id: string): void => {
+    void runSleepWorktree(id)
+  }, [])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -775,7 +781,15 @@ export function MemoryStatusSegment({
           <div className="px-3 py-2 border-b border-border flex items-baseline gap-3 text-xs tabular-nums">
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
-                <span className="font-medium text-foreground">{formatCpu(totalCpu)}</span>
+                {/* Why tabIndex on span triggers: Radix Tooltip needs a
+                    focusable child for keyboard reveal; plain <span> isn't
+                    focusable by default. */}
+                <span
+                  tabIndex={0}
+                  className="font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+                >
+                  {formatCpu(totalCpu)}
+                </span>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6} className="z-[70] max-w-xs">
                 Combined CPU load. Values above 100% mean more than one core is working at once.
@@ -784,7 +798,12 @@ export function MemoryStatusSegment({
             <span className="text-muted-foreground/50">·</span>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
-                <span className="font-medium text-foreground">{formatMemory(totalMemory)}</span>
+                <span
+                  tabIndex={0}
+                  className="font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+                >
+                  {formatMemory(totalMemory)}
+                </span>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6} className="z-[70] max-w-xs">
                 Resident memory held by Orca plus the processes under each worktree&apos;s
@@ -794,7 +813,10 @@ export function MemoryStatusSegment({
             <span className="text-muted-foreground/50">·</span>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
-                <span className="text-muted-foreground">
+                <span
+                  tabIndex={0}
+                  className="text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+                >
                   {formatPercent(hostShare)} of system RAM
                 </span>
               </TooltipTrigger>
@@ -866,9 +888,7 @@ export function MemoryStatusSegment({
               collapsedWorktrees={collapsedWorktrees}
               toggleWorktree={toggleWorktree}
               navigateToWorktree={navigateToWorktree}
-              onSleep={(id) => {
-                void runSleepWorktree(id)
-              }}
+              onSleep={handleSleep}
               onDelete={deleteWorktree}
             />
           )}
