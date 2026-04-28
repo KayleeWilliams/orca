@@ -9,6 +9,8 @@ import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type {
   BaseRefDefaultResult,
   FsChangedPayload,
+  GitHubAssignableUser,
+  GitHubCommentResult,
   GhosttyImportPreview,
   MemorySnapshot,
   NotificationDispatchResult,
@@ -461,13 +463,32 @@ const api = {
       repoPath: string
       number: number
       body: string
-    }): Promise<{ ok: true; id: number } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('gh:addIssueComment', args),
+    }): Promise<GitHubCommentResult> => ipcRenderer.invoke('gh:addIssueComment', args),
+
+    addPRReviewCommentReply: (args: {
+      repoPath: string
+      prNumber: number
+      commentId: number
+      body: string
+      threadId?: string
+      path?: string
+      line?: number
+    }): Promise<GitHubCommentResult> => ipcRenderer.invoke('gh:addPRReviewCommentReply', args),
+
+    addPRReviewComment: (args: {
+      repoPath: string
+      prNumber: number
+      commitId: string
+      path: string
+      line: number
+      startLine?: number
+      body: string
+    }): Promise<GitHubCommentResult> => ipcRenderer.invoke('gh:addPRReviewComment', args),
 
     listLabels: (args: { repoPath: string }): Promise<string[]> =>
       ipcRenderer.invoke('gh:listLabels', args),
 
-    listAssignableUsers: (args: { repoPath: string }): Promise<string[]> =>
+    listAssignableUsers: (args: { repoPath: string }): Promise<GitHubAssignableUser[]> =>
       ipcRenderer.invoke('gh:listAssignableUsers', args),
 
     checkOrcaStarred: (): Promise<boolean | null> => ipcRenderer.invoke('gh:checkOrcaStarred'),
