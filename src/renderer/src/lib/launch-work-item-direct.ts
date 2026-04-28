@@ -10,6 +10,7 @@ import {
   getSetupConfig,
   getWorkspaceSeedName
 } from '@/lib/new-workspace'
+import { getSuggestedCreatureName } from '@/components/sidebar/worktree-name-suggestions'
 import type { OrcaHooks, RepoHookSettings, SetupDecision, TuiAgent } from '../../../shared/types'
 
 export type LaunchableWorkItem = {
@@ -37,6 +38,11 @@ export type LaunchWorkItemDirectArgs = {
    *  `ask`, or the selected repo cannot resolve). Callers wire this to the
    *  existing modal opener so the user still gets a path forward. */
   openModalFallback: () => void
+  /** Optional base branch to start the worktree from. When omitted the
+   *  worktree inherits the repo's effective base ref. Used by the
+   *  "Create from…" PR row to branch from the PR's head so the first
+   *  commit lands on the correct base without the user touching the UI. */
+  baseBranch?: string
 }
 
 function pickAgent(
@@ -100,7 +106,7 @@ async function resolveSetupDecision(
  * has a usable workspace and can paste the URL themselves.
  */
 export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Promise<void> {
-  const { item, repoId, openModalFallback } = args
+  const { item, repoId, openModalFallback, baseBranch } = args
   const store = useAppStore.getState()
   const repo = store.repos.find((r) => r.id === repoId)
   if (!repo) {
@@ -145,7 +151,7 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     const result = await store.createWorktree(
       repoId,
       workspaceName,
-      undefined,
+      baseBranch,
       setupResolution.decision
     )
     worktreeId = result.worktree.id
@@ -218,4 +224,91 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
 
   const content = item.pasteContent ?? item.url
   window.api.pty.write(ptyId, `${BRACKETED_PASTE_BEGIN}${content}${BRACKETED_PASTE_END}`)
+}
+
+export type LaunchFromBranchArgs = {
+  repoId: string
+  baseBranch: string
+  /** Called when the flow cannot proceed without user input (setup policy is
+   *  `ask`, or the selected repo cannot resolve). */
+  openModalFallback: () => void
+}
+
+/**
+ * Create a workspace from a specific branch with no linked work item. Skips
+ * the bracketed-paste draft step — there's no URL to hand the agent, so we
+ * just land the user in a fresh workspace rooted at the requested branch.
+ */
+export async function launchFromBranch(args: LaunchFromBranchArgs): Promise<void> {
+  const { repoId, baseBranch, openModalFallback } = args
+  const store = useAppStore.getState()
+  const repo = store.repos.find((r) => r.id === repoId)
+  if (!repo) {
+    openModalFallback()
+    return
+  }
+
+  const settings = store.settings
+  const detectedIds = new Set(await store.ensureDetectedAgents())
+  const effectiveAgent = pickAgent(settings?.defaultTuiAgent, detectedIds)
+
+  const setupResolution = await resolveSetupDecision(repoId, repo)
+  if (setupResolution.kind === 'needs-modal') {
+    openModalFallback()
+    return
+  }
+
+  // Why: branch-based launches don't carry a title hint, so fall back to the
+  // repo's creature-name generator — same distinct, readable default the
+  // quick-composer uses when the name field is blank.
+  const fallbackName = getSuggestedCreatureName(
+    repoId,
+    store.worktreesByRepo,
+    settings?.nestWorkspaces ?? true
+  )
+  const workspaceName = getWorkspaceSeedName({
+    explicitName: '',
+    prompt: '',
+    linkedIssueNumber: null,
+    linkedPR: null,
+    fallbackName
+  })
+
+  const startupPlan =
+    effectiveAgent === null
+      ? null
+      : buildAgentStartupPlan({
+          agent: effectiveAgent,
+          prompt: '',
+          cmdOverrides: settings?.agentCmdOverrides ?? {},
+          platform: CLIENT_PLATFORM,
+          allowEmptyPromptLaunch: true
+        })
+
+  try {
+    const result = await store.createWorktree(
+      repoId,
+      workspaceName,
+      baseBranch,
+      setupResolution.decision
+    )
+    const activation = activateAndRevealWorktree(result.worktree.id, {
+      setup: result.setup,
+      ...(startupPlan ? { startup: { command: startupPlan.launchCommand } } : {})
+    })
+    if (!activation) {
+      toast.error('Workspace created but could not be activated.')
+      return
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create workspace.'
+    toast.error(message)
+    return
+  }
+
+  store.setSidebarOpen(true)
+  if (settings?.rightSidebarOpenByDefault) {
+    store.setRightSidebarTab('explorer')
+    store.setRightSidebarOpen(true)
+  }
 }

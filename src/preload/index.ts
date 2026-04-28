@@ -1203,8 +1203,13 @@ const api = {
       ipcRenderer.on('ui:openQuickOpen', listener)
       return () => ipcRenderer.removeListener('ui:openQuickOpen', listener)
     },
-    onOpenNewWorkspace: (callback: () => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent) => callback()
+    onOpenNewWorkspace: (callback: (tab: 'quick' | 'create-from') => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, tab: 'quick' | 'create-from') => {
+        // Why: older main-process builds may send this event without a payload
+        // — default to 'quick' so the preload contract stays forward-compatible
+        // during a partial rollout where only one side has shipped the tab arg.
+        callback(tab ?? 'quick')
+      }
       ipcRenderer.on('ui:openNewWorkspace', listener)
       return () => ipcRenderer.removeListener('ui:openNewWorkspace', listener)
     },

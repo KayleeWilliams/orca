@@ -720,7 +720,7 @@ export type PreloadApi = {
     onToggleRightSidebar: (callback: () => void) => () => void
     onToggleWorktreePalette: (callback: () => void) => () => void
     onOpenQuickOpen: (callback: () => void) => () => void
-    onOpenNewWorkspace: (callback: () => void) => () => void
+    onOpenNewWorkspace: (callback: (tab: 'quick' | 'create-from') => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
     onWorktreeHistoryNavigate: (callback: (direction: 'back' | 'forward') => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
