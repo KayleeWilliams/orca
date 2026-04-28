@@ -1016,6 +1016,15 @@ export type GlobalSettings = {
    *  toast shown to users upgrading from v1.3.0 (where the daemon was on by
    *  default). Set to true the first time the toast fires so it never repeats. */
   experimentalTerminalDaemonNoticeShown: boolean
+  /** Experimental: live Agent Dashboard — a bottom-docked right-sidebar panel
+   *  that aggregates working/blocked/done agents across all worktrees, plus
+   *  the sidebar AgentStatusHover surface, retention of "done" rows, and the
+   *  hook-driven status slice that feeds them. Opt-in because the surface is
+   *  still in preview: managed hook installation (Claude/Codex/Gemini) only
+   *  runs when this is true, so toggling it on takes effect on the next app
+   *  launch. The in-pane status indicators and the cursor-agent hook path are
+   *  unaffected by this toggle. */
+  experimentalAgentDashboard: boolean
 }
 
 export type GhosttyImportPreview = {

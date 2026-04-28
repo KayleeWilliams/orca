@@ -7,7 +7,6 @@ import {
   type DashboardWorktreeCard
 } from './useDashboardData'
 import type { RetainedAgentEntry } from '@/store/slices/agent-status'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 
 // Why: when an agent finishes or its terminal closes, the store cleans up the
 // explicit status entry and the agent vanishes from useDashboardData. Retaining
@@ -20,18 +19,20 @@ export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
   const retainAgents = useAppStore((s) => s.retainAgents)
   const pruneRetainedAgents = useAppStore((s) => s.pruneRetainedAgents)
   const clearRetentionSuppressedPaneKeys = useAppStore((s) => s.clearRetentionSuppressedPaneKeys)
+  const dashboardEnabled = useAppStore((s) => s.settings?.experimentalAgentDashboard === true)
   const prevAgentsRef = useRef<Map<string, { row: DashboardAgentRow; worktreeId: string }>>(
     new Map()
   )
 
   useEffect(() => {
-    // Why: the feature-flag gate lives inside the effect (not around the hook
-    // declarations above) so rules-of-hooks stays satisfied — the store
-    // selectors and useRef must always run. When the dashboard is disabled,
-    // skip all retention work to avoid touching the store for a feature the
-    // user cannot see. Keeping this check here (rather than in App.tsx) makes
-    // the hook self-contained and safe to call unconditionally from any site.
-    if (!AGENT_DASHBOARD_ENABLED) {
+    // Why: the experimental-setting gate lives inside the effect (not around
+    // the hook declarations above) so rules-of-hooks stays satisfied — the
+    // store selectors and useRef must always run. When the dashboard is
+    // disabled, skip all retention work to avoid touching the store for a
+    // feature the user cannot see. Keeping this check here (rather than in
+    // App.tsx) makes the hook self-contained and safe to call unconditionally
+    // from any site.
+    if (!dashboardEnabled) {
       return
     }
     const current = new Map<string, { row: DashboardAgentRow; worktreeId: string }>()
@@ -73,7 +74,13 @@ export function useRetainedAgentsSync(liveGroups: DashboardRepoGroup[]): void {
     if (consumedSuppressedPaneKeys.length > 0) {
       clearRetentionSuppressedPaneKeys(consumedSuppressedPaneKeys)
     }
-  }, [liveGroups, retainAgents, pruneRetainedAgents, clearRetentionSuppressedPaneKeys])
+  }, [
+    liveGroups,
+    retainAgents,
+    pruneRetainedAgents,
+    clearRetentionSuppressedPaneKeys,
+    dashboardEnabled
+  ])
 }
 
 export function useRetainedAgents(liveGroups: DashboardRepoGroup[]): {

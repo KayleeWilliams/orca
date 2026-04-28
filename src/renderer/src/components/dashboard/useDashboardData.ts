@@ -7,7 +7,6 @@ import {
   type AgentStatusState,
   type AgentType
 } from '../../../../shared/agent-status-types'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import type { Repo, Worktree, TerminalTab } from '../../../../shared/types'
 
 // ─── Dashboard data types ─────────────────────────────────────────────────────
@@ -194,6 +193,7 @@ export function useDashboardData(): DashboardRepoGroup[] {
   // computation itself) so the memo recomputes when freshness boundaries expire,
   // even if no new PTY data arrives.
   const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
+  const dashboardEnabled = useAppStore((s) => s.settings?.experimentalAgentDashboard === true)
 
   return useMemo(
     // Why: Date.now() is read inside the memo (not as a dep) so stale-decay
@@ -201,11 +201,12 @@ export function useDashboardData(): DashboardRepoGroup[] {
     // freshness boundary crosses, driving re-evaluation without coupling to
     // wall-clock time directly.
     () => {
-      // Why: feature flag gate inside the memo avoids the O(repos × worktrees ×
-      // agents) rebuild on every store update when the dashboard is disabled.
-      // Store selectors still subscribe to keep rules-of-hooks satisfied even
-      // if the flag becomes runtime-dynamic.
-      if (!AGENT_DASHBOARD_ENABLED) {
+      // Why: experimental-setting gate inside the memo avoids the
+      // O(repos × worktrees × agents) rebuild on every store update when the
+      // dashboard is disabled. Store selectors still subscribe to keep
+      // rules-of-hooks satisfied and so flipping the setting re-renders
+      // consumers.
+      if (!dashboardEnabled) {
         return []
       }
       return buildDashboardData(
@@ -217,6 +218,13 @@ export function useDashboardData(): DashboardRepoGroup[] {
       )
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [repos, worktreesByRepo, tabsByWorktree, agentStatusByPaneKey, agentStatusEpoch]
+    [
+      repos,
+      worktreesByRepo,
+      tabsByWorktree,
+      agentStatusByPaneKey,
+      agentStatusEpoch,
+      dashboardEnabled
+    ]
   )
 }

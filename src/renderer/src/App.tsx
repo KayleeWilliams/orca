@@ -1,10 +1,6 @@
 /* eslint-disable max-lines */
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import {
-  AGENT_DASHBOARD_ENABLED,
-  DEFAULT_STATUS_BAR_ITEMS,
-  DEFAULT_WORKTREE_CARD_PROPERTIES
-} from '../../shared/constants'
+import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
 import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
 import {
@@ -162,9 +158,10 @@ function App(): React.JSX.Element {
   // event frequency), re-rendering the entire app tree on every agent status
   // update. Hosting the subscriptions in a leaf isolates that churn.
   //
-  // The AGENT_DASHBOARD_ENABLED gate still lives inside the hooks themselves
-  // (useDashboardData early-returns [] from its memo; useRetainedAgentsSync
-  // early-returns from its effect), so the gate component is cheap when off.
+  // The experimentalAgentDashboard gate still lives inside the hooks
+  // themselves (useDashboardData early-returns [] from its memo;
+  // useRetainedAgentsSync early-returns from its effect), so the gate
+  // component is cheap when the setting is off.
   // Why: git conflict-operation state also drives the worktree cards. Polling
   // cannot live under RightSidebar because App unmounts that subtree when the
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
@@ -722,7 +719,14 @@ function App(): React.JSX.Element {
       // mechanism (same pattern as Cmd+Shift+G above). xterm-helper-textarea
       // is the focus target the terminal handler itself uses to detect
       // terminal focus (see keyboard-handlers.ts isEditableTarget).
-      if (AGENT_DASHBOARD_ENABLED && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      // Why: read the experimental toggle at keypress time via getState() so
+      // flipping the setting takes effect immediately without re-binding the
+      // window-level listener (which would require adding `settings` to the
+      // effect deps and tearing down/rebinding on every unrelated settings
+      // change, like theme or font adjustments).
+      const dashboardExperimentEnabled =
+        useAppStore.getState().settings?.experimentalAgentDashboard === true
+      if (dashboardExperimentEnabled && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
         const active = document.activeElement as HTMLElement | null
         if (active?.classList.contains('xterm-helper-textarea')) {
           return

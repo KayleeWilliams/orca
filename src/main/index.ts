@@ -47,7 +47,6 @@ import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
 import { getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
-import { AGENT_DASHBOARD_ENABLED } from '../shared/constants'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
 
@@ -204,7 +203,11 @@ function openMainWindow(): BrowserWindow {
     if (mainWindow?.isDestroyed()) {
       return
     }
-    if (AGENT_DASHBOARD_ENABLED) {
+    // Why: only forward status events to the renderer when the user has
+    // opted into the experimental dashboard. Reading the current setting
+    // here (rather than a module-level snapshot) lets the gate flip live
+    // for the renderer-side surfaces — the hook server itself always runs.
+    if (store?.getSettings().experimentalAgentDashboard === true) {
       mainWindow?.webContents.send('agentStatus:set', {
         paneKey,
         tabId,
@@ -219,7 +222,7 @@ function openMainWindow(): BrowserWindow {
     // sidebar spinner, unread badge, and Claude prompt-cache timer for every
     // other agent) lights up for cursor panes too. Braille prefix ⠋ → working
     // keyword path; "action required" keyword → permission; bare label → idle.
-    // This runs regardless of AGENT_DASHBOARD_ENABLED because cursor has no
+    // This runs regardless of the dashboard setting because cursor has no
     // pre-dashboard title heuristic to fall back to.
     if (payload.agentType === 'cursor') {
       driveCursorPaneFromHook(paneKey, payload.state)
@@ -341,14 +344,16 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
   // Why: managed hook installation mutates user-global agent config.
   // Startup must fail open so a malformed local config never bricks Orca.
-  // Claude/Codex/Gemini installs are gated behind AGENT_DASHBOARD_ENABLED
-  // because the surface they feed (the in-progress agent dashboard) isn't
-  // shippable yet. Cursor installs unconditionally because cursor-agent
-  // emits no title-based working/idle signal at all (its terminal title
-  // stays literally "Cursor Agent" across a turn), so the hook channel is
-  // the only way to drive the sidebar spinner + unread path for it — there
-  // is no "pre-dashboard" fallback to degrade to the way Claude/Codex have.
-  if (AGENT_DASHBOARD_ENABLED) {
+  // Claude/Codex/Gemini installs are gated behind the experimental
+  // Agent Dashboard setting because the surface they feed (the in-progress
+  // agent dashboard) isn't shippable yet. Cursor installs unconditionally
+  // because cursor-agent emits no title-based working/idle signal at all
+  // (its terminal title stays literally "Cursor Agent" across a turn), so
+  // the hook channel is the only way to drive the sidebar spinner + unread
+  // path for it — there is no "pre-dashboard" fallback to degrade to the
+  // way Claude/Codex have. Toggling the setting takes effect on next launch
+  // because the hook scripts are installed once per boot.
+  if (store.getSettings().experimentalAgentDashboard === true) {
     for (const installManagedHooks of [
       () => claudeHookService.install(),
       () => codexHookService.install(),
@@ -425,11 +430,11 @@ app.whenReady().then(async () => {
   setAppRuntimeFlags({ daemonEnabledAtStartup: daemonStarted })
 
   // Why: the hook server runs unconditionally so cursor-agent panes can reach
-  // it. Claude/Codex/Gemini hook scripts stay uninstalled while
-  // AGENT_DASHBOARD_ENABLED is false, so only cursor events flow in. PTY
-  // spawn env reads ORCA_AGENT_HOOK_* from the live server state, so the
-  // server must start before the window opens — otherwise restored terminals
-  // race ahead without the env on first launch.
+  // it. Claude/Codex/Gemini hook scripts stay uninstalled while the
+  // experimentalAgentDashboard setting is off, so only cursor events flow
+  // in by default. PTY spawn env reads ORCA_AGENT_HOOK_* from the live
+  // server state, so the server must start before the window opens —
+  // otherwise restored terminals race ahead without the env on first launch.
   try {
     await agentHookServer.start({
       env: app.isPackaged ? 'production' : 'development',

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, ExternalLink, RefreshCw, Terminal } from 'lucide-react'
 import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
 import { useDetectedAgents } from '@/hooks/useDetectedAgents'
 import { Button } from '../ui/button'
@@ -256,7 +255,7 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
   return (
     <div className="space-y-8">
       {/* Dashboard visibility */}
-      {AGENT_DASHBOARD_ENABLED && (
+      {settings.experimentalAgentDashboard === true && (
         <section>
           <div className="flex items-center justify-between gap-4 px-1 py-2">
             <div className="space-y-0.5">

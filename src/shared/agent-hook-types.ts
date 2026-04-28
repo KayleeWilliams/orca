@@ -22,7 +22,8 @@ export type AgentHookInstallStatus = {
 // silently producing partial payloads. Still at v1 because the endpoint-file
 // rollout is additive — pre-endpoint-file scripts still post the same JSON
 // body shape, and no caller was ever shipped on v2 (the Claude/Codex/Gemini
-// install path has been gated behind AGENT_DASHBOARD_ENABLED=false, and the
-// Cursor/OpenCode scripts reroll on every Orca launch so no in-wild fleet
-// exists to distinguish from). Reserve the next bump for a real wire change.
+// install path is gated behind the experimentalAgentDashboard setting and is
+// off by default, and the Cursor/OpenCode scripts reroll on every Orca launch
+// so no in-wild fleet exists to distinguish from). Reserve the next bump for
+// a real wire change.
 export const ORCA_HOOK_PROTOCOL_VERSION = '1' as const

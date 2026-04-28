@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import type { RightSidebarTab, ActivityBarPosition } from '@/store/slices/editor'
 import type { CheckStatus } from '../../../../shared/types'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
@@ -125,12 +124,15 @@ function RightSidebarInner(): React.JSX.Element {
   const checksStatus = useAppStore(getActiveChecksStatus)
   const activityBarPosition = useAppStore((s) => s.activityBarPosition)
   const setActivityBarPosition = useAppStore((s) => s.setActivityBarPosition)
-  // Why: the bottom-docked agent dashboard is opt-out via Settings → Agents.
-  // Users who prefer a quieter sidebar can hide the panel without losing any
-  // in-terminal agent status — the per-tab status indicators remain. While
-  // settings are still loading, render the panel so it doesn't flash in once
-  // settings arrive.
+  // Why: the bottom-docked agent dashboard is opt-out via Settings → Agents,
+  // AND gated behind the experimental opt-in setting. Users who prefer a
+  // quieter sidebar can hide the panel without losing any in-terminal agent
+  // status — the per-tab status indicators remain. While settings are still
+  // loading, render the panel so it doesn't flash in once settings arrive.
   const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard !== false)
+  const dashboardExperimentEnabled = useAppStore(
+    (s) => s.settings?.experimentalAgentDashboard === true
+  )
 
   // Why: source control and checks are meaningless for non-git folders.
   // Hide those tabs so the activity bar only shows relevant actions.
@@ -254,7 +256,7 @@ function RightSidebarInner(): React.JSX.Element {
         {effectiveTab === 'checks' && <ChecksPanel />}
         {effectiveTab === 'ports' && <PortsPanel />}
       </div>
-      {AGENT_DASHBOARD_ENABLED && showAgentDashboard && <DashboardBottomPanel />}
+      {dashboardExperimentEnabled && showAgentDashboard && <DashboardBottomPanel />}
     </div>
   )
 
