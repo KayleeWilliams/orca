@@ -626,6 +626,85 @@ describe('registerPtyHandlers', () => {
         expect(spawnEnv).not.toBe(argsEnv)
       })
 
+      it('rejects a caller-supplied sessionId that escapes userData via ..', async () => {
+        // Why: effectiveSessionId is used as a Pi overlay directory key under
+        // userData. A crafted IPC payload with a traversal sequence must be
+        // refused before any filesystem side-effects run.
+        const daemonSpawn = setupDaemonAdapter()
+        handlers.clear()
+        registerPtyHandlers(mainWindow as never)
+        await expect(
+          handlers.get('pty:spawn')!(null, {
+            cols: 80,
+            rows: 24,
+            env: {},
+            sessionId: '../etc/passwd'
+          })
+        ).rejects.toThrow(/Invalid PTY session id/)
+        expect(daemonSpawn).not.toHaveBeenCalled()
+        expect(piBuildPtyEnvMock).not.toHaveBeenCalled()
+      })
+
+      it('sweeps per-PTY state when provider.spawn fails for a MINTED sessionId', async () => {
+        // Why: buildPtyHostEnv has filesystem side-effects (Pi overlay
+        // materialization). If provider.spawn later fails, the overlay would
+        // leak. The handler should clear per-PTY state for the minted id so
+        // it isn't orphaned.
+        const daemonSpawn = vi.fn(async () => {
+          throw new Error('spawn boom')
+        })
+        setLocalPtyProvider({
+          spawn: daemonSpawn,
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          shutdown: vi.fn(),
+          onData: vi.fn(() => vi.fn()),
+          onExit: vi.fn(() => vi.fn()),
+          listProcesses: vi.fn(async () => []),
+          getForegroundProcess: vi.fn(async () => null)
+        } as never)
+        handlers.clear()
+        registerPtyHandlers(mainWindow as never)
+        await expect(
+          handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, env: {} })
+        ).rejects.toThrow(/spawn boom/)
+        expect(openCodeClearPtyMock).toHaveBeenCalled()
+        expect(piClearPtyMock).toHaveBeenCalled()
+      })
+
+      it('does NOT sweep per-PTY state on provider.spawn failure for CALLER-supplied sessionId', async () => {
+        // Why: a caller-supplied sessionId may refer to an existing PTY whose
+        // state (OpenCode hooks, Pi overlay, agent-hook pane caches) must not
+        // be clobbered on a retry/attach failure. Only minted ids get swept.
+        const daemonSpawn = vi.fn(async () => {
+          throw new Error('spawn boom')
+        })
+        setLocalPtyProvider({
+          spawn: daemonSpawn,
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          shutdown: vi.fn(),
+          onData: vi.fn(() => vi.fn()),
+          onExit: vi.fn(() => vi.fn()),
+          listProcesses: vi.fn(async () => []),
+          getForegroundProcess: vi.fn(async () => null)
+        } as never)
+        handlers.clear()
+        registerPtyHandlers(mainWindow as never)
+        await expect(
+          handlers.get('pty:spawn')!(null, {
+            cols: 80,
+            rows: 24,
+            env: {},
+            sessionId: 'caller-owned-session'
+          })
+        ).rejects.toThrow(/spawn boom/)
+        expect(openCodeClearPtyMock).not.toHaveBeenCalled()
+        expect(piClearPtyMock).not.toHaveBeenCalled()
+      })
+
       it('does NOT inject host-local env on SSH spawns (connectionId set)', async () => {
         const sshSpawn = vi.fn(async (_opts: { env: Record<string, string> }) => ({
           id: 'ssh-pty'

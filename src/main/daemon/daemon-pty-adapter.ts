@@ -3,10 +3,10 @@ safety wiring spread across spawn/event-routing; splitting would scatter tightly
 adapter ↔ history lifecycle logic. */
 import { basename } from 'path'
 import { existsSync } from 'fs'
-import { randomUUID } from 'crypto'
 import { DaemonClient } from './client'
 import { HistoryManager } from './history-manager'
 import { HistoryReader } from './history-reader'
+import { mintPtySessionId } from './pty-session-id'
 import { supportsPtyStartupBarrier } from './shell-ready'
 import {
   PROTOCOL_VERSION,
@@ -93,9 +93,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private async doSpawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     await this.ensureConnected()
 
-    const sessionId =
-      opts.sessionId ??
-      (opts.worktreeId ? `${opts.worktreeId}@@${randomUUID().slice(0, 8)}` : randomUUID())
+    const sessionId = opts.sessionId ?? mintPtySessionId(opts.worktreeId)
 
     if (this.killedSessionTombstones.has(sessionId)) {
       throw new TerminalKilledError(sessionId)

@@ -4,7 +4,6 @@ foreground-process inspection, and renderer IPC stay behind a single audited
 boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
 import { join, delimiter } from 'path'
-import { randomUUID } from 'crypto'
 import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -13,7 +12,8 @@ import { openCodeHookService } from '../opencode/hook-service'
 import { agentHookServer } from '../agent-hooks/server'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
-import type { IPtyProvider, PtySpawnOptions } from '../providers/types'
+import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
+import { mintPtySessionId, isSafePtySessionId } from '../daemon/pty-session-id'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 import { CLAUDE_AUTH_ENV_VARS, hasClaudeAuthEnvConflict } from '../claude-accounts/environment'
 import {
@@ -519,25 +519,55 @@ export function registerPtyHandlers(
       // the user's Pi state (auth, sessions, skills) survives daemon cold
       // restore too. Do NOT "simplify" id allocation back to a fresh UUID
       // per spawn; that would discard Pi state on every reconnect.
+      // Why: only state for ids we minted in THIS request should be cleared on
+      // spawn failure. If the caller supplied args.sessionId it may refer to
+      // an existing PTY whose state (OpenCode hooks, Pi overlay, agent-hook
+      // pane caches) we must not clobber on a retry/attach failure.
+      const isMintedSessionId = args.sessionId === undefined && isDaemonHostSpawn
       const effectiveSessionId =
-        args.sessionId ??
-        (isDaemonHostSpawn
-          ? args.worktreeId
-            ? `${args.worktreeId}@@${randomUUID().slice(0, 8)}`
-            : randomUUID()
-          : undefined)
+        args.sessionId ?? (isDaemonHostSpawn ? mintPtySessionId(args.worktreeId) : undefined)
       const baseEnv = claudeAuth ? { ...args.env, ...claudeAuth.envPatch } : args.env
       let env: Record<string, string> | undefined = baseEnv
       if (isDaemonHostSpawn) {
+        if (effectiveSessionId === undefined) {
+          // Should be unreachable: the expression above returns a string when
+          // isDaemonHostSpawn is true. Defense-in-depth in case future edits
+          // break this invariant.
+          throw new Error('Invariant violation: daemon spawn without sessionId')
+        }
+        const sessionIdForEnv = effectiveSessionId
+        // Why: Pi overlay paths are derived from the session id; reject
+        // traversal sequences / path separators so a crafted IPC payload
+        // cannot escape the overlay root. If the renderer ever forwards a
+        // malicious sessionId or worktreeId the spawn is refused before any
+        // filesystem side-effects run.
+        if (!isSafePtySessionId(sessionIdForEnv, app.getPath('userData'))) {
+          throw new Error('Invalid PTY session id')
+        }
         // Why: clone before mutating so we don't leak injections back into
         // args.env (which the renderer may reuse for other IPC calls).
         env = { ...baseEnv }
-        buildPtyHostEnv(effectiveSessionId as string, env, {
-          isPackaged: app.isPackaged,
-          userDataPath: app.getPath('userData'),
-          selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
-          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
-        })
+        try {
+          buildPtyHostEnv(sessionIdForEnv, env, {
+            isPackaged: app.isPackaged,
+            userDataPath: app.getPath('userData'),
+            selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
+            githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
+          })
+        } catch (err) {
+          // Why: buildPtyHostEnv has filesystem side-effects (Pi overlay
+          // materialization). If it throws before we reach provider.spawn,
+          // clear per-PTY state so the next attempt starts clean.
+          //
+          // Only sweep state for ids we MINTED in this request — caller-
+          // supplied ids may refer to existing PTYs whose overlay/hook state
+          // must not be clobbered by a transient overlay-mkdir failure on a
+          // retry/attach path.
+          if (isMintedSessionId) {
+            clearProviderPtyState(sessionIdForEnv)
+          }
+          throw err
+        }
       }
       const envToDelete = claudeAuth?.stripAuthEnv
         ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
@@ -575,7 +605,25 @@ export function registerPtyHandlers(
       if (effectiveShellOverride !== undefined) {
         spawnOptions.shellOverride = effectiveShellOverride
       }
-      const result = await provider.spawn(spawnOptions)
+      let result: PtySpawnResult
+      try {
+        result = await provider.spawn(spawnOptions)
+      } catch (err) {
+        // Why: when buildPtyHostEnv materialized a Pi overlay for this id
+        // but provider.spawn failed, the overlay would leak. Sweep per-PTY
+        // state for the minted id so it isn't orphaned. Safe to call even
+        // when no overlay was created (clearProviderPtyState is a no-op in
+        // that case).
+        //
+        // Only clean up when we MINTED the id in this request. Caller-supplied
+        // ids may correspond to existing PTYs whose state (OpenCode hooks, Pi
+        // overlay, agent-hook pane caches) we MUST NOT clear on a retry/attach
+        // failure.
+        if (isMintedSessionId && effectiveSessionId !== undefined) {
+          clearProviderPtyState(effectiveSessionId)
+        }
+        throw err
+      }
       ptyOwnership.set(result.id, args.connectionId ?? null)
       if (isClaudeLaunch) {
         markClaudePtySpawned(result.id)
