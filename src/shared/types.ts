@@ -924,6 +924,11 @@ export type GlobalSettings = {
    *  — the field may be undefined on first hydrate before main-process defaults
    *  apply, and undefined must read as off (opt-in). */
   showAgentDashboard?: boolean
+  /** One-shot migration flag: the Agent Dashboard shipped default-on, so the
+   *  first load after flipping to default-off resets any persisted value to
+   *  the new default. Presence of this flag tells persistence.ts to skip the
+   *  reset on subsequent launches. */
+  showAgentDashboardDefaultOffMigrated?: boolean
   /** Why: the Tasks sidebar label can be kept cleaner for users who do not
    *  actively use the GitHub/Linear integrations behind it. */
   showTaskProviderIcons: boolean
