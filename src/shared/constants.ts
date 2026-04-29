@@ -153,7 +153,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     openLinksInApp: true,
     rightSidebarOpenByDefault: true,
     showTitlebarAgentActivity: true,
-    showAgentDashboard: true,
+    showAgentDashboard: false,
     showTaskProviderIcons: true,
     notifications: getDefaultNotificationSettings(),
     diffDefaultView: 'inline',
