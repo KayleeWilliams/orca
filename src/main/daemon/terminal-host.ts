@@ -1,5 +1,6 @@
 import { Session, type SubprocessHandle } from './session'
 import { normalizePtySize } from './daemon-pty-size'
+import { resolveProcessCwd } from '../providers/process-cwd'
 import type { SessionInfo, TerminalSnapshot, ShellReadyState } from './types'
 import { SessionNotFoundError } from './types'
 
@@ -166,8 +167,7 @@ export class TerminalHost {
     // tracked value stays null through the entire session for most users.
     // Fall back to the live process cwd via /proc/<pid>/cwd (Linux) or
     // lsof (macOS). Matches the LocalPtyProvider.getCwd fallback.
-    const { resolveProcessCwd } = await import('../providers/process-cwd')
-    const resolved = await resolveProcessCwd(session.pid, '')
+    const resolved = await resolveProcessCwd(session.pid)
     return resolved || null
   }
 

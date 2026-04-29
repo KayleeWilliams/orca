@@ -63,6 +63,23 @@ describe('resolveSplitCwd', () => {
     expect(result).toBe('/worktree')
   })
 
+  it('returns the IPC value when getCwd resolves just under the timeout', async () => {
+    installGetCwd(
+      () =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve('/slow/ipc'), 900)
+        })
+    )
+    const promise = resolveSplitCwd({
+      paneCwdMap: new Map(),
+      sourcePaneId: 1,
+      sourcePtyId: 'pty-1',
+      fallbackCwd: '/worktree'
+    })
+    await vi.advanceTimersByTimeAsync(900)
+    expect(await promise).toBe('/slow/ipc')
+  })
+
   it('times out and falls back when IPC hangs', async () => {
     installGetCwd(() => new Promise<string>(() => {}))
     const promise = resolveSplitCwd({
@@ -71,7 +88,7 @@ describe('resolveSplitCwd', () => {
       sourcePtyId: 'pty-1',
       fallbackCwd: '/worktree'
     })
-    await vi.advanceTimersByTimeAsync(250)
+    await vi.advanceTimersByTimeAsync(1500)
     expect(await promise).toBe('/worktree')
   })
 
