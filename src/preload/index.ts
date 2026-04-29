@@ -1792,10 +1792,16 @@ const api = {
   },
 
   mobile: {
-    getPairingQR: (): Promise<
+    listNetworkInterfaces: (): Promise<{
+      interfaces: { name: string; address: string }[]
+    }> => ipcRenderer.invoke('mobile:listNetworkInterfaces'),
+
+    getPairingQR: (args?: {
+      address?: string
+    }): Promise<
       | { available: false }
       | { available: true; qrDataUrl: string; endpoint: string; deviceId: string }
-    > => ipcRenderer.invoke('mobile:getPairingQR'),
+    > => ipcRenderer.invoke('mobile:getPairingQR', args),
 
     listDevices: (): Promise<{
       devices: { deviceId: string; name: string; pairedAt: number; lastSeenAt: number }[]
