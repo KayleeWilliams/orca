@@ -124,12 +124,11 @@ function RightSidebarInner(): React.JSX.Element {
   const checksStatus = useAppStore(getActiveChecksStatus)
   const activityBarPosition = useAppStore((s) => s.activityBarPosition)
   const setActivityBarPosition = useAppStore((s) => s.setActivityBarPosition)
-  // Why: the bottom-docked agent dashboard is opt-out via Settings → Agents,
-  // AND gated behind the experimental opt-in setting. Users who prefer a
-  // quieter sidebar can hide the panel without losing any in-terminal agent
-  // status — the per-tab status indicators remain. While settings are still
-  // loading, render the panel so it doesn't flash in once settings arrive.
-  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard !== false)
+  // Why: the bottom-docked agent dashboard is opt-in via Settings → Agents
+  // AND gated behind the experimental opt-in setting. Undefined/missing
+  // settings (first hydrate, never-toggled) must read as off so the panel
+  // doesn't flash in before settings load.
+  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard === true)
   const dashboardExperimentEnabled = useAppStore(
     (s) => s.settings?.experimentalAgentDashboard === true
   )

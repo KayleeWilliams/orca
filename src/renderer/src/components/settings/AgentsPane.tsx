@@ -246,11 +246,10 @@ export function AgentsPane({ settings, updateSettings }: AgentsPaneProps): React
     defaultAgent === null || (defaultAgent !== 'blank' && !detectedIds?.has(defaultAgent))
   const isBlankDefault = defaultAgent === 'blank'
 
-  // Why: match right-sidebar's `s.settings?.showAgentDashboard !== false` read.
-  // Persisted settings from older versions may be missing this field — treating
-  // `undefined` as "on" here keeps the toggle's displayed state in sync with
-  // the sidebar's actual rendering, so the UI never contradicts itself.
-  const showDashboard = settings.showAgentDashboard !== false
+  // Why: match right-sidebar's `s.settings?.showAgentDashboard === true` read
+  // so the toggle's displayed state stays in sync with the sidebar's actual
+  // rendering. Undefined reads as off (opt-in).
+  const showDashboard = settings.showAgentDashboard === true
 
   return (
     <div className="space-y-8">
