@@ -21,7 +21,6 @@ import FileExplorer from './FileExplorer'
 import SourceControl from './SourceControl'
 import SearchPanel from './Search'
 import ChecksPanel from './ChecksPanel'
-import DashboardBottomPanel from './DashboardBottomPanel'
 import PortsPanel from './PortsPanel'
 
 const MIN_WIDTH = 220
@@ -124,15 +123,6 @@ function RightSidebarInner(): React.JSX.Element {
   const checksStatus = useAppStore(getActiveChecksStatus)
   const activityBarPosition = useAppStore((s) => s.activityBarPosition)
   const setActivityBarPosition = useAppStore((s) => s.setActivityBarPosition)
-  // Why: the bottom-docked agent dashboard is opt-in via Settings → Agents
-  // AND gated behind the experimental opt-in setting. Undefined/missing
-  // settings (first hydrate, never-toggled) must read as off so the panel
-  // doesn't flash in before settings load.
-  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard === true)
-  const dashboardExperimentEnabled = useAppStore(
-    (s) => s.settings?.experimentalAgentDashboard === true
-  )
-
   // Why: source control and checks are meaningless for non-git folders.
   // Hide those tabs so the activity bar only shows relevant actions.
   const activeRepo = useRepoById(activeWorktree?.repoId ?? null)
@@ -255,7 +245,6 @@ function RightSidebarInner(): React.JSX.Element {
         {effectiveTab === 'checks' && <ChecksPanel />}
         {effectiveTab === 'ports' && <PortsPanel />}
       </div>
-      {dashboardExperimentEnabled && showAgentDashboard && <DashboardBottomPanel />}
     </div>
   )
 

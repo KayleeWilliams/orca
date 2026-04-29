@@ -26,20 +26,17 @@ const EMPTY_TABS: TerminalTab[] = []
 const EMPTY_LIVE_ENTRIES: AgentStatusEntry[] = []
 const EMPTY_RETAINED: RetainedAgentEntry[] = []
 
-// Why: the hovercard must render the exact same information the per-worktree
-// dashboard card shows — hook-reported agents plus any retained "done"
-// snapshots. We intentionally do NOT call useDashboardData() +
-// enrichGroupsWithRetained() here, even though that would centralize the row-
-// building logic. AgentStatusHover wraps every WorktreeCard, so reusing the
-// full dashboard pipeline would mean every agent-status event recomputes the
-// entire repo × worktree × tabs × agentStatus aggregation once per card on
-// screen — O(worktrees²) work per update (render amplification). Instead we
-// read the store's primitive maps via narrow selectors and do a focused
-// per-worktree scan that mirrors buildAgentRowsForWorktree in
-// useDashboardData.ts and the retained-row merge in useRetainedAgents.ts.
-// Retention state itself is still hoisted into the store (see
-// useRetainedAgentsSync wired at App level), so dismissing in the hover
-// reflects in the dashboard and vice versa.
+// Why: the hovercard renders hook-reported agents plus any retained "done"
+// snapshots. We intentionally do NOT call useDashboardData() here, even
+// though that would centralize the row-building logic. AgentStatusHover
+// wraps every WorktreeCard, so reusing the full aggregation pipeline would
+// mean every agent-status event recomputes the entire repo × worktree ×
+// tabs × agentStatus aggregation once per card on screen — O(worktrees²)
+// work per update (render amplification). Instead we read the store's
+// primitive maps via narrow selectors and do a focused per-worktree scan
+// that mirrors buildAgentRowsForWorktree in useDashboardData.ts.
+// Retention state itself is hoisted into the store (see useRetainedAgentsSync
+// wired at App level) so dismissal is consistent across surfaces.
 const AgentStatusHover = React.memo(function AgentStatusHover({
   worktreeId,
   children
@@ -164,10 +161,9 @@ const AgentStatusHover = React.memo(function AgentStatusHover({
       }
     }
 
-    // Retained rows — mirror enrichGroupsWithRetained: add a retained snapshot
-    // only if it belongs to THIS worktree and no live row already occupies its
-    // paneKey. `retained` is already pre-filtered to this worktree by the
-    // narrow selector above.
+    // Retained rows: add a retained snapshot only if it belongs to THIS
+    // worktree and no live row already occupies its paneKey. `retained` is
+    // already pre-filtered to this worktree by the narrow selector above.
     for (const ra of retained) {
       if (seenPaneKeys.has(ra.entry.paneKey)) {
         continue

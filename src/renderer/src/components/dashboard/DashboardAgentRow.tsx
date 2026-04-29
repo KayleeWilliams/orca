@@ -165,8 +165,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     // role=button violates ARIA's "no interactive content inside interactive
     // content" rule and breaks keyboard/AT navigation. Keyboard users reach
     // the agent via the child buttons and the tab switcher; the outer <div>
-    // stays a plain clickable surface for pointer activation, mirroring the
-    // pattern in DashboardBottomPanel.tsx's collapse header.
+    // stays a plain clickable surface for pointer activation.
     <div
       onClick={handleActivate}
       className={cn(

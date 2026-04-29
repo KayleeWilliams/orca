@@ -98,16 +98,6 @@ export class Store {
           : rawOptionAsAlt === undefined || rawOptionAsAlt === 'true'
             ? 'auto'
             : rawOptionAsAlt
-        // Why: the Agent Dashboard shipped default-on, so every pre-existing
-        // install has `showAgentDashboard: true` persisted. It's now default-off
-        // and strictly opt-in. Drop the persisted value once so the new default
-        // takes effect; subsequent user toggles persist normally. The migrated
-        // flag guards against re-running this on later launches.
-        const showAgentDashboardMigrated =
-          parsed.settings?.showAgentDashboardDefaultOffMigrated === true
-        const migratedShowAgentDashboard = showAgentDashboardMigrated
-          ? parsed.settings?.showAgentDashboard
-          : defaults.settings.showAgentDashboard
         return {
           ...defaults,
           ...parsed,
@@ -116,8 +106,6 @@ export class Store {
             ...parsed.settings,
             terminalMacOptionAsAlt: migratedOptionAsAlt,
             terminalMacOptionAsAltMigrated: true,
-            showAgentDashboard: migratedShowAgentDashboard,
-            showAgentDashboardDefaultOffMigrated: true,
             notifications: {
               ...getDefaultNotificationSettings(),
               ...parsed.settings?.notifications
