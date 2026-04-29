@@ -688,6 +688,11 @@ export type SparsePreset = {
   updatedAt: number
 }
 
+export type WorktreeStartupLaunch = {
+  command: string
+  env?: Record<string, string>
+}
+
 export type CreateWorktreeArgs = {
   repoId: string
   name: string

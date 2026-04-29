@@ -54,6 +54,7 @@ import type {
   Worktree,
   WorktreeMeta,
   WorktreeSetupLaunch,
+  WorktreeStartupLaunch,
   WorkspaceSessionState
 } from '../shared/types'
 import type {
@@ -788,7 +789,12 @@ export type PreloadApi = {
     onToggleStatusBar: (callback: () => void) => () => void
     onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
-      callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
+      callback: (data: {
+        repoId: string
+        worktreeId: string
+        setup?: WorktreeSetupLaunch
+        startup?: WorktreeStartupLaunch
+      }) => void
     ) => () => void
     onCreateTerminal: (
       callback: (data: { worktreeId: string; command?: string; title?: string }) => void

@@ -1407,6 +1407,7 @@ const api = {
         repoId: string
         worktreeId: string
         setup?: { runnerScriptPath: string; envVars: Record<string, string> }
+        startup?: { command: string; env?: Record<string, string> }
       }) => void
     ): (() => void) => {
       const listener = (
@@ -1415,6 +1416,7 @@ const api = {
           repoId: string
           worktreeId: string
           setup?: { runnerScriptPath: string; envVars: Record<string, string> }
+          startup?: { command: string; env?: Record<string, string> }
         }
       ) => callback(data)
       ipcRenderer.on('ui:activateWorktree', listener)
