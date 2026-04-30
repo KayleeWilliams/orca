@@ -52,7 +52,6 @@ function Sidebar(): React.JSX.Element {
         <SidebarHeader />
         <SearchBar />
 
-        {/* Virtualized scrollable list */}
         <WorktreeList />
 
         {/* Fixed bottom toolbar */}

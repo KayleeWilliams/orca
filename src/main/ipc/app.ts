@@ -9,7 +9,7 @@ export type AppRuntimeFlags = {
   /** Whether the experimental agent dashboard setting was enabled when this
    *  session booted. When true, Claude/Codex/Gemini managed hook installation
    *  was attempted at startup (individual install failures are logged but do
-   *  not flip this flag — the dashboard UI itself treats missing hooks as
+   *  not flip this flag — the inline agents list treats missing hooks as
    *  no-ops). Toggling the setting only affects hook installation on the next
    *  launch, so the renderer compares this against the current setting to
    *  decide whether a "restart required" banner needs to be shown. */

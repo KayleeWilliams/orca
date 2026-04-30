@@ -82,6 +82,12 @@ export type UISlice = {
    *  first visit after launch is a legitimate "need to see" moment. */
   acknowledgedAgentsByPaneKey: Record<string, number>
   acknowledgeAgents: (paneKeys: string[]) => void
+  /** Per-worktree collapsed state for the inline agents section shown inside
+   *  each workspace card. Session-only — a restart defaults back to expanded,
+   *  which matches the expected default (people rarely want agents hidden
+   *  across launches). */
+  collapsedInlineAgentsByWorktreeId: Record<string, boolean>
+  toggleInlineAgentsCollapsed: (worktreeId: string) => void
   activeView: 'terminal' | 'settings' | 'tasks'
   previousViewBeforeTasks: 'terminal' | 'settings'
   previousViewBeforeSettings: 'terminal' | 'tasks'
@@ -250,6 +256,18 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         }
       }
       return next ? { acknowledgedAgentsByPaneKey: next } : s
+    }),
+  collapsedInlineAgentsByWorktreeId: {},
+  toggleInlineAgentsCollapsed: (worktreeId) =>
+    set((s) => {
+      const current = s.collapsedInlineAgentsByWorktreeId[worktreeId] === true
+      const next = { ...s.collapsedInlineAgentsByWorktreeId }
+      if (current) {
+        delete next[worktreeId]
+      } else {
+        next[worktreeId] = true
+      }
+      return { collapsedInlineAgentsByWorktreeId: next }
     }),
 
   activeView: 'terminal',

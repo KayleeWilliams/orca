@@ -67,7 +67,12 @@ export const DEFAULT_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = [
   'ci',
   'issue',
   'pr',
-  'comment'
+  'comment',
+  // Why: agent activity is the primary reason users opt into the feature, so
+  // show it inline on each card by default. Unchecking this from the
+  // Workspaces view options hides the inline list entirely — there is no
+  // alternative agent-activity surface in the sidebar.
+  'inline-agents'
 ]
 
 export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
@@ -155,7 +160,6 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     openLinksInApp: true,
     rightSidebarOpenByDefault: true,
     showTitlebarAgentActivity: true,
-    showAgentDashboard: true,
     showTaskProviderIcons: true,
     notifications: getDefaultNotificationSettings(),
     diffDefaultView: 'inline',

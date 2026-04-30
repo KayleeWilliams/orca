@@ -202,9 +202,7 @@ describe('fetchGeminiRateLimits', () => {
         return Promise.resolve(makeResponse(quotaResponse))
       }
       if (url.includes('token')) {
-        return Promise.resolve(
-          makeResponse({ access_token: 'retried-token', expires_in: 3600 })
-        )
+        return Promise.resolve(makeResponse({ access_token: 'retried-token', expires_in: 3600 }))
       }
       if (url.includes('loadCodeAssist')) {
         return Promise.resolve(makeResponse({ cloudaicompanionProject: 'proj-123' }))

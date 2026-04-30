@@ -919,16 +919,6 @@ export type GlobalSettings = {
   rightSidebarOpenByDefault: boolean
   /** Whether to show the live agent activity count badge in the titlebar. */
   showTitlebarAgentActivity: boolean
-  /** Whether to show the Agent Dashboard panel at the bottom of the right sidebar.
-   *  Why: optional because readers use the `settings?.showAgentDashboard !== false`
-   *  idiom (right-sidebar/index.tsx, AgentsPane.tsx) which presumes the field may
-   *  be undefined — e.g. on first hydrate before main-process defaults apply, or
-   *  when migrating settings persisted before this field existed. A required
-   *  `boolean` here would make those readers' fallback branches dead-on-paper
-   *  while still being reached at runtime, which is exactly the kind of type
-   *  hack that drifts silently. Aligning the declaration with reader intent
-   *  keeps the contract honest. */
-  showAgentDashboard?: boolean
   /** Why: the Tasks sidebar label can be kept cleaner for users who do not
    *  actively use the GitHub/Linear integrations behind it. */
   showTaskProviderIcons: boolean
@@ -1014,14 +1004,13 @@ export type GlobalSettings = {
    *  detection, so no visible behavior change. Then we flip this flag to true
    *  and never migrate again. */
   terminalMacOptionAsAltMigrated: boolean
-  /** Experimental: live Agent Dashboard — a bottom-docked right-sidebar panel
-   *  that aggregates working/blocked/done agents across all worktrees, plus
-   *  the sidebar AgentStatusHover surface, retention of "done" rows, and the
-   *  hook-driven status slice that feeds them. Opt-in because the surface is
-   *  still in preview: managed hook installation (Claude/Codex/Gemini) only
-   *  runs when this is true, so toggling it on takes effect on the next app
-   *  launch. The in-pane status indicators and the cursor-agent hook path are
-   *  unaffected by this toggle. */
+  /** Experimental: live agent activity — inline per-workspace-card agent
+   *  rows showing state, prompt, and last message, plus retention of "done"
+   *  rows and the hook-driven status slice that feeds them. Opt-in because
+   *  the surface is still in preview: managed hook installation
+   *  (Claude/Codex/Gemini) only runs when this is true, so toggling it on
+   *  takes effect on the next app launch. The in-pane status indicators and
+   *  the cursor-agent hook path are unaffected by this toggle. */
   experimentalAgentDashboard: boolean
 }
 
@@ -1050,7 +1039,20 @@ export type NotificationDispatchResult = {
   reason?: 'disabled' | 'source-disabled' | 'suppressed-focus' | 'cooldown' | 'not-supported'
 }
 
-export type WorktreeCardProperty = 'status' | 'unread' | 'ci' | 'issue' | 'pr' | 'comment'
+export type WorktreeCardProperty =
+  | 'status'
+  | 'unread'
+  | 'ci'
+  | 'issue'
+  | 'pr'
+  | 'comment'
+  // Why: inline list of agent activity rendered directly inside each
+  // workspace card when the experimental agent-activity feature is on. On by
+  // default (see DEFAULT_WORKTREE_CARD_PROPERTIES in shared/constants.ts) —
+  // live agent activity is the primary reason users opt into the feature.
+  // Users who prefer a compact sidebar can uncheck it from the Workspaces
+  // view options.
+  | 'inline-agents'
 
 export type StatusBarItem =
   | 'claude'

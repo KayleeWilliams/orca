@@ -71,21 +71,29 @@ type Props = {
    * Why: the relative-time labels ("Xm ago") need a periodic re-render to stay
    * honest. We accept `now` from a parent container so a single 30s tick owned
    * by the container drives every visible row, rather than each row running
-   * its own setInterval. See useNow.ts for the shared hook — callers own the
-   * tick (AgentDashboard for the dashboard, AgentStatusHover for hovercards).
+   * its own setInterval. See useNow.ts for the shared hook — WorktreeCardAgents
+   * owns the tick for the inline-in-card list.
    */
   now: number
   /**
-   * Why: bold weight for the prompt rides on the enclosing worktree's
-   * isUnread (unvisited) signal, not on the per-agent state. Passed in from
-   * DashboardWorktreeCard so the workspace name and its agent rows share
+   * Why: bold weight for the prompt rides on the enclosing workspace card's
+   * unvisited signal, not on the per-agent state. Passed in from
+   * WorktreeCardAgents so the workspace name and its agent rows share
    * the same "you haven't looked at this yet" rule — visiting the worktree
-   * clears isUnread, and the next render mutes both in lockstep.
+   * clears the signal, and the next render mutes both in lockstep.
    *
    * Optional so other callers can opt out and default to muted when their
    * surface carries the unread signal elsewhere.
    */
   isUnvisited?: boolean
+  /**
+   * Why: the inline-in-card variant sits in a tighter layout next to the
+   * agent identity icon, so 'md' reads as a second ~12px glyph that users
+   * can confuse with the agent icon. 'sm' keeps them visually distinct.
+   * The full dashboard has more breathing room and prefers 'md' for leading-
+   * slot presence, so default stays 'md'.
+   */
+  stateDotSize?: 'sm' | 'md'
 }
 
 const DashboardAgentRow = React.memo(function DashboardAgentRow({
@@ -93,7 +101,8 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   onDismiss,
   onActivate,
   now,
-  isUnvisited = false
+  isUnvisited = false,
+  stateDotSize = 'md'
 }: Props) {
   const [expanded, setExpanded] = useState(false)
   // Why: stop propagation so clicking the X doesn't also fire the worktree
@@ -146,7 +155,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   // slot would collapse the text column and leave the row with no human-
   // readable label — just a state dot and icon. Fall back to the state label
   // ("Working", "Done", "Waiting", …) so every row is identifiable at a
-  // glance, matching the old AgentStatusHover.tsx behavior.
+  // glance.
   const displayLabel = prompt || agentStateLabel(asDotState(agent.state))
   // Why: the tool row describes what the agent is *currently* doing; once it
   // leaves working, that line goes stale and misleads (a done row showing
@@ -179,8 +188,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
     // role=button violates ARIA's "no interactive content inside interactive
     // content" rule and breaks keyboard/AT navigation. Keyboard users reach
     // the agent via the child buttons and the tab switcher; the outer <div>
-    // stays a plain clickable surface for pointer activation, mirroring the
-    // pattern in DashboardBottomPanel.tsx's collapse header.
+    // stays a plain clickable surface for pointer activation.
     <div
       onClick={handleActivate}
       className={cn(
@@ -206,7 +214,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex shrink-0 items-center justify-center">
-              <AgentStateDot state={asDotState(agent.state)} size="md" />
+              <AgentStateDot state={asDotState(agent.state)} size={stateDotSize} />
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" sideOffset={4}>
