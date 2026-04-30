@@ -657,11 +657,7 @@ export type PreloadApi = {
       excludePaths?: string[]
     }) => Promise<string[]>
     search: (args: SearchOptions & { connectionId?: string }) => Promise<SearchResult>
-    importExternalPaths: (args: {
-      sourcePaths: string[]
-      destDir: string
-      connectionId?: string
-    }) => Promise<{
+    importExternalPaths: (args: { sourcePaths: string[]; destDir: string }) => Promise<{
       results: (
         | {
             sourcePath: string
