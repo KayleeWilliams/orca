@@ -1097,6 +1097,11 @@ const api = {
       connectionId?: string
     }): Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }> =>
       ipcRenderer.invoke('fs:readFile', args),
+    listMarkdownDocuments: (args: {
+      rootPath: string
+      connectionId?: string
+    }): Promise<{ filePath: string; relativePath: string; basename: string; name: string }[]> =>
+      ipcRenderer.invoke('fs:listMarkdownDocuments', args),
     writeFile: (args: {
       filePath: string
       content: string

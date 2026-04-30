@@ -1171,6 +1171,13 @@ export type DirEntry = {
   isSymlink: boolean
 }
 
+export type MarkdownDocument = {
+  filePath: string
+  relativePath: string
+  basename: string
+  name: string
+}
+
 // ─── Filesystem watcher ─────────────────────────────────────
 export type FsChangeEvent = {
   kind: 'create' | 'update' | 'delete' | 'rename' | 'overflow'

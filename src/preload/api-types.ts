@@ -35,6 +35,7 @@ import type {
   LinearLabel,
   LinearMember,
   LinearTeam,
+  MarkdownDocument,
   GitHubIssueUpdate,
   NotificationDispatchRequest,
   NotificationDispatchResult,
@@ -629,6 +630,10 @@ export type PreloadApi = {
       filePath: string
       connectionId?: string
     }) => Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }>
+    listMarkdownDocuments: (args: {
+      rootPath: string
+      connectionId?: string
+    }) => Promise<MarkdownDocument[]>
     writeFile: (args: { filePath: string; content: string; connectionId?: string }) => Promise<void>
     createFile: (args: { filePath: string; connectionId?: string }) => Promise<void>
     createDir: (args: { dirPath: string; connectionId?: string }) => Promise<void>

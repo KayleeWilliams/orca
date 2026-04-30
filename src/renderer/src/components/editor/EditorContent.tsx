@@ -9,6 +9,7 @@ import { getMarkdownRenderMode } from './markdown-render-mode'
 import { getMarkdownRichModeUnsupportedMessage } from './markdown-rich-mode'
 import { extractFrontMatter, prependFrontMatter } from './markdown-frontmatter'
 import { RichMarkdownErrorBoundary } from './RichMarkdownErrorBoundary'
+import { useMarkdownDocuments } from './useMarkdownDocuments'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 const DiffViewer = lazy(() => import('./DiffViewer'))
@@ -84,6 +85,9 @@ export function EditorContent({
   const openConflictReview = useAppStore((s) => s.openConflictReview)
   const closeFile = useAppStore((s) => s.closeFile)
   const setRightSidebarTab = useAppStore((s) => s.setRightSidebarTab)
+  const markdownDocLinks = useMarkdownDocuments(activeFile, isMarkdown, mdViewMode)
+  const handleMarkdownSave = (content: string): Promise<void> =>
+    handleSave(content).then(() => markdownDocLinks.refreshMarkdownDocuments())
 
   const activeConflictEntry =
     worktreeEntries.find((entry) => entry.path === activeFile.relativePath) ?? null
@@ -107,7 +111,7 @@ export function EditorContent({
       content={editBuffers[activeFile.id] ?? fc.content}
       language={resolvedLanguage}
       onContentChange={handleContentChange}
-      onSave={handleSave}
+      onSave={isMarkdown ? handleMarkdownSave : handleSave}
       revealLine={
         pendingEditorReveal?.filePath === activeFile.filePath ? pendingEditorReveal.line : undefined
       }
@@ -121,6 +125,7 @@ export function EditorContent({
           ? pendingEditorReveal.matchLength
           : undefined
       }
+      markdownDocuments={isMarkdown ? markdownDocLinks.markdownDocuments : undefined}
     />
   )
 
@@ -169,8 +174,8 @@ export function EditorContent({
         : handleContentChange
 
       const onSaveWithFm = fm
-        ? (body: string): Promise<void> => handleSave(prependFrontMatter(fm.raw, body))
-        : handleSave
+        ? (body: string): Promise<void> => handleMarkdownSave(prependFrontMatter(fm.raw, body))
+        : handleMarkdownSave
 
       return (
         <div className="flex h-full min-h-0 flex-col">
@@ -221,6 +226,7 @@ export function EditorContent({
               content={currentContent}
               filePath={activeFile.filePath}
               scrollCacheKey={`${editorViewStateKey}:preview`}
+              {...markdownDocLinks.previewProps}
             />
           </div>
         </div>
@@ -302,6 +308,7 @@ export function EditorContent({
           filePath={activeFile.filePath}
           scrollCacheKey={markdownPreviewViewStateKey}
           initialAnchor={activeFile.markdownPreviewAnchor ?? null}
+          {...markdownDocLinks.previewProps}
         />
       </div>
     )
@@ -403,6 +410,7 @@ export function EditorContent({
             content={modifiedDiffContent}
             filePath={activeFile.filePath}
             scrollCacheKey={`${diffViewStateKey}:preview`}
+            {...markdownDocLinks.previewProps}
           />
         </div>
       </div>
@@ -421,7 +429,7 @@ export function EditorContent({
       editable={isEditable}
       worktreeId={activeFile.worktreeId}
       onContentChange={isEditable ? handleContentChange : undefined}
-      onSave={isEditable ? handleSave : undefined}
+      onSave={isEditable ? (isMarkdown ? handleMarkdownSave : handleSave) : undefined}
     />
   )
 }
