@@ -316,11 +316,12 @@ const XTERM_HTML = `<!DOCTYPE html>
       ? containerHeightPx
       : window.innerHeight;
     var cols = Math.floor(vpWidth / cellWidth);
-    // Why: subtract one cellHeight of padding before dividing, so the
-    // last row never clips against the container's bottom edge. Without
-    // this, Math.floor can produce a row count where the final row's
-    // bottom pixels sit right at or past the visible boundary.
-    var rows = Math.max(8, Math.floor((vpHeight - cellHeight) / cellHeight));
+    // Why: subtract 2 rows after dividing. The WebView's reported height
+    // can slightly overstate the usable area (layout timing, subpixel
+    // rounding, safe-area insets). Subtracting 2 guarantees the last
+    // visible row plus the shell prompt (which often wraps on narrow
+    // screens) stays fully above the accessory bar.
+    var rows = Math.max(8, Math.floor(vpHeight / cellHeight) - 2);
     notify({ type: 'measure-result', cols: cols, rows: rows });
   }
 
