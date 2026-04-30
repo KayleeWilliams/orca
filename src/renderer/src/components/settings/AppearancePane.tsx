@@ -34,6 +34,20 @@ const STATUS_BAR_TOGGLES: readonly {
     toggleDescription: 'Show Codex token and cost usage for the active workspace.'
   },
   {
+    id: 'gemini',
+    title: 'Gemini Usage',
+    description: 'Show Gemini token and cost usage in the status bar.',
+    keywords: ['status bar', 'gemini', 'usage', 'tokens', 'cost', 'google'],
+    toggleDescription: 'Show Gemini token and cost usage for the active workspace.'
+  },
+  {
+    id: 'opencode-go',
+    title: 'OpenCode Go Usage',
+    description: 'Show OpenCode Go token and cost usage in the status bar.',
+    keywords: ['status bar', 'opencode', 'opencode-go', 'usage', 'tokens', 'cost'],
+    toggleDescription: 'Show OpenCode Go token and cost usage for the active workspace.'
+  },
+  {
     id: 'ssh',
     title: 'SSH Status',
     description: 'Show the active SSH connection status in the status bar.',
