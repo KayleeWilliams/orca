@@ -2,12 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorktreeMeta } from '../../shared/types'
 import { addWorktree, listWorktrees, removeWorktree } from '../git/worktree'
-import {
-  createSetupRunnerScript,
-  getEffectiveHooks,
-  runHook,
-  shouldRunSetupForCreate
-} from '../hooks'
+import { createSetupRunnerScript, getEffectiveHooks, runHook } from '../hooks'
 import { OrchestrationDb } from './orchestration/db'
 import { OrcaRuntimeService } from './orca-runtime'
 
@@ -45,7 +40,11 @@ vi.mock('../hooks', () => ({
   createSetupRunnerScript: vi.fn(),
   getEffectiveHooks: vi.fn().mockReturnValue(null),
   runHook: vi.fn().mockResolvedValue({ success: true, output: '' }),
-  shouldRunSetupForCreate: vi.fn().mockReturnValue(false)
+  shouldRunSetupForCreate: vi
+    .fn()
+    .mockImplementation((_repo: unknown, decision: string) => decision === 'run'),
+  getEffectiveSetupRunPolicy: vi.fn().mockReturnValue('auto'),
+  hasHooksFile: vi.fn().mockReturnValue(false)
 }))
 
 vi.mock('../ipc/worktree-logic', async (importOriginal) => {
@@ -83,6 +82,10 @@ afterEach(() => {
   vi.mocked(createSetupRunnerScript).mockReset()
   vi.mocked(getEffectiveHooks).mockReset()
   vi.mocked(runHook).mockReset()
+  vi.mocked(shouldRunSetupForCreate).mockReset()
+  vi.mocked(shouldRunSetupForCreate).mockImplementation(
+    (_repo: unknown, decision: string) => decision === 'run'
+  )
   vi.mocked(getEffectiveHooks).mockReturnValue(null)
   computeWorktreePathMock.mockReset()
   ensurePathWithinWorkspaceMock.mockReset()
@@ -156,7 +159,6 @@ const store = {
     }
   }),
   getWorktreeMeta: (worktreeId: string) => store.getAllWorktreeMeta()[worktreeId],
-  getGitHubCache: () => ({ pr: {}, issue: {} }),
   setWorktreeMeta: (_worktreeId: string, meta: Record<string, unknown>) =>
     ({
       ...store.getAllWorktreeMeta()[TEST_WORKTREE_ID],
@@ -385,99 +387,6 @@ describe('OrcaRuntimeService', () => {
     expect(writes).toEqual(['continue', '\r'])
   })
 
-  it('serializes terminal state from runtime-tracked PTY output when renderer has no buffer', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    runtime.setPtyController({
-      write: () => true,
-      kill: () => true,
-      getForegroundProcess: async () => null,
-      getSize: () => ({ cols: 100, rows: 30 }),
-      serializeBuffer: vi.fn().mockResolvedValue(null)
-    })
-
-    runtime.onPtyData('pty-1', '\x1b[31mred text\x1b[0m\n', 123)
-
-    const serialized = await runtime.serializeTerminalBuffer('pty-1')
-    expect(serialized).toMatchObject({ cols: 100, rows: 30 })
-    expect(serialized?.data).toContain('red text')
-    expect(serialized?.data).toContain('[31m')
-  })
-
-  it('prefers runtime-tracked screen snapshots over renderer scrollback snapshots', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    runtime.setPtyController({
-      write: () => true,
-      kill: () => true,
-      getForegroundProcess: async () => null,
-      getSize: () => ({ cols: 100, rows: 30 }),
-      serializeBuffer: vi.fn().mockResolvedValue({
-        data: 'renderer scrollback that should not win',
-        cols: 100,
-        rows: 30
-      })
-    })
-
-    runtime.onPtyData('pty-1', '\x1b[32mruntime screen\x1b[0m\n', 123)
-
-    const serialized = await runtime.serializeTerminalBuffer('pty-1')
-    expect(serialized?.data).toContain('runtime screen')
-    expect(serialized?.data).not.toContain('renderer scrollback')
-  })
-
-  it('does not list renderer placeholder leaves alongside live PTY fallback terminals', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    runtime.setPtyController({
-      write: () => true,
-      kill: () => true,
-      getForegroundProcess: async () => null,
-      listProcesses: vi.fn().mockResolvedValue([
-        { id: 'pty-1', cwd: '/tmp/worktree-a', title: 'setup' },
-        { id: 'pty-2', cwd: '/tmp/worktree-a', title: 'Claude Code' }
-      ])
-    })
-
-    runtime.attachWindow(1)
-    runtime.syncWindowGraph(1, {
-      tabs: [
-        {
-          tabId: 'tab-setup',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          title: 'setup',
-          activeLeafId: 'pane:1',
-          layout: null
-        },
-        {
-          tabId: 'tab-claude',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          title: 'Claude Code',
-          activeLeafId: 'pane:2',
-          layout: null
-        }
-      ],
-      leaves: [
-        {
-          tabId: 'tab-setup',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          leafId: 'pane:1',
-          paneRuntimeId: 1,
-          ptyId: null
-        },
-        {
-          tabId: 'tab-claude',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          leafId: 'pane:2',
-          paneRuntimeId: 2,
-          ptyId: null
-        }
-      ]
-    })
-
-    const terminals = await runtime.listTerminals('branch:feature/foo')
-    expect(terminals.terminals).toHaveLength(2)
-    expect(terminals.terminals.every((terminal) => terminal.connected)).toBe(true)
-    expect(new Set(terminals.terminals.map((terminal) => terminal.handle)).size).toBe(2)
-  })
-
   it('waits for terminal exit and resolves with the exit status', async () => {
     const runtime = new OrcaRuntimeService(store)
 
@@ -609,6 +518,52 @@ describe('OrcaRuntimeService', () => {
     const read = await runtime.readTerminal(handle)
     expect(read.handle).toBe(handle)
     expect(read.tail).toEqual(['ready'])
+  })
+
+  it('keeps preallocated terminal handles valid across renderer reloads', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const handle = runtime.preAllocateHandleForPty('pty-1')
+
+    syncSinglePty(runtime)
+    runtime.markRendererReloading(1)
+    syncSinglePty(runtime, null)
+    runtime.onPtyData('pty-1', 'after reload\n', 100)
+
+    const read = await runtime.readTerminal(handle)
+    expect(read.tail).toEqual(['after reload'])
+  })
+
+  it('keeps preallocated terminal handles valid when a reload graph omits the live leaf', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const handle = runtime.preAllocateHandleForPty('pty-1')
+
+    syncSinglePty(runtime)
+    runtime.markRendererReloading(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: []
+    })
+    runtime.onPtyData('pty-1', 'after omitted leaf\n', 100)
+
+    const read = await runtime.readTerminal(handle)
+    expect(read.tail).toEqual(['after omitted leaf'])
+  })
+
+  it('keeps preallocated terminal handles valid after graph unavailable during reload', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const handle = runtime.preAllocateHandleForPty('pty-1')
+
+    syncSinglePty(runtime)
+    runtime.markGraphUnavailable(1)
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: []
+    })
+    runtime.onPtyData('pty-1', 'after unavailable\n', 100)
+
+    const read = await runtime.readTerminal(handle)
+    expect(read.tail).toEqual(['after unavailable'])
   })
 
   it('keeps already-idle status after tui-idle wait for immediate message delivery', async () => {
@@ -797,7 +752,7 @@ describe('OrcaRuntimeService', () => {
     runtime.onPtyData('pty-1', 'build green\n', 321)
 
     const summaries = await runtime.getWorktreePs()
-    expect(summaries).toMatchObject({
+    expect(summaries).toEqual({
       worktrees: [
         {
           worktreeId: 'repo-1::/tmp/worktree-a',
@@ -815,286 +770,6 @@ describe('OrcaRuntimeService', () => {
       ],
       totalCount: 1,
       truncated: false
-    })
-  })
-
-  it('matches live terminal summaries when renderer worktree paths are equivalent but not identical', async () => {
-    const runtime = new OrcaRuntimeService(store)
-
-    runtime.attachWindow(1)
-    runtime.syncWindowGraph(1, {
-      tabs: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/child/../worktree-a',
-          title: 'Claude',
-          activeLeafId: 'pane:1',
-          layout: null
-        }
-      ],
-      leaves: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/child/../worktree-a',
-          leafId: 'pane:1',
-          paneRuntimeId: 1,
-          ptyId: 'pty-1'
-        }
-      ]
-    })
-    runtime.onPtyData('pty-1', 'path-normalized\n', 456)
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      hasAttachedPty: true,
-      lastOutputAt: 456,
-      preview: 'path-normalized'
-    })
-  })
-
-  it('does not classify ordinary terminal output as working in worktree ps', async () => {
-    const runtime = new OrcaRuntimeService(store)
-
-    runtime.attachWindow(1)
-    runtime.syncWindowGraph(1, {
-      tabs: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          title: 'zsh',
-          activeLeafId: 'pane:1',
-          layout: null
-        }
-      ],
-      leaves: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          leafId: 'pane:1',
-          paneRuntimeId: 1,
-          ptyId: 'pty-1',
-          title: 'zsh'
-        }
-      ]
-    })
-    runtime.onPtyData('pty-1', 'README.md\npackage.json\n', 999)
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      lastOutputAt: 999,
-      status: 'active'
-    })
-  })
-
-  it('classifies agent title state in worktree ps', async () => {
-    const runtime = new OrcaRuntimeService(store)
-
-    runtime.attachWindow(1)
-    runtime.syncWindowGraph(1, {
-      tabs: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          title: 'Codex working',
-          activeLeafId: 'pane:1',
-          layout: null
-        }
-      ],
-      leaves: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          leafId: 'pane:1',
-          paneRuntimeId: 1,
-          ptyId: 'pty-1',
-          title: 'Codex working'
-        }
-      ]
-    })
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      status: 'working'
-    })
-  })
-
-  it('keeps mobile worktree ps populated when the renderer leaf graph is empty', async () => {
-    const runtime = new OrcaRuntimeService(store)
-
-    runtime.attachWindow(1)
-    runtime.syncWindowGraph(1, {
-      tabs: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          title: 'Claude',
-          activeLeafId: 'pane:1',
-          layout: null
-        }
-      ],
-      leaves: [
-        {
-          tabId: 'tab-1',
-          worktreeId: 'repo-1::/tmp/worktree-a',
-          leafId: 'pane:1',
-          paneRuntimeId: 1,
-          ptyId: 'pty-1'
-        }
-      ]
-    })
-    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
-    runtime.onPtyData('pty-1', 'still alive\n', 654)
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      hasAttachedPty: true,
-      lastOutputAt: 654,
-      preview: 'still alive'
-    })
-  })
-
-  it('counts a main-process PTY registration before any renderer leaf is synced', async () => {
-    const runtime = new OrcaRuntimeService(store)
-
-    runtime.registerPty('pty-1', 'repo-1::/tmp/worktree-a')
-    runtime.onPtyData('pty-1', 'registered first\n', 777)
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      hasAttachedPty: true,
-      lastOutputAt: 777,
-      preview: 'registered first'
-    })
-  })
-
-  it('discovers existing daemon PTYs from the controller process list', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    runtime.setPtyController({
-      write: () => true,
-      kill: () => true,
-      getForegroundProcess: async () => null,
-      listProcesses: async () => [
-        {
-          id: 'repo-1::/tmp/worktree-a@@abc12345',
-          cwd: '/tmp/worktree-a',
-          title: 'bash'
-        }
-      ]
-    })
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 1,
-      hasAttachedPty: true
-    })
-  })
-
-  it('lists and controls daemon PTYs when the renderer graph has no leaves', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    const writes: string[] = []
-    runtime.setPtyController({
-      write: (_ptyId, data) => {
-        writes.push(data)
-        return true
-      },
-      kill: () => true,
-      getForegroundProcess: async () => null,
-      listProcesses: async () => [
-        {
-          id: 'pty-orphan',
-          cwd: TEST_WORKTREE_PATH,
-          title: 'bash'
-        }
-      ]
-    })
-
-    runtime.attachWindow(TEST_WINDOW_ID)
-    runtime.syncWindowGraph(TEST_WINDOW_ID, { tabs: [], leaves: [] })
-
-    const list = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
-    expect(list).toMatchObject({
-      totalCount: 1,
-      truncated: false
-    })
-    expect(list.terminals[0]).toMatchObject({
-      worktreeId: TEST_WORKTREE_ID,
-      connected: true,
-      writable: true,
-      preview: ''
-    })
-
-    const handle = list.terminals[0]!.handle
-    runtime.onPtyData('pty-orphan', 'ready\n', 456)
-    await expect(runtime.readTerminal(handle)).resolves.toMatchObject({
-      handle,
-      status: 'running',
-      tail: ['ready'],
-      truncated: false
-    })
-
-    await expect(
-      runtime.sendTerminal(handle, {
-        text: 'pwd',
-        enter: true
-      })
-    ).resolves.toMatchObject({
-      handle,
-      accepted: true
-    })
-    expect(writes).toEqual(['pwd\r'])
-  })
-
-  it('counts persisted desktop terminal tabs when no live leaf is mounted', async () => {
-    const runtime = new OrcaRuntimeService({
-      ...store,
-      getWorkspaceSession: () => ({
-        activeRepoId: null,
-        activeWorktreeId: null,
-        activeTabId: null,
-        terminalLayoutsByTabId: {},
-        tabsByWorktree: {
-          'repo-1::/tmp/worktree-a': [
-            {
-              id: 'tab-1',
-              ptyId: null,
-              worktreeId: 'repo-1::/tmp/worktree-a',
-              title: 'Terminal 1',
-              customTitle: null,
-              color: null,
-              sortOrder: 0,
-              createdAt: 1
-            },
-            {
-              id: 'tab-2',
-              ptyId: 'repo-1::/tmp/worktree-a@@abc12345',
-              worktreeId: 'repo-1::/tmp/worktree-a',
-              title: 'Claude',
-              customTitle: null,
-              color: null,
-              sortOrder: 1,
-              createdAt: 2
-            }
-          ]
-        }
-      })
-    })
-
-    const summaries = await runtime.getWorktreePs()
-    expect(summaries.worktrees[0]).toMatchObject({
-      worktreeId: 'repo-1::/tmp/worktree-a',
-      liveTerminalCount: 2,
-      hasAttachedPty: true
     })
   })
 
@@ -1237,32 +912,6 @@ describe('OrcaRuntimeService', () => {
     await expect(runtime.searchRepoRefs('id:repo-1', 'main', -5)).rejects.toThrow('invalid_limit')
   })
 
-  it('activates an existing worktree through the renderer notifier', async () => {
-    const runtime = new OrcaRuntimeService(store)
-    const activateWorktree = vi.fn()
-    runtime.setNotifier({
-      worktreesChanged: vi.fn(),
-      reposChanged: vi.fn(),
-      activateWorktree,
-      createTerminal: vi.fn(),
-      splitTerminal: vi.fn(),
-      renameTerminal: vi.fn(),
-      focusTerminal: vi.fn(),
-      closeTerminal: vi.fn(),
-      sleepWorktree: vi.fn(),
-      terminalFitOverrideChanged: vi.fn()
-    })
-    runtime.attachWindow(TEST_WINDOW_ID)
-    runtime.syncWindowGraph(TEST_WINDOW_ID, { tabs: [], leaves: [] })
-
-    await expect(runtime.activateManagedWorktree(`id:${TEST_WORKTREE_ID}`)).resolves.toEqual({
-      repoId: TEST_REPO_ID,
-      worktreeId: TEST_WORKTREE_ID,
-      activated: true
-    })
-    expect(activateWorktree).toHaveBeenCalledWith(TEST_REPO_ID, TEST_WORKTREE_ID)
-  })
-
   it('returns a setup launch payload for CLI-created worktrees when hooks are explicitly enabled', async () => {
     const runtime = new OrcaRuntimeService(store)
     const activateWorktree = vi.fn()
@@ -1274,15 +923,12 @@ describe('OrcaRuntimeService', () => {
       splitTerminal: vi.fn(),
       renameTerminal: vi.fn(),
       focusTerminal: vi.fn(),
-      closeTerminal: vi.fn(),
-      sleepWorktree: vi.fn(),
-      terminalFitOverrideChanged: vi.fn()
+      closeTerminal: vi.fn()
     })
     runtime.attachWindow(1)
 
     computeWorktreePathMock.mockReturnValue('/tmp/workspaces/runtime-hook-test')
     ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/runtime-hook-test')
-    vi.mocked(shouldRunSetupForCreate).mockReturnValue(true)
     vi.mocked(getEffectiveHooks).mockReturnValue({
       scripts: {
         setup: 'pnpm worktree:setup'
@@ -1352,9 +998,7 @@ describe('OrcaRuntimeService', () => {
       splitTerminal: vi.fn(),
       renameTerminal: vi.fn(),
       focusTerminal: vi.fn(),
-      closeTerminal: vi.fn(),
-      sleepWorktree: vi.fn(),
-      terminalFitOverrideChanged: vi.fn()
+      closeTerminal: vi.fn()
     })
     runtime.attachWindow(1)
 
@@ -1445,9 +1089,7 @@ describe('OrcaRuntimeService', () => {
       splitTerminal: vi.fn(),
       renameTerminal: vi.fn(),
       focusTerminal: vi.fn(),
-      closeTerminal: vi.fn(),
-      sleepWorktree: vi.fn(),
-      terminalFitOverrideChanged: vi.fn()
+      closeTerminal: vi.fn()
     })
 
     computeWorktreePathMock.mockReturnValue('/tmp/workspaces/cli-worktree')
@@ -1505,7 +1147,6 @@ describe('OrcaRuntimeService', () => {
         return nextMeta
       },
       removeWorktreeMeta: () => {},
-      getGitHubCache: () => ({ pr: {}, issue: {} }),
       getSettings: () => ({
         workspaceDir: 'C:\\workspaces',
         nestWorkspaces: false,
@@ -1549,191 +1190,6 @@ describe('OrcaRuntimeService', () => {
         displayName: 'Improve Dashboard'
       }
     ])
-  })
-
-  describe('terminal fit overrides', () => {
-    function createRuntimeWithResize() {
-      const runtime = new OrcaRuntimeService(store)
-      const resizes: { ptyId: string; cols: number; rows: number }[] = []
-      const notifications: {
-        ptyId: string
-        mode: string
-        cols: number
-        rows: number
-      }[] = []
-      runtime.setPtyController({
-        write: () => true,
-        kill: () => true,
-        getForegroundProcess: async () => null,
-        resize: (ptyId, cols, rows) => {
-          resizes.push({ ptyId, cols, rows })
-          return true
-        },
-        getSize: () => ({ cols: 150, rows: 40 })
-      })
-      runtime.setNotifier({
-        worktreesChanged: vi.fn(),
-        reposChanged: vi.fn(),
-        activateWorktree: vi.fn(),
-        createTerminal: vi.fn(),
-        splitTerminal: vi.fn(),
-        renameTerminal: vi.fn(),
-        focusTerminal: vi.fn(),
-        closeTerminal: vi.fn(),
-        sleepWorktree: vi.fn(),
-        terminalFitOverrideChanged: (ptyId, mode, cols, rows) => {
-          notifications.push({ ptyId, mode, cols, rows })
-        }
-      })
-      return { runtime, resizes, notifications }
-    }
-
-    it('clamps dimensions within valid range', () => {
-      const { runtime, resizes } = createRuntimeWithResize()
-      const result = runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 10, 5)
-      expect(result.cols).toBe(20)
-      expect(result.rows).toBe(8)
-      expect(resizes[0]).toEqual({ ptyId: 'pty-1', cols: 20, rows: 8 })
-    })
-
-    it('clamps large dimensions to upper bounds', () => {
-      const { runtime } = createRuntimeWithResize()
-      const result = runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 500, 300)
-      expect(result.cols).toBe(240)
-      expect(result.rows).toBe(120)
-    })
-
-    it('rejects missing dimensions for mobile-fit', () => {
-      const { runtime } = createRuntimeWithResize()
-      expect(() => runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a')).toThrow(
-        'invalid_dimensions'
-      )
-    })
-
-    it('rejects NaN dimensions', () => {
-      const { runtime } = createRuntimeWithResize()
-      expect(() => runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', NaN, 24)).toThrow(
-        'invalid_dimensions'
-      )
-    })
-
-    it('preserves original previousSize across re-fits', () => {
-      const { runtime } = createRuntimeWithResize()
-      const first = runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      expect(first.previousCols).toBe(150)
-      expect(first.previousRows).toBe(40)
-
-      const second = runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 60, 20)
-      expect(second.previousCols).toBe(150)
-      expect(second.previousRows).toBe(40)
-    })
-
-    it('restores for the owning client and resizes PTY back', () => {
-      const { runtime, resizes, notifications } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      const result = runtime.resizeForClient('pty-1', 'restore', 'client-a')
-      expect(result.mode).toBe('desktop-fit')
-      expect(result.cols).toBe(150)
-      expect(result.rows).toBe(40)
-      expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
-      expect(notifications).toHaveLength(2)
-      expect(notifications[1]).toMatchObject({ ptyId: 'pty-1', mode: 'desktop-fit' })
-      expect(resizes).toEqual([
-        { ptyId: 'pty-1', cols: 80, rows: 24 },
-        { ptyId: 'pty-1', cols: 150, rows: 40 }
-      ])
-    })
-
-    it('rejects restore from non-owning client', () => {
-      const { runtime } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      expect(() => runtime.resizeForClient('pty-1', 'restore', 'client-b')).toThrow(
-        'not_override_owner'
-      )
-    })
-
-    it('rejects restore when no override exists', () => {
-      const { runtime } = createRuntimeWithResize()
-      expect(() => runtime.resizeForClient('pty-1', 'restore', 'client-a')).toThrow(
-        'no_active_override'
-      )
-    })
-
-    it('allows a second client to overwrite the first (latest-writer-wins)', () => {
-      const { runtime } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-b', 60, 20)
-
-      expect(() => runtime.resizeForClient('pty-1', 'restore', 'client-a')).toThrow(
-        'not_override_owner'
-      )
-      const result = runtime.resizeForClient('pty-1', 'restore', 'client-b')
-      expect(result.mode).toBe('desktop-fit')
-    })
-
-    it('auto-restores on client disconnect', () => {
-      const { runtime } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      runtime.resizeForClient('pty-2', 'mobile-fit', 'client-a', 60, 20)
-      runtime.resizeForClient('pty-3', 'mobile-fit', 'client-b', 40, 15)
-
-      runtime.onClientDisconnected('client-a')
-
-      expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
-      expect(runtime.getTerminalFitOverride('pty-2')).toBeNull()
-      expect(runtime.getTerminalFitOverride('pty-3')).not.toBeNull()
-    })
-
-    it('clears override on PTY exit', () => {
-      const { runtime, notifications } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      runtime.onPtyExit('pty-1', 0)
-
-      expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
-      const exitNotification = notifications.find(
-        (n) => n.ptyId === 'pty-1' && n.mode === 'desktop-fit'
-      )
-      expect(exitNotification).toBeTruthy()
-    })
-
-    it('returns all active overrides via getAllTerminalFitOverrides', () => {
-      const { runtime } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-      runtime.resizeForClient('pty-2', 'mobile-fit', 'client-b', 60, 20)
-
-      const all = runtime.getAllTerminalFitOverrides()
-      expect(all.size).toBe(2)
-      expect(all.get('pty-1')).toEqual({ mode: 'mobile-fit', cols: 80, rows: 24 })
-      expect(all.get('pty-2')).toEqual({ mode: 'mobile-fit', cols: 60, rows: 20 })
-    })
-
-    it('rolls back override if resize fails', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.setPtyController({
-        write: () => true,
-        kill: () => true,
-        getForegroundProcess: async () => null,
-        resize: () => false
-      })
-
-      expect(() => runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)).toThrow(
-        'resize_failed'
-      )
-      expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
-    })
-
-    it('notifies renderer on mobile-fit', () => {
-      const { runtime, notifications } = createRuntimeWithResize()
-      runtime.resizeForClient('pty-1', 'mobile-fit', 'client-a', 80, 24)
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0]).toEqual({
-        ptyId: 'pty-1',
-        mode: 'mobile-fit',
-        cols: 80,
-        rows: 24
-      })
-    })
   })
 
   describe('browser page targeting', () => {
@@ -1887,89 +1343,6 @@ describe('OrcaRuntimeService', () => {
         })
       ).rejects.toThrow('Browser page page-1 was not found in this worktree')
       expect(getRegisteredTabsMock).toHaveBeenCalledWith(`${TEST_REPO_ID}::/tmp/worktree-b`)
-    })
-  })
-
-  describe('subscribeToTerminalData', () => {
-    it('delivers PTY data to a subscriber', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.registerPty('pty-1', TEST_WORKTREE_ID)
-
-      const chunks: string[] = []
-      runtime.subscribeToTerminalData('pty-1', (data) => chunks.push(data))
-
-      runtime.onPtyData('pty-1', 'hello\n', 100)
-      runtime.onPtyData('pty-1', 'world\n', 101)
-
-      expect(chunks).toEqual(['hello\n', 'world\n'])
-    })
-
-    it('unsubscribe removes the listener so data is not delivered twice', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.registerPty('pty-1', TEST_WORKTREE_ID)
-
-      const chunks: string[] = []
-      const unsub = runtime.subscribeToTerminalData('pty-1', (data) => chunks.push(data))
-
-      runtime.onPtyData('pty-1', 'before\n', 100)
-      unsub()
-      runtime.onPtyData('pty-1', 'after\n', 101)
-
-      expect(chunks).toEqual(['before\n'])
-    })
-
-    it('delivers data exactly once per listener even with multiple subscribers', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.registerPty('pty-1', TEST_WORKTREE_ID)
-
-      const chunksA: string[] = []
-      const chunksB: string[] = []
-      const unsubA = runtime.subscribeToTerminalData('pty-1', (data) => chunksA.push(data))
-      runtime.subscribeToTerminalData('pty-1', (data) => chunksB.push(data))
-
-      runtime.onPtyData('pty-1', 'hello\n', 100)
-      unsubA()
-      runtime.onPtyData('pty-1', 'world\n', 101)
-
-      expect(chunksA).toEqual(['hello\n'])
-      expect(chunksB).toEqual(['hello\n', 'world\n'])
-    })
-  })
-
-  describe('registerSubscriptionCleanup', () => {
-    it('cleans up the previous subscription when re-registering the same id', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.registerPty('pty-1', TEST_WORKTREE_ID)
-
-      const chunksA: string[] = []
-      const chunksB: string[] = []
-      const unsubA = runtime.subscribeToTerminalData('pty-1', (data) => chunksA.push(data))
-      runtime.registerSubscriptionCleanup('sub-1', () => unsubA())
-
-      const unsubB = runtime.subscribeToTerminalData('pty-1', (data) => chunksB.push(data))
-      runtime.registerSubscriptionCleanup('sub-1', () => unsubB())
-
-      runtime.onPtyData('pty-1', 'after-resubscribe\n', 100)
-
-      // Why: only the second listener should receive data. The first was
-      // cleaned up when registerSubscriptionCleanup replaced 'sub-1'.
-      expect(chunksA).toEqual([])
-      expect(chunksB).toEqual(['after-resubscribe\n'])
-    })
-
-    it('cleanupSubscription removes the listener', () => {
-      const runtime = new OrcaRuntimeService(store)
-      runtime.registerPty('pty-1', TEST_WORKTREE_ID)
-
-      const chunks: string[] = []
-      const unsub = runtime.subscribeToTerminalData('pty-1', (data) => chunks.push(data))
-      runtime.registerSubscriptionCleanup('sub-1', () => unsub())
-
-      runtime.onPtyData('pty-1', 'before\n', 100)
-      runtime.cleanupSubscription('sub-1')
-      runtime.onPtyData('pty-1', 'after\n', 101)
-
-      expect(chunks).toEqual(['before\n'])
     })
   })
 })
