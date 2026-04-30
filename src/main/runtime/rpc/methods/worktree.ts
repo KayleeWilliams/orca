@@ -38,7 +38,10 @@ const WorktreeCreate = z.object({
     .transform((v) =>
       typeof v === 'string' && (v === 'run' || v === 'skip' || v === 'inherit') ? v : undefined
     )
-    .pipe(z.enum(['run', 'skip', 'inherit']).optional())
+    .pipe(z.enum(['run', 'skip', 'inherit']).optional()),
+  // Why: mobile clients pass a startup command (e.g. 'claude') so the first
+  // terminal pane launches the selected agent instead of an idle shell.
+  startupCommand: OptionalString
 })
 
 const WorktreeSet = WorktreeSelector.extend({
@@ -92,7 +95,8 @@ export const WORKTREE_METHODS: RpcMethod[] = [
         linkedIssue: params.linkedIssue,
         comment: params.comment,
         runHooks: params.runHooks === true,
-        setupDecision: params.setupDecision
+        setupDecision: params.setupDecision,
+        startup: params.startupCommand ? { command: params.startupCommand } : undefined
       })
   }),
   defineMethod({

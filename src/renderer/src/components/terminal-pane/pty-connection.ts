@@ -775,8 +775,17 @@ export function connectPanePty(
       isSessionOwnedByWorktree(candidateReattachSessionId, deps.worktreeId)
         ? candidateReattachSessionId
         : null
+    const _diagMsg = `pane=${pane.id} tab=${deps.tabId} restored=${restoredPtyId} existing=${existingPtyId} detached=${detachedLivePtyId} reattach=${deferredReattachSessionId} hasTransport=${hasExistingPaneTransport} pendingKey=${pendingSpawnKey}`
+    console.log(`[pty-connect] ${_diagMsg}`)
+    ;((globalThis as Record<string, unknown>).__ptyConnectDiag ??= [] as string[]) as string[]
+    ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[]).push(_diagMsg)
+
     if (deferredReattachSessionId) {
       allowInitialIdleCacheSeed = true
+      console.log(`[pty-connect] pane=${pane.id} → REATTACH ${deferredReattachSessionId}`)
+      ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+        `pane=${pane.id} → REATTACH`
+      )
 
       const reattachPromise = transport.connect({
         url: '',
@@ -810,6 +819,10 @@ export function connectPanePty(
           startFreshSpawn()
         })
     } else if (detachedLivePtyId) {
+      console.log(`[pty-connect] pane=${pane.id} → ATTACH detached=${detachedLivePtyId}`)
+      ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+        `pane=${pane.id} → ATTACH ${detachedLivePtyId}`
+      )
       allowInitialIdleCacheSeed = false
       // Why: surface synchronous attach failures (e.g., the PTY died between
       // mount and remount, so window.api.pty.resize rejects) through
@@ -844,6 +857,10 @@ export function connectPanePty(
         ? undefined
         : pendingSpawnByPaneKey.get(pendingSpawnKey)
       if (pendingSpawn) {
+        console.log(`[pty-connect] pane=${pane.id} → PENDING SPAWN (waiting on sibling)`)
+        ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+          `pane=${pane.id} → PENDING SPAWN`
+        )
         void pendingSpawn
           .then((spawnedPtyId) => {
             if (disposed) {
@@ -884,6 +901,10 @@ export function connectPanePty(
             reportError(err instanceof Error ? err.message : String(err))
           })
       } else {
+        console.log(`[pty-connect] pane=${pane.id} → FRESH SPAWN`)
+        ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+          `pane=${pane.id} → FRESH SPAWN`
+        )
         startFreshSpawn()
       }
     }

@@ -29,7 +29,7 @@ import { useTerminalPaneContextMenu } from './use-terminal-pane-context-menu'
 import { useNotificationDispatch } from './use-notification-dispatch'
 import { connectPanePty } from './pty-connection'
 import {
-  getFitOverrideForPane,
+  getFitOverrideForPty,
   getPaneIdsForPty,
   onOverrideChange
 } from '@/lib/pane-manager/mobile-fit-overrides'
@@ -114,6 +114,9 @@ export default function TerminalPane({
   useEffect(
     () =>
       onOverrideChange((event) => {
+        console.log(
+          `[mobile-fit] desktop onOverrideChange ptyId=${event.ptyId} mode=${event.mode} cols=${event.cols} rows=${event.rows}`
+        )
         setOverrideTick((n) => n + 1)
         if (event.mode === 'desktop-fit') {
           const paneIds = getPaneIdsForPty(event.ptyId)
@@ -1097,7 +1100,11 @@ export default function TerminalPane({
         )
       })}
       {(managerRef.current?.getPanes() ?? []).map((pane) => {
-        const override = getFitOverrideForPane(pane.id)
+        // Why: pane IDs can collide across tabs (e.g. tab 0 pane 1 and tab 1
+        // pane 1). Using the transport's actual ptyId avoids showing banners
+        // on the wrong pane when IDs overlap.
+        const ptyId = paneTransportsRef.current.get(pane.id)?.getPtyId()
+        const override = ptyId ? getFitOverrideForPty(ptyId) : null
         if (!override) {
           return null
         }

@@ -45,6 +45,8 @@ type TerminalCreateResult = {
   }
 }
 
+type MobileDisplayMode = 'auto' | 'phone' | 'desktop'
+
 type AccessoryKey = { label: string; bytes: string; accessibilityLabel?: string }
 
 const ACCESSORY_KEYS: AccessoryKey[] = [
@@ -64,13 +66,6 @@ const ACCESSORY_KEYS: AccessoryKey[] = [
   { label: 'Ctrl+W', bytes: '\x17', accessibilityLabel: 'Delete word backward' },
   { label: 'Ctrl+U', bytes: '\x15', accessibilityLabel: 'Clear line before cursor' }
 ]
-
-// Why: persists fitted-handle sets across component remounts (e.g. navigating
-// away and back). React state resets on unmount, but we need to remember which
-// terminals were phone-fitted so we can auto-refit them on return.
-// Capped to avoid unbounded growth over long app sessions.
-const MAX_PERSISTED_WORKTREES = 50
-const persistedFittedHandles = new Map<string, Set<string>>()
 
 const STATUS_LABELS: Record<ConnectionState, string> = {
   connecting: 'Connecting',
@@ -139,43 +134,24 @@ export default function SessionScreen() {
   const [customKeys, setCustomKeys] = useState<CustomKey[]>([])
   const [showCustomKeyModal, setShowCustomKeyModal] = useState(false)
   const [deleteKeyTarget, setDeleteKeyTarget] = useState<CustomKey | null>(null)
-  const [fittedHandles, setFittedHandles] = useState<Set<string>>(
-    () => persistedFittedHandles.get(worktreeId!) ?? new Set()
-  )
-  const [fitPending, setFitPending] = useState(false)
+  // Why: server-authoritative display mode per terminal. The runtime is the
+  // single source of truth — this state is populated from subscribe responses.
+  const [terminalModes, setTerminalModes] = useState<Map<string, MobileDisplayMode>>(new Map())
   const deviceTokenRef = useRef<string | null>(null)
-  const fittedHandlesRef = useRef<Set<string>>(fittedHandles)
-  fittedHandlesRef.current = fittedHandles
-  // Why: wraps setFittedHandles to also persist to the module-level map,
-  // so fitted state survives component remount when navigating away and back.
-  const updateFittedHandles = useCallback(
-    (updater: (prev: Set<string>) => Set<string>) => {
-      setFittedHandles((prev) => {
-        const next = updater(prev)
-        persistedFittedHandles.delete(worktreeId!)
-        persistedFittedHandles.set(worktreeId!, next)
-        if (persistedFittedHandles.size > MAX_PERSISTED_WORKTREES) {
-          const oldest = persistedFittedHandles.keys().next().value
-          if (oldest) persistedFittedHandles.delete(oldest)
-        }
-        return next
-      })
-    },
-    [worktreeId]
-  )
-  // Why: the subscribe callback captures fitPending via closure, but needs
-  // the current value to avoid re-fitting while a fit is already in progress.
-  const fitPendingRef = useRef(false)
-  fitPendingRef.current = fitPending
   const clientRef = useRef<RpcClient | null>(null)
-  // Why: tracks terminals the user explicitly restored to desktop size.
-  // Without this, switching away and back would auto-fit them again.
-  const manuallyRestoredRef = useRef<Set<string>>(new Set())
+  // Why: measured once from TerminalWebView on mount, then passed with every
+  // subscribe call so the server can auto-fit the PTY to phone dimensions.
+  const viewportRef = useRef<{ cols: number; rows: number } | null>(null)
+  const viewportMeasuredRef = useRef(false)
   const terminalRefs = useRef<Map<string, TerminalWebViewHandle>>(new Map())
   const terminalUnsubsRef = useRef<Map<string, () => void>>(new Map())
   const subscribingHandlesRef = useRef<Set<string>>(new Set())
   const initializedHandlesRef = useRef<Set<string>>(new Set())
-  const locallyCreatedHandlesRef = useRef<Set<string>>(new Set())
+  // Why: WebViews load xterm.js from CDN asynchronously. Hidden WebViews
+  // (opacity:0) may have delayed JS execution on iOS. We must not subscribe
+  // until the WebView has fired web-ready, otherwise init() messages queue
+  // and may not render reliably.
+  const webReadyHandlesRef = useRef<Set<string>>(new Set())
   const activeHandleRef = useRef<string | null>(null)
   const subscribeSeqRef = useRef<Map<string, number>>(new Map())
   const sendingRef = useRef(false)
@@ -200,44 +176,65 @@ export default function SessionScreen() {
     terminalUnsubsRef.current.clear()
     subscribingHandlesRef.current.clear()
     initializedHandlesRef.current.clear()
-    locallyCreatedHandlesRef.current.clear()
+    webReadyHandlesRef.current.clear()
     subscribeSeqRef.current.clear()
     for (const term of terminalRefs.current.values()) {
       term.clear()
     }
   }, [])
 
-  // Why: after a fit/restore resize the PTY grid changes, so we must
-  // resubscribe to get a fresh scrollback snapshot at the new geometry.
-  // We skip terminal.focus to avoid a race where the desktop renderer
-  // auto-fits the pane back to desktop dimensions before the override
-  // takes effect.
-  const resubscribeWithoutFocusRef = useRef<(handle: string) => void>(() => {})
+  // Why: measures the phone viewport once from the first available TerminalWebView.
+  // The viewport dims are passed with every subscribe call so the server can
+  // auto-fit the PTY without a separate RPC round-trip.
+  const measureViewportOnce = useCallback(
+    async (handle: string) => {
+      if (viewportMeasuredRef.current) return
+      const dims = await getTerminalRef(handle)?.measureFitDimensions()
+      if (dims) {
+        viewportRef.current = dims
+        viewportMeasuredRef.current = true
+      }
+    },
+    [getTerminalRef]
+  )
 
-  const resubscribeWithoutFocus = useCallback(
+  const subscribeToTerminal = useCallback(
     (handle: string) => {
-      unsubscribeTerminal(handle)
       if (!client) return
+      if (terminalUnsubsRef.current.has(handle)) return
+      if (subscribingHandlesRef.current.has(handle)) return
+      if (!getTerminalRef(handle)) {
+        console.log(`[mobile-fit] subscribeToTerminal SKIP handle=${handle} reason=no-ref`)
+        return
+      }
 
-      const term = getTerminalRef(handle)
-      term?.clear()
-      initializedHandlesRef.current.delete(handle)
       subscribingHandlesRef.current.add(handle)
       const seq = (subscribeSeqRef.current.get(handle) ?? 0) + 1
       subscribeSeqRef.current.set(handle, seq)
 
-      void (async () => {
-        if (subscribeSeqRef.current.get(handle) !== seq) {
-          subscribingHandlesRef.current.delete(handle)
-          return
-        }
+      console.log(
+        `[mobile-fit] subscribeToTerminal handle=${handle} seq=${seq} viewport=${viewportRef.current ? `${viewportRef.current.cols}x${viewportRef.current.rows}` : 'none'} measured=${viewportMeasuredRef.current}`
+      )
 
-        const unsub = client.subscribe('terminal.subscribe', { terminal: handle }, (result) => {
-          if (subscribeSeqRef.current.get(handle) !== seq) {
-            return
-          }
+      // Why: server handles auto-fit on subscribe — no terminal.focus call needed.
+      // The viewport is embedded in the subscribe params so the server resizes
+      // the PTY before serializing scrollback. This eliminates the focus→safeFit
+      // race and the measure→resize→resubscribe pipeline.
+      const unsub = client.subscribe(
+        'terminal.subscribe',
+        {
+          terminal: handle,
+          client: { id: deviceTokenRef.current!, type: 'mobile' as const },
+          viewport: viewportRef.current ?? undefined
+        },
+        (result) => {
+          if (subscribeSeqRef.current.get(handle) !== seq) return
           const data = result as Record<string, unknown>
           if (data.type === 'scrollback') {
+            console.log(
+              `[mobile-fit] scrollback handle=${handle} cols=${data.cols} rows=${data.rows} displayMode=${data.displayMode} hasSerialized=${!!data.serialized} alreadyInit=${initializedHandlesRef.current.has(handle)}`
+            )
+            if (initializedHandlesRef.current.has(handle)) return
             const cols = (data.cols as number) || 80
             const rows = (data.rows as number) || 24
             const initialData =
@@ -246,130 +243,146 @@ export default function SessionScreen() {
                 : ''
             getTerminalRef(handle)?.init(cols, rows, initialData)
             initializedHandlesRef.current.add(handle)
+            if (data.displayMode) {
+              setTerminalModes((prev) =>
+                new Map(prev).set(handle, data.displayMode as MobileDisplayMode)
+              )
+            }
+            // Why: viewport measurement needs xterm to be initialized (cell
+            // dimensions come from the renderer). On the first subscribe the
+            // WebView hasn't loaded yet, so viewportRef is null and the server
+            // can't auto-fit. After the first init we can measure, then
+            // resubscribe so the server gets the viewport and phone-fits.
+            if (!viewportMeasuredRef.current) {
+              void (async () => {
+                const dims = await getTerminalRef(handle)?.measureFitDimensions()
+                if (dims && !viewportMeasuredRef.current) {
+                  viewportRef.current = dims
+                  viewportMeasuredRef.current = true
+                  unsubscribeTerminal(handle)
+                  initializedHandlesRef.current.delete(handle)
+                  subscribeToTerminal(handle)
+                }
+              })()
+            }
           } else if (data.type === 'data') {
-            const chunk = data.chunk as string
-            getTerminalRef(handle)?.write(chunk)
-          } else if (data.type === 'fit-override-changed') {
-            const mode = data.mode as string
-            if (mode === 'desktop-fit') {
-              updateFittedHandles((prev) => {
-                const next = new Set(prev)
-                next.delete(handle)
-                return next
-              })
-              manuallyRestoredRef.current.add(handle)
-              resubscribeWithoutFocusRef.current(handle)
-              setTimeout(() => getTerminalRef(handle)?.resetZoom(), 500)
+            getTerminalRef(handle)?.write(data.chunk as string)
+          } else if (data.type === 'resized') {
+            console.log(
+              `[mobile-fit] resized handle=${handle} cols=${data.cols} rows=${data.rows} displayMode=${data.displayMode} reason=${(data as Record<string, unknown>).reason}`
+            )
+            // Why: inline resize event — the server changed the PTY dimensions
+            // (mode toggle or desktop restore). Reinitialize xterm at the new
+            // dims with fresh scrollback. No resubscribe needed.
+            const cols = (data.cols as number) || 80
+            const rows = (data.rows as number) || 24
+            const serialized =
+              typeof data.serialized === 'string' && data.serialized.length > 0
+                ? data.serialized
+                : ''
+            getTerminalRef(handle)?.init(cols, rows, serialized)
+            if (data.displayMode) {
+              setTerminalModes((prev) =>
+                new Map(prev).set(handle, data.displayMode as MobileDisplayMode)
+              )
+            }
+            setTimeout(() => getTerminalRef(handle)?.resetZoom(), 200)
+          }
+        }
+      )
+
+      if (subscribeSeqRef.current.get(handle) === seq) {
+        terminalUnsubsRef.current.set(handle, unsub)
+      } else {
+        unsub()
+      }
+      subscribingHandlesRef.current.delete(handle)
+    },
+    [client, getTerminalRef]
+  )
+
+  // Why: toggles between phone and desktop mode via server RPC. The server
+  // handles the actual resize and emits a 'resized' event on the existing
+  // subscription stream — no client-side state tracking needed.
+  const toggleDisplayMode = useCallback(
+    async (handle: string) => {
+      if (!client) return
+      const current = terminalModes.get(handle) ?? 'auto'
+      const next: MobileDisplayMode = current === 'auto' || current === 'phone' ? 'desktop' : 'auto'
+      console.log(`[mobile-fit] toggleDisplayMode handle=${handle} current=${current} next=${next}`)
+      try {
+        await client.sendRequest('terminal.setDisplayMode', { terminal: handle, mode: next })
+      } catch {
+        // Mode change failed — server state unchanged, UI stays in sync.
+      }
+    },
+    [client, terminalModes]
+  )
+
+  const lastKnownTerminalCountRef = useRef(0)
+
+  const fetchTerminals = useCallback(
+    async (opts: { allowEmptyLoaded?: boolean } = {}) => {
+      if (!client) return
+      const allowEmptyLoaded = opts.allowEmptyLoaded ?? true
+
+      try {
+        const response = await client.sendRequest('terminal.list', {
+          worktree: `id:${worktreeId}`
+        })
+        if (response.ok) {
+          const result = (response as RpcSuccess).result as { terminals: Terminal[] }
+          console.log(
+            `[mobile-fit] fetchTerminals count=${result.terminals.length} allowEmpty=${allowEmptyLoaded} activeHandle=${activeHandleRef.current} lastKnown=${lastKnownTerminalCountRef.current}`
+          )
+
+          if (result.terminals.length === 0 && !allowEmptyLoaded) {
+            return
+          }
+          // Why: protect against transient empty responses from the server
+          // during rapid tab switching or RPC timing. If we previously had
+          // terminals and the server now says 0, require a second consecutive
+          // empty to confirm. This prevents the UI from flashing empty during
+          // rapid interactions while still allowing genuine cleanup.
+          if (result.terminals.length === 0 && lastKnownTerminalCountRef.current > 0) {
+            lastKnownTerminalCountRef.current = 0
+            console.log(
+              `[mobile-fit] fetchTerminals SKIP first empty — will clear on next fetch if still empty`
+            )
+            return
+          }
+
+          const liveHandles = new Set(result.terminals.map((terminal) => terminal.handle))
+          for (const handle of Array.from(terminalUnsubsRef.current.keys())) {
+            if (!liveHandles.has(handle)) {
+              unsubscribeTerminal(handle)
+              terminalRefs.current.delete(handle)
+              initializedHandlesRef.current.delete(handle)
             }
           }
-        })
+          lastKnownTerminalCountRef.current = result.terminals.length
+          const current = activeHandleRef.current
 
-        if (subscribeSeqRef.current.get(handle) === seq) {
-          terminalUnsubsRef.current.set(handle, unsub)
-        } else {
-          unsub()
+          setTerminals(result.terminals)
+          setTerminalsLoaded(true)
+
+          if (!current || !result.terminals.some((t) => t.handle === current)) {
+            const active = result.terminals.find((t) => t.isActive) ?? result.terminals[0]
+            if (active) {
+              activeHandleRef.current = active.handle
+              setActiveHandle(active.handle)
+              subscribeToTerminal(active.handle)
+            } else {
+              activeHandleRef.current = null
+              setActiveHandle(null)
+            }
+          }
         }
-        subscribingHandlesRef.current.delete(handle)
-      })()
-    },
-    [client, getTerminalRef, unsubscribeTerminal, updateFittedHandles]
-  )
-
-  resubscribeWithoutFocusRef.current = resubscribeWithoutFocus
-
-  // Why: extracted so both manual "Fit to Phone" and auto-fit-on-subscribe
-  // can share the same measure → resize → resubscribe logic. Takes explicit
-  // handle/rpcClient to avoid stale closure issues from subscribe callbacks.
-  const fitToPhoneCore = useCallback(
-    async (handle: string, rpcClient: RpcClient) => {
-      const clientId = deviceTokenRef.current
-      if (!clientId) return
-      const seq = subscribeSeqRef.current.get(handle)
-
-      const dims = await getTerminalRef(handle)?.measureFitDimensions()
-      if (!dims) return
-      if (
-        clientRef.current !== rpcClient ||
-        !terminalRefs.current.has(handle) ||
-        subscribeSeqRef.current.get(handle) !== seq
-      ) {
-        return
-      }
-
-      const response = await rpcClient.sendRequest('terminal.resizeForClient', {
-        terminal: handle,
-        mode: 'mobile-fit',
-        cols: dims.cols,
-        rows: dims.rows,
-        clientId
-      })
-      if (!response.ok) return
-      if (
-        clientRef.current !== rpcClient ||
-        !terminalRefs.current.has(handle) ||
-        subscribeSeqRef.current.get(handle) !== seq
-      ) {
-        return
-      }
-
-      updateFittedHandles((prev) => new Set(prev).add(handle))
-      resubscribeWithoutFocus(handle)
-      setTimeout(() => getTerminalRef(handle)?.resetZoom(), 500)
-    },
-    [getTerminalRef, resubscribeWithoutFocus, updateFittedHandles]
-  )
-
-  const handleFitToPhone = useCallback(
-    async (targetHandle = activeHandle) => {
-      if (!client || !targetHandle || fitPending) return
-
-      manuallyRestoredRef.current.delete(targetHandle)
-      setFitPending(true)
-      try {
-        await fitToPhoneCore(targetHandle, client)
-      } finally {
-        setFitPending(false)
-      }
-    },
-    [client, activeHandle, fitPending, fitToPhoneCore]
-  )
-
-  const handleRestoreDesktopSize = useCallback(
-    async (targetHandle = activeHandle) => {
-      if (!client || !targetHandle) return
-      const handle = targetHandle
-      const clientId = deviceTokenRef.current
-      if (!clientId) return
-      const seq = subscribeSeqRef.current.get(handle)
-
-      try {
-        const response = await client.sendRequest('terminal.resizeForClient', {
-          terminal: handle,
-          mode: 'restore',
-          clientId
-        })
-        if (!response.ok) return
-        if (
-          clientRef.current !== client ||
-          !terminalRefs.current.has(handle) ||
-          subscribeSeqRef.current.get(handle) !== seq
-        ) {
-          return
-        }
-
-        manuallyRestoredRef.current.add(handle)
-        updateFittedHandles((prev) => {
-          const next = new Set(prev)
-          next.delete(handle)
-          return next
-        })
-        resubscribeWithoutFocus(handle)
-        setTimeout(() => getTerminalRef(handle)?.resetZoom(), 500)
       } catch {
-        // Restore failed — keep current state.
+        // Failed to list terminals
       }
     },
-    [client, activeHandle, getTerminalRef, resubscribeWithoutFocus, updateFittedHandles]
+    [client, worktreeId, subscribeToTerminal, unsubscribeTerminal]
   )
 
   useEffect(() => {
@@ -383,8 +396,6 @@ export default function SessionScreen() {
 
       deviceTokenRef.current = host.deviceToken
       rpcClient = connect(host.endpoint, host.deviceToken, host.publicKeyB64, setConnState)
-      // Why: if the component unmounted while loadHosts was in-flight,
-      // close the just-created client immediately to prevent a leak.
       if (disposed) {
         rpcClient.close()
         return
@@ -432,174 +443,6 @@ export default function SessionScreen() {
     setTerminals([])
   }, [clearTerminalCache, worktreeId])
 
-  const subscribeToTerminal = useCallback(
-    (handle: string) => {
-      if (!client) {
-        return
-      }
-      if (terminalUnsubsRef.current.has(handle)) {
-        return
-      }
-      if (subscribingHandlesRef.current.has(handle)) {
-        return
-      }
-      if (!getTerminalRef(handle)) {
-        return
-      }
-
-      subscribingHandlesRef.current.add(handle)
-      const seq = (subscribeSeqRef.current.get(handle) ?? 0) + 1
-      subscribeSeqRef.current.set(handle, seq)
-      const rpcClient = client
-
-      // Why: phone-fitted terminals skip terminal.focus (which would cause
-      // the desktop to auto-resize back to desktop dimensions). Instead we
-      // subscribe directly and compare the scrollback geometry against the
-      // phone dimensions. If they match, the content is already correct and
-      // we avoid a resize→SIGWINCH→redraw cycle that strips TUI colors.
-      // If they don't match (desktop auto-restored while we were away),
-      // we refit — but only then.
-      const shouldAutoFit =
-        !manuallyRestoredRef.current.has(handle) && fittedHandlesRef.current.has(handle)
-
-      void (async () => {
-        if (
-          !shouldAutoFit &&
-          activeHandleRef.current === handle &&
-          !locallyCreatedHandlesRef.current.has(handle)
-        ) {
-          try {
-            await client.sendRequest('terminal.focus', { terminal: handle })
-            await new Promise((resolve) => setTimeout(resolve, 150))
-          } catch {
-            // Continue with best-effort streaming if desktop focus is unavailable.
-          }
-        }
-
-        if (subscribeSeqRef.current.get(handle) !== seq) {
-          subscribingHandlesRef.current.delete(handle)
-          return
-        }
-
-        const unsub = client.subscribe('terminal.subscribe', { terminal: handle }, (result) => {
-          if (subscribeSeqRef.current.get(handle) !== seq) {
-            return
-          }
-          const data = result as Record<string, unknown>
-          if (data.type === 'scrollback') {
-            if (initializedHandlesRef.current.has(handle)) {
-              return
-            }
-            const cols = (data.cols as number) || 80
-            const rows = (data.rows as number) || 24
-            const initialData =
-              typeof data.serialized === 'string' && data.serialized.length > 0
-                ? data.serialized
-                : ''
-            getTerminalRef(handle)?.init(cols, rows, initialData)
-            initializedHandlesRef.current.add(handle)
-            locallyCreatedHandlesRef.current.delete(handle)
-            // Why: only refit if the scrollback geometry doesn't match
-            // the phone WebView dimensions. This avoids unnecessary
-            // resize→SIGWINCH cycles on tab switches when the terminal
-            // is already at the correct phone size.
-            if (shouldAutoFit && !fitPendingRef.current) {
-              void (async () => {
-                const dims = await getTerminalRef(handle)?.measureFitDimensions()
-                if (!dims) return
-                if (cols !== dims.cols || rows !== dims.rows) {
-                  if (
-                    activeHandleRef.current === handle &&
-                    subscribeSeqRef.current.get(handle) === seq
-                  ) {
-                    void fitToPhoneCore(handle, rpcClient)
-                  }
-                }
-              })()
-            }
-          } else if (data.type === 'data') {
-            const chunk = data.chunk as string
-            getTerminalRef(handle)?.write(chunk)
-          } else if (data.type === 'fit-override-changed') {
-            // Why: the desktop restored the terminal from mobile-fit. Clear
-            // local fitted state and resubscribe to get a fresh scrollback
-            // snapshot at the restored desktop dimensions.
-            const mode = data.mode as string
-            if (mode === 'desktop-fit') {
-              updateFittedHandles((prev) => {
-                const next = new Set(prev)
-                next.delete(handle)
-                return next
-              })
-              manuallyRestoredRef.current.add(handle)
-              resubscribeWithoutFocus(handle)
-              setTimeout(() => getTerminalRef(handle)?.resetZoom(), 500)
-            }
-          }
-        })
-
-        if (subscribeSeqRef.current.get(handle) === seq) {
-          terminalUnsubsRef.current.set(handle, unsub)
-        } else {
-          unsub()
-        }
-        subscribingHandlesRef.current.delete(handle)
-      })()
-    },
-    [client, fitToPhoneCore, getTerminalRef, resubscribeWithoutFocus, updateFittedHandles]
-  )
-
-  const fetchTerminals = useCallback(
-    async (opts: { allowEmptyLoaded?: boolean } = {}) => {
-      if (!client) return
-      const allowEmptyLoaded = opts.allowEmptyLoaded ?? true
-
-      try {
-        const response = await client.sendRequest('terminal.list', {
-          worktree: `id:${worktreeId}`
-        })
-        if (response.ok) {
-          const result = (response as RpcSuccess).result as { terminals: Terminal[] }
-          const liveHandles = new Set(result.terminals.map((terminal) => terminal.handle))
-          for (const handle of Array.from(terminalUnsubsRef.current.keys())) {
-            if (!liveHandles.has(handle)) {
-              unsubscribeTerminal(handle)
-              terminalRefs.current.delete(handle)
-              initializedHandlesRef.current.delete(handle)
-            }
-          }
-          const current = activeHandleRef.current
-          // Why: during initial load, the server may briefly return empty while
-          // the worktree is still spinning up. Skip the update entirely so the
-          // UI doesn't flash empty. Once allowEmptyLoaded is true (after the
-          // grace period), trust the server's empty response so terminals
-          // closed on desktop are cleared from the mobile UI.
-          if (result.terminals.length === 0 && !allowEmptyLoaded) {
-            return
-          }
-
-          setTerminals(result.terminals)
-          setTerminalsLoaded(true)
-
-          if (!current || !result.terminals.some((t) => t.handle === current)) {
-            const active = result.terminals.find((t) => t.isActive) ?? result.terminals[0]
-            if (active) {
-              activeHandleRef.current = active.handle
-              setActiveHandle(active.handle)
-              subscribeToTerminal(active.handle)
-            } else {
-              activeHandleRef.current = null
-              setActiveHandle(null)
-            }
-          }
-        }
-      } catch {
-        // Failed to list terminals
-      }
-    },
-    [client, worktreeId, subscribeToTerminal, unsubscribeTerminal]
-  )
-
   useEffect(() => {
     if (connState !== 'connected') return
     // Why: on reconnect the RPC client auto-resends terminal.subscribe,
@@ -616,9 +459,6 @@ export default function SessionScreen() {
       timers.push(setTimeout(fn, ms))
     }
     void (async () => {
-      // Why: worktree.create already asks the desktop renderer to activate
-      // with startup/setup payloads. A second plain activation can race ahead
-      // and create a blank first terminal before those payloads are applied.
       if (client && created !== '1') {
         await client
           .sendRequest('worktree.activate', {
@@ -661,43 +501,80 @@ export default function SessionScreen() {
     return () => clearInterval(interval)
   }, [connState, fetchTerminals])
 
+  // Why: unsubscribe the old terminal so the server restores its desktop dims
+  // (clearing the phone-fit banner), then subscribe the new terminal with the
+  // measured viewport so the server phone-fits it. Also call terminal.focus
+  // so the desktop renderer follows the mobile user's active terminal.
   const switchTab = useCallback(
     (handle: string) => {
+      const prev = activeHandleRef.current
+      console.log(
+        `[mobile-fit] switchTab prev=${prev} next=${handle} hasUnsub=${terminalUnsubsRef.current.has(handle)} hasRef=${!!terminalRefs.current.get(handle)}`
+      )
       activeHandleRef.current = handle
       setActiveHandle(handle)
-      if (!fittedHandlesRef.current.has(handle)) {
-        void client?.sendRequest('terminal.focus', { terminal: handle }).catch(() => null)
+      if (prev && prev !== handle) {
+        unsubscribeTerminal(prev)
+        initializedHandlesRef.current.delete(prev)
+      }
+      // Force a fresh subscribe even if eagerly subscribed without viewport
+      if (terminalUnsubsRef.current.has(handle)) {
+        unsubscribeTerminal(handle)
+        initializedHandlesRef.current.delete(handle)
       }
       subscribeToTerminal(handle)
-    },
-    [client, subscribeToTerminal]
-  )
-
-  const setTerminalWebViewRef = useCallback(
-    (handle: string, ref: TerminalWebViewHandle | null) => {
-      if (ref) {
-        terminalRefs.current.set(handle, ref)
-        subscribeToTerminal(handle)
-      } else {
-        terminalRefs.current.delete(handle)
+      if (client) {
+        void client.sendRequest('terminal.focus', { terminal: handle }).catch(() => {})
       }
     },
-    [subscribeToTerminal]
+    [client, subscribeToTerminal, unsubscribeTerminal]
   )
+
+  // Why: just store the ref. Subscription is deferred to handleTerminalWebReady
+  // which fires after the WebView has loaded xterm.js and is ready to process
+  // init messages. This prevents the blank terminal race where init() was
+  // queued before the WebView loaded.
+  const setTerminalWebViewRef = useCallback((handle: string, ref: TerminalWebViewHandle | null) => {
+    if (ref) {
+      terminalRefs.current.set(handle, ref)
+      console.log(
+        `[mobile-fit] setTerminalWebViewRef handle=${handle} isActive=${handle === activeHandleRef.current} webReady=${webReadyHandlesRef.current.has(handle)}`
+      )
+    } else {
+      terminalRefs.current.delete(handle)
+    }
+  }, [])
 
   const handleTerminalWebReady = useCallback(
     (handle: string) => {
-      if (!initializedHandlesRef.current.has(handle)) {
+      const wasAlreadyReady = webReadyHandlesRef.current.has(handle)
+      webReadyHandlesRef.current.add(handle)
+      console.log(
+        `[mobile-fit] handleTerminalWebReady handle=${handle} isActive=${handle === activeHandleRef.current} wasAlreadyReady=${wasAlreadyReady} wasInitialized=${initializedHandlesRef.current.has(handle)}`
+      )
+      if (wasAlreadyReady && initializedHandlesRef.current.has(handle)) {
+        // Why: the native WebView reloaded (Metro hot reload or Android
+        // process churn). The old xterm buffer is gone, so force a fresh
+        // scrollback snapshot. Only resubscribe if this is a reload — on
+        // first load the subscription is already running and pendingMessages
+        // will flush the queued init after this callback returns.
+        unsubscribeTerminal(handle)
+        initializedHandlesRef.current.delete(handle)
+        if (handle === activeHandleRef.current) {
+          subscribeToTerminal(handle)
+        }
         return
       }
-      // Why: the native WebView can reload independently of the session
-      // screen during Metro reloads or Android process churn. The old xterm
-      // buffer is gone, so force a fresh scrollback snapshot for this handle.
-      unsubscribeTerminal(handle)
-      initializedHandlesRef.current.delete(handle)
-      subscribeToTerminal(handle)
+      // Why: on first web-ready, the initial subscribeToTerminal call from
+      // fetchTerminals may have been skipped (reason=no-ref, WebView wasn't
+      // mounted yet). Now that the WebView is ready, subscribe if this is the
+      // active terminal and no subscription is running.
+      if (handle === activeHandleRef.current && !terminalUnsubsRef.current.has(handle)) {
+        void measureViewportOnce(handle)
+        subscribeToTerminal(handle)
+      }
     },
-    [subscribeToTerminal, unsubscribeTerminal]
+    [measureViewportOnce, subscribeToTerminal, unsubscribeTerminal]
   )
 
   async function handleSend() {
@@ -747,7 +624,14 @@ export default function SessionScreen() {
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.terminal
-        locallyCreatedHandlesRef.current.add(created.handle)
+        // Why: unsubscribe the old active terminal so the server restores its
+        // desktop dims. Without this, the old terminal's mobile subscription
+        // stays alive and its restore timer is never set.
+        const prev = activeHandleRef.current
+        if (prev) {
+          unsubscribeTerminal(prev)
+          initializedHandlesRef.current.delete(prev)
+        }
         activeHandleRef.current = created.handle
         setActiveHandle(created.handle)
         setTerminals((prev) => [
@@ -803,7 +687,6 @@ export default function SessionScreen() {
         unsubscribeTerminal(target.handle)
         terminalRefs.current.delete(target.handle)
         initializedHandlesRef.current.delete(target.handle)
-        locallyCreatedHandlesRef.current.delete(target.handle)
         const next = terminals.filter((terminal) => terminal.handle !== target.handle)
         setTerminals(next)
         if (activeHandleRef.current === target.handle) {
@@ -819,6 +702,12 @@ export default function SessionScreen() {
     } catch {
       // Close failed — keep the local tab list unchanged.
     }
+  }
+
+  const isPhoneMode = (handle: string | null): boolean => {
+    if (!handle) return false
+    const mode = terminalModes.get(handle)
+    return mode === 'auto' || mode === 'phone' || mode === undefined
   }
 
   const showLoadingState = connState === 'connected' && !terminalsLoaded
@@ -951,23 +840,19 @@ export default function SessionScreen() {
               style={({ pressed }) => [
                 styles.accessoryKey,
                 pressed && styles.accessoryKeyPressed,
-                (!canSend || fitPending) && styles.accessoryKeyDisabled
+                !canSend && styles.accessoryKeyDisabled
               ]}
-              disabled={!canSend || fitPending}
+              disabled={!canSend}
               onPress={() => {
-                if (activeHandle && fittedHandles.has(activeHandle)) {
-                  void handleRestoreDesktopSize()
-                } else {
-                  void handleFitToPhone()
+                if (activeHandle) {
+                  void toggleDisplayMode(activeHandle)
                 }
               }}
               accessibilityLabel={
-                activeHandle && fittedHandles.has(activeHandle)
-                  ? 'Restore desktop size'
-                  : 'Fit to phone'
+                isPhoneMode(activeHandle) ? 'Switch to desktop mode' : 'Switch to phone mode'
               }
             >
-              {activeHandle && fittedHandles.has(activeHandle) ? (
+              {isPhoneMode(activeHandle) ? (
                 <Monitor size={14} color={canSend ? colors.textSecondary : colors.textMuted} />
               ) : (
                 <Smartphone size={14} color={canSend ? colors.textSecondary : colors.textMuted} />
@@ -1056,33 +941,21 @@ export default function SessionScreen() {
         visible={actionTarget != null}
         title={actionTarget?.title || 'Terminal'}
         actions={[
-          ...(actionTarget && fittedHandles.has(actionTarget.handle)
+          ...(actionTarget
             ? [
                 {
-                  label: 'Restore Desktop Size',
-                  icon: Monitor,
+                  label: isPhoneMode(actionTarget.handle) ? 'Switch to Desktop' : 'Switch to Phone',
+                  icon: isPhoneMode(actionTarget.handle) ? Monitor : Smartphone,
                   onPress: () => {
                     const target = actionTarget
                     setActionTarget(null)
                     if (target) {
-                      void handleRestoreDesktopSize(target.handle)
+                      void toggleDisplayMode(target.handle)
                     }
                   }
                 }
               ]
-            : [
-                {
-                  label: fitPending ? 'Fitting…' : 'Fit to Phone',
-                  icon: Smartphone,
-                  onPress: () => {
-                    const target = actionTarget
-                    setActionTarget(null)
-                    if (target) {
-                      void handleFitToPhone(target.handle)
-                    }
-                  }
-                }
-              ]),
+            : []),
           {
             label: 'Rename',
             onPress: () => {

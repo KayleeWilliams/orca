@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- Why: terminal RPC methods are co-located for discoverability; splitting would scatter related handlers across files. */
 import { z } from 'zod'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod } from '../core'
 import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas'
@@ -92,7 +93,24 @@ const TerminalResizeForClient = z.discriminatedUnion('mode', [
   })
 ])
 
-const TerminalSubscribe = TerminalHandle.extend({})
+const TerminalSubscribe = TerminalHandle.extend({
+  client: z
+    .object({
+      id: requiredString('Missing client ID'),
+      type: z.enum(['mobile', 'desktop']).default('desktop')
+    })
+    .optional(),
+  viewport: z
+    .object({
+      cols: z.number().int().min(20).max(240),
+      rows: z.number().int().min(8).max(120)
+    })
+    .optional()
+})
+
+const TerminalSetDisplayMode = TerminalHandle.extend({
+  mode: z.enum(['auto', 'phone', 'desktop'])
+})
 
 const TerminalUnsubscribe = z.object({
   subscriptionId: requiredString('Missing subscription ID')
@@ -215,58 +233,136 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
       close: await runtime.closeTerminal(params.terminal)
     })
   }),
+  defineMethod({
+    name: 'terminal.setDisplayMode',
+    params: TerminalSetDisplayMode,
+    handler: async (params, { runtime }) => {
+      const leaf = runtime.resolveLeafForHandle(params.terminal)
+      if (!leaf?.ptyId) {
+        throw new Error('no_connected_pty')
+      }
+      runtime.setMobileDisplayMode(leaf.ptyId, params.mode)
+      runtime.applyMobileDisplayMode(leaf.ptyId)
+      return { mode: params.mode }
+    }
+  }),
+  defineMethod({
+    name: 'terminal.getDisplayMode',
+    params: TerminalHandle,
+    handler: async (params, { runtime }) => {
+      const leaf = runtime.resolveLeafForHandle(params.terminal)
+      const mode = leaf?.ptyId ? runtime.getMobileDisplayMode(leaf.ptyId) : 'auto'
+      const isPhoneFitted = leaf?.ptyId ? runtime.isMobileSubscriberActive(leaf.ptyId) : false
+      return { mode, isPhoneFitted }
+    }
+  }),
   // Why: terminal.subscribe streams live terminal output over WebSocket.
   // It sends initial scrollback, then live data chunks as they arrive.
-  // Only works over streaming-capable transports (WebSocket, not Unix socket).
+  // Mobile clients pass client+viewport params for server-side auto-fit.
   defineStreamingMethod({
     name: 'terminal.subscribe',
     params: TerminalSubscribe,
     handler: async (params, { runtime }, emit) => {
+      let leaf = runtime.resolveLeafForHandle(params.terminal)
+      const isMobile = params.client?.type === 'mobile'
+      console.log(
+        `[mobile-fit] terminal.subscribe handle=${params.terminal} ptyId=${leaf?.ptyId ?? 'none'} client=${params.client?.type ?? 'none'} viewport=${params.viewport ? `${params.viewport.cols}x${params.viewport.rows}` : 'none'}`
+      )
+
+      // Why: the left pane's PTY spawns asynchronously after the tab is created.
+      // Mobile clients that subscribe before the PTY is ready would get a bare
+      // scrollback+end with no live stream or phone-fit. Wait for the PTY so
+      // the subscribe can proceed normally.
+      if (!leaf?.ptyId && isMobile) {
+        try {
+          const ptyId = await runtime.waitForLeafPtyId(params.terminal)
+          leaf = { ptyId }
+          console.log(
+            `[mobile-fit] terminal.subscribe handle=${params.terminal} ptyId resolved to ${ptyId} after wait`
+          )
+        } catch {
+          console.log(
+            `[mobile-fit] terminal.subscribe handle=${params.terminal} PTY wait timed out, falling back`
+          )
+        }
+      }
+
+      if (!leaf?.ptyId) {
+        const read = await runtime.readTerminal(params.terminal)
+        emit({
+          type: 'scrollback',
+          lines: read.tail,
+          truncated: read.truncated,
+          serialized: undefined,
+          cols: undefined,
+          rows: undefined
+        })
+        emit({ type: 'end' })
+        return
+      }
+
+      const ptyId = leaf.ptyId
+      const clientId = params.client?.id
+
+      // Server-side auto-fit: resize PTY to phone dims before serializing scrollback
+      if (isMobile && clientId) {
+        runtime.handleMobileSubscribe(ptyId, clientId, params.viewport)
+      }
+
       const read = await runtime.readTerminal(params.terminal)
-      const leaf = runtime.resolveLeafForHandle(params.terminal)
-      const serialized = leaf?.ptyId ? await runtime.serializeTerminalBuffer(leaf.ptyId) : null
-      const size = leaf?.ptyId ? runtime.getTerminalSize(leaf.ptyId) : null
+      const serialized = await runtime.serializeTerminalBuffer(ptyId)
+      const size = runtime.getTerminalSize(ptyId)
+      const displayMode = runtime.getMobileDisplayMode(ptyId)
       emit({
         type: 'scrollback',
         lines: read.tail,
         truncated: read.truncated,
         serialized: serialized?.data,
         cols: serialized?.cols ?? size?.cols,
-        rows: serialized?.rows ?? size?.rows
+        rows: serialized?.rows ?? size?.rows,
+        displayMode
       })
 
-      if (!leaf?.ptyId) {
-        emit({ type: 'end' })
-        return
-      }
-
-      // Why: the handler returns a Promise that never resolves (until
-      // unsubscribe or disconnect). The emit callback pushes data chunks
-      // as they arrive. Cleanup happens via the unsubscribe mechanism or
-      // connection-scoped cleanup in the transport layer.
       await new Promise<void>((resolve) => {
-        const unsubscribeData = runtime.subscribeToTerminalData(leaf.ptyId!, (data) => {
+        const unsubscribeData = runtime.subscribeToTerminalData(ptyId, (data) => {
           emit({ type: 'data', chunk: data })
         })
 
-        // Why: mobile clients need to know when the desktop restores a terminal
-        // from mobile-fit so they can clear their fitted state and resubscribe
-        // for a fresh scrollback snapshot at the restored dimensions.
-        const unsubscribeFit = runtime.subscribeToFitOverrideChanges(leaf.ptyId!, (event) => {
+        // Inline resize events replace the old fit-override-changed event for
+        // mobile clients. They include fresh serialized scrollback so the client
+        // can reinitialize xterm without resubscribing.
+        const unsubscribeResize = runtime.subscribeToTerminalResize(ptyId, async (event) => {
+          const fresh = await runtime.serializeTerminalBuffer(ptyId)
           emit({
-            type: 'fit-override-changed',
-            mode: event.mode,
+            type: 'resized',
             cols: event.cols,
-            rows: event.rows
+            rows: event.rows,
+            serialized: fresh?.data,
+            displayMode: event.displayMode,
+            reason: event.reason
           })
         })
 
-        // Why: store the cleanup function so terminal.unsubscribe and
-        // connection-close cleanup can call it.
+        // Legacy fit-override-changed for non-mobile (desktop) subscribers
+        const unsubscribeFit = !isMobile
+          ? runtime.subscribeToFitOverrideChanges(ptyId, (event) => {
+              emit({
+                type: 'fit-override-changed',
+                mode: event.mode,
+                cols: event.cols,
+                rows: event.rows
+              })
+            })
+          : () => {}
+
         const subscriptionId = params.terminal
         runtime.registerSubscriptionCleanup(subscriptionId, () => {
           unsubscribeData()
+          unsubscribeResize()
           unsubscribeFit()
+          if (isMobile && clientId) {
+            runtime.handleMobileUnsubscribe(ptyId, clientId)
+          }
           emit({ type: 'end' })
           resolve()
         })

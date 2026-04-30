@@ -331,6 +331,43 @@ export class OrcaRuntimeService {
     }
   >()
 
+  // Why: server-authoritative display mode per terminal. 'auto' (default) means
+  // phone-fit when mobile subscribes, desktop otherwise. 'phone'/'desktop' lock
+  // the mode regardless of subscriber state. In-memory only — modes reset on restart.
+  private mobileDisplayModes = new Map<string, 'auto' | 'phone' | 'desktop'>()
+
+  // Why: tracks active mobile subscriber per PTY so the runtime can restore
+  // desktop dimensions on unsubscribe and prevent orphaned overrides during
+  // rapid tab switches. Keyed by ptyId (single mobile client per terminal).
+  private mobileSubscribers = new Map<
+    string,
+    {
+      clientId: string
+      viewport: { cols: number; rows: number } | null
+      wasResizedToPhone: boolean
+      previousCols: number | null
+      previousRows: number | null
+    }
+  >()
+
+  // Why: delays PTY restore by 300ms after mobile unsubscribe so rapid tab
+  // switches don't cause unnecessary resize thrashing. Keyed by clientId
+  // Why: keyed by ptyId so each PTY gets its own independent restore timer.
+  // The old clientId-keyed design lost timers when two PTYs were unsubscribed
+  // back-to-back (only the last timer survived).
+  private pendingRestoreTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; clientId: string }
+  >()
+
+  // Why: inline resize events replace the unsubscribe→resubscribe pattern.
+  // Listeners are notified when mode changes or desktop restores, allowing
+  // the subscribe stream to emit a 'resized' event with fresh scrollback.
+  private resizeListeners = new Map<
+    string,
+    Set<(event: { cols: number; rows: number; displayMode: string; reason: string }) => void>
+  >()
+
   private stats: StatsCollector | null = null
 
   constructor(store: RuntimeStore | null = null, stats?: StatsCollector) {
@@ -853,6 +890,9 @@ export class OrcaRuntimeService {
       }
       this.resizeHeadlessTerminal(ptyId, clampedCols, clampedRows)
 
+      console.log(
+        `[mobile-fit] handleMobileSubscribe notifier=${!!this.notifier} ptyId=${ptyId} mode=mobile-fit cols=${clampedCols} rows=${clampedRows}`
+      )
       this.notifier?.terminalFitOverrideChanged(ptyId, 'mobile-fit', clampedCols, clampedRows)
 
       return {
@@ -921,6 +961,42 @@ export class OrcaRuntimeService {
   }
 
   onClientDisconnected(clientId: string): void {
+    // Cancel all pending restore timers for this client — the client is gone,
+    // so the debounce is meaningless and could fire against a stale PTY state.
+    for (const [ptyId, entry] of this.pendingRestoreTimers) {
+      if (entry.clientId === clientId) {
+        clearTimeout(entry.timer)
+        this.pendingRestoreTimers.delete(ptyId)
+      }
+    }
+
+    // Immediately restore PTYs that this client had phone-fitted (no debounce —
+    // client is gone, no point waiting for a re-subscribe that won't come).
+    for (const [ptyId, subscriber] of this.mobileSubscribers) {
+      if (subscriber.clientId !== clientId) {
+        continue
+      }
+
+      this.mobileSubscribers.delete(ptyId)
+
+      if (subscriber.wasResizedToPhone) {
+        const { previousCols, previousRows } = subscriber
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+        this.notifyFitOverrideListeners(ptyId, 'desktop-fit', previousCols ?? 0, previousRows ?? 0)
+      }
+    }
+
+    // Legacy cleanup for any terminalFitOverrides not covered by mobileSubscribers
     for (const [ptyId, override] of this.terminalFitOverrides) {
       if (override.clientId !== clientId) {
         continue
@@ -928,7 +1004,6 @@ export class OrcaRuntimeService {
       try {
         this.resizeForClient(ptyId, 'restore', clientId)
       } catch {
-        // Best-effort cleanup — the PTY may already be gone.
         this.terminalFitOverrides.delete(ptyId)
         this.notifier?.terminalFitOverrideChanged(ptyId, 'desktop-fit', 0, 0)
         this.notifyFitOverrideListeners(ptyId, 'desktop-fit', 0, 0)
@@ -937,6 +1012,16 @@ export class OrcaRuntimeService {
   }
 
   onPtyExit(ptyId: string, exitCode: number): void {
+    // Clean up new mobile state for this PTY
+    this.mobileSubscribers.delete(ptyId)
+    this.mobileDisplayModes.delete(ptyId)
+    this.resizeListeners.delete(ptyId)
+    const pendingRestore = this.pendingRestoreTimers.get(ptyId)
+    if (pendingRestore) {
+      clearTimeout(pendingRestore.timer)
+      this.pendingRestoreTimers.delete(ptyId)
+    }
+
     if (this.terminalFitOverrides.has(ptyId)) {
       this.terminalFitOverrides.delete(ptyId)
       this.notifier?.terminalFitOverrideChanged(ptyId, 'desktop-fit', 0, 0)
@@ -959,6 +1044,229 @@ export class OrcaRuntimeService {
       leaf.lastExitCode = exitCode
       this.resolveExitWaiters(leaf)
       this.failActiveDispatchOnExit(leaf, exitCode)
+    }
+  }
+
+  // ─── Server-Authoritative Mobile Display Mode ─────────────────────
+
+  setMobileDisplayMode(ptyId: string, mode: 'auto' | 'phone' | 'desktop'): void {
+    if (mode === 'auto') {
+      this.mobileDisplayModes.delete(ptyId)
+    } else {
+      this.mobileDisplayModes.set(ptyId, mode)
+    }
+  }
+
+  getMobileDisplayMode(ptyId: string): 'auto' | 'phone' | 'desktop' {
+    return this.mobileDisplayModes.get(ptyId) ?? 'auto'
+  }
+
+  isMobileSubscriberActive(ptyId: string): boolean {
+    return this.mobileSubscribers.has(ptyId)
+  }
+
+  // Why: server-side auto-fit on mobile subscribe. The runtime is the single
+  // source of truth — the mobile client just passes its viewport and the runtime
+  // decides whether to resize. This eliminates the measure→RPC→resubscribe
+  // pipeline that caused race conditions.
+  handleMobileSubscribe(
+    ptyId: string,
+    clientId: string,
+    viewport?: { cols: number; rows: number }
+  ): boolean {
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    console.log(
+      `[mobile-fit] handleMobileSubscribe ptyId=${ptyId} mode=${mode} viewport=${viewport ? `${viewport.cols}x${viewport.rows}` : 'none'}`
+    )
+    if (mode === 'desktop') {
+      console.log('[mobile-fit]   → skipped (desktop mode)')
+      return false
+    }
+    if (!viewport) {
+      console.log('[mobile-fit]   → skipped (no viewport)')
+      return false
+    }
+
+    // Why: only cancel the restore timer for THIS ptyId (re-subscribe case).
+    // Other terminals' timers must fire so their banners clear on the desktop.
+    const pendingRestore = this.pendingRestoreTimers.get(ptyId)
+    if (pendingRestore && pendingRestore.clientId === clientId) {
+      clearTimeout(pendingRestore.timer)
+      this.pendingRestoreTimers.delete(ptyId)
+    }
+
+    // Preserve existing previous dims if re-subscribing to an already phone-fitted
+    // terminal. getTerminalSize would return phone dims, so we use the existing
+    // subscriber's previousCols/previousRows to avoid losing the original desktop size.
+    const existing = this.mobileSubscribers.get(ptyId)
+    const currentSize = this.getTerminalSize(ptyId)
+    const previousCols = existing?.previousCols ?? currentSize?.cols ?? null
+    const previousRows = existing?.previousRows ?? currentSize?.rows ?? null
+
+    this.mobileSubscribers.set(ptyId, {
+      clientId,
+      viewport,
+      wasResizedToPhone: true,
+      previousCols,
+      previousRows
+    })
+
+    const clampedCols = Math.max(20, Math.min(240, Math.round(viewport.cols)))
+    const clampedRows = Math.max(8, Math.min(120, Math.round(viewport.rows)))
+
+    // Why: skip the PTY resize if already at the target dims. Re-subscribing
+    // to a terminal that was left at phone dims (no restore on tab switch)
+    // should not trigger another SIGWINCH → shell prompt redraw.
+    const alreadyAtTarget = currentSize?.cols === clampedCols && currentSize?.rows === clampedRows
+    console.log(
+      `[mobile-fit]   → ${alreadyAtTarget ? 'already at' : 'resizing PTY to'} ${clampedCols}x${clampedRows} (prev=${previousCols}x${previousRows}) notifier=${!!this.notifier}`
+    )
+    if (!alreadyAtTarget) {
+      this.ptyController?.resize?.(ptyId, clampedCols, clampedRows)
+      this.resizeHeadlessTerminal(ptyId, clampedCols, clampedRows)
+    }
+    this.notifier?.terminalFitOverrideChanged(ptyId, 'mobile-fit', clampedCols, clampedRows)
+
+    // Update terminalFitOverrides for desktop safeFit compatibility
+    this.terminalFitOverrides.set(ptyId, {
+      mode: 'mobile-fit',
+      cols: clampedCols,
+      rows: clampedRows,
+      previousCols,
+      previousRows,
+      updatedAt: Date.now(),
+      clientId
+    })
+
+    return true
+  }
+
+  // Why: delayed restore prevents resize thrashing during rapid tab switches.
+  // The 300ms debounce means only the final tab triggers a PTY restore;
+  // intermediate terminals keep their current dims harmlessly.
+  handleMobileUnsubscribe(ptyId: string, clientId: string): void {
+    const subscriber = this.mobileSubscribers.get(ptyId)
+    console.log(
+      `[mobile-fit] handleMobileUnsubscribe ptyId=${ptyId} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
+    )
+    if (!subscriber || subscriber.clientId !== clientId) {
+      return
+    }
+
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    this.mobileSubscribers.delete(ptyId)
+
+    if (mode === 'auto' && subscriber.wasResizedToPhone) {
+      const existing = this.pendingRestoreTimers.get(ptyId)
+      if (existing) {
+        clearTimeout(existing.timer)
+      }
+
+      const { previousCols, previousRows } = subscriber
+      const timer = setTimeout(() => {
+        this.pendingRestoreTimers.delete(ptyId)
+        if (this.mobileSubscribers.has(ptyId)) {
+          return
+        }
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+        this.notifyFitOverrideListeners(ptyId, 'desktop-fit', previousCols ?? 0, previousRows ?? 0)
+      }, 300)
+
+      this.pendingRestoreTimers.set(ptyId, { timer, clientId })
+    }
+    // 'phone' mode: keep phone dims (no restore needed)
+    // 'desktop' mode: was never resized, nothing to restore
+  }
+
+  // Why: called when mode changes via terminal.setDisplayMode. Applies the
+  // mode change immediately if there's an active subscriber, and emits a
+  // 'resized' event so the mobile client can reinitialize xterm inline.
+  applyMobileDisplayMode(ptyId: string): void {
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    const subscriber = this.mobileSubscribers.get(ptyId)
+    console.log(
+      `[mobile-fit] applyMobileDisplayMode ptyId=${ptyId} mode=${mode} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
+    )
+
+    if (mode === 'desktop') {
+      if (subscriber?.wasResizedToPhone) {
+        const { previousCols, previousRows } = subscriber
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        subscriber.wasResizedToPhone = false
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+      }
+      const size = this.getTerminalSize(ptyId)
+      this.notifyTerminalResize(ptyId, {
+        cols: size?.cols ?? 0,
+        rows: size?.rows ?? 0,
+        displayMode: 'desktop',
+        reason: 'mode-change'
+      })
+    } else if (
+      (mode === 'phone' || mode === 'auto') &&
+      subscriber &&
+      !subscriber.wasResizedToPhone
+    ) {
+      const viewport = subscriber.viewport
+      if (viewport) {
+        this.handleMobileSubscribe(ptyId, subscriber.clientId, viewport)
+        this.notifyTerminalResize(ptyId, {
+          cols: viewport.cols,
+          rows: viewport.rows,
+          displayMode: mode,
+          reason: 'mode-change'
+        })
+      }
+    }
+  }
+
+  subscribeToTerminalResize(
+    ptyId: string,
+    listener: (event: { cols: number; rows: number; displayMode: string; reason: string }) => void
+  ): () => void {
+    let listeners = this.resizeListeners.get(ptyId)
+    if (!listeners) {
+      listeners = new Set()
+      this.resizeListeners.set(ptyId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        this.resizeListeners.delete(ptyId)
+      }
+    }
+  }
+
+  private notifyTerminalResize(
+    ptyId: string,
+    event: { cols: number; rows: number; displayMode: string; reason: string }
+  ): void {
+    const listeners = this.resizeListeners.get(ptyId)
+    if (!listeners) {
+      return
+    }
+    for (const listener of listeners) {
+      listener(event)
     }
   }
 
@@ -1604,6 +1912,7 @@ export class OrcaRuntimeService {
     comment?: string
     runHooks?: boolean
     setupDecision?: 'run' | 'skip' | 'inherit'
+    startup?: WorktreeStartupLaunch
   }): Promise<CreateWorktreeResult> {
     if (!this.store) {
       throw new Error('runtime_unavailable')
@@ -1696,8 +2005,7 @@ export class OrcaRuntimeService {
     // defers to the repo's orca.yaml setupRunPolicy. runHooks === true maps
     // to 'run' for backwards compatibility with the desktop create flow.
     const effectiveDecision = args.runHooks ? 'run' : (args.setupDecision ?? 'inherit')
-    const shouldRunSetup =
-      hooks?.scripts.setup && shouldRunSetupForCreate(repo, effectiveDecision)
+    const shouldRunSetup = hooks?.scripts.setup && shouldRunSetupForCreate(repo, effectiveDecision)
     if (shouldRunSetup && hooks?.scripts.setup) {
       if (this.authoritativeWindowId !== null) {
         try {
@@ -1924,6 +2232,54 @@ export class OrcaRuntimeService {
       this.graphSyncCallbacks.push(check)
       // Why: the graph sync may have fired between the initial check and
       // callback registration. Re-check immediately to avoid a missed wake-up.
+      check()
+    })
+  }
+
+  // Why: mobile clients may subscribe before the PTY spawns (the left pane
+  // of a new workspace). Instead of bailing with a bare scrollback+end,
+  // wait for the PTY to appear so the subscribe can proceed with phone-fit.
+  waitForLeafPtyId(handle: string, timeoutMs = 10_000): Promise<string> {
+    const leaf = this.resolveLeafForHandle(handle)
+    if (leaf?.ptyId) {
+      return Promise.resolve(leaf.ptyId)
+    }
+
+    // Why: when the ptyId changes from null to a real value, the old handle
+    // is invalidated (deleted from this.handles). Capture the tabId+leafId
+    // now so we can look up the leaf directly even after handle invalidation.
+    const record = this.handles.get(handle)
+    const savedTabId = record?.tabId ?? null
+    const savedLeafId = record?.leafId ?? null
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        reject(new Error('Timed out waiting for PTY to spawn'))
+      }, timeoutMs)
+
+      const check = (): void => {
+        // Try the handle first (works if handle wasn't invalidated yet)
+        let ptyId = this.resolveLeafForHandle(handle)?.ptyId
+        // Why: when ptyId transitions null→real, issueHandle invalidates the
+        // old handle. Fall back to direct leaf lookup by the saved coordinates.
+        if (!ptyId && savedTabId && savedLeafId) {
+          const directLeaf = this.leaves.get(this.getLeafKey(savedTabId, savedLeafId))
+          ptyId = directLeaf?.ptyId ?? null
+        }
+        if (ptyId) {
+          clearTimeout(timer)
+          const idx = this.graphSyncCallbacks.indexOf(check)
+          if (idx !== -1) {
+            this.graphSyncCallbacks.splice(idx, 1)
+          }
+          resolve(ptyId)
+        }
+      }
+      this.graphSyncCallbacks.push(check)
       check()
     })
   }

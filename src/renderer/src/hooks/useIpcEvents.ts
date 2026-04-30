@@ -789,6 +789,9 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.runtime.onTerminalFitOverrideChanged((event) => {
+        console.log(
+          `[mobile-fit] desktop received fitOverrideChanged ptyId=${event.ptyId} mode=${event.mode} cols=${event.cols} rows=${event.rows}`
+        )
         setFitOverride(event.ptyId, event.mode, event.cols, event.rows)
       })
     )

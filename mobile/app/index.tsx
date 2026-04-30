@@ -525,6 +525,38 @@ export default function HomeScreen() {
                   </View>
                   <Text style={styles.quickActionLabel}>New Worktree</Text>
                 </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.quickAction,
+                    pressed && styles.hostCardPressed,
+                    { borderColor: '#f97316', borderWidth: 1 }
+                  ]}
+                  onPress={async () => {
+                    const connectedHost = sortedHosts.find((h) => hostStates[h.id] === 'connected')
+                    if (!connectedHost) return
+                    const entry = clientsRef.current.find((e) => e.hostId === connectedHost.id)
+                    if (!entry) return
+                    try {
+                      const resp = await entry.client.sendRequest('worktree.create', {
+                        repo: 'name:orca',
+                        name: `dbg${Date.now() % 10000}`,
+                        setupDecision: 'inherit'
+                      })
+                      if (resp.ok) {
+                        const wt = (resp as { result: { worktree: { id: string } } }).result
+                          .worktree
+                        router.push(
+                          `/h/${connectedHost.id}/session/${encodeURIComponent(wt.id)}?name=debug&created=1`
+                        )
+                      }
+                    } catch {}
+                  }}
+                >
+                  <View style={styles.quickActionIcon}>
+                    <Terminal size={20} color="#f97316" />
+                  </View>
+                  <Text style={[styles.quickActionLabel, { color: '#f97316' }]}>Debug Test</Text>
+                </Pressable>
               </View>
             </View>
           }

@@ -33,9 +33,10 @@ export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
     }
   )
 
-  // Why: the desktop "Restore" button needs to clear a mobile-fit override
-  // without going through the mobile RPC path. Any clientId is accepted
-  // because the desktop user has physical access to the machine.
+  // Why: the desktop "Restore" button sets the display mode to 'desktop' and
+  // applies it, which restores the PTY to its original dimensions and emits
+  // a 'resized' event to any active mobile subscriber. This uses the same
+  // code path as the mobile toggle button (terminal.setDisplayMode RPC).
   ipcMain.removeHandler('runtime:restoreTerminalFit')
   ipcMain.handle('runtime:restoreTerminalFit', (_event, args: { ptyId: string }) => {
     const override = runtime.getTerminalFitOverride(args.ptyId)
@@ -43,7 +44,8 @@ export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
       return { restored: false }
     }
     try {
-      runtime.resizeForClient(args.ptyId, 'restore', override.clientId)
+      runtime.setMobileDisplayMode(args.ptyId, 'desktop')
+      runtime.applyMobileDisplayMode(args.ptyId)
       return { restored: true }
     } catch {
       return { restored: false }
