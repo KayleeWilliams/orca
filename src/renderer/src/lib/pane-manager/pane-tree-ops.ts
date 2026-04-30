@@ -67,13 +67,14 @@ export function safeFit(pane: ManagedPane): void {
       // When pendingSplitScrollState is set we must force a fit + refresh so
       // the WebGL renderer repaints. Without this, the pane appears blank
       // until something forces a dimension change.
-      if (pane.pendingSplitScrollState) {
+      const internal = pane as ManagedPaneInternal
+      if (internal.pendingSplitScrollState) {
         console.warn(
           '[terminal] safeFit forcing fit+refresh during pending split for pane',
           pane.id,
           `— dims ${dims.cols}×${dims.rows} match current, webgl:`,
-          !!pane.webglAddon,
-          pane.debugLabel ? `(${pane.debugLabel})` : ''
+          !!internal.webglAddon,
+          internal.debugLabel ? `(${internal.debugLabel})` : ''
         )
         pane.fitAddon.fit()
         try {
