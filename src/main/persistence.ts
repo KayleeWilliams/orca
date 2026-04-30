@@ -156,9 +156,13 @@ export class Store {
           // Why: 'recent' used to mean the weighted smart sort. One-shot
           // migration moves it to 'smart'; the flag prevents re-firing after
           // a user intentionally selects the new last-activity 'recent' sort.
+          // Gate on the *raw* persisted value, not the normalized one: the
+          // default sortBy is now 'recent', so a fresh install with no
+          // persisted sortBy would otherwise be mis-migrated to 'smart'.
           ui: (() => {
-            const sort = normalizeSortBy(parsed.ui?.sortBy)
-            const migrate = !parsed.ui?._sortBySmartMigrated && sort === 'recent'
+            const rawSort = parsed.ui?.sortBy
+            const sort = normalizeSortBy(rawSort)
+            const migrate = !parsed.ui?._sortBySmartMigrated && rawSort === 'recent'
             return {
               ...defaults.ui,
               ...parsed.ui,

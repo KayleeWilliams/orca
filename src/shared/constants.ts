@@ -227,7 +227,7 @@ export function getDefaultUIState(): PersistedUIState {
     sidebarWidth: 280,
     rightSidebarWidth: 350,
     groupBy: 'none',
-    sortBy: 'name',
+    sortBy: 'recent',
     showActiveOnly: false,
     filterRepoIds: [],
     collapsedGroups: [],

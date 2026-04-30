@@ -433,6 +433,24 @@ describe('Store', () => {
     expect(store.getUI().sortBy).toBe('recent')
   })
 
+  it('uses recent as the default sort for a fresh install (no persisted sortBy)', async () => {
+    // Why: the legacy-recent→smart migration must gate on the *raw* persisted
+    // value, not the normalized default. Otherwise, changing the default sort
+    // to 'recent' would cause every fresh install to be mis-migrated to 'smart'.
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getUI().sortBy).toBe('recent')
+  })
+
   // ── terminalMacOptionAsAlt migration (issue #903) ───────────────────
 
   it('migrates legacy "true" terminalMacOptionAsAlt to "auto" on first load', async () => {

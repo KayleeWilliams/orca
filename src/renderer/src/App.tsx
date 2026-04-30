@@ -325,7 +325,7 @@ function App(): React.JSX.Element {
             sidebarWidth: 280,
             rightSidebarWidth: 350,
             groupBy: 'none',
-            sortBy: 'name',
+            sortBy: 'recent',
             showActiveOnly: false,
             filterRepoIds: [],
             collapsedGroups: [],

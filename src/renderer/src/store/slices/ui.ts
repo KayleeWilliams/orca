@@ -429,7 +429,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set({ groupBy: g, collapsedGroups: new Set<string>() })
   },
 
-  sortBy: 'name',
+  sortBy: 'recent',
   setSortBy: (s) => set({ sortBy: s }),
 
   showActiveOnly: false,
