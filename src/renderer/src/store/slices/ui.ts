@@ -172,6 +172,7 @@ export type UISlice = {
     kind: OrcaHookScriptKind,
     contentHash: string
   ) => void
+  markOrcaHookRepoAlwaysTrusted: (repoId: string) => void
   clearOrcaHookTrustForRepo: (repoId: string) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
@@ -386,6 +387,22 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         [kind]: { contentHash, approvedAt: Date.now() }
       }
       const next = { ...s.trustedOrcaHooks, [repoId]: nextRepo }
+      window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
+      return { trustedOrcaHooks: next }
+    }),
+  markOrcaHookRepoAlwaysTrusted: (repoId) =>
+    set((s) => {
+      const existing = s.trustedOrcaHooks[repoId]
+      if (existing?.all) {
+        return s
+      }
+      const next = {
+        ...s.trustedOrcaHooks,
+        [repoId]: {
+          ...existing,
+          all: { approvedAt: Date.now() }
+        }
+      }
       window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
       return { trustedOrcaHooks: next }
     }),

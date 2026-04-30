@@ -669,6 +669,7 @@ export type CreateWorktreeArgs = {
 export type CreateWorktreeResult = {
   worktree: Worktree
   setup?: WorktreeSetupLaunch
+  warning?: string
 }
 
 // ─── Updater ─────────────────────────────────────────────────────────
@@ -1128,6 +1129,9 @@ export type PersistedTrustedOrcaHookEntry = {
 }
 
 export type PersistedTrustedOrcaHookRepo = {
+  all?: {
+    approvedAt: number
+  }
   setup?: PersistedTrustedOrcaHookEntry
   archive?: PersistedTrustedOrcaHookEntry
   issueCommand?: PersistedTrustedOrcaHookEntry

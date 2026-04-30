@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,8 @@ const OrcaYamlTrustDialog = React.memo(function OrcaYamlTrustDialog() {
   const modalData = useAppStore((s) => s.modalData)
   const closeModal = useAppStore((s) => s.closeModal)
   const markOrcaHookScriptConfirmed = useAppStore((s) => s.markOrcaHookScriptConfirmed)
+  const markOrcaHookRepoAlwaysTrusted = useAppStore((s) => s.markOrcaHookRepoAlwaysTrusted)
+  const [alwaysTrust, setAlwaysTrust] = useState(false)
 
   const isOpen = activeModal === 'confirm-orca-yaml-hooks'
 
@@ -48,15 +50,34 @@ const OrcaYamlTrustDialog = React.memo(function OrcaYamlTrustDialog() {
       ? (modalData.onResolve as (decision: 'run' | 'skip') => void)
       : null
 
+  useEffect(() => {
+    if (isOpen) {
+      setAlwaysTrust(false)
+    }
+  }, [isOpen])
+
   const resolveAndClose = useCallback(
     (decision: 'run' | 'skip') => {
-      if (decision === 'run' && repoId && contentHash) {
-        markOrcaHookScriptConfirmed(repoId, scriptKind, contentHash)
+      if (decision === 'run' && repoId) {
+        if (alwaysTrust) {
+          markOrcaHookRepoAlwaysTrusted(repoId)
+        } else if (contentHash) {
+          markOrcaHookScriptConfirmed(repoId, scriptKind, contentHash)
+        }
       }
       onResolve?.(decision)
       closeModal()
     },
-    [closeModal, contentHash, markOrcaHookScriptConfirmed, onResolve, repoId, scriptKind]
+    [
+      alwaysTrust,
+      closeModal,
+      contentHash,
+      markOrcaHookRepoAlwaysTrusted,
+      markOrcaHookScriptConfirmed,
+      onResolve,
+      repoId,
+      scriptKind
+    ]
   )
 
   const handleOpenChange = useCallback(
@@ -92,6 +113,18 @@ const OrcaYamlTrustDialog = React.memo(function OrcaYamlTrustDialog() {
             </pre>
           </div>
         )}
+
+        <label className="flex items-start gap-2 text-xs text-foreground">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-3.5 w-3.5"
+            checked={alwaysTrust}
+            onChange={(event) => setAlwaysTrust(event.target.checked)}
+          />
+          <span>
+            Always trust this repository&apos;s <code>orca.yaml</code> hooks.
+          </span>
+        </label>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => resolveAndClose('skip')}>

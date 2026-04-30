@@ -1022,7 +1022,9 @@ describe('OrcaRuntimeService', () => {
         repoId: 'repo-1',
         path: '/tmp/workspaces/runtime-hook-skip',
         branch: 'runtime-hook-skip'
-      })
+      }),
+      warning:
+        'orca.yaml setup hook skipped for /tmp/workspaces/runtime-hook-skip; pass --run-hooks to run it.'
     })
     expect(activateWorktree).toHaveBeenCalledWith('repo-1', expect.any(String), undefined)
   })
@@ -1036,10 +1038,13 @@ describe('OrcaRuntimeService', () => {
     })
     vi.mocked(removeWorktree).mockResolvedValue(undefined)
 
-    await runtime.removeManagedWorktree(TEST_WORKTREE_ID)
+    const result = await runtime.removeManagedWorktree(TEST_WORKTREE_ID)
 
     expect(runHook).not.toHaveBeenCalled()
     expect(removeWorktree).toHaveBeenCalledWith(TEST_REPO_PATH, TEST_WORKTREE_PATH, false)
+    expect(result.warning).toBe(
+      `orca.yaml archive hook skipped for ${TEST_WORKTREE_PATH}; pass --run-hooks to run it.`
+    )
   })
 
   it('runs archive hooks for CLI worktree removal when hooks are explicitly enabled', async () => {

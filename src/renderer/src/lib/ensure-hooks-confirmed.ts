@@ -23,6 +23,10 @@ export async function ensureHooksConfirmed(
   scriptKind: HookScriptKind
 ): Promise<'run' | 'skip'> {
   return enqueueTrustPrompt(async () => {
+    if (state.trustedOrcaHooks[repoId]?.all) {
+      return 'run'
+    }
+
     let scriptContent = ''
     try {
       if (scriptKind === 'issueCommand') {
