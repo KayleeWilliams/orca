@@ -2,7 +2,6 @@
 concurrency acquire/release pattern and error handling consistent across operations. */
 import type {
   PRInfo,
-  PRMergeableState,
   PRCheckDetail,
   GitHubCommentResult,
   GitHubPRReviewCommentInput,
@@ -12,7 +11,7 @@ import type {
 } from '../../shared/types'
 import { parseTaskQuery, type ParsedTaskQuery } from '../../shared/task-query'
 import { sortWorkItemsByUpdatedAt } from '../../shared/work-items'
-import { getPRConflictSummary } from './conflict-summary'
+import { resolvePRForBranch } from './branch-pr-resolution'
 import {
   execFileAsync,
   ghExecFileAsync,
@@ -37,9 +36,7 @@ import {
   mapCheckRunRESTStatus,
   mapCheckRunRESTConclusion,
   mapCheckStatus,
-  mapCheckConclusion,
-  mapPRState,
-  deriveCheckStatus
+  mapCheckConclusion
 } from './mappers'
 import { mapGraphQLReactionGroups, type GitHubGraphQLReactionGroup } from './comment-reactions'
 
@@ -741,94 +738,15 @@ export async function getWorkItem(
 /**
  * Get PR info for a given branch using gh CLI.
  * Returns null if gh is not installed, or no PR exists for the branch.
+ *
+ * Why the indirection: naive `gh pr list --head <localBranch>` silently
+ * returns `[]` when a worktree's local branch name differs from the remote
+ * branch name it tracks (e.g. pushed with an explicit refspec). The
+ * resolver runs a two-stage cascade — upstream-name lookup, then HEAD-SHA
+ * fallback with validation — to recover the PR in those cases.
  */
 export async function getPRForBranch(repoPath: string, branch: string): Promise<PRInfo | null> {
-  // Strip refs/heads/ prefix if present
-  const branchName = branch.replace(/^refs\/heads\//, '')
-
-  // During a rebase the worktree is in detached HEAD and branch is empty.
-  // An empty --head filter causes gh to return an arbitrary PR — bail early.
-  if (!branchName) {
-    return null
-  }
-
-  await acquire()
-  try {
-    const ownerRepo = await getOwnerRepo(repoPath)
-    let data: {
-      number: number
-      title: string
-      state: string
-      url: string
-      statusCheckRollup: unknown[]
-      updatedAt: string
-      isDraft?: boolean
-      mergeable: string
-      baseRefName?: string
-      headRefName?: string
-      baseRefOid?: string
-      headRefOid?: string
-    } | null = null
-
-    if (ownerRepo) {
-      const { stdout } = await ghExecFileAsync(
-        [
-          'pr',
-          'list',
-          '--repo',
-          `${ownerRepo.owner}/${ownerRepo.repo}`,
-          '--head',
-          branchName,
-          '--state',
-          'all',
-          '--limit',
-          '1',
-          '--json',
-          'number,title,state,url,statusCheckRollup,updatedAt,isDraft,mergeable,baseRefName,headRefName,baseRefOid,headRefOid'
-        ],
-        { cwd: repoPath }
-      )
-      const list = JSON.parse(stdout) as NonNullable<typeof data>[]
-      data = list[0] ?? null
-    } else {
-      const { stdout } = await ghExecFileAsync(
-        [
-          'pr',
-          'view',
-          branchName,
-          '--json',
-          'number,title,state,url,statusCheckRollup,updatedAt,isDraft,mergeable,baseRefName,headRefName,baseRefOid,headRefOid'
-        ],
-        { cwd: repoPath }
-      )
-      data = JSON.parse(stdout)
-    }
-
-    if (!data) {
-      return null
-    }
-
-    const conflictSummary =
-      data.mergeable === 'CONFLICTING' && data.baseRefName && data.baseRefOid && data.headRefOid
-        ? await getPRConflictSummary(repoPath, data.baseRefName, data.baseRefOid, data.headRefOid)
-        : undefined
-
-    return {
-      number: data.number,
-      title: data.title,
-      state: mapPRState(data.state, data.isDraft),
-      url: data.url,
-      checksStatus: deriveCheckStatus(data.statusCheckRollup),
-      updatedAt: data.updatedAt,
-      mergeable: (data.mergeable as PRMergeableState) ?? 'UNKNOWN',
-      headSha: data.headRefOid,
-      conflictSummary
-    }
-  } catch {
-    return null
-  } finally {
-    release()
-  }
+  return await resolvePRForBranch(repoPath, branch)
 }
 
 /**
