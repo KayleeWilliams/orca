@@ -10,7 +10,7 @@ import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
 import type { PtyConnectionDeps } from './pty-connection-types'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
-import { getFitOverrideForPane, bindPanePtyId } from '@/lib/pane-manager/mobile-fit-overrides'
+import { getFitOverrideForPty, bindPanePtyId } from '@/lib/pane-manager/mobile-fit-overrides'
 import { isPaneReplaying, replayIntoTerminal, replayIntoTerminalAsync } from './replay-guard'
 import {
   paneLeafId,
@@ -212,7 +212,8 @@ export function connectPanePty(
   }
 
   const onPtySpawn = (ptyId: string): void => {
-    bindPanePtyId(pane.id, ptyId)
+    bindPanePtyId(pane.id, ptyId, deps.tabId)
+    pane.container.dataset.ptyId = ptyId
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
     deps.updateTabPtyId(deps.tabId, ptyId)
     // Spawn completion is when a pane gains a concrete PTY ID. The initial
@@ -395,8 +396,10 @@ export function connectPanePty(
   const onResizeDisposable = pane.terminal.onResize(({ cols, rows }) => {
     // Why: when a mobile-fit override is active, the PTY is already at the
     // correct phone dimensions. Suppress resize forwarding to avoid spurious
-    // SIGWINCH signals that could cause TUI flicker.
-    if (getFitOverrideForPane(pane.id)) {
+    // SIGWINCH signals that could cause TUI flicker. Uses the transport's
+    // ptyId directly to avoid pane ID collisions across tabs.
+    const currentPtyId = transport.getPtyId()
+    if (currentPtyId && getFitOverrideForPty(currentPtyId)) {
       return
     }
     transport.resize(cols, rows)
@@ -557,7 +560,8 @@ export function connectPanePty(
         startFreshSpawn()
         return
       }
-      bindPanePtyId(pane.id, ptyId)
+      bindPanePtyId(pane.id, ptyId, deps.tabId)
+      pane.container.dataset.ptyId = ptyId
       deps.syncPanePtyLayoutBinding(pane.id, ptyId)
       deps.updateTabPtyId(deps.tabId, ptyId)
 
@@ -648,7 +652,8 @@ export function connectPanePty(
 
       // Why: when a mobile-fit override is active, skip sending desktop dims
       // to the PTY — the PTY is already at phone dimensions and must stay there.
-      if (!getFitOverrideForPane(pane.id)) {
+      const reattachPtyId = transport.getPtyId()
+      if (!reattachPtyId || !getFitOverrideForPty(reattachPtyId)) {
         transport.resize(cols, rows)
       }
       // Why: POSIX only delivers SIGWINCH when terminal dimensions actually

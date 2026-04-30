@@ -5,7 +5,7 @@ import type {
   PaneStyleOptions
 } from './pane-manager-types'
 import { createDivider } from './pane-divider'
-import { getFitOverrideForPane } from './mobile-fit-overrides'
+import { getFitOverrideForPty } from './mobile-fit-overrides'
 
 export { findLineByContent, captureScrollState, restoreScrollState } from './pane-scroll'
 
@@ -44,8 +44,10 @@ export function safeFit(pane: ManagedPane): void {
     // Why: when a mobile client has resized this PTY to phone dimensions,
     // the desktop must keep xterm at those dimensions instead of fitting to
     // the desktop pane geometry. This prevents desktop auto-fit from undoing
-    // the mobile resize.
-    const override = getFitOverrideForPane(pane.id)
+    // the mobile resize. Uses data-pty-id (set by bindPanePtyId) to look up
+    // the override by ptyId directly, avoiding pane ID collisions across tabs.
+    const ptyId = pane.container.dataset.ptyId
+    const override = ptyId ? getFitOverrideForPty(ptyId) : null
     if (override) {
       if (pane.terminal.cols !== override.cols || pane.terminal.rows !== override.rows) {
         pane.terminal.resize(override.cols, override.rows)

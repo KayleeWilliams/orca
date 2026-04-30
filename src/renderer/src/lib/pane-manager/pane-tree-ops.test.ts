@@ -33,7 +33,7 @@ function createPane({
   return {
     id: 1,
     terminal: terminal as never,
-    container: {} as never,
+    container: { dataset: {} } as never,
     xtermContainer: {} as never,
     linkTooltip: {} as never,
     gpuRenderingEnabled: true,

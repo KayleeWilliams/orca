@@ -141,6 +141,7 @@ function createPane(paneId: number) {
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() }))
     },
+    container: { dataset: {} },
     fitAddon: {
       fit: vi.fn()
     }

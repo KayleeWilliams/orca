@@ -10,7 +10,9 @@ type FitOverride = {
 }
 
 const overridesByPtyId = new Map<string, FitOverride>()
-const ptyIdByPaneId = new Map<number, string>()
+// Why: keyed by 'tabId:paneId' composite to avoid collisions when different
+// tabs have panes with the same numeric ID (pane IDs are per-tab, not global).
+const ptyIdByPaneKey = new Map<string, string>()
 
 // Why: the override maps are plain JS — React components that read them
 // (e.g. the desktop mobile-fit banner) have no way to know when entries
@@ -52,9 +54,12 @@ export function setFitOverride(
 
 export function getPaneIdsForPty(ptyId: string): number[] {
   const result: number[] = []
-  for (const [paneId, boundPtyId] of ptyIdByPaneId) {
+  for (const [key, boundPtyId] of ptyIdByPaneKey) {
     if (boundPtyId === ptyId) {
-      result.push(paneId)
+      const paneId = Number(key.split(':').pop())
+      if (!Number.isNaN(paneId)) {
+        result.push(paneId)
+      }
     }
   }
   return result
@@ -64,24 +69,32 @@ export function getFitOverrideForPty(ptyId: string): FitOverride | null {
   return overridesByPtyId.get(ptyId) ?? null
 }
 
-export function getFitOverrideForPane(paneId: number): FitOverride | null {
-  const ptyId = ptyIdByPaneId.get(paneId)
-  if (!ptyId) {
-    return null
+export function getFitOverrideForPane(paneId: number, tabId?: string): FitOverride | null {
+  if (tabId) {
+    const ptyId = ptyIdByPaneKey.get(`${tabId}:${paneId}`)
+    if (!ptyId) {
+      return null
+    }
+    return overridesByPtyId.get(ptyId) ?? null
   }
-  return overridesByPtyId.get(ptyId) ?? null
+  return null
 }
 
-export function bindPanePtyId(paneId: number, ptyId: string | null): void {
-  if (ptyId) {
-    ptyIdByPaneId.set(paneId, ptyId)
-  } else {
-    ptyIdByPaneId.delete(paneId)
+export function bindPanePtyId(paneId: number, ptyId: string | null, tabId?: string): void {
+  if (tabId) {
+    const key = `${tabId}:${paneId}`
+    if (ptyId) {
+      ptyIdByPaneKey.set(key, ptyId)
+    } else {
+      ptyIdByPaneKey.delete(key)
+    }
   }
 }
 
-export function unbindPane(paneId: number): void {
-  ptyIdByPaneId.delete(paneId)
+export function unbindPane(paneId: number, tabId?: string): void {
+  if (tabId) {
+    ptyIdByPaneKey.delete(`${tabId}:${paneId}`)
+  }
 }
 
 export function hydrateOverrides(
