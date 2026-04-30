@@ -34,6 +34,16 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
   },
   {
+    title: 'Memory Monitoring',
+    description: 'Show memory and CPU usage in the status bar.',
+    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']
+  },
+  {
+    title: 'Terminal Sessions',
+    description: 'Show the terminal session count in the status bar.',
+    keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty']
+  },
+  {
     title: 'Task Provider Icons',
     description: 'Show GitHub and Linear icons in the Tasks sidebar button.',
     keywords: ['tasks', 'sidebar', 'github', 'linear', 'icons', 'badges']
@@ -53,7 +63,12 @@ export function AppearancePane({
   const zoomEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(1, 2)
   const layoutEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(2, 3)
   const titlebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(3, 4)
-  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4)
+  const statusBarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4, 6)
+  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(6)
+  const statusBarItems = useAppStore((state) => state.statusBarItems)
+  const toggleStatusBarItem = useAppStore((state) => state.toggleStatusBarItem)
+  const memoryEnabled = statusBarItems.includes('memory')
+  const sessionsEnabled = statusBarItems.includes('sessions')
 
   const visibleSections = [
     matchesSettingsSearch(searchQuery, themeEntries) ? (
@@ -188,6 +203,75 @@ export function AppearancePane({
             <span
               className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
                 settings.showTitlebarAgentActivity ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
+      </section>
+    ) : null,
+    matchesSettingsSearch(searchQuery, statusBarEntries) ? (
+      <section key="status-bar" className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Status Bar</h3>
+          <p className="text-xs text-muted-foreground">
+            Choose which indicators appear at the bottom of the window. You can also right-click the
+            status bar for the same toggles.
+          </p>
+        </div>
+
+        <SearchableSetting
+          title="Memory Monitoring"
+          description="Show memory and CPU usage in the status bar."
+          keywords={['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Memory Monitoring</Label>
+            <p className="text-xs text-muted-foreground">
+              Show total memory and CPU usage. Click it to see a per-workspace breakdown.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={memoryEnabled}
+            onClick={() => toggleStatusBarItem('memory')}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              memoryEnabled ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                memoryEnabled ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
+
+        <SearchableSetting
+          title="Terminal Sessions"
+          description="Show the terminal session count in the status bar."
+          keywords={['status bar', 'terminal', 'sessions', 'count', 'pty']}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Terminal Sessions</Label>
+            <p className="text-xs text-muted-foreground">
+              Show the number of active terminal sessions across all workspaces.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={sessionsEnabled}
+            onClick={() => toggleStatusBarItem('sessions')}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              sessionsEnabled ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                sessionsEnabled ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
           </button>
