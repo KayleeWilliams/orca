@@ -12,57 +12,102 @@ type AppearancePaneProps = {
   applyTheme: (theme: 'system' | 'dark' | 'light') => void
 }
 
-export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+const STATUS_BAR_TOGGLES: readonly {
+  id: StatusBarItem
+  title: string
+  description: string
+  keywords: string[]
+  toggleDescription: string
+}[] = [
+  {
+    id: 'claude',
+    title: 'Claude Usage',
+    description: 'Show Claude token and cost usage in the status bar.',
+    keywords: ['status bar', 'claude', 'usage', 'tokens', 'cost', 'anthropic'],
+    toggleDescription: 'Show Claude token and cost usage for the active workspace.'
+  },
+  {
+    id: 'codex',
+    title: 'Codex Usage',
+    description: 'Show Codex token and cost usage in the status bar.',
+    keywords: ['status bar', 'codex', 'usage', 'tokens', 'cost', 'openai'],
+    toggleDescription: 'Show Codex token and cost usage for the active workspace.'
+  },
+  {
+    id: 'ssh',
+    title: 'SSH Status',
+    description: 'Show the active SSH connection status in the status bar.',
+    keywords: ['status bar', 'ssh', 'remote', 'connection', 'host'],
+    toggleDescription:
+      'Show the active SSH connection. Only visible once an SSH target is configured.'
+  },
+  {
+    id: 'sessions',
+    title: 'Terminal Sessions',
+    description: 'Show the terminal session count in the status bar.',
+    keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty'],
+    toggleDescription: 'Show the number of active terminal sessions across all workspaces.'
+  },
+  {
+    id: 'memory',
+    title: 'Memory Monitoring',
+    description: 'Show memory and CPU usage in the status bar.',
+    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance'],
+    toggleDescription: 'Show total memory and CPU usage. Click it to see a per-workspace breakdown.'
+  }
+]
+
+const THEME_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Theme',
     description: 'Choose how Orca looks in the app window.',
     keywords: ['dark', 'light', 'system']
-  },
+  }
+]
+
+const ZOOM_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'UI Zoom',
     description: 'Scale the entire application interface.',
     keywords: ['zoom', 'scale', 'shortcut']
-  },
+  }
+]
+
+const LAYOUT_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Open Right Sidebar by Default',
     description: 'Automatically expand the file explorer panel when creating a new worktree.',
     keywords: ['layout', 'file explorer', 'sidebar']
-  },
+  }
+]
+
+const TITLEBAR_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Titlebar Agent Activity',
     description: 'Show the number of active agents in the titlebar.',
     keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
-  },
-  {
-    title: 'Claude Usage',
-    description: 'Show Claude token and cost usage in the status bar.',
-    keywords: ['status bar', 'claude', 'usage', 'tokens', 'cost', 'anthropic']
-  },
-  {
-    title: 'Codex Usage',
-    description: 'Show Codex token and cost usage in the status bar.',
-    keywords: ['status bar', 'codex', 'usage', 'tokens', 'cost', 'openai']
-  },
-  {
-    title: 'SSH Status',
-    description: 'Show the active SSH connection status in the status bar.',
-    keywords: ['status bar', 'ssh', 'remote', 'connection', 'host']
-  },
-  {
-    title: 'Terminal Sessions',
-    description: 'Show the terminal session count in the status bar.',
-    keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty']
-  },
-  {
-    title: 'Memory Monitoring',
-    description: 'Show memory and CPU usage in the status bar.',
-    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']
-  },
+  }
+]
+
+const STATUS_BAR_ENTRIES: SettingsSearchEntry[] = STATUS_BAR_TOGGLES.map(
+  ({ title, description, keywords }) => ({ title, description, keywords })
+)
+
+const SIDEBAR_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Task Provider Icons',
     description: 'Show GitHub and Linear icons in the Tasks sidebar button.',
     keywords: ['tasks', 'sidebar', 'github', 'linear', 'icons', 'badges']
   }
+]
+
+export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...THEME_ENTRIES,
+  ...ZOOM_ENTRIES,
+  ...LAYOUT_ENTRIES,
+  ...TITLEBAR_ENTRIES,
+  ...STATUS_BAR_ENTRIES,
+  ...SIDEBAR_ENTRIES
 ]
 
 export function AppearancePane({
@@ -74,63 +119,11 @@ export function AppearancePane({
   const isMac = navigator.userAgent.includes('Mac')
   const zoomInLabel = isMac ? '⌘+' : 'Ctrl +'
   const zoomOutLabel = isMac ? '⌘-' : 'Ctrl -'
-  const themeEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(0, 1)
-  const zoomEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(1, 2)
-  const layoutEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(2, 3)
-  const titlebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(3, 4)
-  const statusBarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4, 9)
-  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(9)
   const statusBarItems = useAppStore((state) => state.statusBarItems)
   const toggleStatusBarItem = useAppStore((state) => state.toggleStatusBarItem)
 
-  const statusBarToggles: {
-    id: StatusBarItem
-    title: string
-    description: string
-    keywords: string[]
-    toggleDescription: string
-  }[] = [
-    {
-      id: 'claude',
-      title: 'Claude Usage',
-      description: 'Show Claude token and cost usage in the status bar.',
-      keywords: ['status bar', 'claude', 'usage', 'tokens', 'cost', 'anthropic'],
-      toggleDescription: 'Show Claude token and cost usage for the active workspace.'
-    },
-    {
-      id: 'codex',
-      title: 'Codex Usage',
-      description: 'Show Codex token and cost usage in the status bar.',
-      keywords: ['status bar', 'codex', 'usage', 'tokens', 'cost', 'openai'],
-      toggleDescription: 'Show Codex token and cost usage for the active workspace.'
-    },
-    {
-      id: 'ssh',
-      title: 'SSH Status',
-      description: 'Show the active SSH connection status in the status bar.',
-      keywords: ['status bar', 'ssh', 'remote', 'connection', 'host'],
-      toggleDescription:
-        'Show the active SSH connection. Only visible once an SSH target is configured.'
-    },
-    {
-      id: 'sessions',
-      title: 'Terminal Sessions',
-      description: 'Show the terminal session count in the status bar.',
-      keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty'],
-      toggleDescription: 'Show the number of active terminal sessions across all workspaces.'
-    },
-    {
-      id: 'memory',
-      title: 'Memory Monitoring',
-      description: 'Show memory and CPU usage in the status bar.',
-      keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance'],
-      toggleDescription:
-        'Show total memory and CPU usage. Click it to see a per-workspace breakdown.'
-    }
-  ]
-
   const visibleSections = [
-    matchesSettingsSearch(searchQuery, themeEntries) ? (
+    matchesSettingsSearch(searchQuery, THEME_ENTRIES) ? (
       <section key="theme" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Theme</h3>
@@ -163,7 +156,7 @@ export function AppearancePane({
         </SearchableSetting>
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, zoomEntries) ? (
+    matchesSettingsSearch(searchQuery, ZOOM_ENTRIES) ? (
       <section key="zoom" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">UI Zoom</h3>
@@ -184,7 +177,7 @@ export function AppearancePane({
         </SearchableSetting>
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, layoutEntries) ? (
+    matchesSettingsSearch(searchQuery, LAYOUT_ENTRIES) ? (
       <section key="layout" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Layout</h3>
@@ -226,7 +219,7 @@ export function AppearancePane({
         </SearchableSetting>
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, titlebarEntries) ? (
+    matchesSettingsSearch(searchQuery, TITLEBAR_ENTRIES) ? (
       <section key="titlebar" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Titlebar</h3>
@@ -268,7 +261,7 @@ export function AppearancePane({
         </SearchableSetting>
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, statusBarEntries) ? (
+    matchesSettingsSearch(searchQuery, STATUS_BAR_ENTRIES) ? (
       <section key="status-bar" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Status Bar</h3>
@@ -278,7 +271,7 @@ export function AppearancePane({
           </p>
         </div>
 
-        {statusBarToggles.map((toggle) => {
+        {STATUS_BAR_TOGGLES.map((toggle) => {
           const enabled = statusBarItems.includes(toggle.id)
           return (
             <SearchableSetting
@@ -295,6 +288,7 @@ export function AppearancePane({
               <button
                 type="button"
                 role="switch"
+                aria-label={toggle.title}
                 aria-checked={enabled}
                 onClick={() => toggleStatusBarItem(toggle.id)}
                 className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
@@ -312,7 +306,7 @@ export function AppearancePane({
         })}
       </section>
     ) : null,
-    matchesSettingsSearch(searchQuery, sidebarEntries) ? (
+    matchesSettingsSearch(searchQuery, SIDEBAR_ENTRIES) ? (
       <section key="sidebar" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Sidebar</h3>
