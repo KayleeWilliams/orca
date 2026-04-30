@@ -2446,7 +2446,10 @@ export class OrcaRuntimeService {
     this.rememberDetachedPreAllocatedLeaves()
     this.handles.clear()
     this.handleByLeafKey.clear()
-    this.handleByPtyId.clear()
+    // Why: handleByPtyId maps ptyId → pre-allocated CLI handle (ORCA_TERMINAL_HANDLE).
+    // These must survive renderer reloads so CLI agents can keep controlling the
+    // same terminal across graph rebuilds — adoptPreAllocatedHandle re-links
+    // them when the new graph arrives.
     this.rejectAllWaiters('terminal_handle_stale')
     this.refreshWritableFlags()
   }
@@ -2475,7 +2478,8 @@ export class OrcaRuntimeService {
     this.leaves.clear()
     this.handles.clear()
     this.handleByLeafKey.clear()
-    this.handleByPtyId.clear()
+    // Why: same as markRendererReloading — pre-allocated CLI handles must
+    // survive graph unavailability so they can be re-adopted on reconnect.
     this.rejectAllWaiters('terminal_handle_stale')
   }
 
