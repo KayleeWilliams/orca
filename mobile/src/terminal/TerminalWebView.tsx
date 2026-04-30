@@ -309,7 +309,11 @@ const XTERM_HTML = `<!DOCTYPE html>
     var vpWidth = window.innerWidth;
     var vpHeight = window.innerHeight;
     var cols = Math.floor(vpWidth / cellWidth);
-    var rows = Math.floor(vpHeight / cellHeight);
+    // Why: subtract 1 row so the bottom terminal line is never covered
+    // by the accessory bar. The WebView's innerHeight can slightly
+    // overstate the visible area due to layout timing or safe-area
+    // insets, causing the last row to render behind the overlay.
+    var rows = Math.max(8, Math.floor(vpHeight / cellHeight) - 1);
     notify({ type: 'measure-result', cols: cols, rows: rows });
   }
 
@@ -430,7 +434,7 @@ const XTERM_HTML = `<!DOCTYPE html>
 
     if (ts.isPinching && e.touches.length < 2) {
       ts.isPinching = false;
-      if (userScale < 1.05) {
+      if (userScale < 1.15) {
         userScale = 1; panX = 0; panY = 0;
         updateTransform();
       }
