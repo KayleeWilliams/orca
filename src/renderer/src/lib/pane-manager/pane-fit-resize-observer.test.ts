@@ -58,7 +58,6 @@ function createPane(): ManagedPaneInternal {
     webglAddon: null,
     ligaturesAddon: null,
     compositionHandler: null,
-    debugLabel: null,
     pendingSplitScrollState: {
       wasAtBottom: true,
       firstVisibleLineContent: '',

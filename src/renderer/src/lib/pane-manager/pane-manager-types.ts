@@ -28,10 +28,6 @@ export type PaneManagerOptions = {
   terminalOptions?: (paneId: number) => Partial<ITerminalOptions>
   onLinkClick?: (event: MouseEvent | undefined, url: string) => void
   initialRenderingSuspended?: boolean
-  // Why: diagnostic label for log correlation. safeFit and other internal
-  // helpers log warnings that are hard to correlate without knowing which
-  // tab/worktree the PaneManager belongs to.
-  debugLabel?: string
 }
 
 export type PaneStyleOptions = {
@@ -95,7 +91,6 @@ export type ManagedPaneInternal = {
   // intermediate fit paths skip their own scroll restoration, deferring to
   // the splitPane's final authoritative restore.
   pendingSplitScrollState: ScrollState | null
-  debugLabel: string | null
 } & ManagedPane
 
 export type DropZone = 'top' | 'bottom' | 'left' | 'right'
