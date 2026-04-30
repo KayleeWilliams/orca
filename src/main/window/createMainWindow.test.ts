@@ -9,7 +9,6 @@ const { browserWindowMock, openExternalMock, attachGuestPoliciesMock, isMock } =
 }))
 
 vi.mock('electron', () => ({
-  app: { on: vi.fn(), removeListener: vi.fn() },
   BrowserWindow: browserWindowMock,
   ipcMain: { on: vi.fn(), removeListener: vi.fn() },
   nativeTheme: { shouldUseDarkColors: false },
