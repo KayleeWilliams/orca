@@ -33,7 +33,7 @@ export default function globalSetup(): void {
     execSync('npx electron-vite build --mode e2e', {
       cwd: root,
       stdio: 'inherit',
-      timeout: 120_000,
+      timeout: 120_000
     })
     console.log('[e2e] Build complete.')
   }
@@ -53,15 +53,16 @@ export default function globalSetup(): void {
     path.join(testRepoDir, 'README.md'),
     '# Orca E2E Test Repo\n\nThis repo was created automatically for Playwright tests.\n'
   )
-  writeFileSync(
-    path.join(testRepoDir, 'CLAUDE.md'),
-    '# CLAUDE.md\n\nTest instructions for E2E.\n'
-  )
+  writeFileSync(path.join(testRepoDir, 'CLAUDE.md'), '# CLAUDE.md\n\nTest instructions for E2E.\n')
   writeFileSync(
     path.join(testRepoDir, 'package.json'),
     `${JSON.stringify({ name: 'orca-e2e-test', version: '0.0.0', private: true }, null, 2)}\n`
   )
   writeFileSync(path.join(testRepoDir, '.gitignore'), 'node_modules/\n')
+  // Why: the dead-terminal-repro spec exercises the real setup-split flow where
+  // main reads orca.yaml, writes a runner script, and returns a WorktreeSetupLaunch.
+  // Without this file the IPC returns no setup and the split never fires.
+  writeFileSync(path.join(testRepoDir, 'orca.yaml'), 'scripts:\n  setup: echo SETUP_COMPLETE\n')
   mkdirSync(path.join(testRepoDir, 'src'), { recursive: true })
   writeFileSync(path.join(testRepoDir, 'src', 'index.ts'), 'export const hello = "world"\n')
 
@@ -74,7 +75,7 @@ export default function globalSetup(): void {
   const worktreeDir = path.join(testRepoDir, '..', `orca-e2e-worktree-${Date.now()}`)
   execSync(`git worktree add "${worktreeDir}" -b e2e-secondary`, {
     cwd: testRepoDir,
-    stdio: 'pipe',
+    stdio: 'pipe'
   })
   console.log(`[e2e] Secondary worktree created at ${worktreeDir}`)
 

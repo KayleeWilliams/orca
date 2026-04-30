@@ -121,7 +121,8 @@ export function createPaneDOM(
     webglAddon: null,
     ligaturesAddon: null,
     compositionHandler: null,
-    pendingSplitScrollState: null
+    pendingSplitScrollState: null,
+    debugLabel: options.debugLabel ?? null
   }
 
   // Focus handler: clicking a pane makes it active and explicitly focuses

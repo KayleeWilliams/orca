@@ -663,7 +663,8 @@ export function useTerminalPaneLifecycle({
       // Why: TerminalPane instances stay mounted for hidden visited worktrees
       // so PTYs survive navigation. Creating WebGL for those offscreen panes
       // still consumes Chromium's context budget and can blank visible panes.
-      initialRenderingSuspended: !isVisibleRef.current
+      initialRenderingSuspended: !isVisibleRef.current,
+      debugLabel: `tab:${tabId}/wt:${worktreeId}`
     })
 
     managerRef.current = manager
