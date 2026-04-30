@@ -1,4 +1,4 @@
-import type { GlobalSettings } from '../../../../shared/types'
+import type { GlobalSettings, StatusBarItem } from '../../../../shared/types'
 import { Label } from '../ui/label'
 import { Separator } from '../ui/separator'
 import { UIZoomControl } from './UIZoomControl'
@@ -34,14 +34,29 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
   },
   {
-    title: 'Memory Monitoring',
-    description: 'Show memory and CPU usage in the status bar.',
-    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']
+    title: 'Claude Usage',
+    description: 'Show Claude token and cost usage in the status bar.',
+    keywords: ['status bar', 'claude', 'usage', 'tokens', 'cost', 'anthropic']
+  },
+  {
+    title: 'Codex Usage',
+    description: 'Show Codex token and cost usage in the status bar.',
+    keywords: ['status bar', 'codex', 'usage', 'tokens', 'cost', 'openai']
+  },
+  {
+    title: 'SSH Status',
+    description: 'Show the active SSH connection status in the status bar.',
+    keywords: ['status bar', 'ssh', 'remote', 'connection', 'host']
   },
   {
     title: 'Terminal Sessions',
     description: 'Show the terminal session count in the status bar.',
     keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty']
+  },
+  {
+    title: 'Memory Monitoring',
+    description: 'Show memory and CPU usage in the status bar.',
+    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']
   },
   {
     title: 'Task Provider Icons',
@@ -63,12 +78,55 @@ export function AppearancePane({
   const zoomEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(1, 2)
   const layoutEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(2, 3)
   const titlebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(3, 4)
-  const statusBarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4, 6)
-  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(6)
+  const statusBarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4, 9)
+  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(9)
   const statusBarItems = useAppStore((state) => state.statusBarItems)
   const toggleStatusBarItem = useAppStore((state) => state.toggleStatusBarItem)
-  const memoryEnabled = statusBarItems.includes('memory')
-  const sessionsEnabled = statusBarItems.includes('sessions')
+
+  const statusBarToggles: {
+    id: StatusBarItem
+    title: string
+    description: string
+    keywords: string[]
+    toggleDescription: string
+  }[] = [
+    {
+      id: 'claude',
+      title: 'Claude Usage',
+      description: 'Show Claude token and cost usage in the status bar.',
+      keywords: ['status bar', 'claude', 'usage', 'tokens', 'cost', 'anthropic'],
+      toggleDescription: 'Show Claude token and cost usage for the active workspace.'
+    },
+    {
+      id: 'codex',
+      title: 'Codex Usage',
+      description: 'Show Codex token and cost usage in the status bar.',
+      keywords: ['status bar', 'codex', 'usage', 'tokens', 'cost', 'openai'],
+      toggleDescription: 'Show Codex token and cost usage for the active workspace.'
+    },
+    {
+      id: 'ssh',
+      title: 'SSH Status',
+      description: 'Show the active SSH connection status in the status bar.',
+      keywords: ['status bar', 'ssh', 'remote', 'connection', 'host'],
+      toggleDescription: 'Show the active SSH connection, or a prompt to connect.'
+    },
+    {
+      id: 'sessions',
+      title: 'Terminal Sessions',
+      description: 'Show the terminal session count in the status bar.',
+      keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty'],
+      toggleDescription: 'Show the number of active terminal sessions across all workspaces.'
+    },
+    {
+      id: 'memory',
+      title: 'Memory Monitoring',
+      description: 'Show memory and CPU usage in the status bar.',
+      keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance'],
+      toggleDescription:
+        'Show total memory and CPU usage. Click it to see a per-workspace breakdown.'
+    }
+  ]
 
   const visibleSections = [
     matchesSettingsSearch(searchQuery, themeEntries) ? (
@@ -219,63 +277,38 @@ export function AppearancePane({
           </p>
         </div>
 
-        <SearchableSetting
-          title="Memory Monitoring"
-          description="Show memory and CPU usage in the status bar."
-          keywords={['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance']}
-          className="flex items-center justify-between gap-4 px-1 py-2"
-        >
-          <div className="space-y-0.5">
-            <Label>Memory Monitoring</Label>
-            <p className="text-xs text-muted-foreground">
-              Show total memory and CPU usage. Click it to see a per-workspace breakdown.
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={memoryEnabled}
-            onClick={() => toggleStatusBarItem('memory')}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-              memoryEnabled ? 'bg-foreground' : 'bg-muted-foreground/30'
-            }`}
-          >
-            <span
-              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                memoryEnabled ? 'translate-x-4' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
-        </SearchableSetting>
-
-        <SearchableSetting
-          title="Terminal Sessions"
-          description="Show the terminal session count in the status bar."
-          keywords={['status bar', 'terminal', 'sessions', 'count', 'pty']}
-          className="flex items-center justify-between gap-4 px-1 py-2"
-        >
-          <div className="space-y-0.5">
-            <Label>Terminal Sessions</Label>
-            <p className="text-xs text-muted-foreground">
-              Show the number of active terminal sessions across all workspaces.
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={sessionsEnabled}
-            onClick={() => toggleStatusBarItem('sessions')}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-              sessionsEnabled ? 'bg-foreground' : 'bg-muted-foreground/30'
-            }`}
-          >
-            <span
-              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                sessionsEnabled ? 'translate-x-4' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
-        </SearchableSetting>
+        {statusBarToggles.map((toggle) => {
+          const enabled = statusBarItems.includes(toggle.id)
+          return (
+            <SearchableSetting
+              key={toggle.id}
+              title={toggle.title}
+              description={toggle.description}
+              keywords={toggle.keywords}
+              className="flex items-center justify-between gap-4 px-1 py-2"
+            >
+              <div className="space-y-0.5">
+                <Label>{toggle.title}</Label>
+                <p className="text-xs text-muted-foreground">{toggle.toggleDescription}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enabled}
+                onClick={() => toggleStatusBarItem(toggle.id)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+                  enabled ? 'bg-foreground' : 'bg-muted-foreground/30'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                    enabled ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </SearchableSetting>
+          )
+        })}
       </section>
     ) : null,
     matchesSettingsSearch(searchQuery, sidebarEntries) ? (
