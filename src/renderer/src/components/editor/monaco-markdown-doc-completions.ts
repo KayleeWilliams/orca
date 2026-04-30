@@ -9,12 +9,21 @@ import {
 type MonacoApi = Parameters<OnMount>[1]
 
 let provider: IDisposable | null = null
+let providerMonaco: MonacoApi | null = null
 const documentsByModel = new Map<string, MarkdownDocument[]>()
 
 export function ensureMarkdownDocCompletionProvider(monaco: MonacoApi): void {
-  if (provider) {
+  // Why: if Monaco was torn down and re-created (e.g. window reload), the old
+  // provider reference is stale. Detect this by checking whether the Monaco
+  // instance changed and re-register.
+  if (provider && providerMonaco === monaco) {
     return
   }
+  if (provider) {
+    provider.dispose()
+    documentsByModel.clear()
+  }
+  providerMonaco = monaco
 
   provider = monaco.languages.registerCompletionItemProvider('markdown', {
     triggerCharacters: ['['],

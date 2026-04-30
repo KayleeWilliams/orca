@@ -11,13 +11,14 @@ type UseMarkdownDocumentsResult = {
     markdownDocuments: MarkdownDocument[]
     onOpenDocument: (document: MarkdownDocument) => Promise<void>
   }
-  refreshMarkdownDocuments: () => Promise<void>
+  mdSave: (content: string) => Promise<void>
 }
 
 export function useMarkdownDocuments(
   activeFile: OpenFile,
   isMarkdown: boolean,
-  viewMode: MarkdownViewMode
+  viewMode: MarkdownViewMode,
+  onSave: (content: string) => Promise<void>
 ): UseMarkdownDocumentsResult {
   const worktreeId = activeFile.worktreeId
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
@@ -103,11 +104,20 @@ export function useMarkdownDocuments(
     void refreshMarkdownDocuments()
   }, [activeFile.id, isMarkdown, viewMode, refreshMarkdownDocuments])
 
-  const markdownDocuments = worktreeId ? (markdownDocumentsByWorktree[worktreeId] ?? []) : []
+  const markdownDocuments = useMemo(
+    () => (worktreeId ? (markdownDocumentsByWorktree[worktreeId] ?? []) : []),
+    [worktreeId, markdownDocumentsByWorktree]
+  )
 
-  return {
-    markdownDocuments,
-    previewProps: { markdownDocuments, onOpenDocument: openMarkdownDocument },
-    refreshMarkdownDocuments
-  }
+  const previewProps = useMemo(
+    () => ({ markdownDocuments, onOpenDocument: openMarkdownDocument }),
+    [markdownDocuments, openMarkdownDocument]
+  )
+
+  const mdSave = useCallback(
+    (content: string) => onSave(content).then(() => refreshMarkdownDocuments()),
+    [onSave, refreshMarkdownDocuments]
+  )
+
+  return { markdownDocuments, previewProps, mdSave }
 }

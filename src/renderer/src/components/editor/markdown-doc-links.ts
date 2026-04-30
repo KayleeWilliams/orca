@@ -100,16 +100,19 @@ export function resolveMarkdownDocLink(
   const normalizedTarget = normalizeDocLinkKey(target)
   const extensionlessTarget = stripMarkdownExtension(normalizedTarget)
 
+  // Why: exact relative path must be checked before the extensionless lookup
+  // so that [[docs/guide.md]] resolves uniquely even when docs/guide.mdx also
+  // exists (both share the extensionless key "docs/guide").
+  const relativeWithExtension = resolveMatches(index.byRelativePath.get(normalizedTarget))
+  if (relativeWithExtension) {
+    return relativeWithExtension
+  }
+
   const relativeWithoutExtension = resolveMatches(
     index.byRelativePathWithoutExtension.get(extensionlessTarget)
   )
   if (relativeWithoutExtension) {
     return relativeWithoutExtension
-  }
-
-  const relativeWithExtension = resolveMatches(index.byRelativePath.get(normalizedTarget))
-  if (relativeWithExtension) {
-    return relativeWithExtension
   }
 
   if (!normalizedTarget.includes('/')) {
