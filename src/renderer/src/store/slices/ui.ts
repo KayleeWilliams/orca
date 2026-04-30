@@ -1,8 +1,10 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
+import { findPrevLiveWorktreeHistoryIndex } from './worktree-nav-history'
 import type {
   ChangelogData,
+  PersistedTrustedOrcaHooks,
   PersistedUIState,
   StatusBarItem,
   TaskViewPresetId,
@@ -10,19 +12,23 @@ import type {
   UpdateStatus,
   WorktreeCardProperty
 } from '../../../../shared/types'
+import { PER_REPO_FETCH_LIMIT } from '../../../../shared/work-items'
 
-// Why: mirrors the preset→query mapping used by NewWorkspacePage's preset
-// buttons. Keeping a local copy here avoids a store ↔ lib circular import
-// while letting openNewWorkspacePage warm exactly the cache key the page will
-// read on mount.
+// Why: mirrors the preset→query mapping used by TaskPage's preset buttons.
+// Keeping a local copy here avoids a store ↔ lib circular import while letting
+// openTaskPage warm exactly the cache key the page will read on mount.
 function presetToQuery(presetId: TaskViewPresetId | null): string {
   switch (presetId) {
+    case 'issues':
+      return 'is:issue is:open'
     case 'my-issues':
-      return 'assignee:@me is:open'
+      return 'assignee:@me is:issue is:open'
+    case 'prs':
+      return 'is:pr is:open'
     case 'review':
-      return 'review-requested:@me is:open'
+      return 'review-requested:@me is:pr is:open'
     case 'my-prs':
-      return 'author:@me is:open'
+      return 'author:@me is:pr is:open'
     default:
       return 'is:open'
   }
@@ -31,6 +37,7 @@ import {
   DEFAULT_STATUS_BAR_ITEMS,
   DEFAULT_WORKTREE_CARD_PROPERTIES
 } from '../../../../shared/constants'
+import type { OrcaHookScriptKind } from '../../lib/orca-hook-trust'
 
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_LEFT_SIDEBAR_WIDTH = 500
@@ -39,6 +46,19 @@ const MAX_LEFT_SIDEBAR_WIDTH = 500
 // cap on wide displays. Use a large hard ceiling purely as a safety net for
 // corrupted/manually-edited values rather than as a product limit.
 const MAX_RIGHT_SIDEBAR_WIDTH = 4000
+
+function filterTrustedOrcaHooksToValidRepos(
+  trust: PersistedTrustedOrcaHooks,
+  validRepoIds: Set<string>
+): PersistedTrustedOrcaHooks {
+  const next: PersistedTrustedOrcaHooks = {}
+  for (const [repoId, entry] of Object.entries(trust)) {
+    if (validRepoIds.has(repoId)) {
+      next[repoId] = entry
+    }
+  }
+  return next
+}
 
 function sanitizePersistedSidebarWidth(width: unknown, fallback: number, maxWidth: number): number {
   if (typeof width !== 'number' || !Number.isFinite(width)) {
@@ -53,13 +73,29 @@ export type UISlice = {
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
   setSidebarWidth: (width: number) => void
-  activeView: 'terminal' | 'settings' | 'new-workspace'
-  previousViewBeforeNewWorkspace: 'terminal' | 'settings'
-  previousViewBeforeSettings: 'terminal' | 'new-workspace'
+  /** Per-agent "I've looked at this" timestamps, keyed by paneKey. Set when
+   *  the user clicks an agent row or its parent workspace card from the
+   *  dashboard. A row is considered unvisited when no ack exists OR the
+   *  agent's current stateStartedAt is newer than the last ack (i.e. the
+   *  agent has transitioned state since the user last saw it). Session-only
+   *  — restart resets everyone to unvisited, which is harmless since the
+   *  first visit after launch is a legitimate "need to see" moment. */
+  acknowledgedAgentsByPaneKey: Record<string, number>
+  acknowledgeAgents: (paneKeys: string[]) => void
+  /** Per-worktree collapsed state for the inline agents section shown inside
+   *  each workspace card. Session-only — a restart defaults back to expanded,
+   *  which matches the expected default (people rarely want agents hidden
+   *  across launches). */
+  collapsedInlineAgentsByWorktreeId: Record<string, boolean>
+  toggleInlineAgentsCollapsed: (worktreeId: string) => void
+  activeView: 'terminal' | 'settings' | 'tasks'
+  previousViewBeforeTasks: 'terminal' | 'settings'
+  previousViewBeforeSettings: 'terminal' | 'tasks'
   setActiveView: (view: UISlice['activeView']) => void
-  newWorkspacePageData: {
+  taskPageData: {
     preselectedRepoId?: string
     prefilledName?: string
+    taskSource?: 'github' | 'linear'
   }
   newWorkspaceDraft: {
     repoId: string | null
@@ -76,9 +112,12 @@ export type UISlice = {
     agent: TuiAgent
     linkedIssue: string
     linkedPR: number | null
+    // Why: repo-scoped start ref selected via the "Start from" picker.
+    // Absent means "use the repo's effective base ref".
+    baseBranch?: string
   } | null
-  openNewWorkspacePage: (data?: UISlice['newWorkspacePageData']) => void
-  closeNewWorkspacePage: () => void
+  openTaskPage: (data?: UISlice['taskPageData']) => void
+  closeTaskPage: () => void
   setNewWorkspaceDraft: (draft: NonNullable<UISlice['newWorkspaceDraft']>) => void
   clearNewWorkspaceDraft: () => void
   openSettingsPage: () => void
@@ -89,10 +128,13 @@ export type UISlice = {
       | 'browser'
       | 'appearance'
       | 'terminal'
+      | 'developer-permissions'
       | 'shortcuts'
       | 'repo'
       | 'agents'
+      | 'accounts'
       | 'experimental'
+      | 'ssh'
     repoId: string | null
     sectionId?: string
   } | null
@@ -109,9 +151,29 @@ export type UISlice = {
     | 'quick-open'
     | 'worktree-palette'
     | 'new-workspace-composer'
+    | 'confirm-orca-yaml-hooks'
   modalData: Record<string, unknown>
   openModal: (modal: UISlice['activeModal'], data?: Record<string, unknown>) => void
   closeModal: () => void
+  /** Active tab inside the new-workspace composer modal. Mutable while the
+   *  modal is open so Cmd+N / Cmd+Shift+N can toggle tabs without tearing
+   *  down the composer state. */
+  newWorkspaceComposerTab: 'quick' | 'create-from'
+  setNewWorkspaceComposerTab: (tab: 'quick' | 'create-from') => void
+  /** Remembered sub-tab inside the Create-from tab (PRs / Issues / Branches /
+   *  Linear). Persists across composer opens within a session so users who
+   *  always start from Linear (for example) don't have to click back to that
+   *  tab every time. */
+  createFromSubTab: 'prs' | 'issues' | 'branches' | 'linear'
+  setCreateFromSubTab: (tab: 'prs' | 'issues' | 'branches' | 'linear') => void
+  trustedOrcaHooks: PersistedTrustedOrcaHooks
+  markOrcaHookScriptConfirmed: (
+    repoId: string,
+    kind: OrcaHookScriptKind,
+    contentHash: string
+  ) => void
+  markOrcaHookRepoAlwaysTrusted: (repoId: string) => void
+  clearOrcaHookTrustForRepo: (repoId: string) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
   groupBy: 'none' | 'repo' | 'pr-status'
@@ -148,6 +210,10 @@ export type UISlice = {
   dismissedUpdateVersion: string | null
   dismissUpdate: (versionOverride?: string) => void
   clearDismissedUpdateVersion: () => void
+  // Why: ephemeral and renderer-only — never persisted and never crosses IPC.
+  // Resets every session and on every phase transition (see setUpdateStatus).
+  updateCardCollapsed: boolean
+  setUpdateCardCollapsed: (collapsed: boolean) => void
   updateReassuranceSeen: boolean
   markUpdateReassuranceSeen: () => void
   isFullScreen: boolean
@@ -166,49 +232,113 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
 
+  acknowledgedAgentsByPaneKey: {},
+  acknowledgeAgents: (paneKeys) =>
+    set((s) => {
+      if (paneKeys.length === 0) {
+        return s
+      }
+      const now = Date.now()
+      // Why: only allocate a new map (and emit a store update) if at least
+      // one ack is actually moving forward. Comparing `prev < now` instead
+      // of `prev !== now` matters because stored values are historical
+      // timestamps and `Date.now()` advances every millisecond — a strict-
+      // inequality guard would fire on every call and rewrite the map on
+      // every dashboard click or auto-ack tick, forcing every subscriber
+      // (all agent rows, the SidebarHeader count, etc.) to re-render.
+      let next: Record<string, number> | null = null
+      for (const key of paneKeys) {
+        const prev = s.acknowledgedAgentsByPaneKey[key] ?? 0
+        if (prev < now) {
+          if (next === null) {
+            next = { ...s.acknowledgedAgentsByPaneKey }
+          }
+          next[key] = now
+        }
+      }
+      return next ? { acknowledgedAgentsByPaneKey: next } : s
+    }),
+  collapsedInlineAgentsByWorktreeId: {},
+  toggleInlineAgentsCollapsed: (worktreeId) =>
+    set((s) => {
+      const current = s.collapsedInlineAgentsByWorktreeId[worktreeId] === true
+      const next = { ...s.collapsedInlineAgentsByWorktreeId }
+      if (current) {
+        delete next[worktreeId]
+      } else {
+        next[worktreeId] = true
+      }
+      return { collapsedInlineAgentsByWorktreeId: next }
+    }),
+
   activeView: 'terminal',
-  previousViewBeforeNewWorkspace: 'terminal',
+  previousViewBeforeTasks: 'terminal',
   previousViewBeforeSettings: 'terminal',
   setActiveView: (view) => set({ activeView: view }),
-  newWorkspacePageData: {},
+  taskPageData: {},
   newWorkspaceDraft: null,
-  openNewWorkspacePage: (data = {}) => {
+  openTaskPage: (data = {}) => {
+    // Why: record a Tasks visit in the shared back/forward history so the
+    // titlebar Back/Forward buttons can return to Tasks. All task-source
+    // variants (github/linear presets) collapse to a single 'tasks' entry;
+    // the slice's adjacent-entry dedupe drops re-opens. No isNavigatingHistory
+    // guard needed — back-to-Tasks routes through setActiveView('tasks') and
+    // never re-enters openTaskPage.
+    get().recordViewVisit('tasks')
     set((state) => ({
-      activeView: 'new-workspace',
-      previousViewBeforeNewWorkspace:
-        state.activeView === 'new-workspace'
-          ? state.previousViewBeforeNewWorkspace
-          : state.activeView,
-      newWorkspacePageData: data
+      activeView: 'tasks',
+      previousViewBeforeTasks:
+        state.activeView === 'tasks' ? state.previousViewBeforeTasks : state.activeView,
+      taskPageData: data
     }))
     // Why: prefetch the GitHub work-item list in parallel with React's first
-    // render of the NewWorkspacePage — by the time the page's own effect runs,
-    // the SWR cache is either already populated or the request is in-flight
-    // and will be deduped. This removes ~300–800ms of perceived latency on
-    // initial page load.
+    // render of the TaskPage — by the time the page's own effect runs, the SWR
+    // cache is either already populated or the request is in-flight and will
+    // be deduped. This removes ~300–800ms of perceived latency on initial
+    // page load.
     const state = get()
     const targetRepoId =
       data.preselectedRepoId ?? state.activeRepoId ?? state.repos.find((r) => r.path)?.id ?? null
     const repo = targetRepoId ? state.repos.find((r) => r.id === targetRepoId) : null
     if (repo?.path) {
       const preset = state.settings?.defaultTaskViewPreset ?? 'all'
-      state.prefetchWorkItems(repo.path, 36, presetToQuery(preset))
+      state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, presetToQuery(preset))
     }
   },
-  closeNewWorkspacePage: () =>
-    set((state) => ({
-      activeView: state.previousViewBeforeNewWorkspace,
-      newWorkspacePageData: {}
-    })),
+  closeTaskPage: () =>
+    set((state) => {
+      // Why: Esc-close from Tasks must rewind the history index if we're
+      // currently parked on a 'tasks' entry. Without this, A → Tasks → Esc
+      // leaves the index at the 'tasks' entry, making Back a visual no-op
+      // (activator re-activates A) and Forward re-opens Tasks. If there is no
+      // earlier live entry (e.g. history is just ['tasks']), leave the index
+      // at 0 — setting it to -1 would lose the only forward target, while the
+      // resulting Back visual no-op self-heals as soon as a real visit records
+      // a new entry. closeTaskPage never runs from the history-nav path, so no
+      // isNavigatingHistory guard is needed.
+      const currentEntry = state.worktreeNavHistory[state.worktreeNavHistoryIndex]
+      let nextHistoryIndex = state.worktreeNavHistoryIndex
+      if (currentEntry === 'tasks') {
+        const prev = findPrevLiveWorktreeHistoryIndex(state)
+        if (prev !== null) {
+          nextHistoryIndex = prev
+        }
+      }
+      return {
+        activeView: state.previousViewBeforeTasks,
+        taskPageData: {},
+        worktreeNavHistoryIndex: nextHistoryIndex
+      }
+    }),
   setNewWorkspaceDraft: (draft) => set({ newWorkspaceDraft: draft }),
   clearNewWorkspaceDraft: () => set({ newWorkspaceDraft: null }),
   openSettingsPage: () =>
     set((state) => ({
       activeView: 'settings',
       // Why: Settings is a temporary detour from either terminal or the
-      // full-page new-workspace composer. Preserve the originating view so the
-      // Settings back action restores an in-progress workspace draft instead of
-      // always dumping the user into terminal.
+      // full-page tasks view. Preserve the originating view so the Settings
+      // back action restores an in-progress workspace draft instead of always
+      // dumping the user into terminal.
       previousViewBeforeSettings:
         state.activeView === 'settings' ? state.previousViewBeforeSettings : state.activeView
     })),
@@ -222,8 +352,70 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
 
   activeModal: 'none',
   modalData: {},
-  openModal: (modal, data = {}) => set({ activeModal: modal, modalData: data }),
+  openModal: (modal, data = {}) => {
+    // Why: when the new-workspace composer opens, seed its active tab from
+    // modalData.initialTab so Cmd+Shift+N lands directly on the "Create from…"
+    // tab without the Quick tab flashing first. Default to 'quick' when no
+    // explicit target is provided so existing callers keep their behavior.
+    if (modal === 'new-workspace-composer') {
+      const requestedTab = (data as { initialTab?: 'quick' | 'create-from' }).initialTab
+      set({
+        activeModal: modal,
+        modalData: data,
+        newWorkspaceComposerTab: requestedTab ?? 'quick'
+      })
+      return
+    }
+    set({ activeModal: modal, modalData: data })
+  },
   closeModal: () => set({ activeModal: 'none', modalData: {} }),
+  newWorkspaceComposerTab: 'quick',
+  setNewWorkspaceComposerTab: (tab) => set({ newWorkspaceComposerTab: tab }),
+  createFromSubTab: 'prs',
+  setCreateFromSubTab: (tab) => set({ createFromSubTab: tab }),
+
+  trustedOrcaHooks: {},
+  markOrcaHookScriptConfirmed: (repoId, kind, contentHash) =>
+    set((s) => {
+      const existing = s.trustedOrcaHooks[repoId]
+      const currentEntry = existing?.[kind]
+      if (currentEntry?.contentHash === contentHash) {
+        return s
+      }
+      const nextRepo = {
+        ...existing,
+        [kind]: { contentHash, approvedAt: Date.now() }
+      }
+      const next = { ...s.trustedOrcaHooks, [repoId]: nextRepo }
+      window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
+      return { trustedOrcaHooks: next }
+    }),
+  markOrcaHookRepoAlwaysTrusted: (repoId) =>
+    set((s) => {
+      const existing = s.trustedOrcaHooks[repoId]
+      if (existing?.all) {
+        return s
+      }
+      const next = {
+        ...s.trustedOrcaHooks,
+        [repoId]: {
+          ...existing,
+          all: { approvedAt: Date.now() }
+        }
+      }
+      window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
+      return { trustedOrcaHooks: next }
+    }),
+  clearOrcaHookTrustForRepo: (repoId) =>
+    set((s) => {
+      if (!(repoId in s.trustedOrcaHooks)) {
+        return s
+      }
+      const next = { ...s.trustedOrcaHooks }
+      delete next[repoId]
+      window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
+      return { trustedOrcaHooks: next }
+    }),
 
   searchQuery: '',
   setSearchQuery: (q) => set({ searchQuery: q }),
@@ -341,13 +533,20 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         updateReassuranceSeen: ui.updateReassuranceSeen ?? false,
         browserDefaultUrl: ui.browserDefaultUrl ?? null,
         browserDefaultSearchEngine: ui.browserDefaultSearchEngine ?? null,
+        trustedOrcaHooks: filterTrustedOrcaHooksToValidRepos(
+          ui.trustedOrcaHooks ?? {},
+          validRepoIds
+        ),
         persistedUIReady: true
       }
     }),
 
   updateStatus: { state: 'idle' },
   setUpdateStatus: (status) => {
-    const update: Partial<Pick<UISlice, 'updateStatus' | 'updateChangelog'>> = {
+    const prevState = get().updateStatus.state
+    const update: Partial<
+      Pick<UISlice, 'updateStatus' | 'updateChangelog' | 'updateCardCollapsed'>
+    > = {
       updateStatus: status
     }
     if (status.state === 'available') {
@@ -367,6 +566,11 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }
     // For 'downloading', 'downloaded', 'error': leave updateChangelog untouched
     // so the card can keep showing rich content from the original 'available'.
+    if (status.state !== prevState) {
+      // Why: re-surface the card on every phase transition so a prior collapse
+      // of `downloading` doesn't bury the `downloaded`/`error` that follows.
+      update.updateCardCollapsed = false
+    }
     set(update)
   },
   updateChangelog: null,
@@ -394,6 +598,8 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       }
       return { dismissedUpdateVersion }
     }),
+  updateCardCollapsed: false,
+  setUpdateCardCollapsed: (collapsed) => set({ updateCardCollapsed: collapsed }),
   updateReassuranceSeen: false,
   markUpdateReassuranceSeen: () => {
     void window.api.ui.set({ updateReassuranceSeen: true }).catch(console.error)

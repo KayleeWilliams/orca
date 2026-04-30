@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import {
   FOCUS_TERMINAL_PANE_EVENT,
+  SYNC_FIT_PANES_EVENT,
   TOGGLE_TERMINAL_PANE_EXPAND_EVENT,
   type FocusTerminalPaneDetail
 } from '@/constants/terminal'
@@ -231,6 +232,29 @@ export function useTerminalPaneGlobalEffects({
     return () => window.removeEventListener(FOCUS_TERMINAL_PANE_EVENT, onFocusPane)
   }, [tabId, managerRef])
 
+  // Why: sidebar open/close toggles dispatch SYNC_FIT_PANES_EVENT from a
+  // useLayoutEffect (pre-paint, same frame as the width change) so the
+  // terminal fits synchronously with the new container size, eliminating the
+  // ~16ms "old cols, new container width" flash that a deferred
+  // ResizeObserver rAF would otherwise produce. xterm's terminal.resize()
+  // natively preserves viewportY across reflows (verified in
+  // scroll-reflow.test.ts "reference: undisturbed"), so a bare fitAllPanes()
+  // is all we need — no capture/restore dance. The subsequent per-pane
+  // ResizeObserver rAF and the 150ms debounced global fit become no-ops
+  // because proposeDimensions() will match current cols/rows (early-return
+  // branch in safeFit). Listener is global (not gated on isVisible/isActive)
+  // so background tabs also fit, keeping their scroll position intact for
+  // when the user switches back.
+  useEffect(() => {
+    const onSyncFit = (): void => {
+      managerRef.current?.fitAllPanes()
+    }
+    window.addEventListener(SYNC_FIT_PANES_EVENT, onSyncFit)
+    return () => {
+      window.removeEventListener(SYNC_FIT_PANES_EVENT, onSyncFit)
+    }
+  }, [managerRef])
+
   useEffect(() => {
     if (!isVisible) {
       return
@@ -287,9 +311,15 @@ export function useTerminalPaneGlobalEffects({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVisible])
 
+  // Why: only the active tab's terminal should process file drops. Registering
+  // a listener per mounted tab causes a MaxListenersExceededWarning when 11+
+  // tabs are open. Gating on isActive ensures at most one listener exists.
   useEffect(() => {
+    if (!isActive) {
+      return
+    }
     return window.api.ui.onFileDrop((data) => {
-      if (!isActiveRef.current || data.target !== 'terminal') {
+      if (data.target !== 'terminal') {
         return
       }
       const manager = managerRef.current
@@ -314,5 +344,5 @@ export function useTerminalPaneGlobalEffects({
         transport.sendInput(`${shellEscapePath(path)} `)
       }
     })
-  }, [isActiveRef, managerRef, paneTransportsRef])
+  }, [isActive, managerRef, paneTransportsRef])
 }

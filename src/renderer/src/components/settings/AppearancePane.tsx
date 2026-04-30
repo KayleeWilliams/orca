@@ -32,6 +32,11 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     title: 'Titlebar Agent Activity',
     description: 'Show the number of active agents in the titlebar.',
     keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
+  },
+  {
+    title: 'Show Tasks Button',
+    description: 'Show the Tasks button at the top of the left sidebar.',
+    keywords: ['tasks', 'sidebar', 'button', 'hide', 'show', 'github', 'linear']
   }
 ]
 
@@ -47,7 +52,8 @@ export function AppearancePane({
   const themeEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(0, 1)
   const zoomEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(1, 2)
   const layoutEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(2, 3)
-  const titlebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(3)
+  const titlebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(3, 4)
+  const sidebarEntries = APPEARANCE_PANE_SEARCH_ENTRIES.slice(4)
 
   const visibleSections = [
     matchesSettingsSearch(searchQuery, themeEntries) ? (
@@ -182,6 +188,45 @@ export function AppearancePane({
             <span
               className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
                 settings.showTitlebarAgentActivity ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </SearchableSetting>
+      </section>
+    ) : null,
+    matchesSettingsSearch(searchQuery, sidebarEntries) ? (
+      <section key="sidebar" className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Sidebar</h3>
+        </div>
+
+        <SearchableSetting
+          title="Show Tasks Button"
+          description="Show the Tasks button at the top of the left sidebar."
+          keywords={['tasks', 'sidebar', 'button', 'hide', 'show', 'github', 'linear']}
+          className="flex items-center justify-between gap-4 px-1 py-2"
+        >
+          <div className="space-y-0.5">
+            <Label>Show Tasks Button</Label>
+            <p className="text-xs text-muted-foreground">
+              Show the Tasks button at the top of the left sidebar.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={settings.showTasksButton}
+            onClick={() =>
+              updateSettings({
+                showTasksButton: !settings.showTasksButton
+              })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+              settings.showTasksButton ? 'bg-foreground' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                settings.showTasksButton ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
           </button>

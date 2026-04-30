@@ -3,21 +3,34 @@ import React, { useMemo, useCallback, useRef, useState, useEffect, useLayoutEffe
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, CircleX, Plus } from 'lucide-react'
 import { useAppStore } from '@/store'
+import {
+  getAllWorktreesFromState,
+  useAllWorktrees,
+  useRepoMap,
+  useWorktreeMap
+} from '@/store/selectors'
 import WorktreeCard from './WorktreeCard'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { Worktree, Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import { buildWorktreeComparator } from './smart-sort'
+import {
+  buildExplicitEntriesByTabId,
+  buildWorktreeComparator,
+  computeSmartScore
+} from './smart-sort'
 import {
   type GroupHeaderRow,
   type Row,
+  ALL_GROUP_KEY,
+  PINNED_GROUP_KEY,
   buildRows,
   getGroupKeyForWorktree
 } from './worktree-list-groups'
 import { computeVisibleWorktreeIds, setVisibleWorktreeIds } from './visible-worktrees'
 import { useModifierHint } from '@/hooks/useModifierHint'
+import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 
 // How long to wait after a sortEpoch bump before actually re-sorting.
 // Prevents jarring position shifts when background events (AI starting work,
@@ -52,7 +65,6 @@ function getWorktreeOptionId(worktreeId: string): string {
 type VirtualizedWorktreeViewportProps = {
   rows: Row[]
   activeWorktreeId: string | null
-  setActiveWorktree: (worktreeId: string | null) => void
   groupBy: 'none' | 'repo' | 'pr-status'
   toggleGroup: (key: string) => void
   collapsedGroups: Set<string>
@@ -69,7 +81,6 @@ type VirtualizedWorktreeViewportProps = {
 const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewport({
   rows,
   activeWorktreeId,
-  setActiveWorktree,
   groupBy,
   toggleGroup,
   collapsedGroups,
@@ -99,11 +110,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       if (!row) {
         return `__stale_${index}`
       }
-      return row.type === 'header'
-        ? `hdr:${row.key}`
-        : row.type === 'separator'
-          ? `sep:${row.key}`
-          : `wt:${row.worktree.id}`
+      return row.type === 'header' ? `hdr:${row.key}` : `wt:${row.worktree.id}`
     }
   })
 
@@ -112,12 +119,28 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       return
     }
 
-    if (groupBy !== 'none') {
+    {
       const targetWorktree = worktrees.find((w) => w.id === pendingRevealWorktreeId)
-      if (targetWorktree) {
+      if (targetWorktree?.isPinned) {
+        // Why: pinned worktrees live in the dedicated "Pinned" section regardless
+        // of their PR-status / repo group. Only uncollapse the Pinned header
+        // itself — expanding the underlying status group would be surprising since
+        // the user intentionally collapsed it.
+        if (collapsedGroups.has(PINNED_GROUP_KEY)) {
+          toggleGroup(PINNED_GROUP_KEY)
+        }
+      } else if (targetWorktree && groupBy !== 'none') {
         const groupKey = getGroupKeyForWorktree(groupBy, targetWorktree, repoMap, prCache)
         if (groupKey && collapsedGroups.has(groupKey)) {
           toggleGroup(groupKey)
+        }
+      } else if (targetWorktree && groupBy === 'none') {
+        // Why: when any worktree is pinned, buildRows emits a sibling "All"
+        // header for the unpinned block (see worktree-list-groups.ts). If that
+        // header is collapsed, revealing an unpinned target would otherwise
+        // leave it hidden — uncollapse it so the card is actually visible.
+        if (collapsedGroups.has(ALL_GROUP_KEY)) {
+          toggleGroup(ALL_GROUP_KEY)
         }
       }
     }
@@ -159,9 +182,18 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
   const navigateWorktree = useCallback(
     (direction: 'up' | 'down') => {
-      const worktreeRows = rows.filter(
-        (r): r is Extract<Row, { type: 'item' }> => r.type === 'item'
-      )
+      // Why: derive the cycling order from an all-expanded layout, not the
+      // rendered rows. Otherwise Cmd+Shift+Up/Down would skip any worktree
+      // hidden in a collapsed group — in particular it couldn't cross the
+      // Pinned/All boundary when either section is collapsed. Reveal will
+      // uncollapse the target section (see pendingRevealWorktreeId effect).
+      const worktreeRows = buildRows(
+        groupBy,
+        worktrees,
+        repoMap,
+        prCache,
+        new Set<string>()
+      ).filter((r): r is Extract<Row, { type: 'item' }> => r.type === 'item')
       if (worktreeRows.length === 0) {
         return
       }
@@ -184,14 +216,16 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       }
 
       const nextWorktreeId = worktreeRows[nextIndex].worktree.id
-      setActiveWorktree(nextWorktreeId)
+      // Why: keyboard cycling between worktrees is still real navigation, so
+      // it must flow through the same activation helper that records history.
+      activateAndRevealWorktree(nextWorktreeId)
 
       const rowIndex = rows.findIndex((r) => r.type === 'item' && r.worktree.id === nextWorktreeId)
       if (rowIndex !== -1) {
         virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
       }
     },
-    [rows, activeWorktreeId, setActiveWorktree, virtualizer]
+    [rows, activeWorktreeId, virtualizer, groupBy, worktrees, repoMap, prCache]
   )
 
   useEffect(() => {
@@ -268,21 +302,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       >
         {virtualItems.map((vItem) => {
           const row = rows[vItem.index]
-
-          if (row.type === 'separator') {
-            return (
-              <div
-                key={vItem.key}
-                role="separator"
-                data-index={vItem.index}
-                ref={virtualizer.measureElement}
-                className="absolute left-0 right-0"
-                style={{ transform: `translateY(${vItem.start}px)` }}
-              >
-                <div className="mx-2 my-1.5 border-t border-border/60" />
-              </div>
-            )
-          }
 
           if (row.type === 'header') {
             return (
@@ -406,10 +425,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
 const WorktreeList = React.memo(function WorktreeList() {
   // ── Granular selectors (each is a primitive or shallow-stable ref) ──
+  const allWorktrees = useAllWorktrees()
+  const repoMap = useRepoMap()
+  const worktreeMap = useWorktreeMap()
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
-  const repos = useAppStore((s) => s.repos)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const searchQuery = useAppStore((s) => s.searchQuery)
   const groupBy = useAppStore((s) => s.groupBy)
   const sortBy = useAppStore((s) => s.sortBy)
@@ -447,15 +467,13 @@ const WorktreeList = React.memo(function WorktreeList() {
   // can apply immediately when the list shape changes.
   const worktreeCount = useMemo(() => {
     let count = 0
-    for (const ws of Object.values(worktreesByRepo)) {
-      for (const w of ws) {
-        if (!w.isArchived) {
-          count++
-        }
+    for (const worktree of allWorktrees) {
+      if (!worktree.isArchived) {
+        count++
       }
     }
     return count
-  }, [worktreesByRepo])
+  }, [allWorktrees])
 
   // Why debounce: sort scores include a time-decaying activity component.
   // Recomputing instantly on every sortEpoch bump (e.g. AI starting work,
@@ -495,13 +513,6 @@ const WorktreeList = React.memo(function WorktreeList() {
   // reverts, so the cold-start path is only used on actual cold start.
   const sessionHasHadPty = useRef(false)
 
-  const repoMap = useMemo(() => {
-    const m = new Map<string, Repo>()
-    for (const r of repos) {
-      m.set(r.id, r)
-    }
-    return m
-  }, [repos])
   // ── Stable sort order ──────────────────────────────────────────
   // The sort order is cached and only recomputed when `sortEpoch` changes
   // (worktree add/remove, terminal activity, backend refresh, etc.).
@@ -515,9 +526,9 @@ const WorktreeList = React.memo(function WorktreeList() {
   // first render (and epoch bumps) would use stale/empty data from the ref.
   const sortedIds = useMemo(() => {
     const state = useAppStore.getState()
-    const allWorktrees: Worktree[] = Object.values(state.worktreesByRepo)
-      .flat()
-      .filter((w) => !w.isArchived)
+    const nonArchivedWorktrees = getAllWorktreesFromState(state).filter(
+      (worktree) => !worktree.isArchived
+    )
 
     // Why cold-start detection: the smart score is dominated by ephemeral
     // signals (running jobs +60, live terminals +12, needs attention +35)
@@ -533,24 +544,72 @@ const WorktreeList = React.memo(function WorktreeList() {
       if (hasAnyLivePty) {
         sessionHasHadPty.current = true
       } else {
-        allWorktrees.sort(
+        nonArchivedWorktrees.sort(
           (a, b) => b.sortOrder - a.sortOrder || a.displayName.localeCompare(b.displayName)
         )
-        return allWorktrees.map((w) => w.id)
+        return nonArchivedWorktrees.map((w) => w.id)
       }
     }
 
-    const currentRepoMap = new Map(state.repos.map((r) => [r.id, r]))
     const currentTabs = state.tabsByWorktree
-    allWorktrees.sort(
-      buildWorktreeComparator(sortBy, currentTabs, currentRepoMap, state.prCache, Date.now())
+    const now = Date.now()
+    // Why precompute: this is the hot sidebar sort. Array.sort invokes the
+    // comparator O(N log N) times, and the smart-score computation would
+    // otherwise scan `agentStatusByPaneKey` (O(E)) or do per-worktree O(T)
+    // index lookups on every call. Two layered optimizations:
+    //   1. Build the tabId → explicit-entries index ONCE (O(E)) so the
+    //      per-worktree scoring does cheap lookups instead of rescanning.
+    //   2. Precompute scores once per worktree (decorate-sort-undecorate) so
+    //      the comparator does O(1) map lookups instead of re-scoring per
+    //      comparison.
+    // Combined: O(E) index + O(N×T) scoring + O(N log N) sort, instead of
+    // O(N × E × T) per sortEpoch bump. Only smart mode uses the score map;
+    // other modes ignore it.
+    // Why: smart-sort only weighs live agent status when the experimental
+    // agent-activity feature is opted in — that's what populates
+    // agentStatusByPaneKey via hooks. With the setting off, pass undefined
+    // so the comparator falls back to the persisted-sortOrder + title
+    // heuristics instead of scoring against an empty map.
+    const agentStatusForSort =
+      state.settings?.experimentalAgentDashboard === true ? state.agentStatusByPaneKey : undefined
+    const explicitByTabId =
+      sortBy === 'smart' ? buildExplicitEntriesByTabId(agentStatusForSort) : undefined
+    const precomputedScores =
+      sortBy === 'smart'
+        ? new Map<string, number>(
+            nonArchivedWorktrees.map((w) => [
+              w.id,
+              computeSmartScore(
+                w,
+                currentTabs,
+                repoMap,
+                state.prCache,
+                now,
+                agentStatusForSort,
+                explicitByTabId
+              )
+            ])
+          )
+        : undefined
+    nonArchivedWorktrees.sort(
+      buildWorktreeComparator(
+        sortBy,
+        currentTabs,
+        repoMap,
+        state.prCache,
+        now,
+        null,
+        agentStatusForSort,
+        precomputedScores,
+        explicitByTabId
+      )
     )
-    return allWorktrees.map((w) => w.id)
+    return nonArchivedWorktrees.map((w) => w.id)
     // debouncedSortEpoch is an intentional trigger: it's not read inside the
     // memo, but its change signals that the sort order should be recomputed.
     // The debounce prevents jarring mid-interaction position shifts.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSortEpoch, sortBy, repos])
+  }, [debouncedSortEpoch, repoMap, sortBy])
 
   // Persist the computed sort order so the sidebar can be restored after
   // restart. Only persist during live sessions (sessionHasHadPty latched) —
@@ -576,16 +635,8 @@ const WorktreeList = React.memo(function WorktreeList() {
       prCache,
       issueCache
     })
-    // Resolve IDs back to Worktree objects for rendering
-    const allMap = new Map<string, Worktree>()
-    for (const ws of Object.values(worktreesByRepo)) {
-      for (const w of ws) {
-        allMap.set(w.id, w)
-      }
-    }
-    return ids.map((id) => allMap.get(id)).filter((w): w is Worktree => w != null)
+    return ids.map((id) => worktreeMap.get(id)).filter((w): w is Worktree => w != null)
   }, [
-    worktreesByRepo,
     filterRepoIds,
     searchQuery,
     showActiveOnly,
@@ -595,7 +646,9 @@ const WorktreeList = React.memo(function WorktreeList() {
     browserTabsByWorktree,
     sortedIds,
     prCache,
-    issueCache
+    issueCache,
+    worktreeMap,
+    worktreesByRepo
   ])
 
   const worktrees = visibleWorktrees
@@ -641,9 +694,9 @@ const WorktreeList = React.memo(function WorktreeList() {
         .map((r) => r.worktree),
     [rows]
   )
-  // Why: when the new-workspace page is active, no sidebar card should appear
-  // selected — the user hasn't picked a worktree yet.
-  const selectedSidebarWorktreeId = activeView === 'new-workspace' ? null : activeWorktreeId
+  // Why: when the tasks page is active, no sidebar card should appear selected
+  // — the user hasn't picked a worktree yet.
+  const selectedSidebarWorktreeId = activeView === 'tasks' ? null : activeWorktreeId
 
   // Why layout effect instead of effect: the global Cmd/Ctrl+1–9 key handler
   // can fire immediately after React commits the new grouped/collapsed order.
@@ -707,7 +760,6 @@ const WorktreeList = React.memo(function WorktreeList() {
       key={viewportResetKey}
       rows={rows}
       activeWorktreeId={selectedSidebarWorktreeId}
-      setActiveWorktree={setActiveWorktree}
       groupBy={groupBy}
       toggleGroup={toggleGroup}
       collapsedGroups={collapsedGroups}

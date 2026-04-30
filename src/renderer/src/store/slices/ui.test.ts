@@ -3,15 +3,18 @@ import { describe, expect, it } from 'vitest'
 import { getDefaultUIState } from '../../../../shared/constants'
 import type { PersistedUIState } from '../../../../shared/types'
 import { createUISlice } from './ui'
+import { createWorktreeNavHistorySlice } from './worktree-nav-history'
 import type { AppState } from '../types'
 
 function createUIStore(): StoreApi<AppState> {
   // Only the UI slice, repo ids, and right sidebar width fallback are needed
-  // for persisted UI hydration tests.
+  // for persisted UI hydration tests. The worktree-nav-history slice is also
+  // included because openTaskPage records a Tasks visit via recordViewVisit.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return createStore<any>()((...args: any[]) => ({
     repos: [],
     rightSidebarWidth: 280,
+    ...createWorktreeNavHistorySlice(...(args as Parameters<typeof createWorktreeNavHistorySlice>)),
     ...createUISlice(...(args as Parameters<typeof createUISlice>))
   })) as unknown as StoreApi<AppState>
 }
@@ -97,31 +100,31 @@ describe('createUISlice hydratePersistedUI', () => {
 })
 
 describe('createUISlice settings navigation', () => {
-  it('returns to the new workspace page after visiting settings from an in-progress draft', () => {
+  it('returns to the tasks page after visiting settings from an in-progress draft', () => {
     const store = createUIStore()
 
-    store.getState().openNewWorkspacePage({ preselectedRepoId: 'repo-1' })
+    store.getState().openTaskPage({ preselectedRepoId: 'repo-1' })
     store.getState().openSettingsPage()
 
     expect(store.getState().activeView).toBe('settings')
-    expect(store.getState().previousViewBeforeSettings).toBe('new-workspace')
+    expect(store.getState().previousViewBeforeSettings).toBe('tasks')
 
     store.getState().closeSettingsPage()
 
-    expect(store.getState().activeView).toBe('new-workspace')
+    expect(store.getState().activeView).toBe('tasks')
   })
 
   it('keeps the original return target when settings is reopened while already visible', () => {
     const store = createUIStore()
 
-    store.getState().openNewWorkspacePage()
+    store.getState().openTaskPage()
     store.getState().openSettingsPage()
     store.getState().openSettingsPage()
 
-    expect(store.getState().previousViewBeforeSettings).toBe('new-workspace')
+    expect(store.getState().previousViewBeforeSettings).toBe('tasks')
 
     store.getState().closeSettingsPage()
 
-    expect(store.getState().activeView).toBe('new-workspace')
+    expect(store.getState().activeView).toBe('tasks')
   })
 })

@@ -22,6 +22,18 @@ export type WorktreeSlice = {
    * — NOT by selection-triggered side-effects like clearing `isUnread`.
    */
   sortEpoch: number
+  /**
+   * Worktree IDs that have been activated at least once during this app
+   * session. The first activation of a worktree is special: its
+   * TerminalPane mounts for the first time, tabs reattach or fresh-spawn
+   * their PTYs, and the resulting `updateTabPtyId`/`clearTabPtyId` calls
+   * are all side-effects of the click — not real activity. On first
+   * activation we tag every terminal tab with `pendingActivationSpawn` so
+   * the bump is suppressed. After the first activation we do NOT re-tag,
+   * so subsequent events on the worktree (codex restart, new pane spawn,
+   * agent output) count normally. Session-only; never persisted.
+   */
+  everActivatedWorktreeIds: Set<string>
   fetchWorktrees: (repoId: string) => Promise<void>
   fetchAllWorktrees: () => Promise<void>
   createWorktree: (
@@ -37,6 +49,10 @@ export type WorktreeSlice = {
   clearWorktreeDeleteState: (worktreeId: string) => void
   updateWorktreeMeta: (worktreeId: string, updates: Partial<WorktreeMeta>) => Promise<void>
   markWorktreeUnread: (worktreeId: string) => void
+  /** Clear the worktree's unread dot. Called on user interaction with any
+   *  terminal pane inside the worktree (keystroke, click) — matches
+   *  ghostty's "show until interact" model. Persists isUnread=false. */
+  clearWorktreeUnread: (worktreeId: string) => void
   bumpWorktreeActivity: (worktreeId: string) => void
   setActiveWorktree: (worktreeId: string | null) => void
   allWorktrees: () => Worktree[]

@@ -259,6 +259,31 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('throws a clear error when no default base ref can be resolved', async () => {
+    // Why: guard against regressing to a silent 'origin/main' fallback. When
+    // getDefaultBaseRef returns null (e.g. a fresh repo with no origin/HEAD,
+    // no origin/main, no origin/master, and no local main/master), we must
+    // fail loudly with a message that prompts the user to pick a base
+    // branch, not hand a non-existent ref to `git worktree add`.
+    getDefaultBaseRefMock.mockReturnValue(null)
+    store.getRepo.mockReturnValue({
+      id: 'repo-1',
+      path: '/workspace/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      worktreeBaseRef: null
+    })
+
+    await expect(
+      handlers['worktrees:create'](null, {
+        repoId: 'repo-1',
+        name: 'improve-dashboard'
+      })
+    ).rejects.toThrow(/Could not resolve a default base ref/)
+    expect(addWorktreeMock).not.toHaveBeenCalled()
+  })
+
   it('creates an issue-command runner for an existing repo/worktree pair', async () => {
     const result = await handlers['hooks:createIssueCommandRunner'](null, {
       repoId: 'repo-1',
@@ -627,6 +652,55 @@ describe('registerWorktreeHandlers', () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'
     })
+  })
+
+  it('runs the archive hook on remove when skipArchive is not set', async () => {
+    listWorktreesMock.mockResolvedValue([])
+    removeWorktreeMock.mockResolvedValue(undefined)
+    getEffectiveHooksMock.mockReturnValue({
+      scripts: {
+        archive: 'echo archived'
+      }
+    })
+    runHookMock.mockResolvedValue({ success: true, output: '' })
+
+    await handlers['worktrees:remove'](null, {
+      worktreeId: 'repo-1::/workspace/feature-wt'
+    })
+
+    expect(runHookMock).toHaveBeenCalledWith(
+      'archive',
+      '/workspace/feature-wt',
+      expect.objectContaining({ id: 'repo-1' })
+    )
+    expect(removeWorktreeMock).toHaveBeenCalledWith(
+      '/workspace/repo',
+      '/workspace/feature-wt',
+      false
+    )
+  })
+
+  it('skips the archive hook on remove when skipArchive is true', async () => {
+    listWorktreesMock.mockResolvedValue([])
+    removeWorktreeMock.mockResolvedValue(undefined)
+    getEffectiveHooksMock.mockReturnValue({
+      scripts: {
+        archive: 'echo archived'
+      }
+    })
+    runHookMock.mockResolvedValue({ success: true, output: '' })
+
+    await handlers['worktrees:remove'](null, {
+      worktreeId: 'repo-1::/workspace/feature-wt',
+      skipArchive: true
+    })
+
+    expect(runHookMock).not.toHaveBeenCalled()
+    expect(removeWorktreeMock).toHaveBeenCalledWith(
+      '/workspace/repo',
+      '/workspace/feature-wt',
+      false
+    )
   })
 
   it('rejects ask-policy creates before mutating git state when setup decision is missing', async () => {

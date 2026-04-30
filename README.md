@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="docs/README.zh-CN.md">中文</a> · <a href="docs/README.ja.md">日本語</a>
+  <a href="README.md">English</a> · <a href="docs/README.zh-CN.md">中文</a> · <a href="docs/README.ja.md">日本語</a> · <a href="docs/README.es.md">Español</a>
 </p>
 
 <p align="center">
@@ -49,7 +49,7 @@ Orca supports any CLI agent (_not just this list_).
   <a href="https://cursor.com/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=cursor.com&sz=64" width="16" valign="middle" /> Cursor</kbd></a> &nbsp;
   <a href="https://docs.factory.ai/cli/getting-started/quickstart"><kbd><img src="https://www.google.com/s2/favicons?domain=factory.ai&sz=64" width="16" valign="middle" /> Droid</kbd></a> &nbsp;
   <a href="https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"><kbd><img src="https://www.google.com/s2/favicons?domain=github.com&sz=64" width="16" valign="middle" /> GitHub Copilot</kbd></a> &nbsp;
-  <a href="https://kilo.ai/docs/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=kilo.ai&sz=64" width="16" valign="middle" /> Kilocode</kbd></a> &nbsp;
+  <a href="https://kilo.ai/docs/cli"><kbd><img src="https://raw.githubusercontent.com/Kilo-Org/kilocode/main/packages/kilo-vscode/assets/icons/kilo-light.png" width="16" valign="middle" /> Kilocode</kbd></a> &nbsp;
   <a href="https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html"><kbd><img src="https://www.google.com/s2/favicons?domain=moonshot.cn&sz=64" width="16" valign="middle" /> Kimi</kbd></a> &nbsp;
   <a href="https://kiro.dev/docs/cli/"><kbd><img src="https://www.google.com/s2/favicons?domain=kiro.dev&sz=64" width="16" valign="middle" /> Kiro</kbd></a> &nbsp;
   <a href="https://github.com/mistralai/mistral-vibe"><kbd><img src="https://www.google.com/s2/favicons?domain=mistral.ai&sz=64" width="16" valign="middle" /> Mistral Vibe</kbd></a> &nbsp;
@@ -66,6 +66,7 @@ Orca supports any CLI agent (_not just this list_).
 - **Multi-agent terminals** — Run multiple AI agents side-by-side in tabs and panes. See which ones are active at a glance.
 - **Built-in source control** — Review AI-generated diffs, make quick edits, and commit without leaving Orca.
 - **GitHub integration** — PRs, issues, and Actions checks linked to each worktree automatically.
+- **SSH support** — Connect to remote machines and run agents on them directly from Orca.
 - **Notifications** — Know when an agent finishes or needs attention. Mark threads unread to come back later.
 
 ---
@@ -74,6 +75,18 @@ Orca supports any CLI agent (_not just this list_).
 
 - **[Download from onOrca.dev](https://onOrca.dev)**
 - Or download the latest binaries via the **[GitHub Releases page](https://github.com/stablyai/orca/releases)**.
+
+---
+
+## [New] Annotate AI Diff
+
+**Comment directly on AI-generated diffs.**
+
+Annotate any line in an AI-generated diff with your feedback, then send it back to the agent to revise. Keep the review loop tight — no copying line numbers, no context switching.
+
+<p align="center">
+  <img src="docs/assets/annotate-ai-diff.gif" alt="Orca Annotate AI Diff — comment on AI-generated diffs and send feedback to the agent" width="800" />
+</p>
 
 ---
 
@@ -105,7 +118,7 @@ Orca ships with a built-in browser right inside your worktree. Preview your app 
 
 **Agent orchestration from your terminal.**
 
-Let your AI agent control your IDE. Use AI to add repos to your IDE, spin up worktrees, and update the current worktree's comment with meaningful progress checkpoints directly from the terminal. Ships with the Orca IDE (install under Settings).
+Let your AI agent control your IDE. Use AI to add projects to your IDE, spin up worktrees, and update the current worktree's comment with meaningful progress checkpoints directly from the terminal. Ships with the Orca IDE (install under Settings).
 
 ```bash
 npx skills add https://github.com/stablyai/orca --skill orca-cli

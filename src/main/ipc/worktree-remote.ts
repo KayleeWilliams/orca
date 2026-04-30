@@ -19,6 +19,7 @@ import { gitExecFileAsync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { createSetupRunnerScript, getEffectiveHooks, shouldRunSetupForCreate } from '../hooks'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
+import { getActiveMultiplexer } from './ssh'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
 import {
   sanitizeWorktreeName,
@@ -79,6 +80,11 @@ export async function createRemoteWorktree(
   const remotePath = `${repo.path}/../${sanitizedName}`
 
   // Determine base branch
+  // Why: previously fell back to a hardcoded 'origin/main' when
+  // symbolic-ref failed. That silently handed addWorktree a ref that may
+  // not exist on the remote (e.g. repos whose primary branch is master or
+  // develop), producing an opaque git error. Fail here with a clear
+  // message so the UI can surface it and prompt the user to pick a base.
   let baseBranch = args.baseBranch || repo.worktreeBaseRef
   if (!baseBranch) {
     try {
@@ -88,8 +94,13 @@ export async function createRemoteWorktree(
       )
       baseBranch = stdout.trim()
     } catch {
-      baseBranch = 'origin/main'
+      // Fall through — baseBranch stays unset.
     }
+  }
+  if (!baseBranch) {
+    throw new Error(
+      'Could not resolve a default base ref for this repo. Pick a base branch explicitly and try again.'
+    )
   }
 
   // Fetch latest
@@ -100,11 +111,62 @@ export async function createRemoteWorktree(
     /* best-effort */
   }
 
+  // Why: the relay's git.addWorktree validates targetDir against registered
+  // roots. The worktree sibling path (repo/../name) is outside the repo root
+  // and must be registered first. Using request (not notify) makes the
+  // ordering guarantee explicit rather than relying on FIFO frame processing,
+  // and closes failure windows during relay reconnect or fresh-host scenarios
+  // where roots may not yet be registered at all. See issue #911.
+  const mux = getActiveMultiplexer(repo.connectionId!)
+  if (!mux) {
+    throw new Error('SSH connection is not available. Please reconnect and try again.')
+  }
+  // Why: git.addWorktree validates both repoPath and targetDir against
+  // registered roots. In a fresh-host or reconnect scenario, registerRelayRoots
+  // may not have finished yet, so neither path may be registered. Register both
+  // synchronously here to close that window.
+  //
+  // Why (fallback): when Orca reconnects via --connect to a relay still in its
+  // grace period, the old relay binary may not have the request handler yet.
+  // Fall back to notify so worktree creation still works against pre-upgrade
+  // relays.
+  try {
+    await Promise.all([
+      mux.request('session.registerRoot', { rootPath: repo.path }),
+      mux.request('session.registerRoot', { rootPath: remotePath })
+    ])
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Method not found')) {
+      mux.notify('session.registerRoot', { rootPath: repo.path })
+      mux.notify('session.registerRoot', { rootPath: remotePath })
+    } else {
+      throw err
+    }
+  }
+
   // Create worktree via relay
-  await provider.addWorktree(repo.path, branchName, remotePath, {
-    base: baseBranch,
-    track: baseBranch.includes('/')
-  })
+  try {
+    await provider.addWorktree(repo.path, branchName, remotePath, {
+      base: baseBranch,
+      track: baseBranch.includes('/')
+    })
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message.includes('No workspace roots registered yet') ||
+        err.message.includes('Path outside authorized workspace'))
+    ) {
+      // Why: validatePath throws two distinct errors — "No workspace roots
+      // registered yet" (relay has no roots at all, e.g., reconnect before
+      // registerRelayRoots completes) and "Path outside authorized workspace"
+      // (roots exist but the sibling worktree path isn't among them). Both are
+      // implementation details that mean nothing to the user.
+      throw new Error(
+        'The SSH relay has not registered the worktree path yet. Please wait a moment and try again, or disconnect and reconnect the SSH session.'
+      )
+    }
+    throw err
+  }
 
   // Re-list to get the created worktree info
   const gitWorktrees = await provider.listWorktrees(repo.path)
@@ -226,8 +288,20 @@ export async function createLocalWorktree(
     )
   }
 
-  // Determine base branch
+  // Determine base branch.
+  //
+  // Why: getDefaultBaseRef may return null when none of origin/HEAD,
+  // origin/main, origin/master, local main, or local master exist. In that
+  // case we must not fall back to a hardcoded 'origin/main' — passing a
+  // non-existent ref to `git worktree add` produces an opaque error. Fail
+  // here with a clear message so the UI can prompt the user to pick a base
+  // branch explicitly.
   const baseBranch = args.baseBranch || repo.worktreeBaseRef || getDefaultBaseRef(repo.path)
+  if (!baseBranch) {
+    throw new Error(
+      'Could not resolve a default base ref for this repo. Pick a base branch explicitly and try again.'
+    )
+  }
   const setupScript = getEffectiveHooks(repo)?.scripts.setup
   // Why: `ask` is a pre-create choice gate, not a post-create side effect.
   // Resolve it before mutating git state so missing UI input cannot strand

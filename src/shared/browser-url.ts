@@ -64,7 +64,18 @@ export function normalizeBrowserNavigationUrl(
 
   try {
     const parsed = new URL(trimmed)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null
+    // Why: file:// is allowed so the browser pane can render local files the
+    // user already has access to via the editor (e.g. "Open Preview to the
+    // Side" on an HTML file). The guest webview is still sandboxed
+    // (nodeIntegration off, contextIsolation on, webSecurity on; see
+    // createMainWindow.ts will-attach-webview), so the loaded page cannot
+    // escalate privileges. Other non-web schemes (javascript:, arbitrary
+    // data: URIs) remain rejected.
+    return parsed.protocol === 'http:' ||
+      parsed.protocol === 'https:' ||
+      parsed.protocol === 'file:'
+      ? parsed.toString()
+      : null
   } catch {
     // Why: search fallback is opt-in. The main process calls this function for
     // URL validation (will-attach-webview, will-navigate) where non-URL text
@@ -89,5 +100,15 @@ export function normalizeBrowserNavigationUrl(
 
 export function normalizeExternalBrowserUrl(rawUrl: string): string | null {
   const normalized = normalizeBrowserNavigationUrl(rawUrl)
-  return normalized === ORCA_BROWSER_BLANK_URL ? null : normalized
+  if (normalized === null || normalized === ORCA_BROWSER_BLANK_URL) {
+    return null
+  }
+  // Why: external-link opening (shell.openExternal, will-navigate) must only
+  // hand off http(s) targets to the OS. file:// is allowed for the in-app
+  // browser pane (local HTML preview), but forwarding it to openExternal
+  // would let a remote page smuggle arbitrary file paths into Finder/Explorer.
+  if (normalized.startsWith('file:')) {
+    return null
+  }
+  return normalized
 }

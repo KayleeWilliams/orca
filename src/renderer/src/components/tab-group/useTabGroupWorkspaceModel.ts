@@ -12,9 +12,12 @@ import type {
   TerminalTab
 } from '../../../../shared/types'
 import { useAppStore } from '../../store'
+import { useAllWorktrees } from '../../store/selectors'
 import { createUntitledMarkdownFile } from '../../lib/create-untitled-markdown'
+import { getConnectionId } from '../../lib/connection-context'
 import { extractIpcErrorMessage } from '../../lib/ipc-error'
 import { destroyPersistentWebview } from '../browser-pane/BrowserPane'
+import { focusTerminalTabSurface } from '../../lib/focus-terminal-tab-surface'
 
 export type GroupEditorItem = OpenFile & { tabId: string }
 export type GroupBrowserItem = BrowserTabState & { tabId: string }
@@ -43,6 +46,7 @@ export function useTabGroupWorkspaceModel({
   groupId: string
   worktreeId: string
 }) {
+  const allWorktrees = useAllWorktrees()
   const worktreeState = useAppStore(
     useShallow((state) => ({
       // Why: Zustand v5 expects selector snapshots to be referentially stable
@@ -55,11 +59,7 @@ export function useTabGroupWorkspaceModel({
       openFiles: state.openFiles,
       browserTabs: state.browserTabsByWorktree[worktreeId] ?? EMPTY_BROWSER_TABS,
       runtimeTerminalTabs: state.tabsByWorktree[worktreeId] ?? EMPTY_RUNTIME_TERMINAL_TABS,
-      expandedPaneByTabId: state.expandedPaneByTabId,
-      worktree:
-        Object.values(state.worktreesByRepo)
-          .flat()
-          .find((candidate) => candidate.id === worktreeId) ?? null
+      expandedPaneByTabId: state.expandedPaneByTabId
     }))
   )
 
@@ -90,6 +90,10 @@ export function useTabGroupWorkspaceModel({
   const group = useMemo(
     () => worktreeState.groups.find((item) => item.id === groupId) ?? null,
     [groupId, worktreeState.groups]
+  )
+  const worktree = useMemo(
+    () => allWorktrees.find((candidate) => candidate.id === worktreeId) ?? null,
+    [allWorktrees, worktreeId]
   )
   const groupTabs = useMemo(
     () => worktreeState.unifiedTabs.filter((item) => item.groupId === groupId),
@@ -143,14 +147,6 @@ export function useTabGroupWorkspaceModel({
         })
         .filter((item): item is GroupBrowserItem => item !== null),
     [groupTabs, worktreeState.browserTabs]
-  )
-
-  const activeBrowserTab = useMemo(
-    () =>
-      activeTab?.contentType === 'browser'
-        ? (worktreeState.browserTabs.find((bt) => bt.id === activeTab.entityId) ?? null)
-        : null,
-    [activeTab, worktreeState.browserTabs]
   )
 
   const runtimeTerminalTabById = useMemo(
@@ -381,13 +377,12 @@ export function useTabGroupWorkspaceModel({
   return {
     group,
     activeTab,
-    activeBrowserTab,
     browserItems,
     editorItems,
     terminalTabs,
     tabBarOrder,
     groupTabs,
-    worktreePath: worktreeState.worktree?.path,
+    worktreePath: worktree?.path,
     runtimeTerminalTabById,
     expandedPaneByTabId: worktreeState.expandedPaneByTabId,
     commands: {
@@ -406,7 +401,10 @@ export function useTabGroupWorkspaceModel({
       createSplitGroup,
       newBrowserTab: () => {
         const defaultUrl = useAppStore.getState().browserDefaultUrl ?? 'about:blank'
-        createBrowserTab(worktreeId, defaultUrl, { title: 'New Browser Tab' })
+        createBrowserTab(worktreeId, defaultUrl, {
+          title: 'New Browser Tab',
+          focusAddressBar: true
+        })
       },
       duplicateBrowserTab: (browserTabId: string) => {
         const state = useAppStore.getState()
@@ -425,12 +423,13 @@ export function useTabGroupWorkspaceModel({
       // assistive-tech activation because the "+" menu can be triggered from
       // an unfocused panel without first updating global group focus.
       newFileTab: async () => {
-        const path = worktreeState.worktree?.path
+        const path = worktree?.path
         if (!path) {
           return
         }
         try {
-          const fileInfo = await createUntitledMarkdownFile(path, worktreeId)
+          const connectionId = getConnectionId(worktreeId) ?? undefined
+          const fileInfo = await createUntitledMarkdownFile(path, worktreeId, connectionId)
           openFile(fileInfo, { preview: false, targetGroupId: groupId })
         } catch (err) {
           toast.error(extractIpcErrorMessage(err, 'Failed to create untitled markdown file.'))
@@ -440,6 +439,13 @@ export function useTabGroupWorkspaceModel({
         const terminal = createTab(worktreeId, groupId)
         setActiveTab(terminal.id)
         setActiveTabType('terminal')
+        focusTerminalTabSurface(terminal.id)
+      },
+      newTerminalWithShell: (shellOverride: string) => {
+        const terminal = createTab(worktreeId, groupId, shellOverride)
+        setActiveTab(terminal.id)
+        setActiveTabType('terminal')
+        focusTerminalTabSurface(terminal.id)
       },
       pinFile,
       setTabColor,

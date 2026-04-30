@@ -5,90 +5,36 @@ import React from 'react'
 import {
   Check,
   ChevronDown,
-  CircleDot,
   CornerDownLeft,
-  GitPullRequest,
-  Github,
+  FolderPlus,
   LoaderCircle,
-  Paperclip,
-  Plus,
-  X
+  Settings2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList
-} from '@/components/ui/command'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import RepoCombobox from '@/components/repo/RepoCombobox'
-import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
+import AgentCombobox from '@/components/agent/AgentCombobox'
+import { AGENT_CATALOG } from '@/lib/agent-catalog'
+import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
-import type { GitHubWorkItem, TuiAgent } from '../../../shared/types'
+import type { TuiAgent } from '../../../shared/types'
+
+const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
-
-type LinkedWorkItemSummary = {
-  type: 'issue' | 'pr'
-  number: number
-  title: string
-  url: string
-} | null
 
 type NewWorkspaceComposerCardProps = {
   containerClassName?: string
   composerRef?: React.RefObject<HTMLDivElement | null>
   nameInputRef?: React.RefObject<HTMLInputElement | null>
-  promptTextareaRef?: React.RefObject<HTMLTextAreaElement | null>
+  quickAgent: TuiAgent | null
+  onQuickAgentChange: (agent: TuiAgent | null) => void
   eligibleRepos: RepoOption[]
   repoId: string
   onRepoChange: (value: string) => void
   name: string
   onNameChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  agentPrompt: string
-  onAgentPromptChange: (value: string) => void
-  onPromptKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  linkedOnlyTemplatePreview: string | null
-  attachmentPaths: string[]
-  getAttachmentLabel: (pathValue: string) => string
-  onAddAttachment: () => void
-  onRemoveAttachment: (pathValue: string) => void
-  addAttachmentShortcut: string
-  linkedWorkItem: LinkedWorkItemSummary
-  onRemoveLinkedWorkItem: () => void
-  linkPopoverOpen: boolean
-  onLinkPopoverOpenChange: (open: boolean) => void
-  linkQuery: string
-  onLinkQueryChange: (value: string) => void
-  filteredLinkItems: GitHubWorkItem[]
-  linkItemsLoading: boolean
-  linkDirectLoading: boolean
-  normalizedLinkQuery: {
-    query: string
-    repoMismatch: string | null
-  }
-  onSelectLinkedItem: (item: GitHubWorkItem) => void
-  tuiAgent: TuiAgent
-  onTuiAgentChange: (value: TuiAgent) => void
   detectedAgentIds: Set<TuiAgent> | null
   onOpenAgentSettings: () => void
   advancedOpen: boolean
@@ -107,126 +53,6 @@ type NewWorkspaceComposerCardProps = {
   createError: string | null
 }
 
-function PromptPrefixTextarea({
-  textareaRef,
-  value,
-  onChange,
-  onKeyDown,
-  placeholder,
-  placeholderTone
-}: {
-  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
-  value: string
-  onChange: (value: string) => void
-  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  placeholder: string
-  placeholderTone: 'muted' | 'ghost-prompt'
-}): React.JSX.Element {
-  const internalRef = React.useRef<HTMLTextAreaElement | null>(null)
-
-  const setRefs = React.useCallback(
-    (node: HTMLTextAreaElement | null) => {
-      internalRef.current = node
-      if (textareaRef) {
-        textareaRef.current = node
-      }
-    },
-    [textareaRef]
-  )
-
-  // Why: auto-size the textarea to its content and hoist scrolling onto the
-  // outer wrapper. Any JS-driven overlay sync (listening to `scroll`, updating
-  // `translateY`) always paints a frame behind the textarea's own scroll — on
-  // momentum scroll that shows up as visible wobble between the `>` and the
-  // typed text. Putting both elements inside the same native scroll container
-  // makes them move in lockstep with zero JS and no cross-layer paint delay.
-  React.useLayoutEffect(() => {
-    const el = internalRef.current
-    if (!el) {
-      return
-    }
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
-
-  return (
-    // Why: allow the composer to grow with the user's prompt up to ~20 rows
-    // (560px at leading-7 ≈ 28px/row) before scrolling. The inner textarea's
-    // JS-driven auto-resize sets its own height to scrollHeight, so the wrapper
-    // simply follows until the max-height cap engages and hands off to scroll.
-    <div className="scrollbar-sleek max-h-[560px] overflow-auto">
-      <div className="relative">
-        <span
-          aria-hidden
-          className="pointer-events-none absolute left-4 top-4 select-none text-[15px] leading-7 font-semibold text-foreground"
-        >
-          {'>'}
-        </span>
-        <textarea
-          ref={setRefs}
-          // Why: native autoFocus reliably focuses the prompt on initial mount
-          // — used by both the full-page composer and the Cmd+J modal so the
-          // user can start typing immediately without an extra tab. Running
-          // during React's mount means it beats Radix Dialog's FocusScope,
-          // which would otherwise land focus on the first focusable child
-          // (the "Workspace name" input that renders above this textarea).
-          autoFocus
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={placeholder}
-          // Why: the "ghost-prompt" tone previews the exact issueCommand
-          // template that will be sent to the agent when the user submits with
-          // only a linked work item. Emphasising it with higher contrast makes
-          // it obvious this is a real pending prompt, not instructional copy.
-          className={cn(
-            'block min-h-[110px] w-full resize-none overflow-hidden bg-transparent py-4 pl-4 pr-4 text-[15px] leading-7 text-foreground outline-none',
-            placeholderTone === 'ghost-prompt'
-              ? 'placeholder:text-foreground/70'
-              : 'placeholder:text-muted-foreground/50'
-          )}
-          style={{ textIndent: '2ch' }}
-          spellCheck={false}
-        />
-      </div>
-    </div>
-  )
-}
-
-function LinearIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={className} fill="currentColor">
-      <path d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z" />
-    </svg>
-  )
-}
-
-function renderSetupYamlPreview(command: string): React.JSX.Element[] {
-  const lines = ['scripts:', '  setup: |', ...command.split('\n').map((line) => `    ${line}`)]
-
-  return lines.map((line, index) => {
-    const keyMatch = line.match(/^(\s*)([a-zA-Z][\w-]*)(:\s*)(\|)?$/)
-    if (keyMatch) {
-      return (
-        <div key={`${line}-${index}`} className="whitespace-pre">
-          <span className="text-muted-foreground">{keyMatch[1]}</span>
-          <span className="font-semibold text-sky-600 dark:text-sky-300">{keyMatch[2]}</span>
-          <span className="text-muted-foreground">{keyMatch[3]}</span>
-          {keyMatch[4] ? (
-            <span className="text-amber-600 dark:text-amber-300">{keyMatch[4]}</span>
-          ) : null}
-        </div>
-      )
-    }
-
-    return (
-      <div key={`${line}-${index}`} className="whitespace-pre">
-        <span className="text-emerald-700 dark:text-emerald-300/95">{line}</span>
-      </div>
-    )
-  })
-}
-
 function SetupCommandPreview({
   setupConfig,
   headerAction
@@ -238,13 +64,11 @@ function SetupCommandPreview({
     return (
       <div className="rounded-2xl border border-border/60 bg-muted/40 shadow-inner">
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            orca.yaml
-          </div>
+          <div className="font-mono text-[11px] text-muted-foreground">orca.yaml</div>
           {headerAction}
         </div>
-        <pre className="overflow-x-auto px-4 py-4 font-mono text-[12px] leading-6 text-foreground">
-          {renderSetupYamlPreview(setupConfig.command)}
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12px] leading-5 text-emerald-700 dark:text-emerald-300/95">
+          {setupConfig.command}
         </pre>
       </div>
     )
@@ -340,34 +164,13 @@ export default function NewWorkspaceComposerCard({
   containerClassName,
   composerRef,
   nameInputRef,
-  promptTextareaRef,
+  quickAgent,
+  onQuickAgentChange,
   eligibleRepos,
   repoId,
   onRepoChange,
   name,
   onNameChange,
-  agentPrompt,
-  onAgentPromptChange,
-  onPromptKeyDown,
-  linkedOnlyTemplatePreview,
-  attachmentPaths,
-  getAttachmentLabel,
-  onAddAttachment,
-  onRemoveAttachment,
-  addAttachmentShortcut,
-  linkedWorkItem,
-  onRemoveLinkedWorkItem,
-  linkPopoverOpen,
-  onLinkPopoverOpenChange,
-  linkQuery,
-  onLinkQueryChange,
-  filteredLinkItems,
-  linkItemsLoading,
-  linkDirectLoading,
-  normalizedLinkQuery,
-  onSelectLinkedItem,
-  tuiAgent,
-  onTuiAgentChange,
   detectedAgentIds,
   onOpenAgentSettings,
   advancedOpen,
@@ -386,448 +189,307 @@ export default function NewWorkspaceComposerCard({
   createError
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
+  const openModal = useAppStore((s) => s.openModal)
+  const defaultTuiAgent = useAppStore((s) => s.settings?.defaultTuiAgent ?? null)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+
+  const handleSetDefaultAgent = React.useCallback(
+    (next: TuiAgent | 'blank' | null) => {
+      updateSettings({ defaultTuiAgent: next })
+    },
+    [updateSettings]
+  )
+
+  const focusNameInput = React.useCallback(() => {
+    // Why: after the repo picker commits a choice, moving focus to the name
+    // field keeps the keyboard flow progressing through the form instead of
+    // trapping the user in the repo popover interaction.
+    requestAnimationFrame(() => {
+      nameInputRef?.current?.focus()
+    })
+  }, [nameInputRef])
+
+  const visibleQuickAgents = React.useMemo(
+    () =>
+      AGENT_CATALOG.filter((agent) => detectedAgentIds === null || detectedAgentIds.has(agent.id)),
+    [detectedAgentIds]
+  )
+
+  const handleAddRepo = React.useCallback((): void => {
+    openModal('add-repo')
+  }, [openModal])
+
   return (
-    <div className="grid gap-3">
-      <div
-        ref={composerRef}
-        // Why: preload classifies native OS file drops by the nearest
-        // `data-native-file-drop-target` marker in the composedPath. Tagging
-        // the composer root makes drops anywhere on the card (modal or full
-        // page) route to the composer attachment handler instead of falling
-        // back to the default editor-open behavior.
-        data-native-file-drop-target="composer"
-        onDragEnter={dragHandlers.onDragEnter}
-        onDragLeave={dragHandlers.onDragLeave}
-        className={cn(
-          'rounded-[20px] border border-border/50 bg-background/40 p-3 shadow-lg backdrop-blur-xl supports-[backdrop-filter]:bg-background/40 transition',
-          isFileDragOver && 'border-ring ring-2 ring-ring/30',
-          containerClassName
-        )}
-      >
-        <div className="grid gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={name}
-              onChange={onNameChange}
-              placeholder="[Optional] Workspace name"
-              className="h-9 min-w-0 flex-1 bg-transparent px-1 text-[14px] font-medium text-foreground outline-none placeholder:text-muted-foreground/80"
-            />
-            <div className="w-[240px] shrink-0">
-              <RepoCombobox
-                repos={eligibleRepos}
-                value={repoId}
-                onValueChange={onRepoChange}
-                placeholder="Select a repository"
-                triggerClassName="h-9 w-full rounded-[10px] border border-border/50 bg-background/50 px-3 text-sm font-medium shadow-sm transition hover:bg-muted/50 focus:ring-2 focus:ring-ring/20 focus:outline-none backdrop-blur-md supports-[backdrop-filter]:bg-background/50"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col rounded-[16px] border border-border/60 bg-input/30 shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-            {/* Why: the `>` is rendered as a visual overlay (aria-hidden) so
-                it's never part of the submitted prompt value. It must behave
-                like the first character of line 1 — inline with line 1's text
-                and scrolling out of view with it. See PromptPrefixTextarea for
-                how the shared-scroll-container approach avoids wobble. */}
-            <PromptPrefixTextarea
-              textareaRef={promptTextareaRef}
-              value={agentPrompt}
-              onChange={onAgentPromptChange}
-              onKeyDown={onPromptKeyDown}
-              placeholder={
-                linkedOnlyTemplatePreview ?? 'Describe a task to start an agent, or leave blank...'
-              }
-              placeholderTone={linkedOnlyTemplatePreview ? 'ghost-prompt' : 'muted'}
-            />
-
-            {attachmentPaths.length > 0 || linkedWorkItem ? (
-              <div className="flex flex-wrap gap-2 px-3">
-                {linkedWorkItem ? (
-                  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50">
-                    {linkedWorkItem.type === 'pr' ? (
-                      <GitPullRequest className="size-3.5 shrink-0" />
-                    ) : (
-                      <CircleDot className="size-3.5 shrink-0" />
-                    )}
-                    <span className="shrink-0 font-mono text-muted-foreground">
-                      #{linkedWorkItem.number}
-                    </span>
-                    <span className="truncate" title={linkedWorkItem.url}>
-                      {linkedWorkItem.title}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Remove linked ${linkedWorkItem.type} #${linkedWorkItem.number}`}
-                      onClick={onRemoveLinkedWorkItem}
-                      className="shrink-0 text-muted-foreground transition hover:text-foreground"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </div>
-                ) : null}
-                {attachmentPaths.map((pathValue) => (
-                  <div
-                    key={pathValue}
-                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted/60 supports-[backdrop-filter]:bg-background/50"
-                  >
-                    <Paperclip className="size-3.5 shrink-0" />
-                    <span className="truncate" title={pathValue}>
-                      {getAttachmentLabel(pathValue)}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Remove attachment ${getAttachmentLabel(pathValue)}`}
-                      onClick={() => onRemoveAttachment(pathValue)}
-                      className="shrink-0 text-muted-foreground transition hover:text-foreground"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="flex items-center justify-between px-3 pb-3 pt-2">
-              <div className="flex items-center gap-1.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div>
-                      <DropdownMenu modal={false}>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-full bg-transparent p-0 text-foreground hover:bg-muted/60 hover:text-foreground"
-                            aria-label="Add attachment"
-                          >
-                            <Plus className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem onSelect={() => onAddAttachment()}>
-                            <Paperclip className="size-4" />
-                            Add attachment
-                            <DropdownMenuShortcut>{addAttachmentShortcut}</DropdownMenuShortcut>
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    Add files
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div>
-                      <Popover open={linkPopoverOpen} onOpenChange={onLinkPopoverOpenChange}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-full bg-muted/55 p-0 text-foreground backdrop-blur-md hover:bg-muted/75 hover:text-foreground supports-[backdrop-filter]:bg-muted/50"
-                            aria-label="Link GitHub issue or pull request"
-                          >
-                            <Github className="size-3.5" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-80 p-0">
-                          <Command shouldFilter={false}>
-                            <CommandInput
-                              autoFocus
-                              placeholder="Search issues or pull requests..."
-                              value={linkQuery}
-                              onValueChange={onLinkQueryChange}
-                            />
-                            <CommandList className="max-h-[280px]">
-                              {filteredLinkItems.length === 0 ? (
-                                <CommandEmpty>
-                                  {normalizedLinkQuery.repoMismatch
-                                    ? `GitHub URL must match ${normalizedLinkQuery.repoMismatch}.`
-                                    : linkItemsLoading || linkDirectLoading
-                                      ? normalizedLinkQuery.query.trim()
-                                        ? 'Searching...'
-                                        : 'Loading...'
-                                      : normalizedLinkQuery.query.trim()
-                                        ? 'No issues or pull requests found.'
-                                        : 'No recent issues or pull requests found.'}
-                                </CommandEmpty>
-                              ) : null}
-                              {filteredLinkItems.length > 0 ? (
-                                <CommandGroup
-                                  heading={
-                                    normalizedLinkQuery.query.trim()
-                                      ? `${filteredLinkItems.length} result${filteredLinkItems.length === 1 ? '' : 's'}`
-                                      : 'Recent issues & pull requests'
-                                  }
-                                >
-                                  {filteredLinkItems.map((item) => (
-                                    <CommandItem
-                                      key={item.id}
-                                      value={`${item.type}-${item.number}-${item.title}`}
-                                      onSelect={() => onSelectLinkedItem(item)}
-                                      className="group"
-                                    >
-                                      {item.type === 'pr' ? (
-                                        <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
-                                      ) : (
-                                        <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
-                                      )}
-                                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                                        #{item.number}
-                                      </span>
-                                      <span className="min-w-0 flex-1 truncate text-xs">
-                                        {item.title}
-                                      </span>
-                                      <Check className="size-3.5 shrink-0 opacity-0 group-data-[selected=true]:opacity-100" />
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              ) : null}
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    Add GH Issue / PR
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        disabled
-                        className="h-8 w-8 rounded-full bg-muted/35 p-0 text-muted-foreground/70 backdrop-blur-md supports-[backdrop-filter]:bg-muted/30"
-                        aria-label="Link Linear issue"
-                      >
-                        <LinearIcon className="size-3.5" />
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6}>
-                    coming soon
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-
-              <Select
-                value={tuiAgent}
-                onValueChange={(value) => onTuiAgentChange(value as TuiAgent)}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className={cn(
-                    'h-8 rounded-full border-border/50 bg-background/50 px-3 backdrop-blur-md supports-[backdrop-filter]:bg-background/50 transition-opacity',
-                    !agentPrompt.trim() &&
-                      !linkedOnlyTemplatePreview &&
-                      'opacity-60 hover:opacity-100 grayscale-[0.5]'
-                  )}
+    <div
+      ref={composerRef}
+      // Why: preload classifies native OS file drops by the nearest
+      // `data-native-file-drop-target` marker in the composedPath. Tagging
+      // the composer root makes drops anywhere on the card route to the
+      // composer attachment handler instead of falling back to the default
+      // editor-open behavior.
+      data-native-file-drop-target="composer"
+      onDragEnter={dragHandlers.onDragEnter}
+      onDragLeave={dragHandlers.onDragLeave}
+      className={cn(
+        'grid gap-1 rounded-md transition',
+        isFileDragOver && 'ring-2 ring-ring/30',
+        containerClassName
+      )}
+    >
+      <div className="space-y-4 pt-3">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs font-medium text-muted-foreground">Repository</label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={handleAddRepo}
+                  className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                  aria-label="Add folder or repository"
                 >
-                  <SelectValue>
-                    <span className="flex items-center gap-2">
-                      <AgentIcon agent={tuiAgent} />
-                      <span>{AGENT_CATALOG.find((a) => a.id === tuiAgent)?.label ?? tuiAgent}</span>
-                    </span>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="end">
-                  {AGENT_CATALOG.filter(
-                    (a) => detectedAgentIds === null || detectedAgentIds.has(a.id)
-                  ).map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      <span className="flex items-center gap-2">
-                        <AgentIcon agent={option.id} />
-                        <span>{option.label}</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                  <div className="border-t border-border/50 px-1 pb-0.5 pt-1">
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                      onPointerDown={(event) => event.preventDefault()}
-                      onClick={onOpenAgentSettings}
-                    >
-                      Manage agents
-                      <svg
-                        className="size-3"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M5 12h14M12 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                </SelectContent>
-              </Select>
-            </div>
+                  <FolderPlus className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Add project
+              </TooltipContent>
+            </Tooltip>
           </div>
+          <RepoCombobox
+            repos={eligibleRepos}
+            value={repoId}
+            onValueChange={onRepoChange}
+            onValueSelected={focusNameInput}
+            placeholder="Choose repository"
+            // Why: programmatic .focus() from the Dialog's onOpenAutoFocus
+            // handler does not reliably trigger :focus-visible in Chromium.
+            // Mirror the Input component's standard ring (border-ring +
+            // ring-ring/50, 3px) onto :focus so the autofocused repo trigger
+            // paints the familiar field ring instead of leaving no visible
+            // focus state.
+            triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            showStandaloneAddButton={false}
+          />
+        </div>
 
-          <div className="flex items-center justify-between">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="rounded-full px-2.5 text-muted-foreground hover:text-foreground"
-              onClick={onToggleAdvanced}
-            >
-              Advanced
-              <ChevronDown
-                className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
-              />
-            </Button>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">
+            Workspace Name <span className="text-muted-foreground/70">[Optional]</span>
+          </label>
+          <Input
+            ref={nameInputRef}
+            value={name}
+            onChange={onNameChange}
+            onKeyDown={(event) => {
+              // Why: Enter on the workspace name advances focus to the next
+              // field (Agent combobox) rather than submitting, letting the user
+              // progress through the form with just the keyboard.
+              if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey) {
+                return
+              }
+              event.preventDefault()
+              const root = composerRef?.current
+              const agentTrigger = root?.querySelector<HTMLElement>(
+                '[data-agent-combobox-root="true"][role="combobox"]'
+              )
+              agentTrigger?.focus()
+            }}
+            placeholder="Workspace name"
+            className="h-9 text-sm"
+          />
+        </div>
 
-            <div className="flex justify-end">
-              <Button
-                onClick={() => void onCreate()}
-                disabled={createDisabled}
-                size="sm"
-                className="rounded-full px-3"
-              >
-                {creating ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                {agentPrompt.trim() || linkedOnlyTemplatePreview
-                  ? 'Start Agent'
-                  : 'Create Worktree'}
-                <span className="ml-1 rounded-full border border-white/20 p-1 text-current/80">
-                  <CornerDownLeft className="size-3" />
-                </span>
-              </Button>
-            </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs font-medium text-muted-foreground">Agent</label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={onOpenAgentSettings}
+                  className="size-5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
+                  aria-label="Open agent settings"
+                >
+                  <Settings2 className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Configure agents
+              </TooltipContent>
+            </Tooltip>
           </div>
+          <AgentCombobox
+            agents={visibleQuickAgents}
+            value={quickAgent}
+            onValueChange={onQuickAgentChange}
+            onOpenManageAgents={onOpenAgentSettings}
+            defaultAgent={defaultTuiAgent}
+            onSetDefault={handleSetDefaultAgent}
+            triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+            onTriggerEnter={createDisabled ? undefined : onCreate}
+          />
+        </div>
 
-          <div
-            className={cn(
-              'grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-out',
-              advancedOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-            )}
-            aria-hidden={!advancedOpen}
-          >
-            <div className="min-h-0 px-3 pt-3">
-              <div className="grid gap-5 pb-3">
-                <div className="grid gap-1.5">
-                  <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Note
-                  </label>
-                  <Input
-                    value={note}
-                    onChange={(event) => onNoteChange(event.target.value)}
-                    placeholder="Write a note"
-                    className="h-10 rounded-xl border-border/60 bg-input/30 shadow-sm"
-                  />
-                </div>
-
-                {setupConfig ? (
-                  <div className="grid gap-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                        Setup script
-                      </label>
-                      <span className="rounded-full border border-border/70 bg-muted/45 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-foreground/70 shadow-sm">
-                        {setupConfig.source === 'yaml' ? 'orca.yaml' : 'legacy hooks'}
-                      </span>
-                    </div>
-
-                    {/* Why: `orca.yaml` is the committed source of truth for shared setup,
-                        so the preview reconstructs the real YAML shape instead of showing a raw
-                        shell blob that hides where the command came from. */}
-                    <SetupCommandPreview
-                      setupConfig={setupConfig}
-                      headerAction={
-                        requiresExplicitSetupChoice ? null : (
-                          <label className="group flex items-center gap-2 text-xs text-foreground">
-                            <span
-                              className={cn(
-                                'flex size-4 items-center justify-center rounded-[3px] border transition shadow-sm',
-                                resolvedSetupDecision === 'run'
-                                  ? 'border-emerald-500/60 bg-emerald-500 text-white'
-                                  : 'border-foreground/20 bg-background dark:border-white/20 dark:bg-muted/10'
-                              )}
-                            >
-                              <Check
-                                className={cn(
-                                  'size-3 transition-opacity',
-                                  resolvedSetupDecision === 'run' ? 'opacity-100' : 'opacity-0'
-                                )}
-                              />
-                            </span>
-                            <input
-                              type="checkbox"
-                              checked={resolvedSetupDecision === 'run'}
-                              onChange={(event) =>
-                                onSetupDecisionChange(event.target.checked ? 'run' : 'skip')
-                              }
-                              className="sr-only"
-                            />
-                            <span>Run setup command</span>
-                          </label>
-                        )
-                      }
-                    />
-
-                    {requiresExplicitSetupChoice ? (
-                      <div className="grid gap-2.5">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                          Run setup now?
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onSetupDecisionChange('run')}
-                            className={cn(
-                              'rounded-full border px-3.5 py-2 text-xs font-medium transition',
-                              setupDecision === 'run'
-                                ? 'border-emerald-500/40 bg-emerald-500/12 text-foreground shadow-sm'
-                                : 'border-border/70 bg-muted/35 text-foreground/75 hover:text-foreground'
-                            )}
-                          >
-                            Run setup now
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onSetupDecisionChange('skip')}
-                            className={cn(
-                              'rounded-full border px-3.5 py-2 text-xs font-medium transition',
-                              setupDecision === 'skip'
-                                ? 'border-border/70 bg-foreground/10 text-foreground shadow-sm'
-                                : 'border-border/70 bg-muted/35 text-foreground/75 hover:text-foreground'
-                            )}
-                          >
-                            Skip for now
-                          </button>
-                        </div>
-                        {!setupDecision ? (
-                          <div className="text-xs text-muted-foreground">
-                            {shouldWaitForSetupCheck
-                              ? 'Checking setup configuration...'
-                              : 'Choose whether to run setup before creating this workspace.'}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+        <div
+          className={cn(
+            'grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-out',
+            advancedOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+          )}
+          aria-hidden={!advancedOpen}
+        >
+          <div className="min-h-0">
+            {/* Why: px-1 insets the content 4px on each side so the Note
+                textarea's 3px outset focus ring has horizontal breathing room
+                inside the overflow-hidden drawer above. Without it the ring
+                gets clipped on the right edge when the field is focused. */}
+            <div className="space-y-4 px-1 pt-1">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Note</label>
+                <textarea
+                  value={note}
+                  onChange={(event) => onNoteChange(event.target.value)}
+                  onInput={(event) => {
+                    // Why: start at one-line height, grow to fit content so a short
+                    // note keeps the dialog compact while longer notes get room to
+                    // breathe without a scroll bar until the max-h clamps growth.
+                    const ta = event.currentTarget
+                    ta.style.height = 'auto'
+                    ta.style.height = `${ta.scrollHeight}px`
+                  }}
+                  placeholder="Write a note"
+                  rows={1}
+                  className="w-full min-w-0 resize-none overflow-hidden rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 max-h-40"
+                />
               </div>
+
+              {setupConfig ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Setup script
+                    </label>
+                    <span className="rounded-full border border-border/70 bg-muted/45 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-foreground/70">
+                      {setupConfig.source === 'yaml' ? 'orca.yaml' : 'legacy hooks'}
+                    </span>
+                  </div>
+
+                  {/* Why: `orca.yaml` is the committed source of truth for shared setup,
+                      so the preview reconstructs the real YAML shape instead of showing a raw
+                      shell blob that hides where the command came from. */}
+                  <SetupCommandPreview
+                    setupConfig={setupConfig}
+                    headerAction={
+                      requiresExplicitSetupChoice ? null : (
+                        <label className="group flex items-center gap-2 text-xs text-foreground">
+                          <span
+                            className={cn(
+                              'flex size-4 items-center justify-center rounded-[3px] border transition shadow-sm',
+                              resolvedSetupDecision === 'run'
+                                ? 'border-emerald-500/60 bg-emerald-500 text-white'
+                                : 'border-foreground/20 bg-background dark:border-white/20 dark:bg-muted/10'
+                            )}
+                          >
+                            <Check
+                              className={cn(
+                                'size-3 transition-opacity',
+                                resolvedSetupDecision === 'run' ? 'opacity-100' : 'opacity-0'
+                              )}
+                            />
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={resolvedSetupDecision === 'run'}
+                            onChange={(event) =>
+                              onSetupDecisionChange(event.target.checked ? 'run' : 'skip')
+                            }
+                            className="sr-only"
+                          />
+                          <span>Run setup command</span>
+                        </label>
+                      )
+                    }
+                  />
+
+                  {requiresExplicitSetupChoice ? (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-medium text-muted-foreground">
+                        Run setup now?
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => onSetupDecisionChange('run')}
+                          variant={setupDecision === 'run' ? 'default' : 'outline'}
+                          size="sm"
+                        >
+                          Run setup now
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => onSetupDecisionChange('skip')}
+                          variant={setupDecision === 'skip' ? 'secondary' : 'outline'}
+                          size="sm"
+                        >
+                          Skip for now
+                        </Button>
+                      </div>
+                      {!setupDecision ? (
+                        <div className="text-xs text-muted-foreground">
+                          {shouldWaitForSetupCheck
+                            ? 'Checking setup configuration...'
+                            : 'Choose whether to run setup before creating this workspace.'}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
       </div>
 
       {createError ? (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {createError}
         </div>
       ) : null}
+
+      <div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onToggleAdvanced}
+          className="-ml-2 text-xs"
+        >
+          Advanced
+          <ChevronDown
+            className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
+          />
+        </Button>
+      </div>
+
+      <div className="flex justify-end">
+        <Button
+          onClick={() => void onCreate()}
+          disabled={createDisabled}
+          size="sm"
+          className="text-xs"
+        >
+          {creating ? <LoaderCircle className="size-4 animate-spin" /> : null}
+          Create Workspace
+          <span className="ml-1 inline-flex items-center gap-0.5 rounded border border-white/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-current/80">
+            <span>{isMac ? '⌘' : 'Ctrl'}</span>
+            <CornerDownLeft className="size-3" />
+          </span>
+        </Button>
+      </div>
     </div>
   )
 }

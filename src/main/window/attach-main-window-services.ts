@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { app, clipboard, ipcMain, nativeImage, session } from 'electron'
-import type { BrowserWindow } from 'electron'
+import { app, clipboard, ipcMain, nativeImage, session, systemPreferences } from 'electron'
+import type { BrowserWindow, MediaAccessPermissionRequest } from 'electron'
 import type { Store } from '../persistence'
 import type { CreateWorktreeResult } from '../../shared/types'
 import { ORCA_BROWSER_PARTITION } from '../../shared/constants'
@@ -22,16 +22,24 @@ import {
 } from '../updater'
 import { scheduleHistoryGc } from '../terminal-history'
 import { listRepoWorktrees } from '../repo-worktrees'
+import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 
 export function attachMainWindowServices(
   mainWindow: BrowserWindow,
   store: Store,
   runtime: OrcaRuntimeService,
-  getSelectedCodexHomePath?: () => string | null
+  getSelectedCodexHomePath?: () => string | null,
+  prepareClaudeAuth?: () => Promise<ClaudeRuntimeAuthPreparation>
 ): void {
   registerRepoHandlers(mainWindow, store)
   registerWorktreeHandlers(mainWindow, store)
-  registerPtyHandlers(mainWindow, runtime, getSelectedCodexHomePath, () => store.getSettings())
+  registerPtyHandlers(
+    mainWindow,
+    runtime,
+    getSelectedCodexHomePath,
+    () => store.getSettings(),
+    prepareClaudeAuth
+  )
   // Why: GC runs on a 10s delay so live worktree enumeration completes first.
   // Uses git worktree list (not store.getWorktreeMeta) because untouched
   // worktrees have no metadata entries — see design doc §7.6.
@@ -46,7 +54,7 @@ export function attachMainWindowServices(
     }
     return ids
   })
-  registerSshHandlers(store, () => mainWindow)
+  registerSshHandlers(store, () => mainWindow, runtime)
   registerFileDropRelay(mainWindow)
   setupAutoUpdater(mainWindow, {
     getLastUpdateCheckAt: () => store.getUI().lastUpdateCheckAt,
@@ -77,8 +85,23 @@ export function attachMainWindowServices(
 
   const allowedPermissions = new Set(['media', 'fullscreen', 'pointerLock'])
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (_webContents, permission, callback) => {
+    (_webContents, permission, callback, details) => {
+      if (permission === 'media') {
+        void requestSystemMediaAccess(details).then(callback, (error: unknown) => {
+          console.error('[permissions] Failed to request media access:', error)
+          callback(false)
+        })
+        return
+      }
       callback(allowedPermissions.has(permission))
+    }
+  )
+  mainWindow.webContents.session.setPermissionCheckHandler(
+    (_webContents, permission, _origin, details) => {
+      if (permission !== 'media') {
+        return allowedPermissions.has(permission)
+      }
+      return hasSystemMediaAccess(details?.mediaType)
     }
   )
 
@@ -124,6 +147,54 @@ export function attachMainWindowServices(
   })
 }
 
+function requestedMediaTypes(
+  details: MediaAccessPermissionRequest | undefined
+): Set<'audio' | 'video'> {
+  return new Set(details?.mediaTypes ?? [])
+}
+
+function hasSystemMediaAccess(mediaType: string | undefined): boolean {
+  if (process.platform !== 'darwin') {
+    return true
+  }
+  if (mediaType === 'audio') {
+    return systemPreferences.getMediaAccessStatus('microphone') === 'granted'
+  }
+  if (mediaType === 'video') {
+    return systemPreferences.getMediaAccessStatus('camera') === 'granted'
+  }
+  return false
+}
+
+async function requestSystemMediaAccess(
+  details: MediaAccessPermissionRequest | undefined
+): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return true
+  }
+
+  const mediaTypes = requestedMediaTypes(details)
+  if (mediaTypes.size === 0) {
+    return false
+  }
+
+  if (mediaTypes.has('audio')) {
+    // Why: macOS only shows the TCC prompt from the app process, so Chromium's
+    // media grant is paired with the OS-level request at the actual media ask.
+    const granted = await systemPreferences.askForMediaAccess('microphone')
+    if (!granted) {
+      return false
+    }
+  }
+  if (mediaTypes.has('video')) {
+    const granted = await systemPreferences.askForMediaAccess('camera')
+    if (!granted) {
+      return false
+    }
+  }
+  return true
+}
+
 function registerRuntimeWindowLifecycle(
   mainWindow: BrowserWindow,
   runtime: OrcaRuntimeService
@@ -143,6 +214,40 @@ function registerRuntimeWindowLifecycle(
     activateWorktree: (repoId, worktreeId, setup?: CreateWorktreeResult['setup']) => {
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ui:activateWorktree', { repoId, worktreeId, setup })
+      }
+    },
+    createTerminal: (worktreeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:createTerminal', {
+          worktreeId,
+          command: opts.command,
+          title: opts.title
+        })
+      }
+    },
+    splitTerminal: (tabId, paneRuntimeId, opts) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:splitTerminal', {
+          tabId,
+          paneRuntimeId,
+          direction: opts.direction,
+          command: opts.command
+        })
+      }
+    },
+    renameTerminal: (tabId, title) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:renameTerminal', { tabId, title })
+      }
+    },
+    focusTerminal: (tabId, worktreeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:focusTerminal', { tabId, worktreeId })
+      }
+    },
+    closeTerminal: (tabId, paneRuntimeId) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:closeTerminal', { tabId, paneRuntimeId })
       }
     }
   })

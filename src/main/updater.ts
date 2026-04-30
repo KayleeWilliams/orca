@@ -11,7 +11,13 @@ import {
   markMacQuitAndInstallInFlight
 } from './updater-mac-install'
 import { registerAutoUpdaterHandlers } from './updater-events'
-import { compareVersions, isBenignCheckFailure, statusesEqual } from './updater-fallback'
+import {
+  compareVersions,
+  isBenignCheckFailure,
+  isPrereleaseVersion,
+  statusesEqual
+} from './updater-fallback'
+import { fetchNewerReleaseTag, getReleaseDownloadUrl } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
 
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -25,10 +31,10 @@ let currentStatus: UpdateStatus = { state: 'idle' }
 let userInitiatedCheck = false
 let onBeforeQuitCleanup: (() => void) | null = null
 let autoUpdaterInitialized = false
-// Why: Cmd+Shift-clicking "Check for Updates" opts the user into the RC
-// release channel for the rest of this process. We switch to the GitHub
-// provider with allowPrerelease=true so both the check AND any follow-up
-// download resolve against the same (possibly prerelease) release manifest.
+// Why: Shift-clicking "Check for Updates" opts the user into the RC release
+// channel for the rest of this process. We switch to the GitHub provider
+// with allowPrerelease=true so both the check AND any follow-up download
+// resolve against the same (possibly prerelease) release manifest.
 // Resetting only after the check would leave a downloaded RC pointing at a
 // feed URL that no longer advertises it. See design comment in
 // enableIncludePrerelease.
@@ -41,6 +47,8 @@ let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
+let _getLastUpdateCheckAt: (() => number | null) | null = null
+let backgroundCheckLaunchPending = false
 let activeUpdateNudgeId: string | null = null
 let awaitingNudgeCheckOutcome = false
 let nudgeCheckInFlight = false
@@ -126,6 +134,10 @@ function sendStatus(status: UpdateStatus): void {
   mainWindowRef?.webContents.send('updater:status', decoratedStatus)
 }
 
+function clearBackgroundCheckLaunchPending(): void {
+  backgroundCheckLaunchPending = false
+}
+
 function sendErrorStatus(message: string, userInitiated?: boolean): void {
   if (
     currentStatus.state === 'error' &&
@@ -190,25 +202,24 @@ async function sendCheckFailureStatus(message: string, userInitiated?: boolean):
   const handleFailure = async (): Promise<void> => {
     if (isBenignCheckFailure(message)) {
       // Why: release transition failures (missing latest.yml while a new
-      // release is being published) and network blips are transient.  The
-      // previous approach sent 'not-available' for user-initiated checks
-      // during a release transition, which falsely told the user "you're
-      // on the latest version" — the toast would flash and auto-dismiss,
-      // hiding the fact that a newer release is mid-publish.  Now all
-      // benign failures go to 'idle' uniformly: the toast controller
-      // converts a user-initiated checking→idle transition into an honest
-      // "currently rolling out" message, and a background retry is
-      // always scheduled so the update notification arrives once the
-      // release finishes.
+      // release is being published) and network blips are transient. Schedule
+      // a background retry so the notification arrives once the release
+      // finishes, and intentionally skip persistLastUpdateCheckAt — the check
+      // didn't truly complete, and recording a timestamp would suppress the
+      // next startup check.
       console.warn('[updater] benign check failure:', message)
       clearAvailableUpdateContext()
       scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
-      // Why: we intentionally do NOT call persistLastUpdateCheckAt here.
-      // The check didn't truly complete (the manifest was unreachable due
-      // to a release transition or network blip), so recording a timestamp
-      // would suppress the next startup check and delay discovery of the
-      // new version.
-      sendStatus({ state: 'idle' })
+      if (userInitiated) {
+        // Why: a user-initiated click expects visible feedback — silently
+        // dropping to 'idle' makes the button look broken. The card already
+        // prefixes "Could not check for updates." and Settings prefixes
+        // "Update check failed.", so the message here only carries the
+        // actionable cause.
+        sendErrorStatus('GitHub may be temporarily unavailable. Try again in a minute.', true)
+      } else {
+        sendStatus({ state: 'idle' })
+      }
       return
     }
 
@@ -251,9 +262,47 @@ function recordCompletedUpdateCheck(): void {
   persistLastUpdateCheckAt?.(Date.now())
 }
 
+function shouldResolvePrereleaseFeed(): boolean {
+  // Why: if the user Shift-clicked the menu to opt into RC this process, we've
+  // already switched to the native github provider — leave that alone. The
+  // atom-feed resolver only applies to users *running* a prerelease build on
+  // the default generic feed.
+  return !includePrereleaseActive && isPrereleaseVersion(app.getVersion())
+}
+
+async function pinPrereleaseFeed(): Promise<void> {
+  // Why: for prerelease users we mine the atom feed ourselves and pin the
+  // generic feed at /releases/download/<tag>/ so the follow-up manifest fetch
+  // resolves against exactly that release. This handles BOTH RC→newer-RC and
+  // RC→stable, which is what a prerelease user wants. We avoid the native
+  // github provider because GitHubProvider.getLatestVersion() filters the feed
+  // by channel — when currentChannel is "rc", stable releases get skipped and
+  // the user never sees the GA (trapping them on the RC channel).
+  //
+  // If the resolver returns null (no newer release, or fetch failed), we fall
+  // back to the default /releases/latest/download/ URL. In the "no newer"
+  // case that feed will report the latest stable and compareVersions in the
+  // 'update-available' handler will correctly mark it as not-available.
+  const newerTag = await fetchNewerReleaseTag(app.getVersion())
+  if (newerTag) {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: getReleaseDownloadUrl(newerTag)
+    })
+  } else {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: 'https://github.com/stablyai/orca/releases/latest/download'
+    })
+  }
+}
+
 function runBackgroundUpdateCheck(
   nudgeId: string | null = getPersistedPendingUpdateNudgeId()
 ): void {
+  if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
+    return
+  }
   if (!app.isPackaged || is.dev) {
     sendStatus({ state: 'not-available' })
     return
@@ -264,9 +313,17 @@ function runBackgroundUpdateCheck(
   // the persisted pending id for ordinary background checks so a nudge-driven
   // card can still be dismissed correctly after relaunch or a later 24h check.
   activeUpdateNudgeId = nudgeId
+  // Why: autoUpdater.checkForUpdates() is async and 'checking-for-update'
+  // arrives on a later tick, so a second focus/resume event can slip in before
+  // currentStatus flips to 'checking'. Track the launch in memory to dedupe
+  // that gap without persisting a successful-check timestamp before the result.
+  backgroundCheckLaunchPending = true
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
-  autoUpdater.checkForUpdates().catch((err) => {
+  const launch = (): Promise<unknown> => autoUpdater.checkForUpdates()
+  const run = shouldResolvePrereleaseFeed() ? pinPrereleaseFeed().then(launch) : launch()
+  void Promise.resolve(run).catch((err) => {
+    backgroundCheckLaunchPending = false
     void sendCheckFailureStatus(String(err?.message ?? err))
   })
 }
@@ -313,7 +370,9 @@ export function checkForUpdatesFromMenu(options?: { includePrerelease?: boolean 
   // Don't send 'checking' here — the 'checking-for-update' event handler does it,
   // and sending it from both places causes duplicate notifications (issue #35).
 
-  autoUpdater.checkForUpdates().catch((err) => {
+  const launch = (): Promise<unknown> => autoUpdater.checkForUpdates()
+  const run = shouldResolvePrereleaseFeed() ? pinPrereleaseFeed().then(launch) : launch()
+  void Promise.resolve(run).catch((err) => {
     userInitiatedCheck = false
     void sendCheckFailureStatus(String(err?.message ?? err), true)
   })
@@ -428,6 +487,7 @@ export function setupAutoUpdater(
   mainWindowRef = mainWindow
   onBeforeQuitCleanup = opts?.onBeforeQuit ?? null
   persistLastUpdateCheckAt = opts?.setLastUpdateCheckAt ?? null
+  _getLastUpdateCheckAt = opts?.getLastUpdateCheckAt ?? null
   _getPendingUpdateNudgeId = opts?.getPendingUpdateNudgeId ?? null
   _getDismissedUpdateNudgeId = opts?.getDismissedUpdateNudgeId ?? null
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
@@ -465,6 +525,14 @@ export function setupAutoUpdater(
   // latest-linux.yml) from the latest non-prerelease release. This sidesteps
   // the broken /releases/latest API endpoint (returns 406) and automatically
   // excludes RC/prerelease versions without client-side filtering.
+  //
+  // Why: for users already running a prerelease (e.g. 1.3.19-rc.6) we repin
+  // this URL to a specific /releases/download/<tag>/ before each check — see
+  // ensurePrereleaseFeedReady. That handles both RC→newer-RC AND RC→stable.
+  // We keep the generic provider (rather than switching to electron-updater's
+  // native github provider + allowPrerelease) because GitHubProvider filters
+  // the atom feed by channel and would silently skip stable releases when the
+  // running build is an RC — trapping the user on the RC channel.
   autoUpdater.setFeedURL({
     provider: 'generic',
     url: 'https://github.com/stablyai/orca/releases/latest/download'
@@ -488,6 +556,7 @@ export function setupAutoUpdater(
     recordCompletedUpdateCheck,
     sendStatus,
     scheduleAutomaticUpdateCheck,
+    clearBackgroundCheckLaunchPending,
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl
     },
@@ -502,12 +571,25 @@ export function setupAutoUpdater(
   void checkForUpdateNudge()
   scheduleUpdateNudgeCheck()
 
-  powerMonitor.on('resume', () => {
+  const checkDailyOnWake = () => {
     void checkForUpdateNudge()
-  })
-  app.on('browser-window-focus', () => {
-    void checkForUpdateNudge()
-  })
+    if (
+      backgroundCheckLaunchPending ||
+      currentStatus.state === 'checking' ||
+      currentStatus.state === 'downloading'
+    ) {
+      return
+    }
+    const lastCheck = _getLastUpdateCheckAt?.() ?? null
+    const msSince = lastCheck === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheck
+    if (msSince >= AUTO_UPDATE_CHECK_INTERVAL_MS) {
+      runBackgroundUpdateCheck()
+      scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+    }
+  }
+
+  powerMonitor.on('resume', checkDailyOnWake)
+  app.on('browser-window-focus', checkDailyOnWake)
 
   const lastUpdateCheckAt = opts?.getLastUpdateCheckAt?.() ?? null
   const msSinceLastCheck =
@@ -522,7 +604,17 @@ export function setupAutoUpdater(
 }
 
 export function downloadUpdate(): void {
-  if (currentStatus.state !== 'available' || downloadInFlight) {
+  if (downloadInFlight) {
+    return
+  }
+  // Why: permit retry from 'error' when we still have a cached availableVersion —
+  // a failed download leaves the status at 'error' but availableVersion intact,
+  // and the error card's "Retry Download" button must be able to restart the
+  // download. Without this, the button would appear to do nothing.
+  const canStart =
+    currentStatus.state === 'available' ||
+    (currentStatus.state === 'error' && hasNewerDownloadedVersion())
+  if (!canStart) {
     return
   }
   downloadInFlight = true

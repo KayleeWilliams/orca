@@ -8,6 +8,7 @@ import {
   getRepoIdFromWorktreeId,
   type WorktreeSlice
 } from './worktree-helpers'
+import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 
 function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
@@ -47,6 +48,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   activeWorktreeId: null,
   deleteStateByWorktreeId: {},
   sortEpoch: 0,
+  everActivatedWorktreeIds: new Set<string>(),
 
   fetchWorktrees: async (repoId) => {
     try {
@@ -140,12 +142,16 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     }))
 
     try {
+      const repoIdForTrust = getRepoIdFromWorktreeId(worktreeId)
+      const trustDecision = await ensureHooksConfirmed(get(), repoIdForTrust, 'archive')
+      const skipArchive = trustDecision === 'skip'
+
       // Why: setup-enabled worktrees now commonly have a live shell open as soon as
       // they are created. We must tear those PTYs down before asking Git to remove
       // the working tree or Windows and some shells can keep the directory in use
       // and make delete look broken even though the git state itself is fine.
       await get().shutdownWorktreeTerminals(worktreeId)
-      await window.api.worktrees.remove({ worktreeId, force })
+      await window.api.worktrees.remove({ worktreeId, force, skipArchive })
       const tabs = get().tabsByWorktree[worktreeId] ?? []
       const tabIds = new Set(tabs.map((t) => t.id))
 
@@ -236,6 +242,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? s.openFiles.some((f) => f.id === s.activeFileId && f.worktreeId === worktreeId)
           : false
         const removedActiveWorktree = s.activeWorktreeId === worktreeId
+        const nextEverActivatedWorktreeIds = s.everActivatedWorktreeIds.has(worktreeId)
+          ? new Set([...s.everActivatedWorktreeIds].filter((id) => id !== worktreeId))
+          : s.everActivatedWorktreeIds
         return {
           worktreesByRepo: next,
           tabsByWorktree: nextTabs,
@@ -277,6 +286,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           activeFileId: activeFileCleared ? null : s.activeFileId,
           activeBrowserTabId: removedActiveWorktree ? null : s.activeBrowserTabId,
           activeTabType: removedActiveWorktree || activeFileCleared ? 'terminal' : s.activeTabType,
+          everActivatedWorktreeIds: nextEverActivatedWorktreeIds,
           sortEpoch: s.sortEpoch + 1
         }
       })
@@ -333,11 +343,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   markWorktreeUnread: (worktreeId) => {
-    const activeWorktreeId = get().activeWorktreeId
-    if (activeWorktreeId === worktreeId) {
-      return
-    }
-
+    // Why: BEL must fire regardless of focus (ghostty semantics — "show
+    // until interact"). Interaction with a pane inside the worktree
+    // dismisses the dot via clearWorktreeUnread. Worktree activation via
+    // setActiveWorktree also clears isUnread as a side-effect; that path
+    // predates this PR and is unaffected here.
     let shouldPersist = false
     const now = Date.now()
     set((s) => {
@@ -363,6 +373,37 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       .updateMeta({ worktreeId, updates: { isUnread: true, lastActivityAt: now } })
       .catch((err) => {
         console.error('Failed to persist unread worktree state:', err)
+        void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+      })
+  },
+
+  clearWorktreeUnread: (worktreeId) => {
+    let shouldPersist = false
+    set((s) => {
+      const worktree = findWorktreeById(s.worktreesByRepo, worktreeId)
+      if (!worktree || !worktree.isUnread) {
+        // Why: return `s` (not `{}`) to preserve the exact object reference
+        // on no-op. This matches the sibling `clearTerminalTabUnread` in
+        // terminals.ts and avoids downstream selector churn on the hot path
+        // (called on every keystroke and pointerdown).
+        return s
+      }
+      shouldPersist = true
+      return {
+        worktreesByRepo: applyWorktreeUpdates(s.worktreesByRepo, worktreeId, {
+          isUnread: false
+        })
+      }
+    })
+
+    if (!shouldPersist) {
+      return
+    }
+
+    void window.api.worktrees
+      .updateMeta({ worktreeId, updates: { isUnread: false } })
+      .catch((err) => {
+        console.error('Failed to persist cleared unread worktree state:', err)
         void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
       })
   },
@@ -536,19 +577,43 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       // before the generation bump unmounts it — that intermediate render
       // resumes the pane with a transport stuck at connected=false/ptyId=null,
       // and user input is silently dropped.
+      //
+      // Why pendingActivationSpawn + first-activation check: the first time a
+      // worktree is activated in this session, its TerminalPane mounts and
+      // each tab's PTY either reattaches (restored session) or fresh-spawns
+      // (never visited). Both paths call updateTabPtyId; neither is real
+      // activity — they are side-effects of the click. Tag every tab on the
+      // FIRST activation so the resulting updateTabPtyId suppresses both the
+      // activity bump and the sortEpoch bump.
+      //
+      // We can't use tab.ptyId==null as the guard (what the old `allDead`
+      // check did): reconnectPersistedTerminals re-populates tab.ptyId with
+      // restored daemon session IDs *before* the pane mounts, so tabs look
+      // live to allDead even though the next updateTabPtyId is a reattach.
+      // Tracking first-activation per worktree is the reliable signal.
+      //
+      // Generation is still only bumped when tabs are allDead — a live tab
+      // remount would kill the user's running shell.
       const tabs = s.tabsByWorktree[worktreeId ?? ''] ?? []
       const allDead = worktreeId && tabs.length > 0 && tabs.every((tab) => !tab.ptyId)
-      const tabsByWorktreeUpdate = allDead
-        ? {
-            tabsByWorktree: {
-              ...s.tabsByWorktree,
-              [worktreeId!]: tabs.map((tab) => ({
-                ...tab,
-                generation: (tab.generation ?? 0) + 1
-              }))
+      const isFirstActivation = worktreeId != null && !s.everActivatedWorktreeIds.has(worktreeId)
+      const shouldTagTabs = worktreeId != null && tabs.length > 0 && isFirstActivation
+      const nextEverActivated = isFirstActivation
+        ? new Set([...s.everActivatedWorktreeIds, worktreeId!])
+        : s.everActivatedWorktreeIds
+      const tabsByWorktreeUpdate =
+        allDead || shouldTagTabs
+          ? {
+              tabsByWorktree: {
+                ...s.tabsByWorktree,
+                [worktreeId!]: tabs.map((tab) => ({
+                  ...tab,
+                  ...(allDead ? { generation: (tab.generation ?? 0) + 1 } : {}),
+                  ...(shouldTagTabs ? { pendingActivationSpawn: true } : {})
+                }))
+              }
             }
-          }
-        : {}
+          : {}
 
       return {
         activeWorktreeId: worktreeId,
@@ -557,6 +622,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         activeTabType,
         activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: activeTabType },
         activeTabId,
+        everActivatedWorktreeIds: nextEverActivated,
         ...(shouldClearUnread
           ? { worktreesByRepo: applyWorktreeUpdates(s.worktreesByRepo, worktreeId, metaUpdates) }
           : {}),

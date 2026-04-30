@@ -25,6 +25,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAppStore } from '@/store'
 import { ORCA_BROWSER_BLANK_URL, ORCA_BROWSER_PARTITION } from '../../../../shared/constants'
 import type {
@@ -147,6 +148,14 @@ export function destroyPersistentWebview(browserTabId: string): void {
     return
   }
   void window.api.browser.unregisterGuest({ browserPageId: browserTabId })
+  // Why: if this webview currently owns focus, removing it lets macOS hand
+  // activation back to the previously-active app (Slack, etc.) because the
+  // focused webContents is gone with no replacement. Move focus back into the
+  // main renderer first so Electron keeps focus inside the Orca window.
+  if (webview === document.activeElement || webview.contains(document.activeElement)) {
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    window.focus()
+  }
   webview.remove()
   webviewRegistry.delete(browserTabId)
   registeredWebContentsIds.delete(browserTabId)
@@ -1785,16 +1794,28 @@ function BrowserPagePane({
           inputRef={addressBarInputRef}
         />
 
-        <Button
-          size="icon"
-          variant={grab.state !== 'idle' ? 'default' : 'ghost'}
-          className={`h-8 w-8 ${grab.state !== 'idle' ? 'bg-foreground/80 text-background hover:bg-foreground/90' : ''}`}
-          onClick={grab.toggle}
-          title={`Grab page element (${navigator.userAgent.includes('Mac') ? '⌘C' : 'Ctrl+C'})`}
-          disabled={isBlankTab}
-        >
-          <Crosshair className="size-4" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* Why: wrap the disabled button in a span so pointer events still
+                reach the tooltip trigger — Radix (and the DOM) drop hover
+                events on disabled <button>, which is why the previous native
+                `title` attribute fired inconsistently. */}
+            <span className="inline-flex">
+              <Button
+                size="icon"
+                variant={grab.state !== 'idle' ? 'default' : 'ghost'}
+                className={`h-8 w-8 ${grab.state !== 'idle' ? 'bg-foreground/80 text-background hover:bg-foreground/90' : ''}`}
+                onClick={grab.toggle}
+                disabled={isBlankTab}
+              >
+                <Crosshair className="size-4" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            {`Grab page element (${navigator.userAgent.includes('Mac') ? '⌘C' : 'Ctrl+C'})`}
+          </TooltipContent>
+        </Tooltip>
 
         <Button
           size="icon"

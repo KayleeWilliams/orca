@@ -10,6 +10,7 @@ import type {
   Worktree,
   GitHubWorkItem
 } from '../../../../shared/types'
+import { sortWorkItemsByUpdatedAt, PER_REPO_FETCH_LIMIT } from '../../../../shared/work-items'
 import { syncPRChecksStatus } from './github-checks'
 
 export type CacheEntry<T> = {
@@ -35,8 +36,41 @@ const inflightPRRequests = new Map<
 const inflightIssueRequests = new Map<string, Promise<IssueInfo | null>>()
 const inflightChecksRequests = new Map<string, Promise<PRCheckDetail[]>>()
 const inflightCommentsRequests = new Map<string, Promise<PRComment[]>>()
-const inflightWorkItemsRequests = new Map<string, Promise<GitHubWorkItem[]>>()
+type InflightWorkItems = {
+  promise: Promise<GitHubWorkItem[]>
+  force: boolean
+}
+const inflightWorkItemsRequests = new Map<string, InflightWorkItems>()
 const prRequestGenerations = new Map<string, number>()
+
+// Why: cap in-flight cross-repo fan-out and hover-prefetches at the renderer
+// boundary — the main-side gate is behind the IPC queue, so it can't see a
+// stampede until the calls are already mid-flight. 8 balances responsiveness
+// against gh rate-limit pressure.
+const WORK_ITEM_FETCH_CONCURRENCY = 8
+let workItemFetchInFlight = 0
+const workItemFetchWaiters: (() => void)[] = []
+
+async function acquireWorkItemSlot(): Promise<void> {
+  if (workItemFetchInFlight < WORK_ITEM_FETCH_CONCURRENCY) {
+    workItemFetchInFlight += 1
+    return
+  }
+  await new Promise<void>((resolve) => workItemFetchWaiters.push(resolve))
+  // Why: resolver has already claimed the slot on our behalf, so we don't
+  // re-increment here. Pairing convention: acquireWorkItemSlot + releaseWorkItemSlot.
+}
+
+function releaseWorkItemSlot(): void {
+  const next = workItemFetchWaiters.shift()
+  if (next) {
+    // Hand the slot off directly — net count unchanged — so we can't race a
+    // third caller into the cap between decrement and resolve.
+    next()
+    return
+  }
+  workItemFetchInFlight -= 1
+}
 
 function workItemsCacheKey(repoPath: string, limit: number, query: string): string {
   return `${repoPath}::${limit}::${query}`
@@ -135,16 +169,49 @@ export type GitHubSlice = {
    */
   getCachedWorkItems: (repoPath: string, limit: number, query: string) => GitHubWorkItem[] | null
   fetchWorkItems: (
+    repoId: string,
     repoPath: string,
     limit: number,
     query: string,
     options?: FetchOptions
   ) => Promise<GitHubWorkItem[]>
   /**
+   * Why: fan out a single work-item query across multiple repos. Partial
+   * failures don't reject — a repo that both fails to fetch *and* has no
+   * cached fallback contributes nothing and increments `failedCount`, which
+   * the caller surfaces as a "N of M repos failed to load" banner. A repo
+   * served from stale cache on rejection is NOT counted as failed — matching
+   * the single-repo behavior of quietly serving stale data.
+   */
+  fetchWorkItemsAcrossRepos: (
+    repos: { repoId: string; path: string }[],
+    perRepoLimit: number,
+    displayLimit: number,
+    query: string,
+    options?: FetchOptions
+  ) => Promise<{ items: GitHubWorkItem[]; failedCount: number }>
+  /**
+   * Fetch the next page of work items using a date cursor. Does not cache —
+   * pagination pages are ephemeral and managed by TaskPage state.
+   */
+  fetchWorkItemsNextPage: (
+    repos: { repoId: string; path: string }[],
+    perRepoLimit: number,
+    displayLimit: number,
+    query: string,
+    before: string
+  ) => Promise<{ items: GitHubWorkItem[]; failedCount: number }>
+  /**
+   * Count total work items across repos using GitHub's search API.
+   * Returns the sum of per-repo counts for the given query.
+   */
+  countWorkItemsAcrossRepos: (repos: { path: string }[], query: string) => Promise<number>
+  /**
    * Fire-and-forget prefetch used by UI entry points (hover/focus of the
    * "new workspace" buttons) to warm the cache before the page mounts.
    */
-  prefetchWorkItems: (repoPath: string, limit?: number, query?: string) => void
+  prefetchWorkItems: (repoId: string, repoPath: string, limit?: number, query?: string) => void
+  patchWorkItem: (itemId: string, patch: Partial<GitHubWorkItem>) => void
 }
 
 export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (set, get) => ({
@@ -159,25 +226,40 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     return get().workItemsCache[key]?.data ?? null
   },
 
-  fetchWorkItems: async (repoPath, limit, query, options): Promise<GitHubWorkItem[]> => {
+  fetchWorkItems: async (repoId, repoPath, limit, query, options): Promise<GitHubWorkItem[]> => {
     const key = workItemsCacheKey(repoPath, limit, query)
     const cached = get().workItemsCache[key]
     if (!options?.force && isFresh(cached, WORK_ITEMS_CACHE_TTL)) {
       return cached.data ?? []
     }
 
-    const inflight = inflightWorkItemsRequests.get(key)
-    if (inflight) {
-      return inflight
+    const existing = inflightWorkItemsRequests.get(key)
+    if (existing) {
+      // Why: a user-initiated refresh (force=true) must not silently dedupe to
+      // a non-forcing fetch already in flight — the result would be no fresher
+      // than what the user just asked to invalidate. Wait for the non-forcing
+      // request to settle (success or failure — we discard the result either
+      // way), then fall through to issue a new forced request. Non-forcing
+      // callers continue to dedupe onto any in-flight request as before.
+      if (options?.force && !existing.force) {
+        await existing.promise.catch(() => {})
+      } else {
+        return existing.promise
+      }
     }
 
     const request = (async () => {
+      await acquireWorkItemSlot()
       try {
-        const items = (await window.api.gh.listWorkItems({
+        const raw = (await window.api.gh.listWorkItems({
           repoPath,
           limit,
           query: query || undefined
-        })) as GitHubWorkItem[]
+        })) as Omit<GitHubWorkItem, 'repoId'>[]
+        // Why: stamp repoId at the renderer fetch boundary so every downstream
+        // consumer (cross-repo merge, row rendering, drawer) can rely on the
+        // field being present. Main doesn't know Orca's Repo.id.
+        const items: GitHubWorkItem[] = raw.map((item) => ({ ...item, repoId }))
         set((s) => ({
           workItemsCache: {
             ...s.workItemsCache,
@@ -191,15 +273,91 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         console.error('Failed to fetch GitHub work items:', err)
         throw err
       } finally {
+        releaseWorkItemSlot()
         inflightWorkItemsRequests.delete(key)
       }
     })()
 
-    inflightWorkItemsRequests.set(key, request)
+    inflightWorkItemsRequests.set(key, {
+      promise: request,
+      force: Boolean(options?.force)
+    })
     return request
   },
 
-  prefetchWorkItems: (repoPath, limit = 36, query = '') => {
+  fetchWorkItemsAcrossRepos: async (repos, perRepoLimit, displayLimit, query, options) => {
+    const state = get()
+    let failedCount = 0
+    const perRepoResults = await Promise.all(
+      repos.map(async (r) => {
+        try {
+          return await state.fetchWorkItems(r.repoId, r.path, perRepoLimit, query, options)
+        } catch (err) {
+          // Why: fall back to any cache entry (stale or not) before declaring
+          // this repo failed. Matches single-repo behavior of silently serving
+          // stale data on error. A repo is only counted as failed when it has
+          // nothing at all to contribute.
+          // Why: must use perRepoLimit (not displayLimit) so the cache key
+          // matches what fetchWorkItems wrote.
+          const key = workItemsCacheKey(r.path, perRepoLimit, query)
+          const cached = get().workItemsCache[key]?.data
+          if (cached) {
+            console.warn(`[workItems] ${r.repoId} failed, serving cached:`, err)
+            return cached
+          }
+          console.warn(`[workItems] ${r.repoId} failed:`, err)
+          failedCount += 1
+          return [] as GitHubWorkItem[]
+        }
+      })
+    )
+    const merged = sortWorkItemsByUpdatedAt(perRepoResults.flat()).slice(0, displayLimit)
+    return { items: merged, failedCount }
+  },
+
+  fetchWorkItemsNextPage: async (repos, perRepoLimit, displayLimit, query, before) => {
+    let failedCount = 0
+    const perRepoResults = await Promise.all(
+      repos.map(async (r) => {
+        await acquireWorkItemSlot()
+        try {
+          const raw = (await window.api.gh.listWorkItems({
+            repoPath: r.path,
+            limit: perRepoLimit,
+            query: query || undefined,
+            before
+          })) as Omit<GitHubWorkItem, 'repoId'>[]
+          return raw.map((item): GitHubWorkItem => ({ ...item, repoId: r.repoId }))
+        } catch (err) {
+          console.warn(`[workItems] next page ${r.repoId} failed:`, err)
+          failedCount += 1
+          return [] as GitHubWorkItem[]
+        } finally {
+          releaseWorkItemSlot()
+        }
+      })
+    )
+    const merged = sortWorkItemsByUpdatedAt(perRepoResults.flat()).slice(0, displayLimit)
+    return { items: merged, failedCount }
+  },
+
+  countWorkItemsAcrossRepos: async (repos, query) => {
+    const counts = await Promise.all(
+      repos.map(async (r) => {
+        try {
+          return await window.api.gh.countWorkItems({
+            repoPath: r.path,
+            query: query || undefined
+          })
+        } catch {
+          return 0
+        }
+      })
+    )
+    return counts.reduce((sum, c) => sum + c, 0)
+  },
+
+  prefetchWorkItems: (repoId, repoPath, limit = PER_REPO_FETCH_LIMIT, query = '') => {
     const key = workItemsCacheKey(repoPath, limit, query)
     const cached = get().workItemsCache[key]
     // Skip when the cache is fresh or a request is already in flight.
@@ -207,7 +365,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return
     }
     void get()
-      .fetchWorkItems(repoPath, limit, query)
+      .fetchWorkItems(repoId, repoPath, limit, query)
       .catch(() => {})
   },
 
@@ -525,6 +683,28 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     if (worktree.linkedIssue) {
       void get().fetchIssue(repo.path, worktree.linkedIssue)
     }
+  },
+
+  patchWorkItem: (itemId, patch) => {
+    set((s) => {
+      const nextCache = { ...s.workItemsCache }
+      let changed = false
+      for (const key of Object.keys(nextCache)) {
+        const entry = nextCache[key]
+        if (!entry?.data) {
+          continue
+        }
+        const idx = entry.data.findIndex((item) => item.id === itemId)
+        if (idx === -1) {
+          continue
+        }
+        const updatedItems = [...entry.data]
+        updatedItems[idx] = { ...updatedItems[idx], ...patch }
+        nextCache[key] = { ...entry, data: updatedItems }
+        changed = true
+      }
+      return changed ? { workItemsCache: nextCache } : {}
+    })
   },
 
   // Why: worktree switches previously force-refreshed GitHub data on every

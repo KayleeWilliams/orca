@@ -5,7 +5,7 @@ import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import type { Store } from '../persistence'
-import type { Repo } from '../../shared/types'
+import type { Repo, BaseRefDefaultResult } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { REPO_COLORS } from '../../shared/constants'
 import { rebuildAuthorizedRootsCache } from './filesystem-auth'
@@ -18,6 +18,12 @@ import {
   getGitUsername,
   getRepoName,
   getBaseRefDefault,
+  getRemoteCount,
+  normalizeRefSearchQuery,
+  parseAndFilterSearchRefs,
+  parseRemoteCount,
+  resolveDefaultBaseRefViaExec,
+  buildSearchBaseRefsArgv,
   searchBaseRefs
 } from '../git/repo'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
@@ -49,32 +55,38 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     return store.getRepos()
   })
 
-  ipcMain.handle('repos:add', async (_event, args: { path: string; kind?: 'git' | 'folder' }): Promise<{ repo: Repo } | { error: string }> => {
-    const repoKind = args.kind === 'folder' ? 'folder' : 'git'
-    if (repoKind === 'git' && !isGitRepo(args.path)) {
-      return { error: `Not a valid git repository: ${args.path}` }
-    }
+  ipcMain.handle(
+    'repos:add',
+    async (
+      _event,
+      args: { path: string; kind?: 'git' | 'folder' }
+    ): Promise<{ repo: Repo } | { error: string }> => {
+      const repoKind = args.kind === 'folder' ? 'folder' : 'git'
+      if (repoKind === 'git' && !isGitRepo(args.path)) {
+        return { error: `Not a valid git repository: ${args.path}` }
+      }
 
-    // Check if already added
-    const existing = store.getRepos().find((r) => r.path === args.path)
-    if (existing) {
-      return { repo: existing }
-    }
+      // Check if already added
+      const existing = store.getRepos().find((r) => r.path === args.path)
+      if (existing) {
+        return { repo: existing }
+      }
 
-    const repo: Repo = {
-      id: randomUUID(),
-      path: args.path,
-      displayName: getRepoName(args.path),
-      badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
-      addedAt: Date.now(),
-      kind: repoKind
-    }
+      const repo: Repo = {
+        id: randomUUID(),
+        path: args.path,
+        displayName: getRepoName(args.path),
+        badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
+        addedAt: Date.now(),
+        kind: repoKind
+      }
 
-    store.addRepo(repo)
-    await rebuildAuthorizedRootsCache(store)
-    notifyReposChanged(mainWindow)
-    return { repo }
-  })
+      store.addRepo(repo)
+      await rebuildAuthorizedRootsCache(store)
+      notifyReposChanged(mainWindow)
+      return { repo }
+    }
+  )
 
   ipcMain.handle(
     'repos:addRemote',
@@ -92,18 +104,37 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         return { error: `SSH connection "${args.connectionId}" not found or not connected` }
       }
 
+      let repoKind: 'git' | 'folder' = args.kind ?? 'git'
+      let resolvedPath = args.remotePath
+
+      // Why: `~` is a shell expansion that Node's fs APIs don't understand.
+      // Resolve tilde paths to absolute paths via the relay before storing,
+      // so all downstream fs operations (readDir, stat, etc.) work correctly.
+      if (resolvedPath === '~' || resolvedPath === '~/' || resolvedPath.startsWith('~/')) {
+        const mux = getActiveMultiplexer(args.connectionId)
+        if (mux) {
+          try {
+            const result = (await mux.request('session.resolveHome', {
+              path: resolvedPath
+            })) as { resolvedPath: string }
+            resolvedPath = result.resolvedPath
+          } catch {
+            // Relay may not support resolveHome yet — fall through to raw path
+          }
+        }
+      }
+
+      // Why: check for duplicates after tilde resolution so that adding `~/`
+      // when `/home/ubuntu` is already stored correctly detects the duplicate.
       const existing = store
         .getRepos()
-        .find((r) => r.connectionId === args.connectionId && r.path === args.remotePath)
+        .find((r) => r.connectionId === args.connectionId && r.path === resolvedPath)
       if (existing) {
         return { repo: existing }
       }
 
-      const pathSegments = args.remotePath.replace(/\/+$/, '').split('/')
-      const folderName = pathSegments.at(-1) || args.remotePath
-
-      let repoKind: 'git' | 'folder' = args.kind ?? 'git'
-      let resolvedPath = args.remotePath
+      const pathSegments = resolvedPath.replace(/\/+$/, '').split('/')
+      let folderName = pathSegments.at(-1) || resolvedPath
 
       if (args.kind !== 'folder') {
         // Why: when kind is not explicitly 'folder', verify the remote path is
@@ -111,7 +142,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         // Folder" confirmation dialog — matching the local add-repo behavior
         // where non-git directories require explicit user consent.
         try {
-          const check = await gitProvider.isGitRepoAsync(args.remotePath)
+          const check = await gitProvider.isGitRepoAsync(resolvedPath)
           if (check.isRepo) {
             repoKind = 'git'
             if (check.rootPath) {
@@ -128,10 +159,20 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         }
       }
 
+      // When folderName is the home directory basename (e.g. 'ubuntu'),
+      // use SSH target label for a more descriptive name
+      let displayName = args.displayName || folderName
+      if (!args.displayName && (args.remotePath === '~' || args.remotePath === '~/')) {
+        const sshTarget = store.getSshTarget(args.connectionId)
+        if (sshTarget) {
+          displayName = sshTarget.label
+        }
+      }
+
       const repo: Repo = {
         id: randomUUID(),
         path: resolvedPath,
-        displayName: args.displayName || folderName,
+        displayName,
         badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
         addedAt: Date.now(),
         kind: repoKind,
@@ -189,7 +230,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   })
 
   // Why: pickDirectory is a generic "choose a folder" picker, separate from
-  // pickFolder which is specifically the "add repo" flow. Clone needs a
+  // pickFolder which is specifically the "add project" flow. Clone needs a
   // destination directory that may not be a git repo yet.
   ipcMain.handle('repos:pickDirectory', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -241,7 +282,9 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         // Why: clone destination may be a WSL path (e.g. user picks a WSL
         // directory). Use the parent destination as the cwd so the runner
         // detects WSL and routes through wsl.exe.
-        const proc = gitSpawn(['clone', '--progress', args.url, clonePath], {
+        // Why: use the '--' separator to isolate the URL argument and prevent
+        // malicious URLs from being interpreted as git flags (command injection).
+        const proc = gitSpawn(['clone', '--progress', '--', args.url, clonePath], {
           cwd: args.destination,
           stdio: ['ignore', 'ignore', 'pipe']
         })
@@ -344,34 +387,82 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     return getGitUsername(repo.path)
   })
 
-  ipcMain.handle('repos:getBaseRefDefault', async (_event, args: { repoId: string }) => {
-    const repo = store.getRepo(args.repoId)
-    if (!repo || isFolderRepo(repo)) {
-      return 'origin/main'
-    }
-    // Why: remote repos need the relay to resolve symbolic-ref on the
-    // remote host where the git data lives.
-    if (repo.connectionId) {
-      const provider = getSshGitProvider(repo.connectionId)
-      if (!provider) {
-        return 'origin/main'
+  ipcMain.handle(
+    'repos:getBaseRefDefault',
+    async (_event, args: { repoId: string }): Promise<BaseRefDefaultResult> => {
+      const repo = store.getRepo(args.repoId)
+      if (!repo || isFolderRepo(repo)) {
+        // Why: folder-mode repos have no git state to resolve a base ref from.
+        // Return null + 0 so the renderer can decline to use a fabricated default
+        // and suppress the multi-remote hint.
+        return { defaultBaseRef: null, remoteCount: 0 }
       }
-      try {
-        const result = await provider.exec(
-          ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
-          repo.path
-        )
-        const ref = result.stdout.trim()
-        if (ref) {
-          return ref.replace(/^refs\/remotes\//, '')
+      // Why: remote repos need the relay to resolve symbolic-ref on the
+      // remote host where the git data lives.
+      if (repo.connectionId) {
+        const provider = getSshGitProvider(repo.connectionId)
+        if (!provider) {
+          return { defaultBaseRef: null, remoteCount: 0 }
         }
-      } catch {
-        // Fall through to default
+        // Why: run default-ref resolution and remote-count concurrently to
+        // match the local path's latency characteristics (see Promise.all
+        // below). The two lookups are independent — neither depends on the
+        // other's result — so serializing them only adds SSH round-trip
+        // latency on slow relays.
+        //
+        // Why: delegate to the shared resolveDefaultBaseRefViaExec so SSH and
+        // local repos return identical defaults for equivalent states. We
+        // log in the exec callback for the symbolic-ref call to preserve the
+        // SSH-specific transport-failure diagnostic (connection drops,
+        // permission issues) that the shared helper otherwise swallows
+        // together with the expected "origin/HEAD unset" non-zero exit.
+        const resolveDefault = async (): Promise<string | null> => {
+          return resolveDefaultBaseRefViaExec(async (argv) => {
+            try {
+              return await provider.exec(argv, repo.path)
+            } catch (err) {
+              if (argv[0] === 'symbolic-ref') {
+                console.warn('[repos:getBaseRefDefault] SSH symbolic-ref failed', {
+                  path: repo.path,
+                  err
+                })
+              }
+              throw err
+            }
+          })
+        }
+
+        const resolveRemoteCount = async (): Promise<number> => {
+          try {
+            const remotesResult = await provider.exec(['remote'], repo.path)
+            return parseRemoteCount(remotesResult.stdout)
+          } catch (err) {
+            // Why: fall back to 0 (the "unknown / do not render the multi-remote
+            // hint" sentinel). Log so diagnostic signal isn't lost.
+            console.warn('[repos:getBaseRefDefault] SSH git remote count failed', {
+              path: repo.path,
+              err
+            })
+            return 0
+          }
+        }
+
+        const [defaultBaseRef, remoteCount] = await Promise.all([
+          resolveDefault(),
+          resolveRemoteCount()
+        ])
+        return { defaultBaseRef, remoteCount }
       }
-      return 'origin/main'
+      // Why: compute default and remote count independently. A failure
+      // counting remotes must not break default detection. Run in parallel
+      // since the two lookups don't depend on each other.
+      const [defaultBaseRef, remoteCount] = await Promise.all([
+        getBaseRefDefault(repo.path),
+        getRemoteCount(repo.path)
+      ])
+      return { defaultBaseRef, remoteCount }
     }
-    return getBaseRefDefault(repo.path)
-  })
+  )
 
   ipcMain.handle(
     'repos:searchBaseRefs',
@@ -387,23 +478,29 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         if (!provider) {
           return []
         }
+        // Why: mirror the local path's sanitization (normalizeRefSearchQuery
+        // in ../git/repo.ts) — strip glob metacharacters to prevent glob
+        // injection via the SSH branch, and short-circuit empty queries so
+        // we don't leak every ref. Without this the SSH path diverges from
+        // the local path's behavior.
+        const normalizedQuery = normalizeRefSearchQuery(args.query)
+        if (!normalizedQuery) {
+          return []
+        }
         try {
-          const result = await provider.exec(
-            [
-              'for-each-ref',
-              '--format=%(refname:short)',
-              '--sort=-committerdate',
-              `refs/remotes/origin/*${args.query}*`,
-              `refs/heads/*${args.query}*`
-            ],
-            repo.path
-          )
-          return result.stdout
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, limit)
-        } catch {
+          // Why: argv (including the two-remote-glob rationale) lives in
+          // buildSearchBaseRefsArgv so the SSH and local paths cannot drift.
+          const result = await provider.exec(buildSearchBaseRefsArgv(normalizedQuery), repo.path)
+          // Why: delegate the NUL-parse + HEAD filter + dedup + limit pipeline
+          // to the shared helper so the SSH and local paths cannot diverge.
+          // See parseAndFilterSearchRefs in ../git/repo.ts for the dedup +
+          // HEAD-filter rationale.
+          return parseAndFilterSearchRefs(result.stdout, limit)
+        } catch (err) {
+          console.warn('[repos:searchBaseRefs] SSH for-each-ref failed', {
+            path: repo.path,
+            err
+          })
           return []
         }
       }

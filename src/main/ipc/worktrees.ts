@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines */
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import { rm } from 'fs/promises'
@@ -7,6 +8,8 @@ import { deleteWorktreeHistoryDir } from '../terminal-history'
 import type { CreateWorktreeArgs, CreateWorktreeResult, WorktreeMeta } from '../../shared/types'
 import { removeWorktree } from '../git/worktree'
 import { gitExecFileAsync } from '../git/runner'
+import { getDefaultRemote } from '../git/repo'
+import { getWorkItem } from '../github/client'
 import { listRepoWorktrees, createFolderWorktree } from '../repo-worktrees'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
 import {
@@ -52,6 +55,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
   ipcMain.removeHandler('worktrees:listAll')
   ipcMain.removeHandler('worktrees:list')
   ipcMain.removeHandler('worktrees:create')
+  ipcMain.removeHandler('worktrees:resolvePrBase')
   ipcMain.removeHandler('worktrees:remove')
   ipcMain.removeHandler('worktrees:updateMeta')
   ipcMain.removeHandler('worktrees:persistSortOrder')
@@ -113,11 +117,14 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
       gitWorktrees = [createFolderWorktree(repo)]
     } else if (repo.connectionId) {
       const provider = getSshGitProvider(repo.connectionId)
-      // Why: when SSH is disconnected the provider is null. Throwing here
-      // makes the renderer's fetchWorktrees catch block preserve its cached
-      // worktree list instead of replacing it with an empty array.
+      // Why: when SSH is disconnected the provider is null. Return [] so the
+      // renderer's fetchWorktrees guard (`worktrees.length === 0 && current.length > 0`)
+      // preserves its cached worktree list. This avoids a console error on every
+      // fetchAllWorktrees cycle while the connection is being (re-)established —
+      // worktrees will be properly populated when the SSH `connected` event fires
+      // and triggers a re-fetch.
       if (!provider) {
-        throw new Error(`SSH connection "${repo.connectionId}" is not active`)
+        return []
       }
       gitWorktrees = await provider.listWorktrees(repo.path)
     } else {
@@ -151,8 +158,112 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
   )
 
   ipcMain.handle(
+    'worktrees:resolvePrBase',
+    async (
+      _event,
+      args: {
+        repoId: string
+        prNumber: number
+        headRefName?: string
+        isCrossRepository?: boolean
+      }
+    ): Promise<{ baseBranch: string } | { error: string }> => {
+      const repo = store.getRepo(args.repoId)
+      if (!repo) {
+        return { error: 'Repo not found' }
+      }
+      // Why: remote SSH repos are out of scope in v1. The picker already
+      // disables its PR tab for them — this guard belt-and-suspenders it.
+      if (repo.connectionId) {
+        return { error: 'PR start points are not supported for remote repos yet.' }
+      }
+      if (isFolderRepo(repo)) {
+        return { error: 'Folder mode does not support creating worktrees.' }
+      }
+
+      let headRefName = args.headRefName?.trim() ?? ''
+      let isCrossRepository = args.isCrossRepository === true
+
+      // Skip the gh lookup when both hints are present (picker already has them).
+      if (!headRefName) {
+        // Why: the caller already knows this is a PR number, so scope the
+        // lookup to `type: 'pr'` and skip the speculative issue-first probe
+        // that would hit the upstream issue tracker for fork checkouts.
+        const item = await getWorkItem(repo.path, args.prNumber, 'pr')
+        if (!item || item.type !== 'pr') {
+          return { error: `PR #${args.prNumber} not found.` }
+        }
+        headRefName = (item.branchName ?? '').trim()
+        if (!headRefName) {
+          return { error: `PR #${args.prNumber} has no head branch.` }
+        }
+        if (item.isCrossRepository === true) {
+          isCrossRepository = true
+        }
+      }
+
+      let remote: string
+      try {
+        remote = await getDefaultRemote(repo.path)
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Could not resolve git remote.' }
+      }
+
+      // Why: fork PR heads live on a remote we don't have configured, so
+      // `git fetch <remote> <headRefName>` would fail. GitHub exposes every
+      // PR head (fork or same-repo) as refs/pull/<N>/head on the upstream
+      // repo. Fetch that and snapshot the SHA — the new worktree branch is
+      // derived from the workspace name, so there's no tracking ref to set
+      // up, which makes SHA semantics ("branch from this commit") cleaner
+      // than returning a ref that would go stale on force-push.
+      if (isCrossRepository) {
+        const pullRef = `refs/pull/${args.prNumber}/head`
+        try {
+          await gitExecFileAsync(['fetch', remote, pullRef], { cwd: repo.path })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return {
+            error: `Failed to fetch ${pullRef}: ${message.split('\n')[0]}`
+          }
+        }
+        let sha: string
+        try {
+          const { stdout } = await gitExecFileAsync(['rev-parse', '--verify', 'FETCH_HEAD'], {
+            cwd: repo.path
+          })
+          sha = stdout.trim()
+        } catch {
+          return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
+        }
+        if (!sha) {
+          return { error: `Empty SHA resolving fork PR #${args.prNumber} head.` }
+        }
+        return { baseBranch: sha }
+      }
+
+      try {
+        await gitExecFileAsync(['fetch', remote, headRefName], { cwd: repo.path })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          error: `Failed to fetch ${remote}/${headRefName}: ${message.split('\n')[0]}`
+        }
+      }
+
+      const remoteRef = `${remote}/${headRefName}`
+      try {
+        await gitExecFileAsync(['rev-parse', '--verify', remoteRef], { cwd: repo.path })
+      } catch {
+        return { error: `Remote ref ${remoteRef} does not exist after fetch.` }
+      }
+
+      return { baseBranch: remoteRef }
+    }
+  )
+
+  ipcMain.handle(
     'worktrees:remove',
-    async (_event, args: { worktreeId: string; force?: boolean }) => {
+    async (_event, args: { worktreeId: string; force?: boolean; skipArchive?: boolean }) => {
       const { repoId, worktreePath } = parseWorktreeId(args.worktreeId)
       const repo = store.getRepo(repoId)
       if (!repo) {
@@ -176,7 +287,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
 
       // Run archive hook before removal
       const hooks = getEffectiveHooks(repo)
-      if (hooks?.scripts.archive) {
+      if (hooks?.scripts.archive && !args.skipArchive) {
         const result = await runHook('archive', worktreePath, repo)
         if (!result.success) {
           console.error(`[hooks] archive hook failed for ${worktreePath}:`, result.output)

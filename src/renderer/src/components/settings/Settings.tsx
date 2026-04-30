@@ -8,10 +8,13 @@ import {
   GitBranch,
   Globe,
   Keyboard,
+  ShieldCheck,
   Palette,
   Server,
   SlidersHorizontal,
-  SquareTerminal
+  Blocks,
+  SquareTerminal,
+  UserCog
 } from 'lucide-react'
 import type { OrcaHooks } from '../../../../shared/types'
 import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
@@ -24,6 +27,9 @@ import { BrowserPane, BROWSER_PANE_SEARCH_ENTRIES } from './BrowserPane'
 import { AppearancePane, APPEARANCE_PANE_SEARCH_ENTRIES } from './AppearancePane'
 import { ShortcutsPane, SHORTCUTS_PANE_SEARCH_ENTRIES } from './ShortcutsPane'
 import { TerminalPane } from './TerminalPane'
+import { useGhosttyImport } from './useGhosttyImport'
+import { Button } from '../ui/button'
+import ghosttyIcon from '../../../../../resources/ghostty.svg'
 import { RepositoryPane, getRepositoryPaneSearchEntries } from './RepositoryPane'
 import { getTerminalPaneSearchEntries } from './terminal-search'
 import { GitPane, GIT_PANE_SEARCH_ENTRIES } from './GitPane'
@@ -31,18 +37,27 @@ import { NotificationsPane, NOTIFICATIONS_PANE_SEARCH_ENTRIES } from './Notifica
 import { SshPane, SSH_PANE_SEARCH_ENTRIES } from './SshPane'
 import { ExperimentalPane, EXPERIMENTAL_PANE_SEARCH_ENTRIES } from './ExperimentalPane'
 import { AgentsPane, AGENTS_PANE_SEARCH_ENTRIES } from './AgentsPane'
+import { AccountsPane, ACCOUNTS_PANE_SEARCH_ENTRIES } from './AccountsPane'
 import { StatsPane, STATS_PANE_SEARCH_ENTRIES } from '../stats/StatsPane'
+import { IntegrationsPane, INTEGRATIONS_PANE_SEARCH_ENTRIES } from './IntegrationsPane'
+import {
+  DeveloperPermissionsPane,
+  DEVELOPER_PERMISSIONS_PANE_SEARCH_ENTRIES
+} from './DeveloperPermissionsPane'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSection } from './SettingsSection'
 import { matchesSettingsSearch, type SettingsSearchEntry } from './settings-search'
 
 type SettingsNavTarget =
   | 'general'
+  | 'integrations'
+  | 'accounts'
   | 'browser'
   | 'git'
   | 'appearance'
   | 'terminal'
   | 'notifications'
+  | 'developer-permissions'
   | 'shortcuts'
   | 'stats'
   | 'ssh'
@@ -133,11 +148,19 @@ function Settings(): React.JSX.Element {
   )
   const [scrollbackMode, setScrollbackMode] = useState<'preset' | 'custom'>('preset')
   const [prevScrollbackBytes, setPrevScrollbackBytes] = useState(settings?.terminalScrollbackBytes)
+  // Why: lifted out of TerminalPane so the Terminal section header can render
+  // the import trigger as a headerAction. The modal itself still lives inside
+  // TerminalPane, driven by this shared state.
+  const ghostty = useGhosttyImport(updateSettings, settings)
+  const [wslAvailable, setWslAvailable] = useState(false)
+  useEffect(() => {
+    void window.api.wsl.isAvailable().then(setWslAvailable)
+  }, [])
   const [terminalFontSuggestions, setTerminalFontSuggestions] = useState<string[]>(
     getFallbackTerminalFonts()
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
-  // Why: the hidden-experimental group is an unlock — Cmd+Shift-clicking the
+  // Why: the hidden-experimental group is an unlock — Shift-clicking the
   // Experimental sidebar entry reveals it for the remainder of the session.
   // Not persisted on purpose: it's a power-user affordance we don't want to
   // leak through into a normal reopen of Settings.
@@ -289,6 +312,13 @@ function Settings(): React.JSX.Element {
         searchEntries: AGENTS_PANE_SEARCH_ENTRIES
       },
       {
+        id: 'accounts',
+        title: 'Agent Accounts',
+        description: 'Sign in and switch between Claude, Codex, Gemini, and OpenCode Go accounts.',
+        icon: UserCog,
+        searchEntries: ACCOUNTS_PANE_SEARCH_ENTRIES
+      },
+      {
         id: 'git',
         title: 'Git',
         description: 'Branch naming and local ref behavior.',
@@ -323,12 +353,30 @@ function Settings(): React.JSX.Element {
         icon: Bell,
         searchEntries: NOTIFICATIONS_PANE_SEARCH_ENTRIES
       },
+      ...(isMac
+        ? [
+            {
+              id: 'developer-permissions' as const,
+              title: 'Permissions',
+              description: 'macOS privacy access for terminal-launched developer tools.',
+              icon: ShieldCheck,
+              searchEntries: DEVELOPER_PERMISSIONS_PANE_SEARCH_ENTRIES
+            }
+          ]
+        : []),
       {
         id: 'shortcuts',
         title: 'Shortcuts',
         description: 'Keyboard shortcuts for common actions.',
         icon: Keyboard,
         searchEntries: SHORTCUTS_PANE_SEARCH_ENTRIES
+      },
+      {
+        id: 'integrations',
+        title: 'Integrations',
+        description: 'GitHub, Linear, and other service connections.',
+        icon: Blocks,
+        searchEntries: INTEGRATIONS_PANE_SEARCH_ENTRIES
       },
       {
         id: 'stats',
@@ -342,8 +390,7 @@ function Settings(): React.JSX.Element {
         title: 'SSH',
         description: 'Remote SSH connections.',
         icon: Server,
-        searchEntries: SSH_PANE_SEARCH_ENTRIES,
-        badge: 'Beta'
+        searchEntries: SSH_PANE_SEARCH_ENTRIES
       },
       {
         id: 'experimental',
@@ -360,7 +407,7 @@ function Settings(): React.JSX.Element {
         searchEntries: getRepositoryPaneSearchEntries(repo)
       }))
     ],
-    [repos, terminalPaneSearchEntries]
+    [isMac, repos, terminalPaneSearchEntries]
   )
 
   const visibleNavSections = useMemo(
@@ -474,17 +521,12 @@ function Settings(): React.JSX.Element {
       sectionId: string,
       modifiers?: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
     ) => {
-      // Why: Cmd+Shift-clicking (Ctrl+Shift on win/linux) the Experimental
-      // sidebar entry unlocks a hidden power-user group. Keep this scoped to
-      // the Experimental row so normal shortcut combos on other rows don't
-      // accidentally flip state. The unlock persists for the life of the
-      // Settings view (resets when Settings is reopened).
-      if (
-        sectionId === 'experimental' &&
-        modifiers &&
-        (modifiers.metaKey || modifiers.ctrlKey) &&
-        modifiers.shiftKey
-      ) {
+      // Why: Shift-clicking the Experimental sidebar entry unlocks a hidden
+      // power-user group. Keep this scoped to the Experimental row so normal
+      // shortcut combos on other rows don't accidentally flip state. The
+      // unlock persists for the life of the Settings view (resets when
+      // Settings is reopened).
+      if (sectionId === 'experimental' && modifiers?.shiftKey) {
         setHiddenExperimentalUnlocked((previous) => !previous)
       }
       scrollSectionIntoView(sectionId, contentScrollRef.current)
@@ -542,12 +584,30 @@ function Settings(): React.JSX.Element {
                 </SettingsSection>
 
                 <SettingsSection
+                  id="integrations"
+                  title="Integrations"
+                  description="GitHub, Linear, and other service connections."
+                  searchEntries={INTEGRATIONS_PANE_SEARCH_ENTRIES}
+                >
+                  <IntegrationsPane />
+                </SettingsSection>
+
+                <SettingsSection
                   id="agents"
                   title="Agents"
                   description="Manage AI agents, set a default, and customize commands."
                   searchEntries={AGENTS_PANE_SEARCH_ENTRIES}
                 >
                   <AgentsPane settings={settings} updateSettings={updateSettings} />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="accounts"
+                  title="Agent Accounts"
+                  description="Sign in and switch between Claude, Codex, Gemini, and OpenCode Go accounts."
+                  searchEntries={ACCOUNTS_PANE_SEARCH_ENTRIES}
+                >
+                  <AccountsPane settings={settings} updateSettings={updateSettings} />
                 </SettingsSection>
 
                 <SettingsSection
@@ -581,6 +641,17 @@ function Settings(): React.JSX.Element {
                   title="Terminal"
                   description="Terminal appearance, previews, and defaults for new panes."
                   searchEntries={terminalPaneSearchEntries}
+                  headerAction={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => void ghostty.handleClick()}
+                    >
+                      <img src={ghosttyIcon} alt="" aria-hidden="true" className="size-4" />
+                      Import from Ghostty
+                    </Button>
+                  }
                 >
                   <TerminalPane
                     settings={settings}
@@ -589,6 +660,8 @@ function Settings(): React.JSX.Element {
                     terminalFontSuggestions={terminalFontSuggestions}
                     scrollbackMode={scrollbackMode}
                     setScrollbackMode={setScrollbackMode}
+                    ghostty={ghostty}
+                    wslAvailable={wslAvailable}
                   />
                 </SettingsSection>
 
@@ -609,6 +682,17 @@ function Settings(): React.JSX.Element {
                 >
                   <NotificationsPane settings={settings} updateSettings={updateSettings} />
                 </SettingsSection>
+
+                {isMac ? (
+                  <SettingsSection
+                    id="developer-permissions"
+                    title="Permissions"
+                    description="macOS privacy access for terminal-launched developer tools."
+                    searchEntries={DEVELOPER_PERMISSIONS_PANE_SEARCH_ENTRIES}
+                  >
+                    <DeveloperPermissionsPane />
+                  </SettingsSection>
+                ) : null}
 
                 <SettingsSection
                   id="shortcuts"
@@ -631,7 +715,6 @@ function Settings(): React.JSX.Element {
                 <SettingsSection
                   id="ssh"
                   title="SSH"
-                  badge="Beta"
                   description="Manage remote SSH connections. Connect to remote servers to browse files, run terminals, and use git."
                   searchEntries={SSH_PANE_SEARCH_ENTRIES}
                 >
