@@ -1035,6 +1035,7 @@ export class OrcaRuntimeService {
     const worktree = mergeWorktree(repo.id, created, meta)
 
     let setup: CreateWorktreeResult['setup']
+    let warning: string | undefined
     const hooks = getEffectiveHooks(repo)
     if (hooks?.scripts.setup && args.runHooks === true) {
       if (this.authoritativeWindowId !== null) {
@@ -1059,7 +1060,8 @@ export class OrcaRuntimeService {
       }
     } else if (hooks?.scripts.setup) {
       // Runtime RPC calls have no renderer trust prompt, so hooks require explicit CLI opt-in.
-      console.info(`[hooks] setup hook skipped for ${worktreePath}; pass --run-hooks to run it`)
+      warning = `orca.yaml setup hook skipped for ${worktreePath}; pass --run-hooks to run it.`
+      console.warn(`[hooks] ${warning}`)
     }
 
     this.notifier?.worktreesChanged(repo.id)
@@ -1077,7 +1079,8 @@ export class OrcaRuntimeService {
     invalidateAuthorizedRootsCache()
     return {
       worktree,
-      ...(setup ? { setup } : {})
+      ...(setup ? { setup } : {}),
+      ...(warning ? { warning } : {})
     }
   }
 
@@ -1109,7 +1112,7 @@ export class OrcaRuntimeService {
     worktreeSelector: string,
     force = false,
     runHooks = false
-  ): Promise<void> {
+  ): Promise<{ warning?: string }> {
     if (!this.store) {
       throw new Error('runtime_unavailable')
     }
@@ -1123,6 +1126,7 @@ export class OrcaRuntimeService {
     }
 
     const hooks = getEffectiveHooks(repo)
+    let warning: string | undefined
     if (hooks?.scripts.archive && runHooks) {
       const result = await runHook('archive', worktree.path, repo)
       if (!result.success) {
@@ -1130,7 +1134,8 @@ export class OrcaRuntimeService {
       }
     } else if (hooks?.scripts.archive) {
       // Runtime RPC calls have no renderer trust prompt, so hooks require explicit CLI opt-in.
-      console.info(`[hooks] archive hook skipped for ${worktree.path}; pass --run-hooks to run it`)
+      warning = `orca.yaml archive hook skipped for ${worktree.path}; pass --run-hooks to run it.`
+      console.warn(`[hooks] ${warning}`)
     }
 
     try {
@@ -1147,7 +1152,9 @@ export class OrcaRuntimeService {
         this.invalidateResolvedWorktreeCache()
         invalidateAuthorizedRootsCache()
         this.notifier?.worktreesChanged(repo.id)
-        return
+        return {
+          ...(warning ? { warning } : {})
+        }
       }
       throw new Error(formatWorktreeRemovalError(error, worktree.path, force))
     }
@@ -1156,6 +1163,9 @@ export class OrcaRuntimeService {
     this.invalidateResolvedWorktreeCache()
     invalidateAuthorizedRootsCache()
     this.notifier?.worktreesChanged(repo.id)
+    return {
+      ...(warning ? { warning } : {})
+    }
   }
 
   async renameTerminal(handle: string, title: string | null): Promise<RuntimeTerminalRename> {

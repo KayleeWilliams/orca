@@ -95,12 +95,12 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     name: 'worktree.rm',
     params: WorktreeRemove,
     handler: async (params, { runtime }) => {
-      await runtime.removeManagedWorktree(
+      const result = await runtime.removeManagedWorktree(
         params.worktree,
         params.force === true,
         params.runHooks === true
       )
-      return { removed: true }
+      return { removed: true, ...result }
     }
   })
 ]

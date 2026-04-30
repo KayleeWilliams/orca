@@ -92,6 +92,20 @@ describe('ensureHooksConfirmed', () => {
     await expect(promise).resolves.toBe('run')
   })
 
+  it('returns run without inspecting hooks when the repo is always trusted', async () => {
+    const { state, pending } = createTestState()
+    state.trustedOrcaHooks['repo-1'] = {
+      all: { approvedAt: 1 }
+    }
+    hooksCheckMock.mockRejectedValue(new Error('boom'))
+
+    const decision = await ensureHooksConfirmed(state, 'repo-1', 'setup')
+
+    expect(decision).toBe('run')
+    expect(hooksCheckMock).not.toHaveBeenCalled()
+    expect(pending).toHaveLength(0)
+  })
+
   it('returns run without prompting when no script of that kind is configured', async () => {
     const { state, pending } = createTestState()
     hooksCheckMock.mockResolvedValue({
