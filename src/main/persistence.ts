@@ -1,12 +1,18 @@
 /* eslint-disable max-lines -- Why: persistence keeps schema defaults, migration,
 load/save, and flush logic in one file so the full storage contract is reviewable
 as a unit instead of being scattered across modules. */
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'fs'
 import { writeFile, rename, mkdir, rm } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import type { PersistedState, Repo, WorktreeMeta, GlobalSettings } from '../shared/types'
+import type {
+  PersistedState,
+  Repo,
+  SparsePreset,
+  WorktreeMeta,
+  GlobalSettings
+} from '../shared/types'
 import type { SshTarget } from '../shared/ssh-types'
 import { isFolderRepo } from '../shared/repo-kind'
 import { getGitUsername } from './git/repo'
@@ -18,6 +24,35 @@ import {
   getDefaultWorkspaceSession
 } from '../shared/constants'
 import { parseWorkspaceSession } from '../shared/workspace-session-schema'
+
+function encrypt(plaintext: string): string {
+  if (!plaintext || !safeStorage.isEncryptionAvailable()) {
+    return plaintext
+  }
+  try {
+    return safeStorage.encryptString(plaintext).toString('base64')
+  } catch (err) {
+    console.error('[persistence] Encryption failed:', err)
+    return plaintext
+  }
+}
+
+function decrypt(ciphertext: string): string {
+  if (!ciphertext || !safeStorage.isEncryptionAvailable()) {
+    return ciphertext
+  }
+  try {
+    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  } catch {
+    // Why: if decryption fails, it likely means the value was stored as
+    // plaintext (pre-encryption build) or the OS keychain changed. Fall
+    // back to the raw string so users don't lose their cookie after upgrade.
+    console.warn(
+      '[persistence] safeStorage decryption failed — returning ciphertext as-is. Possible keychain reset.'
+    )
+    return ciphertext
+  }
+}
 
 // Why: the data-file path must not be a module-level constant. Module-level
 // code runs at import time — before configureDevUserDataPath() redirects the
@@ -76,6 +111,13 @@ export class Store {
       if (existsSync(dataFile)) {
         const raw = readFileSync(dataFile, 'utf-8')
         const parsed = JSON.parse(raw) as PersistedState
+
+        // Why: opencodeSessionCookie is stored encrypted on disk via safeStorage.
+        // Decrypt at the load boundary so the rest of the app sees plaintext.
+        if (parsed.settings?.opencodeSessionCookie) {
+          parsed.settings.opencodeSessionCookie = decrypt(parsed.settings.opencodeSessionCookie)
+        }
+
         // Merge with defaults in case new fields were added
         const defaults = getDefaultPersistedState(homedir())
         // Why: before the layout-aware 'auto' mode shipped (issue #903),
@@ -114,9 +156,13 @@ export class Store {
           // Why: 'recent' used to mean the weighted smart sort. One-shot
           // migration moves it to 'smart'; the flag prevents re-firing after
           // a user intentionally selects the new last-activity 'recent' sort.
+          // Gate on the *raw* persisted value, not the normalized one: the
+          // default sortBy is now 'recent', so a fresh install with no
+          // persisted sortBy would otherwise be mis-migrated to 'smart'.
           ui: (() => {
-            const sort = normalizeSortBy(parsed.ui?.sortBy)
-            const migrate = !parsed.ui?._sortBySmartMigrated && sort === 'recent'
+            const rawSort = parsed.ui?.sortBy
+            const sort = normalizeSortBy(rawSort)
+            const migrate = !parsed.ui?._sortBySmartMigrated && rawSort === 'recent'
             return {
               ...defaults.ui,
               ...parsed.ui,
@@ -185,12 +231,23 @@ export class Store {
     const dir = dirname(dataFile)
     await mkdir(dir, { recursive: true }).catch(() => {})
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+
+    // Why: opencodeSessionCookie must be encrypted on disk. Clone state so
+    // the in-memory this.state stays plaintext for the rest of the app.
+    const stateToSave = {
+      ...this.state,
+      settings: {
+        ...this.state.settings,
+        opencodeSessionCookie: encrypt(this.state.settings.opencodeSessionCookie)
+      }
+    }
+
     // Why: wrap write+rename in try/finally-on-error so any failure (ENOSPC,
     // ENFILE, EIO, permission) removes the tmp file rather than leaving a
     // multi-megabyte orphan behind. Successful rename consumes the tmp file.
     let renamed = false
     try {
-      await writeFile(tmpFile, JSON.stringify(this.state, null, 2), 'utf-8')
+      await writeFile(tmpFile, JSON.stringify(stateToSave, null, 2), 'utf-8')
       // Why: if flush() ran while this async write was in-flight, it bumped
       // writeGeneration and already wrote the latest state synchronously.
       // Renaming this stale tmp file would overwrite the fresh data.
@@ -215,12 +272,23 @@ export class Store {
       mkdirSync(dir, { recursive: true })
     }
     const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+
+    // Why: opencodeSessionCookie must be encrypted on disk. Clone state so
+    // the in-memory this.state stays plaintext for the rest of the app.
+    const stateToSave = {
+      ...this.state,
+      settings: {
+        ...this.state.settings,
+        opencodeSessionCookie: encrypt(this.state.settings.opencodeSessionCookie)
+      }
+    }
+
     // Why: mirror the async path — on any failure between writeFileSync and
     // renameSync, remove the tmp file so crashes during shutdown don't leak
     // orphans into userData.
     let renamed = false
     try {
-      writeFileSync(tmpFile, JSON.stringify(this.state, null, 2), 'utf-8')
+      writeFileSync(tmpFile, JSON.stringify(stateToSave, null, 2), 'utf-8')
       renameSync(tmpFile, dataFile)
       renamed = true
     } finally {
@@ -252,6 +320,9 @@ export class Store {
 
   removeRepo(id: string): void {
     this.state.repos = this.state.repos.filter((r) => r.id !== id)
+    // Why: presets are repo-scoped, so removing the repo means the presets
+    // can never be referenced again — drop them with the parent.
+    delete this.state.sparsePresetsByRepo[id]
     // Clean up worktree meta for this repo
     const prefix = `${id}::`
     for (const key of Object.keys(this.state.worktreeMeta)) {
@@ -300,6 +371,31 @@ export class Store {
         }
       }
     }
+  }
+
+  // ── Sparse Presets ─────────────────────────────────────────────────
+
+  getSparsePresets(repoId: string): SparsePreset[] {
+    return [...(this.state.sparsePresetsByRepo[repoId] ?? [])].sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )
+  }
+
+  saveSparsePreset(preset: SparsePreset): SparsePreset {
+    const existing = this.state.sparsePresetsByRepo[preset.repoId] ?? []
+    const index = existing.findIndex((entry) => entry.id === preset.id)
+    this.state.sparsePresetsByRepo[preset.repoId] =
+      index === -1
+        ? [...existing, preset]
+        : existing.map((entry, i) => (i === index ? preset : entry))
+    this.scheduleSave()
+    return preset
+  }
+
+  removeSparsePreset(repoId: string, presetId: string): void {
+    const existing = this.state.sparsePresetsByRepo[repoId] ?? []
+    this.state.sparsePresetsByRepo[repoId] = existing.filter((entry) => entry.id !== presetId)
+    this.scheduleSave()
   }
 
   // ── Worktree Meta ──────────────────────────────────────────────────

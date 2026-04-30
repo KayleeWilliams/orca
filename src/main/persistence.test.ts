@@ -77,7 +77,7 @@ describe('Store', () => {
     expect(settings.terminalFontSize).toBe(14)
     expect(settings.terminalFontWeight).toBe(500)
     expect(settings.rightSidebarOpenByDefault).toBe(true)
-    expect(settings.showTaskProviderIcons).toBe(true)
+    expect(settings.showTasksButton).toBe(true)
   })
 
   it('returns default UI state when no data file exists', async () => {
@@ -145,7 +145,7 @@ describe('Store', () => {
     expect(store.getSettings().editorAutoSaveDelayMs).toBe(1000)
     expect(store.getSettings().refreshLocalBaseRefOnWorktreeCreate).toBe(false)
     expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
-    expect(store.getSettings().showTaskProviderIcons).toBe(true)
+    expect(store.getSettings().showTasksButton).toBe(true)
     // repos should be loaded
     expect(store.getRepos()).toHaveLength(1)
   })
@@ -425,6 +425,24 @@ describe('Store', () => {
       worktreeMeta: {},
       settings: {},
       ui: { sortBy: 'recent', _sortBySmartMigrated: true },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getUI().sortBy).toBe('recent')
+  })
+
+  it('uses recent as the default sort for a fresh install (no persisted sortBy)', async () => {
+    // Why: the legacy-recent→smart migration must gate on the *raw* persisted
+    // value, not the normalized default. Otherwise, changing the default sort
+    // to 'recent' would cause every fresh install to be mis-migrated to 'smart'.
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
     })
