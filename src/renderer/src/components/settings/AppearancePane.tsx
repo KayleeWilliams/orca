@@ -109,7 +109,8 @@ export function AppearancePane({
       title: 'SSH Status',
       description: 'Show the active SSH connection status in the status bar.',
       keywords: ['status bar', 'ssh', 'remote', 'connection', 'host'],
-      toggleDescription: 'Show the active SSH connection, or a prompt to connect.'
+      toggleDescription:
+        'Show the active SSH connection. Only visible once an SSH target is configured.'
     },
     {
       id: 'sessions',
