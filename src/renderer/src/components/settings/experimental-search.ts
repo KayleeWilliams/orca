@@ -22,6 +22,23 @@ export const EXPERIMENTAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ]
   },
   {
+    title: 'Mobile Pairing',
+    description:
+      'Pair a mobile device to control Orca remotely. Experimental — requires the Orca mobile APK from GitHub Releases.',
+    keywords: [
+      'experimental',
+      'mobile',
+      'phone',
+      'pair',
+      'qr',
+      'code',
+      'scan',
+      'remote',
+      'android',
+      'apk'
+    ]
+  },
+  {
     title: 'Agent Orchestration',
     description:
       'Coordinate multiple coding agents via messaging, task DAGs, dispatch, and decision gates.',

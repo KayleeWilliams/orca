@@ -1147,7 +1147,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm
   },
   createButton: {
-    backgroundColor: colors.accentBlue,
+    backgroundColor: colors.bgRaised,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm + 2,
     borderRadius: radii.button
@@ -1156,7 +1158,7 @@ const styles = StyleSheet.create({
     opacity: 0.5
   },
   createButtonText: {
-    color: '#fff',
+    color: colors.textPrimary,
     fontSize: typography.bodySize,
     fontWeight: '600'
   },

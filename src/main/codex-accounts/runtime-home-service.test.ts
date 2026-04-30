@@ -92,6 +92,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalMacOptionAsAlt: 'false',
     terminalMacOptionAsAltMigrated: true,
     experimentalAgentDashboard: false,
+    experimentalMobile: false,
     terminalWindowsShell: 'powershell.exe',
     enableGitHubAttribution: true,
     ...overrides

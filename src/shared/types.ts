@@ -1049,6 +1049,7 @@ export type GlobalSettings = {
    *  takes effect on the next app launch. The in-pane status indicators and
    *  the cursor-agent hook path are unaffected by this toggle. */
   experimentalAgentDashboard: boolean
+  experimentalMobile: boolean
 }
 
 export type GhosttyImportPreview = {

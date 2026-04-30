@@ -1119,7 +1119,7 @@ export default function TerminalPane({
               right: 0,
               zIndex: 10,
               padding: '4px 12px',
-              background: 'var(--orca-banner-bg, rgba(30, 30, 30, 0.95))',
+              background: 'var(--orca-banner-bg, rgba(30, 30, 30, 0.75))',
               color: 'var(--orca-banner-fg, #a0a0a0)',
               fontSize: '12px',
               display: 'flex',

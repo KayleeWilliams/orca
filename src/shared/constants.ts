@@ -191,7 +191,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // Why: opt-in preview — default off so managed-hook installation
     // (Claude/Codex/Gemini) stays dormant for existing users and upgraders
     // (persistence.ts merges defaults first, so upgraders inherit this).
-    experimentalAgentDashboard: false
+    experimentalAgentDashboard: false,
+    experimentalMobile: false
   }
 }
 
