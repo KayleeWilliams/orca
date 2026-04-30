@@ -309,11 +309,11 @@ const XTERM_HTML = `<!DOCTYPE html>
     var vpWidth = window.innerWidth;
     var vpHeight = window.innerHeight;
     var cols = Math.floor(vpWidth / cellWidth);
-    // Why: subtract 1 row so the bottom terminal line is never covered
+    // Why: subtract 2 rows so the bottom terminal line is never covered
     // by the accessory bar. The WebView's innerHeight can slightly
     // overstate the visible area due to layout timing or safe-area
-    // insets, causing the last row to render behind the overlay.
-    var rows = Math.max(8, Math.floor(vpHeight / cellHeight) - 1);
+    // insets, causing the last rows to render behind the overlay.
+    var rows = Math.max(8, Math.floor(vpHeight / cellHeight) - 2);
     notify({ type: 'measure-result', cols: cols, rows: rows });
   }
 
