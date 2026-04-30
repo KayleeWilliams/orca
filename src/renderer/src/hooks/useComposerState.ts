@@ -16,6 +16,7 @@ import type {
   OrcaHooks,
   SetupDecision,
   SetupRunPolicy,
+  SparsePreset,
   TuiAgent
 } from '../../../shared/types'
 import {
@@ -35,6 +36,7 @@ import {
 } from '@/lib/new-workspace'
 import { getSuggestedCreatureName } from '@/components/sidebar/worktree-name-suggestions'
 import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
+import { normalizeSparseDirectoryLines, sparseDirectoriesMatch } from '@/lib/sparse-paths'
 
 export type UseComposerStateOptions = {
   initialRepoId?: string
@@ -119,6 +121,13 @@ export type ComposerCardProps = {
   shouldWaitForSetupCheck: boolean
   resolvedSetupDecision: 'run' | 'skip' | null
   createError: string | null
+  canUseSparseCheckout: boolean
+  /** Saved presets for the currently-selected repo. Empty array when no
+   *  presets exist or when the repo is remote. */
+  sparsePresets: SparsePreset[]
+  /** ID of the selected sparse preset. Null means sparse checkout is off. */
+  sparseSelectedPresetId: string | null
+  onSparseSelectPreset: (preset: SparsePreset | null) => void
 }
 
 export type UseComposerStateResult = {
@@ -142,6 +151,7 @@ export type UseComposerStateResult = {
 // modal wins when both are present, and the page takes over once the modal
 // closes.
 const composerDropStack: symbol[] = []
+const EMPTY_SPARSE_PRESETS: SparsePreset[] = []
 
 export function useComposerState(options: UseComposerStateOptions): UseComposerStateResult {
   const {
@@ -172,7 +182,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       closeModal: s.closeModal,
       openSettingsPage: s.openSettingsPage,
       openSettingsTarget: s.openSettingsTarget,
-      prefetchWorkItems: s.prefetchWorkItems
+      prefetchWorkItems: s.prefetchWorkItems,
+      fetchSparsePresets: s.fetchSparsePresets
     }))
   )
   const {
@@ -186,7 +197,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     closeModal,
     openSettingsPage,
     openSettingsTarget,
-    prefetchWorkItems
+    prefetchWorkItems,
+    fetchSparsePresets
   } = actions
 
   const repos = useAppStore((s) => s.repos)
@@ -194,7 +206,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const settings = useAppStore((s) => s.settings)
   const newWorkspaceDraft = useAppStore((s) => s.newWorkspaceDraft)
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
-
+  const sparsePresetsByRepo = useAppStore((s) => s.sparsePresetsByRepo)
   const eligibleRepos = useMemo(() => repos.filter((repo) => isGitRepoKind(repo)), [repos])
   const draftRepoId = persistDraft ? (newWorkspaceDraft?.repoId ?? null) : null
 
@@ -298,6 +310,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const [advancedOpen, setAdvancedOpen] = useState(
     persistDraft ? Boolean((newWorkspaceDraft?.note ?? '').trim()) : false
   )
+  const [sparseEnabled, setSparseEnabled] = useState(false)
+  const [sparseDirectories, setSparseDirectories] = useState('')
+  const [sparseSelectedPresetId, setSparseSelectedPresetId] = useState<string | null>(null)
 
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [linkQuery, setLinkQuery] = useState('')
@@ -331,6 +346,46 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   agentPromptRef.current = agentPrompt
 
   const selectedRepo = eligibleRepos.find((repo) => repo.id === repoId)
+  const sparsePresetsForRepo = sparsePresetsByRepo[repoId]
+  const sparsePresets = sparsePresetsForRepo ?? EMPTY_SPARSE_PRESETS
+  const normalizedSparseDirectories = useMemo(
+    () => normalizeSparseDirectoryLines(sparseDirectories),
+    [sparseDirectories]
+  )
+  // Why: a preset attribution should only ride along if what's about to be
+  // created actually equals the saved preset. If the user picked a preset and
+  // then edited the textarea, we want the worktree to be a "Custom" sparse
+  // checkout — not falsely tagged as the original preset.
+  const effectivePresetId = useMemo(() => {
+    if (!sparseSelectedPresetId) {
+      return null
+    }
+    const selected = sparsePresets.find((preset) => preset.id === sparseSelectedPresetId)
+    if (!selected) {
+      return null
+    }
+    return sparseDirectoriesMatch(selected.directories, normalizedSparseDirectories)
+      ? selected.id
+      : null
+  }, [normalizedSparseDirectories, sparsePresets, sparseSelectedPresetId])
+
+  const sparseError = useMemo(() => {
+    if (!sparseEnabled) {
+      return null
+    }
+    if (selectedRepo?.connectionId) {
+      return 'Sparse checkout is only supported for local repos right now.'
+    }
+    if (normalizedSparseDirectories.length === 0) {
+      return 'Enter at least one repo-relative directory.'
+    }
+    if (
+      normalizedSparseDirectories.some((entry) => entry === '.' || entry.split('/').includes('..'))
+    ) {
+      return 'Use repo-relative directories, not root or parent paths.'
+    }
+    return null
+  }, [normalizedSparseDirectories, selectedRepo?.connectionId, sparseEnabled])
   const parsedLinkedIssueNumber = useMemo(
     () => (linkedIssue.trim() ? parseGitHubIssueOrPRNumber(linkedIssue) : null),
     [linkedIssue]
@@ -482,6 +537,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setRepoId(eligibleRepos[0].id)
     }
   }, [eligibleRepos, repoId, setRepoId])
+
+  // Why: the compact sparse dropdown is always visible under Advanced, so
+  // presets must load before sparse mode is enabled.
+  useEffect(() => {
+    if (!repoId || selectedRepo?.connectionId) {
+      return
+    }
+    if (sparsePresetsByRepo[repoId] !== undefined) {
+      return
+    }
+    void fetchSparsePresets(repoId)
+  }, [fetchSparsePresets, repoId, selectedRepo?.connectionId, sparsePresetsByRepo])
 
   // Why: detect agents for the selected repo. For local repos this runs once
   // on mount (deduped by the store). For remote repos it re-runs when the
@@ -899,6 +966,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setLinkedIssue('')
       setLinkedPR(null)
       setLinkedWorkItem(null)
+      setSparseEnabled(false)
+      setSparseDirectories('')
+      // Why: presets are repo-scoped, so a stale selection from the prior
+      // repo would be meaningless after a repo switch.
+      setSparseSelectedPresetId(null)
       // Why: the Start-from picker is repo-scoped, so any prior branch/PR
       // selection is meaningless in the new repo. Resetting to undefined
       // makes the field fall back to the new repo's effective base ref.
@@ -907,6 +979,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     },
     [baseBranch, linkedWorkItem, repoId, setRepoId]
   )
+
+  const handleSparseSelectPreset = useCallback((preset: SparsePreset | null): void => {
+    if (preset) {
+      setSparseEnabled(true)
+      setSparseDirectories(preset.directories.join('\n'))
+      setSparseSelectedPresetId(preset.id)
+    } else {
+      setSparseEnabled(false)
+      setSparseDirectories('')
+      setSparseSelectedPresetId(null)
+    }
+  }, [])
 
   const handleBaseBranchChange = useCallback((next: string | undefined): void => {
     setBaseBranch(next)
@@ -972,7 +1056,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       !selectedRepo ||
       shouldWaitForSetupCheck ||
       shouldWaitForIssueAutomationCheck ||
-      (requiresExplicitSetupChoice && !setupDecision)
+      (requiresExplicitSetupChoice && !setupDecision) ||
+      sparseError !== null
     ) {
       return
     }
@@ -994,7 +1079,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             : await ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')
       }
 
-      const result = await createWorktree(repoId, workspaceName, baseBranch, effectiveSetupDecision)
+      const result = await createWorktree(
+        repoId,
+        workspaceName,
+        baseBranch,
+        effectiveSetupDecision,
+        sparseEnabled
+          ? {
+              directories: normalizedSparseDirectories,
+              ...(effectivePresetId ? { presetId: effectivePresetId } : {})
+            }
+          : undefined
+      )
       const worktree = result.worktree
 
       await applyWorktreeMeta(worktree.id, {
@@ -1054,6 +1150,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     issueCommandTemplate,
     linkedPR,
     linkedWorkItem?.url,
+    normalizedSparseDirectories,
     note,
     onCreated,
     parsedLinkedIssueNumber,
@@ -1068,6 +1165,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     setRightSidebarTab,
     setSidebarOpen,
     setupDecision,
+    sparseEnabled,
+    sparseError,
+    effectivePresetId,
     tuiAgent,
     shouldRunIssueAutomation,
     shouldWaitForIssueAutomationCheck,
@@ -1090,7 +1190,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         !workspaceName ||
         !selectedRepo ||
         shouldWaitForSetupCheck ||
-        (requiresExplicitSetupChoice && !setupDecision)
+        (requiresExplicitSetupChoice && !setupDecision) ||
+        sparseError !== null
       ) {
         return
       }
@@ -1108,7 +1209,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           repoId,
           workspaceName,
           baseBranch,
-          effectiveSetupDecision
+          effectiveSetupDecision,
+          sparseEnabled
+            ? {
+                directories: normalizedSparseDirectories,
+                ...(effectivePresetId ? { presetId: effectivePresetId } : {})
+              }
+            : undefined
         )
         const worktree = result.worktree
 
@@ -1160,6 +1267,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       createWorktree,
       fallbackCreatureName,
       name,
+      normalizedSparseDirectories,
       note,
       onCreated,
       persistDraft,
@@ -1173,6 +1281,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setRightSidebarTab,
       setSidebarOpen,
       setupDecision,
+      sparseEnabled,
+      sparseError,
+      effectivePresetId,
       shouldWaitForSetupCheck
     ]
   )
@@ -1183,7 +1294,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     creating ||
     shouldWaitForSetupCheck ||
     shouldWaitForIssueAutomationCheck ||
-    (requiresExplicitSetupChoice && !setupDecision)
+    (requiresExplicitSetupChoice && !setupDecision) ||
+    sparseError !== null
 
   const cardProps: ComposerCardProps = {
     eligibleRepos,
@@ -1237,7 +1349,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     onSetupDecisionChange: setSetupDecision,
     shouldWaitForSetupCheck,
     resolvedSetupDecision,
-    createError
+    createError,
+    canUseSparseCheckout: !selectedRepo?.connectionId,
+    sparsePresets,
+    sparseSelectedPresetId,
+    onSparseSelectPreset: handleSparseSelectPreset
   }
 
   return {
