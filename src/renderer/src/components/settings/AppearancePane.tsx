@@ -34,9 +34,9 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
   },
   {
-    title: 'Show Tasks Button',
-    description: 'Show the Tasks button at the top of the left sidebar.',
-    keywords: ['tasks', 'sidebar', 'button', 'hide', 'show', 'github', 'linear']
+    title: 'Task Provider Icons',
+    description: 'Show GitHub and Linear icons in the Tasks sidebar button.',
+    keywords: ['tasks', 'sidebar', 'github', 'linear', 'icons', 'badges']
   }
 ]
 
@@ -198,35 +198,36 @@ export function AppearancePane({
       <section key="sidebar" className="space-y-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Sidebar</h3>
+          <p className="text-xs text-muted-foreground">Tune the left sidebar chrome.</p>
         </div>
 
         <SearchableSetting
-          title="Show Tasks Button"
-          description="Show the Tasks button at the top of the left sidebar."
-          keywords={['tasks', 'sidebar', 'button', 'hide', 'show', 'github', 'linear']}
+          title="Task Provider Icons"
+          description="Show GitHub and Linear icons in the Tasks sidebar button."
+          keywords={['tasks', 'sidebar', 'github', 'linear', 'icons', 'badges']}
           className="flex items-center justify-between gap-4 px-1 py-2"
         >
           <div className="space-y-0.5">
-            <Label>Show Tasks Button</Label>
+            <Label>Task Provider Icons</Label>
             <p className="text-xs text-muted-foreground">
-              Show the Tasks button at the top of the left sidebar.
+              Show GitHub and Linear icons next to the Tasks button.
             </p>
           </div>
           <button
             role="switch"
-            aria-checked={settings.showTasksButton}
+            aria-checked={settings.showTaskProviderIcons}
             onClick={() =>
               updateSettings({
-                showTasksButton: !settings.showTasksButton
+                showTaskProviderIcons: !settings.showTaskProviderIcons
               })
             }
             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-              settings.showTasksButton ? 'bg-foreground' : 'bg-muted-foreground/30'
+              settings.showTaskProviderIcons ? 'bg-foreground' : 'bg-muted-foreground/30'
             }`}
           >
             <span
               className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                settings.showTasksButton ? 'translate-x-4' : 'translate-x-0.5'
+                settings.showTaskProviderIcons ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
           </button>

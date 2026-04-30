@@ -178,9 +178,6 @@ describe('useIpcEvents updater integration', () => {
           getZoomLevel: () => 0,
           set: vi.fn()
         },
-        settings: {
-          onChanged: () => () => {}
-        },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
           onStatus: (listener: (status: unknown) => void) => {
@@ -368,9 +365,6 @@ describe('useIpcEvents updater integration', () => {
           getZoomLevel: () => 0,
           set: vi.fn()
         },
-        settings: {
-          onChanged: () => () => {}
-        },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
           onStatus: () => () => {},
@@ -555,9 +549,6 @@ describe('useIpcEvents updater integration', () => {
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
-        },
-        settings: {
-          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -756,9 +747,6 @@ describe('useIpcEvents browser tab close routing', () => {
           getZoomLevel: () => 0,
           set: vi.fn()
         },
-        settings: {
-          onChanged: () => () => {}
-        },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
           onStatus: () => () => {},
@@ -941,9 +929,6 @@ describe('useIpcEvents browser tab close routing', () => {
           getZoomLevel: () => 0,
           set: vi.fn()
         },
-        settings: {
-          onChanged: () => () => {}
-        },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
           onStatus: () => () => {},
@@ -1120,9 +1105,6 @@ describe('useIpcEvents browser tab close routing', () => {
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
-        },
-        settings: {
-          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -1309,9 +1291,6 @@ describe('useIpcEvents shortcut hint clearing', () => {
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
-        },
-        settings: {
-          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -1505,9 +1484,6 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
-        },
-        settings: {
-          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),

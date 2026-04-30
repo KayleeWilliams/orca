@@ -530,10 +530,6 @@ export type PreloadApi = {
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
     listFonts: () => Promise<string[]>
     previewGhosttyImport: () => Promise<GhosttyImportPreview>
-    /** Subscribe to out-of-band settings updates (e.g. the View > Appearance
-     *  menu toggles) so the renderer can stay in sync with main's persisted
-     *  state without round-tripping through settings:get. */
-    onChanged: (callback: (updates: Partial<GlobalSettings>) => void) => () => void
   }
   codexAccounts: {
     list: () => Promise<CodexRateLimitAccountsState>
