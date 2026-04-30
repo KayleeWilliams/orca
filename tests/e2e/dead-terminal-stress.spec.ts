@@ -33,8 +33,23 @@ test.describe('Dead Terminal Stress @headful', () => {
     await waitForActiveWorktree(orcaPage)
     await ensureTerminalVisible(orcaPage)
 
-    await orcaPage.evaluate(() => {
-      window.__store?.getState().updateSettings({ setupScriptLaunchMode: 'split-vertical' })
+    await orcaPage.evaluate(async () => {
+      const state = window.__store?.getState()
+      if (!state) {
+        return
+      }
+      state.updateSettings({ setupScriptLaunchMode: 'split-vertical' })
+
+      const wt = Object.values(state.worktreesByRepo)
+        .flat()
+        .find((w) => w.id === state.activeWorktreeId)
+      if (wt) {
+        const sep = wt.path.includes('\\') ? '\\' : '/'
+        await window.api.fs.writeFile({
+          filePath: `${wt.path}${sep}orca.yaml`,
+          content: 'scripts:\n  setup: echo SETUP_COMPLETE\n'
+        })
+      }
     })
   })
 

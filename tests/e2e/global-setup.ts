@@ -59,10 +59,6 @@ export default function globalSetup(): void {
     `${JSON.stringify({ name: 'orca-e2e-test', version: '0.0.0', private: true }, null, 2)}\n`
   )
   writeFileSync(path.join(testRepoDir, '.gitignore'), 'node_modules/\n')
-  // Why: the dead-terminal-repro spec exercises the real setup-split flow where
-  // main reads orca.yaml, writes a runner script, and returns a WorktreeSetupLaunch.
-  // Without this file the IPC returns no setup and the split never fires.
-  writeFileSync(path.join(testRepoDir, 'orca.yaml'), 'scripts:\n  setup: echo SETUP_COMPLETE\n')
   mkdirSync(path.join(testRepoDir, 'src'), { recursive: true })
   writeFileSync(path.join(testRepoDir, 'src', 'index.ts'), 'export const hello = "world"\n')
 

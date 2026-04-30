@@ -38,8 +38,27 @@ test.describe('Dead Terminal Reproduction @headful', () => {
     await waitForActiveWorktree(orcaPage)
     await ensureTerminalVisible(orcaPage)
 
-    await orcaPage.evaluate(() => {
-      window.__store?.getState().updateSettings({ setupScriptLaunchMode: 'split-vertical' })
+    await orcaPage.evaluate(async () => {
+      const state = window.__store?.getState()
+      if (!state) {
+        return
+      }
+      state.updateSettings({ setupScriptLaunchMode: 'split-vertical' })
+
+      // Why: write orca.yaml into the repo so createWorktree IPC returns a
+      // WorktreeSetupLaunch with a runner script, triggering the setup split.
+      // This is scoped to the dead-terminal tests to avoid breaking other
+      // specs that don't expect setup scripts to fire on worktree creation.
+      const wt = Object.values(state.worktreesByRepo)
+        .flat()
+        .find((w) => w.id === state.activeWorktreeId)
+      if (wt) {
+        const sep = wt.path.includes('\\') ? '\\' : '/'
+        await window.api.fs.writeFile({
+          filePath: `${wt.path}${sep}orca.yaml`,
+          content: 'scripts:\n  setup: echo SETUP_COMPLETE\n'
+        })
+      }
     })
   })
 
