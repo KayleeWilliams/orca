@@ -8,7 +8,7 @@ export type TerminalWebViewHandle = {
   write: (data: string) => void
   init: (cols: number, rows: number, initialData?: string) => void
   clear: () => void
-  measureFitDimensions: () => Promise<{ cols: number; rows: number } | null>
+  measureFitDimensions: (containerHeight?: number) => Promise<{ cols: number; rows: number } | null>
   resetZoom: () => void
 }
 
@@ -21,7 +21,7 @@ type TerminalMessage =
   | { type: 'write'; id?: number; data: string }
   | { type: 'init'; id?: number; cols: number; rows: number; initialData?: string }
   | { type: 'clear'; id?: number }
-  | { type: 'measure'; id?: number }
+  | { type: 'measure'; id?: number; containerHeight?: number }
   | { type: 'reset-zoom'; id?: number }
 
 // Why: TUI apps (Claude Code / Ink) emit escape codes with absolute cursor
@@ -287,7 +287,7 @@ const XTERM_HTML = `<!DOCTYPE html>
     }
   }
 
-  function measureFitDimensions() {
+  function measureFitDimensions(containerHeightPx) {
     if (!term || !term.element) {
       notify({ type: 'measure-result', cols: null, rows: null });
       return;
@@ -307,13 +307,16 @@ const XTERM_HTML = `<!DOCTYPE html>
       return;
     }
     var vpWidth = window.innerWidth;
-    var vpHeight = window.innerHeight;
+    // Why: prefer the container height passed from React Native over
+    // window.innerHeight. The RN layout system knows the exact pixel
+    // height of the terminal frame after the accessory/input bars are
+    // subtracted, whereas innerHeight can overstate the visible area
+    // due to layout timing or safe-area insets.
+    var vpHeight = (typeof containerHeightPx === 'number' && containerHeightPx > 0)
+      ? containerHeightPx
+      : window.innerHeight;
     var cols = Math.floor(vpWidth / cellWidth);
-    // Why: subtract 2 rows so the bottom terminal line is never covered
-    // by the accessory bar. The WebView's innerHeight can slightly
-    // overstate the visible area due to layout timing or safe-area
-    // insets, causing the last rows to render behind the overlay.
-    var rows = Math.max(8, Math.floor(vpHeight / cellHeight) - 2);
+    var rows = Math.max(8, Math.floor(vpHeight / cellHeight));
     notify({ type: 'measure-result', cols: cols, rows: rows });
   }
 
@@ -334,7 +337,7 @@ const XTERM_HTML = `<!DOCTYPE html>
       writesDraining = false;
       if (term) { term.clear(); term.reset(); }
     } else if (msg.type === 'measure') {
-      measureFitDimensions();
+      measureFitDimensions(msg.containerHeight);
     } else if (msg.type === 'reset-zoom') {
       applyFitScale();
     }
@@ -576,12 +579,14 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
       clear() {
         postMessage({ type: 'clear' })
       },
-      measureFitDimensions(): Promise<{ cols: number; rows: number } | null> {
+      measureFitDimensions(
+        containerHeight?: number
+      ): Promise<{ cols: number; rows: number } | null> {
         if (!isWebReadyRef.current) return Promise.resolve(null)
         return new Promise((resolve) => {
           measureResolveRef.current?.(null)
           measureResolveRef.current = resolve
-          sendToWebView({ type: 'measure' })
+          sendToWebView({ type: 'measure', containerHeight })
           // Why: if the WebView doesn't respond within 2s (e.g., xterm
           // failed to load), resolve null so the caller can disable
           // Fit to Phone rather than hanging indefinitely.

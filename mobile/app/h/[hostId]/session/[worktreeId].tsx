@@ -155,6 +155,10 @@ export default function SessionScreen() {
   const activeHandleRef = useRef<string | null>(null)
   const subscribeSeqRef = useRef<Map<string, number>>(new Map())
   const sendingRef = useRef(false)
+  // Why: tracks the pixel height of the terminal frame so measureFitDimensions
+  // can use the exact container height instead of relying on window.innerHeight,
+  // which can overstate the visible area due to layout timing.
+  const terminalFrameHeightRef = useRef<number>(0)
 
   const canSend = connState === 'connected' && activeHandle != null
 
@@ -189,7 +193,9 @@ export default function SessionScreen() {
   const measureViewportOnce = useCallback(
     async (handle: string) => {
       if (viewportMeasuredRef.current) return
-      const dims = await getTerminalRef(handle)?.measureFitDimensions()
+      const dims = await getTerminalRef(handle)?.measureFitDimensions(
+        terminalFrameHeightRef.current || undefined
+      )
       if (dims) {
         viewportRef.current = dims
         viewportMeasuredRef.current = true
@@ -255,7 +261,9 @@ export default function SessionScreen() {
             // resubscribe so the server gets the viewport and phone-fits.
             if (!viewportMeasuredRef.current) {
               void (async () => {
-                const dims = await getTerminalRef(handle)?.measureFitDimensions()
+                const dims = await getTerminalRef(handle)?.measureFitDimensions(
+                  terminalFrameHeightRef.current || undefined
+                )
                 if (dims && !viewportMeasuredRef.current) {
                   viewportRef.current = dims
                   viewportMeasuredRef.current = true
@@ -816,7 +824,12 @@ export default function SessionScreen() {
             </Pressable>
           </View>
         ) : (
-          <View style={styles.terminalFrame}>
+          <View
+            style={styles.terminalFrame}
+            onLayout={(e) => {
+              terminalFrameHeightRef.current = e.nativeEvent.layout.height
+            }}
+          >
             {terminals.map((terminal) => (
               <TerminalPaneView
                 key={terminal.handle}
