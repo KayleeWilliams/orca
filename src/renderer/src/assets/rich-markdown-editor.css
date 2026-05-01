@@ -605,6 +605,11 @@
   color: #58a6ff;
 }
 
+.rich-markdown-editor .rich-markdown-doc-link--missing {
+  color: var(--muted-foreground);
+  text-decoration-style: dashed;
+}
+
 .rich-markdown-mod-held .rich-markdown-editor .rich-markdown-doc-link {
   cursor: pointer;
 }

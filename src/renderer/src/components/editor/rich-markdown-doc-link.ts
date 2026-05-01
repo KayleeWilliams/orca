@@ -1,6 +1,11 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { getMarkdownDocLinkTarget } from './markdown-doc-links'
+import type { MarkdownDocument } from '../../../../shared/types'
+import {
+  createMarkdownDocumentIndex,
+  getMarkdownDocLinkTarget,
+  resolveMarkdownDocLink
+} from './markdown-doc-links'
 
 const DOC_LINK_PLACEHOLDER_PREFIX = '[[ORCA_DOC_LINK:'
 const DOC_LINK_PLACEHOLDER_SUFFIX = ']]'
@@ -9,12 +14,24 @@ const DOC_LINK_PATTERN = /\[\[([^[\]\r\n|]+)\]\]/g
 
 const docLinkAutoConvertKey = new PluginKey('docLinkAutoConvert')
 
+function isDocLinkResolved(target: string, documents: MarkdownDocument[]): boolean {
+  if (documents.length === 0) {
+    return true
+  }
+  const index = createMarkdownDocumentIndex(documents)
+  return resolveMarkdownDocLink(target, index).status === 'resolved'
+}
+
 export const MarkdownDocLink = Node.create({
   name: 'markdownDocLink',
   inline: true,
   group: 'inline',
   atom: true,
   selectable: true,
+
+  addStorage() {
+    return { documents: [] as MarkdownDocument[] }
+  },
 
   addAttributes() {
     return {
@@ -62,6 +79,41 @@ export const MarkdownDocLink = Node.create({
 
   renderMarkdown: (node) =>
     `[[${typeof node.attrs?.target === 'string' ? node.attrs.target : ''}]]`,
+
+  addNodeView() {
+    const storage = this.storage as { documents: MarkdownDocument[] }
+    return ({ node }: { node: { type: { name: string }; attrs: { target?: string } } }) => {
+      const target = typeof node.attrs.target === 'string' ? node.attrs.target : ''
+      const dom = document.createElement('span')
+      dom.setAttribute('data-doc-link-target', target)
+      dom.setAttribute('contenteditable', 'false')
+      dom.textContent = target
+
+      const applyResolutionClass = (t: string): void => {
+        const resolved = isDocLinkResolved(t, storage.documents)
+        dom.className = resolved
+          ? 'rich-markdown-doc-link'
+          : 'rich-markdown-doc-link rich-markdown-doc-link--missing'
+      }
+
+      applyResolutionClass(target)
+
+      return {
+        dom,
+        update: (updatedNode) => {
+          if (updatedNode.type.name !== 'markdownDocLink') {
+            return false
+          }
+          const newTarget =
+            typeof updatedNode.attrs.target === 'string' ? updatedNode.attrs.target : ''
+          dom.setAttribute('data-doc-link-target', newTarget)
+          dom.textContent = newTarget
+          applyResolutionClass(newTarget)
+          return true
+        }
+      }
+    }
+  },
 
   // Why: a ProseMirror plugin (not an input rule) so that [[target]] typed in
   // any order — brackets first then target, paste, etc. — converts to a doc

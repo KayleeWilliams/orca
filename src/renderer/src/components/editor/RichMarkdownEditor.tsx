@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor } from '@tiptap/react'
+import type { MarkdownDocument } from '../../../../shared/types'
 import { RichMarkdownSlashMenu } from './RichMarkdownSlashMenu'
 import { useAppStore } from '@/store'
 import { RichMarkdownToolbar } from './RichMarkdownToolbar'
@@ -43,6 +44,7 @@ type RichMarkdownEditorProps = {
   onDirtyStateHint: (dirty: boolean) => void
   onSave: (content: string) => void
   onOpenDocLink?: (target: string) => void
+  markdownDocuments?: MarkdownDocument[]
   // Why: front-matter is stripped from the rich editor's content but we still
   // want it visible to the user. It renders between the toolbar and the editor
   // surface so the formatting toolbar stays at the top of the pane.
@@ -63,6 +65,7 @@ export default function RichMarkdownEditor({
   onDirtyStateHint,
   onSave,
   onOpenDocLink,
+  markdownDocuments,
   headerSlot
 }: RichMarkdownEditorProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -354,6 +357,22 @@ export default function RichMarkdownEditor({
       }
     }
   }, [editor, filePath])
+
+  // Why: same pattern as Image storage above — the doc link NodeView reads the
+  // document list from storage to style resolved vs. missing links. A no-op
+  // transaction triggers ProseMirror to re-render the nodeViews with the new list.
+  useEffect(() => {
+    if (editor && markdownDocuments) {
+      isApplyingProgrammaticUpdateRef.current = true
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(editor.storage as any).markdownDocLink.documents = markdownDocuments
+        editor.view.dispatch(editor.state.tr)
+      } finally {
+        isApplyingProgrammaticUpdateRef.current = false
+      }
+    }
+  }, [editor, markdownDocuments])
 
   const handleLocalImagePick = useLocalImagePick(editor, filePath)
 

@@ -193,6 +193,7 @@ export function EditorContent({
                 onDirtyStateHint={handleDirtyStateHint}
                 onSave={onSaveWithFm}
                 onOpenDocLink={md.onOpenDocLink}
+                markdownDocuments={md.markdownDocuments}
                 // Why: render the front-matter banner below the editor toolbar
                 // (inside the editor shell) so formatting controls remain at
                 // the top of the pane — the banner is read-only context, not
