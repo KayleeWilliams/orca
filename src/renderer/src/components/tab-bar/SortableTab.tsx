@@ -261,9 +261,8 @@ export default function SortableTab({
             // Why: the activity marker sits to the LEFT of the tab title using
             // Orca's filled bell glyph (amber-500 with a subtle drop shadow).
             // The sidebar WorktreeCard used to render the same bell; it now
-            // uses a bold-title treatment (see docs/bold-instead-of-bell.md).
-            // The tab bar keeps the bell for now — aligning the two surfaces
-            // is a deliberate follow-up (out-of-scope in that doc).
+            // uses a bold-title treatment. The tab bar keeps the bell for
+            // now — aligning the two surfaces is a deliberate follow-up.
             <span data-testid="tab-activity-bell" className="inline-flex shrink-0">
               <FilledBellIcon className="w-3 h-3 mr-1 text-amber-500 drop-shadow-sm" />
             </span>
