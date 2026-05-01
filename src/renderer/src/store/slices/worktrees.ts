@@ -105,13 +105,22 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             baseBranch,
             setupDecision
           })
-          set((s) => ({
-            worktreesByRepo: {
-              ...s.worktreesByRepo,
-              [repoId]: [...(s.worktreesByRepo[repoId] ?? []), result.worktree]
-            },
-            sortEpoch: s.sortEpoch + 1
-          }))
+          // Why: a file watcher (worktrees.onChanged) can fire between the
+          // backend creating the worktree and this callback running, causing
+          // fetchWorktrees to add the worktree first. Appending unconditionally
+          // then produces a duplicate entry in worktreesByRepo, which gives
+          // React duplicate keys and can corrupt terminal DOM containers.
+          set((s) => {
+            const current = s.worktreesByRepo[repoId] ?? []
+            const alreadyPresent = current.some((w) => w.id === result.worktree.id)
+            return {
+              worktreesByRepo: {
+                ...s.worktreesByRepo,
+                [repoId]: alreadyPresent ? current : [...current, result.worktree]
+              },
+              sortEpoch: s.sortEpoch + 1
+            }
+          })
           return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
