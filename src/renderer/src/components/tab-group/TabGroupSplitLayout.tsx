@@ -217,11 +217,16 @@ export default function TabGroupSplitLayout({
       // so disabling it is the simplest fix.
       autoScroll={false}
     >
-      {/* Why: the 6px drag strip sits ABOVE the split layout — lifted out of
+      {/* Why: the 8px drag strip sits ABOVE the split layout — lifted out of
           each pane — so vertical split resize handles don't extend into the
           window-drag region at the top. Only the split layout's own panes
           own the resize handles, while this strip keeps the whole top of the
           center column draggable regardless of how the splits are arranged.
+          Why 8px specifically: the 34px tab row below this strip must bring
+          the total top-band to 42px so its bottom border aligns with the
+          sibling `titlebar-left` (also 42px) above the sidebar — otherwise
+          the tab row sits 2px high and the seam between the two columns
+          snags the eye.
           Why `border-l` on the wrapper: paint a single full-height divider
           between the left sidebar and the terminal area, regardless of
           split state. When splits exist, the leftmost pane also renders its
@@ -229,7 +234,7 @@ export default function TabGroupSplitLayout({
           overlapping 1px lines read as one clean seam. */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
         <div
-          className="h-[6px] shrink-0 bg-card"
+          className="h-[8px] shrink-0 bg-card"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
