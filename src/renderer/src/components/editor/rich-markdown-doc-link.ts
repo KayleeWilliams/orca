@@ -70,7 +70,7 @@ export const MarkdownDocLink = Node.create({
         contenteditable: 'false',
         class: 'rich-markdown-doc-link'
       }),
-      `[[${target}]]`
+      target
     ]
   }
 })
