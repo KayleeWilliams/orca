@@ -150,7 +150,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
         (row) => row.type === 'item' && row.worktree.id === pendingRevealWorktreeId
       )
       if (targetIndex !== -1) {
-        virtualizer.scrollToIndex(targetIndex, { align: 'center' })
+        // Why: `align: 'auto'` is a no-op when the card is already visible and
+        // otherwise scrolls the minimum amount to bring it into view. Using
+        // 'center' here made every worktree click re-center the sidebar, which
+        // is visually jumpy even when nothing needed to move.
+        virtualizer.scrollToIndex(targetIndex, { align: 'auto' })
       }
       clearPendingRevealWorktreeId()
     })
