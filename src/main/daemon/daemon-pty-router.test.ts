@@ -74,6 +74,7 @@ function createAdapter(
     reconcileOnStartup: vi.fn(async () => reconcileResult ?? { alive: sessions, killed: [] }),
     dispose: vi.fn(),
     disconnectOnly: vi.fn(async () => {}),
+    protocolVersion: label === 'current' ? 4 : 3,
     emitData: (id: string, data: string) => {
       for (const listener of dataListeners) {
         listener({ id, data })
@@ -110,7 +111,8 @@ describe('DaemonPtyRouter', () => {
   it('drops a legacy mapping after the routed session exits', async () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy', ['legacy-session'])
-    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
 
     await router.discoverLegacySessions()
 
@@ -118,6 +120,102 @@ describe('DaemonPtyRouter', () => {
     await router.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
 
     expect(current.spawn).toHaveBeenCalledWith({ sessionId: 'legacy-session', cols: 80, rows: 24 })
+    expect(onLegacyDrained).toHaveBeenCalledWith(legacy)
+  })
+
+  it('fires drain only after every session on a legacy adapter exits', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['one', 'two', 'three'])
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
+
+    await router.discoverLegacySessions()
+
+    legacy.emitExit('one', 0)
+    legacy.emitExit('two', 0)
+    expect(onLegacyDrained).not.toHaveBeenCalled()
+
+    legacy.emitExit('three', 0)
+    expect(onLegacyDrained).toHaveBeenCalledTimes(1)
+    expect(onLegacyDrained).toHaveBeenCalledWith(legacy)
+  })
+
+  it('drains one legacy adapter without touching another', async () => {
+    const current = createAdapter('current')
+    const legacy1 = createAdapter('legacy-1', ['one'])
+    const legacy2 = createAdapter('legacy-2', ['two'])
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({
+      current,
+      legacy: [legacy1, legacy2],
+      onLegacyDrained
+    })
+
+    await router.discoverLegacySessions()
+
+    legacy1.emitExit('one', 0)
+    router.write('two', 'still-live\n')
+
+    expect(onLegacyDrained).toHaveBeenCalledTimes(1)
+    expect(onLegacyDrained).toHaveBeenCalledWith(legacy1)
+    expect(legacy2.write).toHaveBeenCalledWith('two', 'still-live\n')
+  })
+
+  it('does not fire drain for current adapter exits', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
+
+    const currentSession = await router.spawn({ cols: 80, rows: 24 })
+    current.emitExit(currentSession.id, 0)
+
+    expect(onLegacyDrained).not.toHaveBeenCalled()
+  })
+
+  it('does not query drained adapters in listProcesses', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({
+      current,
+      legacy: [legacy],
+      onLegacyDrained: vi.fn()
+    })
+
+    await router.discoverLegacySessions()
+    legacy.emitExit('legacy-session', 0)
+    vi.mocked(legacy.listProcesses).mockClear()
+
+    await router.listProcesses()
+
+    expect(legacy.listProcesses).not.toHaveBeenCalled()
+  })
+
+  it('guards against double drain events for the same adapter', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
+
+    await router.discoverLegacySessions()
+
+    legacy.emitExit('legacy-session', 0)
+    legacy.emitExit('legacy-session', 0)
+
+    expect(onLegacyDrained).toHaveBeenCalledTimes(1)
+  })
+
+  it('sweeps adapters that drain before discovery registers sessions', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy')
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
+
+    await router.discoverLegacySessions()
+    router.sweepDrainedLegacyAdapters()
+
+    expect(onLegacyDrained).toHaveBeenCalledTimes(1)
+    expect(onLegacyDrained).toHaveBeenCalledWith(legacy)
   })
 
   it('merges startup reconciliation and updates route mappings', async () => {

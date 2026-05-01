@@ -6,7 +6,8 @@ import {
   DaemonSpawner,
   getDaemonPidPath,
   getDaemonSocketPath,
-  getDaemonTokenPath
+  getDaemonTokenPath,
+  serializeDaemonPidFile
 } from './daemon-spawner'
 import { startDaemon, type DaemonHandle } from './daemon-main'
 import { DaemonClient } from './client'
@@ -80,6 +81,13 @@ describe('DaemonSpawner', () => {
       }
       expect(tokenPath).toBe(join(dir, `daemon-v${PROTOCOL_VERSION}.token`))
       expect(pidPath).toBe(join(dir, `daemon-v${PROTOCOL_VERSION}.pid`))
+    })
+
+    it('serializes pid files with process start metadata', () => {
+      expect(JSON.parse(serializeDaemonPidFile({ pid: 123, startedAtMs: 456 }))).toEqual({
+        pid: 123,
+        startedAtMs: 456
+      })
     })
 
     it('starts daemon and returns connection info', async () => {
