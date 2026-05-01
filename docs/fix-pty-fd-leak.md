@@ -1,5 +1,47 @@
 # Fix per-session PTY fd leak in the current daemon
 
+## Status: resolved (2026-05-01)
+
+**Native-side root cause confirmed and patched.** E2E validation under both Node and Electron ABIs: 50 spawn/kill cycles, ptmx count stays at baseline (0). Before the patch, the same harness reproduced a 1-fd-per-spawn linear leak (5 → 55 ptmx fds over 50 cycles).
+
+## Root cause (actual)
+
+The leak is a native-side off-by-one in `node-pty@1.1.0`'s `pty_posix_spawn` cleanup loop on macOS. In `src/unix/pty.cc`:
+
+- **Allocation** (lines 697-701) walks `low_fds[0..2]`, allocating via `posix_openpt(O_RDWR)`. The loop `break`s at the first `low_fds[count] >= STDERR_FILENO`, so `count` holds the index of the last allocated slot (0, 1, or 2). These are decoy `/dev/ptmx` handles used as a workaround for a macOS pty race condition that ensures the real master fd lands above `STDERR_FILENO`.
+- **Cleanup** (lines 781-783, buggy):
+  ```c
+  for (; count > 0; count--) {
+    close(low_fds[count]);
+  }
+  ```
+  When the typical case triggers (`break` at `count=0`, i.e. the very first `posix_openpt` returned an fd ≥ 2), the loop body never executes — `low_fds[0]` is never closed. Every spawn leaks one ptmx handle.
+
+Upstream fixed this in commit [`af053f2`](https://github.com/microsoft/node-pty/commit/af053f2) (PR #882, 2026-01-28), but version 1.1.0 (pinned here) predates that fix.
+
+**Applied fix:** minimal 3-line backport in `config/patches/node-pty@1.1.0.patch`:
+
+```c
+-  for (; count > 0; count--) {
+-    close(low_fds[count]);
++  for (size_t i = 0; i <= count && i < 3; i++) {
++    close(low_fds[i]);
+   }
+```
+
+The `i < 3` bound is an over-cautious defense against the pathological case where all three `posix_openpt` calls returned fds < `STDERR_FILENO` (loop exhausts to `count=3`, which would otherwise read `low_fds[3]` — UB in upstream's fix too, though unreachable in practice).
+
+## Why the JS-side `destroy()` discipline (below) is still correct
+
+The native patch alone closes the leak. But the JS-side changes landed in `pty-subprocess.ts`, `session.ts`, `terminal-host.ts`, `local-pty-provider.ts`, and `relay/pty-handler.ts` remain load-bearing for separate reasons:
+
+1. **SIGHUP-to-recycled-pid hazard.** `UnixTerminal.destroy()` registers `_socket.once('close', () => this.kill('SIGHUP'))`. After the child is reaped, its pid can be recycled to an unrelated user process (Chrome tab, editor, etc.) before the socket close event fires. Neutralizing `proc.kill` on POSIX before `destroy()` prevents delivering SIGHUP to a stranger.
+2. **`forceKill`/`signal` guard against recycled pid.** `process.kill(proc.pid, …)` after `onExit` targets a potentially-recycled pid. The internal `dead` guard converts these into no-ops.
+3. **Daemon shutdown determinism.** `TerminalHost.dispose()` → `Session.forceKillAndDisposeSubprocess()` reaps stubborn children via SIGKILL and releases the master fd synchronously, bypassing the 5s `KILL_TIMEOUT_MS` fallback.
+4. **Belt-and-suspenders fd release.** Calling `destroy()` on every teardown path remains the contract that will keep holding if the pinned node-pty is ever replaced or upgraded to a build without the bug.
+
+## Original problem statement (for historical context)
+
 ## Problem
 
 The current `daemon-v4` is leaking PTY master file descriptors (`ptmx`) at a rate roughly 20× the live session count. In a real reported case, the live v4 daemon was holding **269 `ptmx` fds for only 13 active terminals** — every closed terminal should have returned its `ptmx` to the OS, but the daemon keeps accumulating them until it hits macOS's `kern.tty.ptmx_max=511` cap and every new terminal (Orca or otherwise) fails with "cannot allocate any more pty devices."
