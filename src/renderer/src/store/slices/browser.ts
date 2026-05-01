@@ -13,6 +13,7 @@ import type {
 } from '../../../../shared/types'
 import { ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
 import { pickNeighbor } from './tab-group-state'
+import { destroyWorkspaceWebviews } from './browser-webview-cleanup'
 
 type CreateBrowserTabOptions = {
   activate?: boolean
@@ -64,6 +65,7 @@ export type BrowserSlice = {
     options?: CreateBrowserTabOptions
   ) => BrowserWorkspace
   closeBrowserTab: (tabId: string) => void
+  shutdownWorktreeBrowsers: (worktreeId: string) => Promise<void>
   reopenClosedBrowserTab: (worktreeId: string) => BrowserWorkspace | null
   setActiveBrowserTab: (tabId: string) => void
   createBrowserPage: (
@@ -520,6 +522,37 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     }
   },
 
+  shutdownWorktreeBrowsers: async (worktreeId) => {
+    const workspaces = get().browserTabsByWorktree[worktreeId] ?? []
+    // Why: snapshot pre-loop so the post-loop set() can reproduce the original
+    // `hadBrowserTabs` semantics. Reading `s.browserTabsByWorktree[worktreeId]`
+    // inside set() would always be empty here because each closeBrowserTab call
+    // above has already removed the workspace from that array.
+    const hadBrowserTabs = workspaces.length > 0
+    for (const workspace of workspaces) {
+      destroyWorkspaceWebviews(get().browserPagesByWorkspace, workspace.id)
+      get().closeBrowserTab(workspace.id)
+    }
+    set((s) => {
+      const nextBrowserTabsByWorktree = { ...s.browserTabsByWorktree }
+      delete nextBrowserTabsByWorktree[worktreeId]
+      const nextActiveBrowserTabIdByWorktree = { ...s.activeBrowserTabIdByWorktree }
+      delete nextActiveBrowserTabIdByWorktree[worktreeId]
+      // Why: mirror shutdownWorktreeTerminals' `hadBrowserTabs && isActive`
+      // guard. Only reset the globally-visible active browser surface when the
+      // worktree being shut down is the one the user is looking at AND it
+      // actually had browser tabs to tear down.
+      const shouldResetGlobalBrowser = s.activeWorktreeId === worktreeId && hadBrowserTabs
+      return {
+        browserTabsByWorktree: nextBrowserTabsByWorktree,
+        activeBrowserTabIdByWorktree: nextActiveBrowserTabIdByWorktree,
+        ...(shouldResetGlobalBrowser
+          ? { activeBrowserTabId: null, activeTabType: 'terminal' as const }
+          : {})
+      }
+    })
+  },
+
   reopenClosedBrowserTab: (worktreeId) => {
     // Why: read and pop atomically inside set() to prevent a TOCTOU race
     // where two rapid Cmd+Shift+T presses both restore the same entry.
@@ -955,8 +988,33 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     }),
 
   hydrateBrowserSession: (session) => {
+    const persistedTabsByWorktree = session.browserTabsByWorktree ?? {}
+    const currentState = get()
+    const validWorktreeIdsForCleanup = new Set(
+      Object.values(currentState.worktreesByRepo)
+        .flat()
+        .map((worktree) => worktree.id)
+    )
+
+    // Why: mirror closeBrowserTab's contract — reducers are pure, imperative
+    // side effects bracket them. Compute dropped workspaces first, destroy
+    // their webviews, then run the state reducer unchanged. hydrate is called
+    // once at boot (App.tsx) when the webview registry is empty, so this loop
+    // is a no-op today; it's defense-in-depth for any future caller that
+    // re-hydrates after webviews are live.
+    const droppedWorkspaceIds: string[] = []
+    for (const [worktreeId, tabs] of Object.entries(persistedTabsByWorktree)) {
+      if (!validWorktreeIdsForCleanup.has(worktreeId)) {
+        for (const tab of tabs) {
+          droppedWorkspaceIds.push(tab.id)
+        }
+      }
+    }
+    for (const workspaceId of droppedWorkspaceIds) {
+      destroyWorkspaceWebviews(currentState.browserPagesByWorkspace, workspaceId)
+    }
+
     set((s) => {
-      const persistedTabsByWorktree = session.browserTabsByWorktree ?? {}
       const persistedPagesByWorkspace = session.browserPagesByWorkspace ?? {}
       const persistedActiveBrowserTabIdByWorktree = session.activeBrowserTabIdByWorktree ?? {}
       const persistedActiveTabTypeByWorktree = session.activeTabTypeByWorktree ?? {}

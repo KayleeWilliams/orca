@@ -16,7 +16,7 @@ import { useAllWorktrees } from '../../store/selectors'
 import { createUntitledMarkdownFile } from '../../lib/create-untitled-markdown'
 import { getConnectionId } from '../../lib/connection-context'
 import { extractIpcErrorMessage } from '../../lib/ipc-error'
-import { destroyPersistentWebview } from '../browser-pane/BrowserPane'
+import { destroyWorkspaceWebviews } from '../../store/slices/browser-webview-cleanup'
 import { focusTerminalTabSurface } from '../../lib/focus-terminal-tab-surface'
 
 export type GroupEditorItem = OpenFile & { tabId: string }
@@ -196,7 +196,7 @@ export function useTabGroupWorkspaceModel({
       if (item.contentType === 'terminal') {
         closeTab(item.entityId)
       } else if (item.contentType === 'browser') {
-        destroyPersistentWebview(item.entityId)
+        destroyWorkspaceWebviews(useAppStore.getState().browserPagesByWorkspace, item.entityId)
         closeBrowserTab(item.entityId)
       } else {
         closeEditorIfUnreferenced(item.entityId, item.id)
@@ -226,7 +226,7 @@ export function useTabGroupWorkspaceModel({
         if (item.contentType === 'terminal') {
           closeTab(item.entityId)
         } else if (item.contentType === 'browser') {
-          destroyPersistentWebview(item.entityId)
+          destroyWorkspaceWebviews(useAppStore.getState().browserPagesByWorkspace, item.entityId)
           closeBrowserTab(item.entityId)
         } else {
           closeEditorIfUnreferenced(item.entityId, item.id)

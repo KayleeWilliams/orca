@@ -29,9 +29,13 @@ import {
 import { isUpdaterQuitAndInstallInProgress } from '@/lib/updater-beforeunload'
 import EditorAutosaveController from './editor/EditorAutosaveController'
 import type { TabGroupLayoutNode } from '../../../shared/types'
-import BrowserPane, { destroyPersistentWebview } from './browser-pane/BrowserPane'
+import BrowserPane from './browser-pane/BrowserPane'
+import { destroyPersistentWebview } from './browser-pane/webview-registry'
 import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
-import { collectBrowserWebviewIds } from './browser-pane/browser-webview-cleanup'
+import {
+  collectBrowserWebviewIds,
+  destroyWorkspaceWebviews
+} from '../store/slices/browser-webview-cleanup'
 import { handleSwitchTab, handleSwitchTerminalTab } from '../hooks/ipc-tab-switch'
 import TabGroupSplitLayout from './tab-group/TabGroupSplitLayout'
 import { shouldAutoCreateInitialTerminal } from './terminal/initial-terminal'
@@ -536,7 +540,7 @@ function Terminal(): React.JSX.Element | null {
       }
       const currentTabs = state.browserTabsByWorktree[owningWorktreeId] ?? []
       if (currentTabs.length <= 1) {
-        destroyPersistentWebview(tabId)
+        destroyWorkspaceWebviews(state.browserPagesByWorkspace, tabId)
         closeBrowserTab(tabId)
         if (state.activeWorktreeId === owningWorktreeId) {
           const worktreeFile = state.openFiles.find((file) => file.worktreeId === owningWorktreeId)
@@ -562,7 +566,7 @@ function Terminal(): React.JSX.Element | null {
           setActiveBrowserTab(nextTab.id)
         }
       }
-      destroyPersistentWebview(tabId)
+      destroyWorkspaceWebviews(state.browserPagesByWorkspace, tabId)
       closeBrowserTab(tabId)
     },
     [
@@ -611,7 +615,7 @@ function Terminal(): React.JSX.Element | null {
         } else if (
           (state.browserTabsByWorktree[activeWorktreeId] ?? []).some((tab) => tab.id === id)
         ) {
-          destroyPersistentWebview(id)
+          destroyWorkspaceWebviews(state.browserPagesByWorkspace, id)
           closeBrowserTab(id)
         }
       }
@@ -641,7 +645,7 @@ function Terminal(): React.JSX.Element | null {
         } else if (
           (state.browserTabsByWorktree[activeWorktreeId] ?? []).some((tab) => tab.id === id)
         ) {
-          destroyPersistentWebview(id)
+          destroyWorkspaceWebviews(state.browserPagesByWorkspace, id)
           closeBrowserTab(id)
         }
       }

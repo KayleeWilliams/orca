@@ -1,4 +1,5 @@
 import type { BrowserPage, BrowserWorkspace } from '../../../../shared/types'
+import { destroyPersistentWebview } from '../../components/browser-pane/webview-registry'
 
 export function collectBrowserWebviewIds(
   browserTabsByWorktree: Record<string, BrowserWorkspace[]>,
@@ -19,4 +20,20 @@ export function collectBrowserWebviewIds(
     }
   }
   return ids
+}
+
+export function destroyWorkspaceWebviews(
+  browserPagesByWorkspace: Record<string, BrowserPage[]>,
+  workspaceId: string
+): void {
+  const pages = browserPagesByWorkspace[workspaceId] ?? []
+  if (pages.length === 0) {
+    // Why: legacy sessions persisted before pages existed still key their
+    // webview by workspace id. Preserve the legacy destroy as a fallback.
+    destroyPersistentWebview(workspaceId)
+    return
+  }
+  for (const page of pages) {
+    destroyPersistentWebview(page.id)
+  }
 }
