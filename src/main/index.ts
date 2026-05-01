@@ -95,9 +95,18 @@ function focusExistingWindow(): void {
   // after another launch tries (and fails) to acquire the lock. Bring the
   // existing window forward so the user sees the same focus behaviour as
   // re-clicking the dock/taskbar icon, rather than a silent no-op.
+  //
+  // Why show() as well as restore() + focus(): isMinimized() only covers the
+  // dock-minimised case. A hidden window (close-to-tray on macOS via Cmd+W,
+  // or a window on a different macOS Space) is NOT minimised, so focus()
+  // alone is a silent no-op. show() handles those plus Windows taskbar
+  // focus-steal, which focus() alone does not reliably trigger.
   if (mainWindow) {
     if (mainWindow.isMinimized()) {
       mainWindow.restore()
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show()
     }
     mainWindow.focus()
   }
