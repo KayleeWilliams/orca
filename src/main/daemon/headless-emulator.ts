@@ -90,7 +90,7 @@ export class HeadlessEmulator {
   getSnapshot(): TerminalSnapshot {
     const modes = this.getModes()
     return {
-      snapshotAnsi: this.serializer.serialize(),
+      snapshotAnsi: this.serializer.serialize() + this.buildAbsoluteCursorTail(),
       scrollbackAnsi: '',
       rehydrateSequences: this.buildRehydrateSequences(modes),
       cwd: this.cwd,
@@ -145,6 +145,24 @@ export class HeadlessEmulator {
         buffer.type === 'normal' ? this.terminal.modes.applicationCursorKeysMode : false,
       alternateScreen: buffer.type === 'alternate'
     }
+  }
+
+  // Why: SerializeAddon appends a *relative* cursor-move tail (e.g. `\x1b[4A\x1b[104D`)
+  // computed from the last content cell it emitted to `_buffer.baseY + _buffer.cursorY`.
+  // That math lands the cursor on the correct cell in simple cases but drifts
+  // when rows are emitted out of visual order (e.g. a TUI drew an input
+  // prompt, then drew a border below it, then moved the cursor back up to
+  // the prompt — the tail then targets a row below the prompt). A trailing
+  // absolute `CSI row;col H` after the serialized buffer acts as an
+  // authoritative override: whatever SerializeAddon's relative math lands
+  // on, the absolute positioner places the cursor exactly where the source
+  // terminal had it at capture time. 1-indexed per DECSET/CUP; the buffer
+  // API is 0-indexed.
+  private buildAbsoluteCursorTail(): string {
+    const buffer = this.terminal.buffer.active
+    const row = buffer.cursorY + 1
+    const col = buffer.cursorX + 1
+    return `\x1b[${row};${col}H`
   }
 
   private buildRehydrateSequences(modes: TerminalModes): string {

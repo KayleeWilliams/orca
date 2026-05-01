@@ -228,10 +228,37 @@ function collectLeafIds(
 
 /**
  * Write saved scrollback buffers into the restored panes so the user sees
- * their previous terminal output after an app restart.  If a buffer was
- * captured while the alternate screen was active (e.g. an agent TUI was
- * running at shutdown), we exit alt-screen first so the user sees a usable
- * normal-mode terminal.
+ * their previous terminal output after an app restart.
+ *
+ * CONTRACT — do not break this:
+ *
+ * The serialized buffer from disk is a PRE-PAINT. It is the `SerializeAddon`
+ * output verbatim, including mode bits, the `\x1b[?1049h` alt-screen marker
+ * (when captured in alt mode), and the trailing relative-cursor-move tail
+ * that positions xterm's cursor at capture time. Write it through
+ * `replayIntoTerminal` exactly as-is, followed only by
+ * `POST_REPLAY_MODE_RESET`.
+ *
+ * Do not strip escape sequences from this buffer. A previous version sliced
+ * off everything from the last `\x1b[?1049h` onward to "exit alt-screen" —
+ * that also discarded the cursor-position tail and caused the "cursor lands
+ * one row below the TUI input box after restart" bug for alt-screen TUIs
+ * like Claude Code, vim, lazygit.
+ *
+ * Do not append synthetic bytes like `\r\n` for "PROMPT_EOL_MARK protection".
+ * A previous version did this unconditionally and pushed the cursor an extra
+ * row down on top of the alt-trim drift. zsh's PROMPT_EOL_MARK is a
+ * shell-level concern that fires when zsh prints its prompt; this function
+ * runs before any prompt is printed and can only harm cursor state by
+ * injecting bytes.
+ *
+ * The reattach path in `pty-connection.ts` (`handleReattachResult`) is
+ * authoritative when it has data — `coldRestore`, `snapshot`, and `replay`
+ * branches each do `\x1b[2J\x1b[3J\x1b[H` + write and will overwrite this
+ * pre-paint. When none of those branches fire (fresh attach with no daemon
+ * scrollback), the verbatim replay of the serialized buffer is what the
+ * user sees, and its trailing cursor tail is what places the cursor
+ * correctly.
  */
 export function restoreScrollbackBuffers(
   manager: PaneManager,
@@ -242,8 +269,6 @@ export function restoreScrollbackBuffers(
   if (!savedBuffers) {
     return
   }
-  const ALT_SCREEN_ON = '\x1b[?1049h'
-  const ALT_SCREEN_OFF = '\x1b[?1049l'
   for (const [oldLeafId, buffer] of Object.entries(savedBuffers)) {
     const newPaneId = restoredPaneByLeafId.get(oldLeafId)
     if (newPaneId == null || !buffer) {
@@ -254,29 +279,17 @@ export function restoreScrollbackBuffers(
       continue
     }
     try {
-      let buf = buffer
-      // If buffer ends in alt-screen mode (agent TUI was running at
-      // shutdown), exit alt-screen so the user sees a usable terminal.
-      const lastOn = buf.lastIndexOf(ALT_SCREEN_ON)
-      const lastOff = buf.lastIndexOf(ALT_SCREEN_OFF)
-      if (lastOn > lastOff) {
-        buf = buf.slice(0, lastOn)
-      }
-      if (buf.length > 0) {
-        // Why replayIntoTerminal: the serialized buffer can contain query
-        // sequences that leaked in via the pendingWritesRef flush before
-        // serialization (see TerminalPane capture hook). Writing those
-        // through xterm would trigger auto-replies that land in the new
-        // shell's stdin. See replay-guard.ts.
-        replayIntoTerminal(pane, replayingPanesRef, buf)
-        // Ensure cursor is on a new line so the new shell prompt
-        // doesn't trigger zsh's PROMPT_EOL_MARK (%) indicator.
-        replayIntoTerminal(pane, replayingPanesRef, '\r\n')
-        // Clear any mode bits the serialized buffer replayed into xterm.
-        // The shell underneath is fresh and has no TUI consuming these modes.
-        // See POST_REPLAY_MODE_RESET comment.
-        replayIntoTerminal(pane, replayingPanesRef, POST_REPLAY_MODE_RESET)
-      }
+      // Why replayIntoTerminal: the serialized buffer can contain query
+      // sequences that leaked in via the pendingWritesRef flush before
+      // serialization (see TerminalPane capture hook). Writing those
+      // through xterm would trigger auto-replies that land in the new
+      // shell's stdin. See replay-guard.ts.
+      replayIntoTerminal(pane, replayingPanesRef, buffer)
+      // Clear mode bits the serialized buffer replayed into xterm. When
+      // no reattach authoritative write follows (case: fresh attach with
+      // no daemon scrollback), the shell underneath has no TUI consuming
+      // these modes. See POST_REPLAY_MODE_RESET.
+      replayIntoTerminal(pane, replayingPanesRef, POST_REPLAY_MODE_RESET)
     } catch {
       // If restore fails, continue with blank terminal.
     }

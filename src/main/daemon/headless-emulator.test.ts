@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { Terminal } from '@xterm/headless'
 import { HeadlessEmulator } from './headless-emulator'
 
 describe('HeadlessEmulator', () => {
@@ -180,10 +181,182 @@ describe('HeadlessEmulator', () => {
     })
   })
 
+  describe('absolute cursor tail', () => {
+    // Why: SerializeAddon emits a relative cursor-move tail that drifts when
+    // the TUI drew rows out of visual order. getSnapshot() appends an
+    // absolute `CSI row;col H` after the SerializeAddon output so the
+    // restored cursor lands exactly where it was at capture time regardless
+    // of what relative math the serializer used.
+    it('appends absolute cursor position after the serialized buffer', async () => {
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      await emulator.write('hello\r\nworld')
+      // Move cursor to row 10, col 5 (1-indexed CSI)
+      await emulator.write('\x1b[10;5H')
+
+      const snapshot = emulator.getSnapshot()
+      // Last 6 chars must be the absolute-cursor CSI
+      expect(snapshot.snapshotAnsi.endsWith('\x1b[10;5H')).toBe(true)
+    })
+
+    it('restores cursor after a normal-buffer TUI that drew rows below the cursor', async () => {
+      // Reproduces the shape of the real-world Claude Code bug: input prompt
+      // drawn above, border + status drawn below, cursor parked back on the
+      // input prompt. SerializeAddon's relative tail would land one row low;
+      // the absolute tail corrects it.
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      await emulator.write('\x1b[H')
+      await emulator.write('\r\n\r\n\r\n\r\n\r\n\r\n') // rows 0-5 blank
+      await emulator.write('> ') // row 6 cursor col 2
+      await emulator.write('\x1b[8;1H──────') // row 7
+      await emulator.write('\x1b[9;1Hstatus') // row 8
+      await emulator.write('\x1b[10;1Hhint') // row 9
+      await emulator.write('\x1b[7;3H') // park cursor on prompt
+
+      const srcSnapshot = emulator.getSnapshot()
+
+      const replayTerm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+      await new Promise<void>((resolve) =>
+        replayTerm.write(srcSnapshot.rehydrateSequences + srcSnapshot.snapshotAnsi, () => resolve())
+      )
+
+      expect(replayTerm.buffer.active.cursorX).toBe(2)
+      expect(replayTerm.buffer.active.cursorY).toBe(6)
+      replayTerm.dispose()
+    })
+  })
+
   describe('dispose', () => {
     it('can be disposed without error', () => {
       emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
       expect(() => emulator.dispose()).not.toThrow()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Snapshot restore round-trip — alt-screen cursor alignment
+  //
+  // Regression guard for the "cursor lands one row below the TUI input box
+  // after restart" bug. The reattach path in pty-connection.ts writes
+  // `rehydrateSequences + snapshotAnsi` into a fresh xterm. For alt-screen
+  // sessions, `rehydrateSequences` must not pre-enter the alt buffer with
+  // `\x1b[?1049h` because SerializeAddon's own output already emits
+  // `\x1b[?1049h\x1b[H` between the normal and alt buffers. Pre-entering
+  // causes normal-buffer content to be drawn into the alt buffer, pushing
+  // the alt cursor down by the height of the normal buffer's trailing rows.
+  // ---------------------------------------------------------------------------
+  describe('alt-screen snapshot restore round-trip', () => {
+    async function replaySnapshotIntoFreshTerminal(rehydrate: string, snapshotAnsi: string) {
+      const replayTerm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+      await new Promise<void>((resolve) =>
+        replayTerm.write(rehydrate + snapshotAnsi, () => resolve())
+      )
+      return replayTerm
+    }
+
+    it('places the cursor at the same (row, col) as the source alt-screen terminal', async () => {
+      // Simulate a shell session that ran `$ claude`, entered alt-screen, drew
+      // the Claude UI header + an input box, and left the cursor inside the
+      // input box at column 2, row 5.
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      await emulator.write('$ claude\r\n')
+      await emulator.write('\x1b[?1049h\x1b[H') // enter alt screen, home
+      await emulator.write('Claude Code v2.1.126\r\n')
+      await emulator.write('Opus 4.7 · API Usage Billing\r\n')
+      await emulator.write('~/orca/workspaces/orca/Chimaera\r\n')
+      await emulator.write('\r\n') // blank
+      await emulator.write('> ') // input prompt
+      // Cursor is now at row 4, col 2 in the alt buffer.
+
+      const srcSnapshot = emulator.getSnapshot()
+      expect(srcSnapshot.modes.alternateScreen).toBe(true)
+
+      // Match the reattach path in daemon-pty-adapter.ts:199 exactly:
+      // `snapshotPayload = rehydrateSequences + snapshotAnsi`.
+      const replayTerm = await replaySnapshotIntoFreshTerminal(
+        srcSnapshot.rehydrateSequences,
+        srcSnapshot.snapshotAnsi
+      )
+
+      expect(replayTerm.buffer.active.type).toBe('alternate')
+      expect(replayTerm.buffer.active.cursorY).toBe(emulator.getSnapshot().rows - 24 + 4)
+      // The crucial assertion: cursor col/row match the source.
+      expect({
+        x: replayTerm.buffer.active.cursorX,
+        y: replayTerm.buffer.active.cursorY
+      }).toEqual({ x: 2, y: 4 })
+      replayTerm.dispose()
+    })
+
+    it('places cursor correctly when the normal buffer has scrollback beyond terminal rows', async () => {
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      // Fill normal buffer with enough scrollback that it scrolls past one screen.
+      for (let i = 0; i < 40; i++) {
+        await emulator.write(`line ${i}\r\n`)
+      }
+      await emulator.write('$ claude\r\n')
+      await emulator.write('\x1b[?1049h\x1b[H')
+      await emulator.write('Claude Code v2.1.126\r\n')
+      await emulator.write('Opus 4.7 · API Usage Billing\r\n')
+      await emulator.write('~/orca/workspaces/orca/Chimaera\r\n')
+      await emulator.write('\r\n')
+      await emulator.write('> ')
+      const srcSnapshot = emulator.getSnapshot()
+      expect(srcSnapshot.modes.alternateScreen).toBe(true)
+
+      const replayTerm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+      await new Promise<void>((resolve) =>
+        replayTerm.write(srcSnapshot.rehydrateSequences + srcSnapshot.snapshotAnsi, () => resolve())
+      )
+
+      expect(replayTerm.buffer.active.type).toBe('alternate')
+      expect({
+        x: replayTerm.buffer.active.cursorX,
+        y: replayTerm.buffer.active.cursorY
+      }).toEqual({ x: 2, y: 4 })
+      replayTerm.dispose()
+    })
+
+    it('reproduces the renderer write sequence: local scrollback replay, then daemon snapshot reattach', async () => {
+      // Source: same alt-screen Claude session as above.
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      await emulator.write('$ claude\r\n')
+      await emulator.write('\x1b[?1049h\x1b[H')
+      await emulator.write('Claude Code v2.1.126\r\n')
+      await emulator.write('Opus 4.7 · API Usage Billing\r\n')
+      await emulator.write('~/orca/workspaces/orca/Chimaera\r\n')
+      await emulator.write('\r\n')
+      await emulator.write('> ')
+      const srcSnapshot = emulator.getSnapshot()
+
+      // Step 1: restoreScrollbackBuffers replays the LOCAL saved xterm buffer
+      // (same data as the daemon's serialize, since both sides come from the
+      // same bytes), followed by POST_REPLAY_MODE_RESET.
+      //   Local serialized buffer = `snapshotAnsi` (what the renderer's
+      //   SerializeAddon would have produced when Orca saved layout state).
+      const POST_REPLAY_MODE_RESET =
+        '\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?2004l'
+      // Step 2: reattach path — pty-connection.ts:587 — clear then write
+      // `rehydrateSequences + snapshotAnsi`, then POST_REPLAY_FOCUS_REPORTING_RESET.
+      const POST_REPLAY_FOCUS_REPORTING_RESET = '\x1b[?25h\x1b[?1004l'
+      const snapshotPayload = srcSnapshot.rehydrateSequences + srcSnapshot.snapshotAnsi
+
+      const replayTerm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+      await new Promise<void>((resolve) =>
+        replayTerm.write(srcSnapshot.snapshotAnsi + POST_REPLAY_MODE_RESET, () => resolve())
+      )
+      await new Promise<void>((resolve) =>
+        replayTerm.write(
+          `\x1b[2J\x1b[3J\x1b[H${snapshotPayload}${POST_REPLAY_FOCUS_REPORTING_RESET}`,
+          () => resolve()
+        )
+      )
+
+      expect(replayTerm.buffer.active.type).toBe('alternate')
+      expect({
+        x: replayTerm.buffer.active.cursorX,
+        y: replayTerm.buffer.active.cursorY
+      }).toEqual({ x: 2, y: 4 })
+      replayTerm.dispose()
     })
   })
 })

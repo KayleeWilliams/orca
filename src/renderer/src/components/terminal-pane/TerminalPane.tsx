@@ -771,7 +771,21 @@ export default function TerminalPane({
             serialized = best
           }
           if (serialized.length > 0) {
-            buffers[leafId] = serialized
+            // Why absolute cursor tail: SerializeAddon emits a relative
+            // cursor-move tail (`\x1b[NA\x1b[MD`) computed from the last
+            // content cell it serialized to the terminal's real cursor.
+            // That math drifts when a TUI drew rows out of visual order
+            // (input prompt, then border below, then cursor moved back up
+            // to prompt) — replay lands the cursor on the border row
+            // instead of the prompt. An absolute `CSI row;col H`
+            // appended after the SerializeAddon tail overrides whatever
+            // relative move it produced and places the cursor exactly
+            // where xterm had it at capture time. 1-indexed per CUP;
+            // buffer API is 0-indexed.
+            const activeBuffer = pane.terminal.buffer.active
+            const cursorRow = activeBuffer.cursorY + 1
+            const cursorCol = activeBuffer.cursorX + 1
+            buffers[leafId] = `${serialized}\x1b[${cursorRow};${cursorCol}H`
           }
         } catch {
           // Serialization failure for one pane should not block others.
