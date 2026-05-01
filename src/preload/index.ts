@@ -9,6 +9,7 @@ import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type {
   BaseRefDefaultResult,
+  CreateWorktreeArgs,
   CustomPetModel,
   FsChangedPayload,
   GitHubAssignableUser,
@@ -247,18 +248,36 @@ const api = {
     }
   },
 
+  sparsePresets: {
+    list: (args: { repoId: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('sparsePresets:list', args),
+
+    save: (args: {
+      repoId: string
+      id?: string
+      name: string
+      directories: string[]
+    }): Promise<unknown> => ipcRenderer.invoke('sparsePresets:save', args),
+
+    remove: (args: { repoId: string; presetId: string }): Promise<void> =>
+      ipcRenderer.invoke('sparsePresets:remove', args),
+
+    onChanged: (callback: (data: { repoId: string }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { repoId: string }) =>
+        callback(data)
+      ipcRenderer.on('sparsePresets:changed', listener)
+      return () => ipcRenderer.removeListener('sparsePresets:changed', listener)
+    }
+  },
+
   worktrees: {
     list: (args: { repoId: string }): Promise<unknown[]> =>
       ipcRenderer.invoke('worktrees:list', args),
 
     listAll: (): Promise<unknown[]> => ipcRenderer.invoke('worktrees:listAll'),
 
-    create: (args: {
-      repoId: string
-      name: string
-      baseBranch?: string
-      setupDecision?: 'inherit' | 'run' | 'skip'
-    }): Promise<unknown> => ipcRenderer.invoke('worktrees:create', args),
+    create: (args: CreateWorktreeArgs): Promise<unknown> =>
+      ipcRenderer.invoke('worktrees:create', args),
 
     resolvePrBase: (args: {
       repoId: string
@@ -1107,6 +1126,11 @@ const api = {
       connectionId?: string
     }): Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }> =>
       ipcRenderer.invoke('fs:readFile', args),
+    listMarkdownDocuments: (args: {
+      rootPath: string
+      connectionId?: string
+    }): Promise<{ filePath: string; relativePath: string; basename: string; name: string }[]> =>
+      ipcRenderer.invoke('fs:listMarkdownDocuments', args),
     writeFile: (args: {
       filePath: string
       content: string

@@ -8,6 +8,7 @@ import type {
   BrowserSessionProfileSource,
   ClaudeRateLimitAccountsState,
   CodexRateLimitAccountsState,
+  CreateWorktreeArgs,
   CreateWorktreeResult,
   CustomPetModel,
   DirEntry,
@@ -37,6 +38,7 @@ import type {
   LinearLabel,
   LinearMember,
   LinearTeam,
+  MarkdownDocument,
   GitHubIssueUpdate,
   NotificationDispatchRequest,
   NotificationDispatchResult,
@@ -46,6 +48,7 @@ import type {
   PRComment,
   PRInfo,
   Repo,
+  SparsePreset,
   SearchOptions,
   SearchResult,
   StatsSummary,
@@ -329,15 +332,21 @@ export type PreloadApi = {
     searchBaseRefs: (args: { repoId: string; query: string; limit?: number }) => Promise<string[]>
     onChanged: (callback: () => void) => () => void
   }
+  sparsePresets: {
+    list: (args: { repoId: string }) => Promise<SparsePreset[]>
+    save: (args: {
+      repoId: string
+      id?: string
+      name: string
+      directories: string[]
+    }) => Promise<SparsePreset>
+    remove: (args: { repoId: string; presetId: string }) => Promise<void>
+    onChanged: (callback: (data: { repoId: string }) => void) => () => void
+  }
   worktrees: {
     list: (args: { repoId: string }) => Promise<Worktree[]>
     listAll: () => Promise<Worktree[]>
-    create: (args: {
-      repoId: string
-      name: string
-      baseBranch?: string
-      setupDecision?: 'inherit' | 'run' | 'skip'
-    }) => Promise<CreateWorktreeResult>
+    create: (args: CreateWorktreeArgs) => Promise<CreateWorktreeResult>
     resolvePrBase: (args: {
       repoId: string
       prNumber: number
@@ -636,6 +645,10 @@ export type PreloadApi = {
       filePath: string
       connectionId?: string
     }) => Promise<{ content: string; isBinary: boolean; isImage?: boolean; mimeType?: string }>
+    listMarkdownDocuments: (args: {
+      rootPath: string
+      connectionId?: string
+    }) => Promise<MarkdownDocument[]>
     writeFile: (args: { filePath: string; content: string; connectionId?: string }) => Promise<void>
     createFile: (args: { filePath: string; connectionId?: string }) => Promise<void>
     createDir: (args: { dirPath: string; connectionId?: string }) => Promise<void>

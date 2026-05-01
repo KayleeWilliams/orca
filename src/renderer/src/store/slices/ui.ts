@@ -177,8 +177,6 @@ export type UISlice = {
   ) => void
   markOrcaHookRepoAlwaysTrusted: (repoId: string) => void
   clearOrcaHookTrustForRepo: (repoId: string) => void
-  searchQuery: string
-  setSearchQuery: (q: string) => void
   groupBy: 'none' | 'repo' | 'pr-status'
   setGroupBy: (g: UISlice['groupBy']) => void
   sortBy: 'name' | 'smart' | 'recent' | 'repo'
@@ -434,9 +432,6 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       window.api.ui.set({ trustedOrcaHooks: next }).catch(console.error)
       return { trustedOrcaHooks: next }
     }),
-
-  searchQuery: '',
-  setSearchQuery: (q) => set({ searchQuery: q }),
 
   groupBy: 'none',
   // Why: group keys are mode-specific (e.g. repo id vs PR status), so
