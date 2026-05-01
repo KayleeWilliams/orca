@@ -99,7 +99,8 @@ export default function CreateFromTab({
     rememberedSubTab,
     setRememberedSubTab,
     fetchWorkItems,
-    getCachedWorkItems
+    getCachedWorkItems,
+    getWorkItemsSourcesAndError
   } = useAppStore(
     useShallow((s) => ({
       activeRepoId: s.activeRepoId,
@@ -110,7 +111,8 @@ export default function CreateFromTab({
       rememberedSubTab: s.createFromSubTab,
       setRememberedSubTab: s.setCreateFromSubTab,
       fetchWorkItems: s.fetchWorkItems,
-      getCachedWorkItems: s.getCachedWorkItems
+      getCachedWorkItems: s.getCachedWorkItems,
+      getWorkItemsSourcesAndError: s.getWorkItemsSourcesAndError
     }))
   )
 
@@ -331,6 +333,18 @@ export default function CreateFromTab({
           return
         }
         setIssueItems(items.filter((i) => i.type === 'issue').slice(0, ISSUE_LIST_LIMIT))
+        // Why: partial failures (e.g. a 403 on a private upstream's issues)
+        // must surface here, otherwise the subtab shows an empty list and
+        // re-creates the silent-wrongness the parent feature aims to eliminate.
+        // fetchWorkItems stores envelope-level errors on the cache entry; read
+        // them via the selector so the banner surfaces rather than the subtab
+        // silently showing no items. This branch is mutually exclusive with the
+        // .catch below: a cached error implies the IPC call resolved, so
+        // there's no double-surface risk between the two setIssueError paths.
+        const { error } = getWorkItemsSourcesAndError(selectedRepo.path, effectiveLimit, q)
+        if (error) {
+          setIssueError(error.message)
+        }
         setIssueLoading(false)
       })
       .catch((err) => {
@@ -352,7 +366,8 @@ export default function CreateFromTab({
     normalizedGhQuery.query,
     normalizedGhQuery.directNumber,
     fetchWorkItems,
-    getCachedWorkItems
+    getCachedWorkItems,
+    getWorkItemsSourcesAndError
   ])
 
   // ---------------------------------------------------------------------
