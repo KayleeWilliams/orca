@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Bell, GitMerge, LoaderCircle, CircleCheck, CircleX, Server, ServerOff } from 'lucide-react'
+import { GitMerge, LoaderCircle, CircleCheck, CircleX, Server, ServerOff } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import CacheTimer from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
@@ -26,8 +26,7 @@ import {
   checksLabel,
   CONFLICT_OPERATION_LABELS,
   EMPTY_TABS,
-  EMPTY_BROWSER_TABS,
-  FilledBellIcon
+  EMPTY_BROWSER_TABS
 } from './WorktreeCardHelpers'
 import { IssueSection, PrSection, CommentSection } from './WorktreeCardMeta'
 
@@ -53,7 +52,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
   hintNumber
 }: WorktreeCardProps) {
   const openModal = useAppStore((s) => s.openModal)
-  const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
   const fetchIssue = useAppStore((s) => s.fetchIssue)
   const cardProps = useAppStore((s) => s.worktreeCardProperties)
@@ -317,16 +315,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
     })
   }, [worktree.id, worktree.displayName, worktree.linkedIssue, worktree.comment, openModal])
 
-  const handleToggleUnreadQuick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault()
-      event.stopPropagation()
-      updateWorktreeMeta(worktree.id, { isUnread: !worktree.isUnread })
-    },
-    [worktree.id, worktree.isUnread, updateWorktreeMeta]
-  )
-
-  const unreadTooltip = worktree.isUnread ? 'Mark read' : 'Mark unread'
+  // Why: the 'unread' card property is the user's opt-out. When off, we render
+  // as if the workspace is read so bold emphasis never appears — matching the
+  // old "hide the bell" behavior exactly. The persisted `worktree.isUnread`
+  // flag is unchanged; only the rendering changes.
+  const showUnreadEmphasis = cardProps.includes('unread') && worktree.isUnread
 
   const cardBody = (
     <div
@@ -367,41 +360,14 @@ const WorktreeCard = React.memo(function WorktreeCard({
         </div>
       )}
 
-      {/* Status indicator on the left */}
-      {(cardProps.includes('status') || cardProps.includes('unread')) && (
+      {/* Status indicator on the left.
+           Why: bold-for-unread carries the attention signal in the title row
+           now, so the rail only needs to render when the status dot is
+           enabled — the 'unread' property is intentionally excluded here. */}
+      {cardProps.includes('status') && (
         <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
-          {cardProps.includes('status') && (
-            <>
-              <StatusIndicator status={status} aria-hidden="true" />
-              <span className="sr-only">{getWorktreeStatusLabel(status)}</span>
-            </>
-          )}
-
-          {cardProps.includes('unread') && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleToggleUnreadQuick}
-                  className={cn(
-                    'group/unread flex size-4 cursor-pointer items-center justify-center rounded transition-all',
-                    'hover:bg-accent/80 active:scale-95',
-                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
-                  )}
-                  aria-label={worktree.isUnread ? 'Mark as read' : 'Mark as unread'}
-                >
-                  {worktree.isUnread ? (
-                    <FilledBellIcon className="size-[13px] text-amber-500 drop-shadow-sm" />
-                  ) : (
-                    <Bell className="size-3 text-muted-foreground/40 opacity-0 group-hover:opacity-100 group-hover/unread:opacity-100 transition-opacity" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>
-                <span>{unreadTooltip}</span>
-              </TooltipContent>
-            </Tooltip>
-          )}
+          <StatusIndicator status={status} aria-hidden="true" />
+          <span className="sr-only">{getWorktreeStatusLabel(status)}</span>
         </div>
       )}
 
@@ -427,7 +393,23 @@ const WorktreeCard = React.memo(function WorktreeCard({
               </Tooltip>
             )}
 
-            <div className="text-[12px] font-semibold text-foreground truncate leading-tight">
+            {/* Why: bold = unread is the single attention signal on this
+                 card, mirroring DashboardAgentRow.tsx:262. The base class
+                 drops the always-on font-semibold that was safe when a
+                 separate bell carried the signal; now the title IS the
+                 signal, so it must de-bold on read cards. */}
+            <div
+              className={cn(
+                'text-[12px] truncate leading-tight',
+                showUnreadEmphasis
+                  ? 'font-semibold text-foreground'
+                  : 'font-normal text-muted-foreground'
+              )}
+            >
+              {/* Why: the card root is a non-interactive <div>, so aria-label
+                   on it is announced inconsistently across screen readers.
+                   A visible-text prefix inside the accessible name is reliable. */}
+              {showUnreadEmphasis && <span className="sr-only">Unread: </span>}
               {worktree.displayName}
             </div>
 
@@ -505,7 +487,19 @@ const WorktreeCard = React.memo(function WorktreeCard({
           {repo && !hideRepoBadge && (
             <div className="flex items-center gap-1.5 shrink-0 px-1.5 py-0.5 rounded-[4px] bg-accent border border-border dark:bg-accent/50 dark:border-border/60">
               <div className="size-1.5 rounded-full" style={{ backgroundColor: repo.badgeColor }} />
-              <span className="text-[10px] font-semibold text-foreground truncate max-w-[6rem] leading-none lowercase">
+              {/* Why: repo label tracks the title's weight. Keeps
+                   text-foreground on the read state (not muted) because this
+                   label sits on a tinted bg-accent chip — muting it would leave
+                   it nearly invisible; the weight change alone restores
+                   hierarchy against the title. */}
+              <span
+                className={cn(
+                  'text-[10px] truncate max-w-[6rem] leading-none lowercase',
+                  showUnreadEmphasis
+                    ? 'font-semibold text-foreground'
+                    : 'font-normal text-foreground'
+                )}
+              >
                 {repo.displayName}
               </span>
             </div>
