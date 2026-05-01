@@ -339,12 +339,15 @@ if (legacyAdapters.length > 0) {
 
 6. **Probe-to-discovery race on Tier 2 — mandatory post-discovery sweep.** Between `processLegacyVersion` returning a wrapped adapter with `liveCount > 0` and `DaemonPtyRouter.discoverLegacySessions` completing, the legacy daemon's last session could exit. In that window, the router never registers any session on the legacy adapter → `onExit` never fires on it → drain never triggers. Without a sweep, the legacy daemon persists idle and leaking fds for the rest of this app session (potentially days for always-on users); Tier 1 only catches it on the next launch.
 
-**Required (not optional):** after `discoverLegacySessions` completes, iterate `this.legacy`. For each adapter where no entry in `this.sessionAdapters` maps to it (use `hasActiveSessionsOn(adapter)` — it already exists for the drain path), remove the adapter from `this.legacy`, tear down its per-adapter unsubscribers, and invoke the same `onLegacyDrained(adapter)` callback used by the runtime drain path. This closes the race synchronously on startup.
+**Required (not optional):** after `discoverLegacySessions` completes, iterate `this.legacy`. For each adapter where discovery succeeded and no entry in `this.sessionAdapters` maps to it (use `hasActiveSessionsOn(adapter)` — it already exists for the drain path), remove the adapter from `this.legacy`, tear down its per-adapter unsubscribers, and invoke the same `onLegacyDrained(adapter)` callback used by the runtime drain path. This closes the race synchronously on startup.
+
+If `discoverLegacySessions` catches a `listProcesses` error for an adapter, mark that adapter as `discoveryFailed` and exclude it from both the post-discovery sweep and runtime drain. Reason: the startup probe already proved the daemon had live sessions; a transient discovery RPC failure must not be reinterpreted as "no live sessions" and used to kill the daemon. Leaking that one legacy daemon until the next app launch is acceptable; killing live work is not.
 
 ```ts
 // DaemonPtyRouter — call after discoverLegacySessions finishes populating sessionAdapters.
 sweepDrainedLegacyAdapters(): void {
   for (const adapter of [...this.legacy]) {
+    if (this.discoveryFailedAdapters.has(adapter)) continue
     if (this.hasActiveSessionsOn(adapter)) continue
     this.legacy = this.legacy.filter((a) => a !== adapter)
     const subs = this.unsubscribersByAdapter.get(adapter)
@@ -402,6 +405,7 @@ Drain hook behaviors:
 - **Post-drain `listProcesses`** — assert the drained adapter is not queried (removed from `allAdapters()` iteration). Prevents spurious errors from a dead socket.
 - **Re-entrancy guard** — synthesize a double-exit event for the same session id. Assert `onLegacyDrained` fires at most once.
 - **Post-discovery sweep** — have `discoverLegacySessions` find no sessions for a wrapped legacy adapter. Assert `sweepDrainedLegacyAdapters()` removes that adapter and invokes `onLegacyDrained` exactly once.
+- **Discovery failure is conservative** — make `listProcesses` reject for a wrapped legacy adapter. Assert `sweepDrainedLegacyAdapters()` does not drain it, and a later exit event from that adapter also does not invoke `onLegacyDrained`.
 
 ### Unit tests — `daemon-health.test.ts`
 
@@ -441,6 +445,7 @@ Drain hook behaviors:
 | `listSessions` on a v1 daemon behaves differently than v4. | `cleanupDaemonForProtocol` already works across all versions today — that's its entire design (`daemon-init.ts:242`, accepts `protocolVersion` arg). We're reusing that proven path. `listSessions` has been stable since v1 (it's one of the first RPCs defined — see `daemon-server.ts` handlers). |
 | Probe RPC hangs indefinitely on a wedged daemon, blocking startup. | `DaemonClient` enforces `CONNECT_TIMEOUT_MS=5000` and `REQUEST_TIMEOUT_MS=30000` (`client.ts:8-9`). Worst case per version: ~35s for the probe; if the cleanup path also hangs on the same wedged daemon, the combined worst case per version is ~100s. Parallel across versions caps total at that per-version figure. |
 | Startup latency regression from parallel cleanup. | Benchmark before merge: time from `app.on('ready')` to first IPC on a machine with 3 planted legacy daemons. Target: < 2s additional latency vs baseline in the happy path (daemons present and responsive). Document expected worst-case of 35s when all three are wedged. |
+| `discoverLegacySessions` fails after the startup probe saw live sessions. | Mark that adapter as discovery-failed and exclude it from sweep/drain for this app session. Tier 1 can retry on next launch; the zero-regression priority is preserving live work. |
 | Legacy adapter's `DaemonClient` disconnect races with the `shutdown` RPC inside `cleanupDaemonForProtocol`. | `cleanupDaemonForProtocol` creates its own client (`daemon-init.ts:269`). The probe client opened in `processLegacyVersion` is disconnected in `finally` before cleanup runs. No shared connection. |
 | Future protocol bump to v5 accidentally leaves v4 missing from `PREVIOUS_DAEMON_PROTOCOL_VERSIONS`. | Unit test in `types.test.ts` (add if not present): asserts `PREVIOUS_DAEMON_PROTOCOL_VERSIONS` contains every integer from 1 to `PROTOCOL_VERSION - 1`. Forces discipline at version-bump time. |
 | Two Orca processes racing on the same legacy socket during a user-initiated reinstall. | The app already has a single-instance lock (Electron's `requestSingleInstanceLock`). Legacy cleanup inherits that lock's exclusivity — not additive risk. |
