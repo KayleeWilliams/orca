@@ -1,5 +1,6 @@
 import type { DropZone, ManagedPaneInternal, PaneStyleOptions } from './pane-manager-types'
 import { createDivider } from './pane-divider'
+import { disposeWebgl, attachWebgl } from './pane-lifecycle'
 
 export { findLineByContent, captureScrollState, restoreScrollState } from './pane-scroll'
 
@@ -27,12 +28,6 @@ function getProposedDimensions(pane: ManagedPaneInternal): { cols: number; rows:
 // viewportY across reflows — see scroll-reflow.test.ts "reference: undisturbed".
 // A plain fit() is all we need during sidebar drags, divider drags, and window
 // resizes. This matches how Superset and VSCode handle the same cases.
-//
-// pendingSplitScrollState is the one case where fit() alone isn't enough:
-// wrapInSplit() reparents the container, which makes the browser reset
-// scrollTop to 0 asynchronously. splitPane captures the pre-split state and
-// scheduleSplitScrollRestore owns the authoritative restore on a timer, so
-// safeFit here just fits and lets the scheduled restore do its job.
 export function safeFit(pane: ManagedPaneInternal): void {
   try {
     const dims = getProposedDimensions(pane)
@@ -40,29 +35,6 @@ export function safeFit(pane: ManagedPaneInternal): void {
       // Why: divider drags fire refits every frame, but most frames do not
       // cross a cell boundary. Skipping those avoids FitAddon.clear()+refresh()
       // churn, which was causing visible terminal blinking while resizing.
-      //
-      // Why: wrapInSplit() reparents the pane's container, which can leave
-      // the WebGL canvas stale even when proposed dimensions match current
-      // (the browser detaches and reattaches the canvas during the DOM move).
-      // When pendingSplitScrollState is set we must force a fit + refresh so
-      // the WebGL renderer repaints. Without this, the pane appears blank
-      // until something forces a dimension change.
-      if (pane.pendingSplitScrollState) {
-        console.warn(
-          '[terminal] safeFit forcing fit+refresh during pending split for pane',
-          pane.id,
-          `— dims ${dims.cols}×${dims.rows} match current, webgl:`,
-          !!pane.webglAddon,
-          pane.debugLabel ? `(${pane.debugLabel})` : ''
-        )
-        pane.fitAddon.fit()
-        try {
-          pane.terminal.refresh(0, pane.terminal.rows - 1)
-        } catch {
-          /* ignore — terminal may not be fully initialised */
-        }
-        return
-      }
       return
     }
     pane.fitAddon.fit()
@@ -183,6 +155,17 @@ export function insertPaneNextTo(
   applyPaneFlexStyle(source.container)
   applyPaneFlexStyle(targetContainer)
 
+  // Why: dispose WebGL before reparenting so Chromium cannot silently
+  // invalidate the context during the DOM move (same as splitPane).
+  const sourceHadWebgl = !!source.webglAddon
+  const targetHadWebgl = !!target.webglAddon
+  if (sourceHadWebgl) {
+    disposeWebgl(source)
+  }
+  if (targetHadWebgl) {
+    disposeWebgl(target)
+  }
+
   // Replace target with the split in the DOM
   parent.replaceChild(split, targetContainer)
 
@@ -197,11 +180,14 @@ export function insertPaneNextTo(
     split.appendChild(source.container)
   }
 
-  // Refit both and refresh rendering surfaces — both panes were reparented
-  // into the new split wrapper, which can leave the WebGL canvas in a stale
-  // state (same mechanism as wrapInSplit; see refreshAfterReparent in
-  // pane-split-scroll.ts).
+  // Re-attach WebGL after the DOM has settled, then refit both panes.
   requestAnimationFrame(() => {
+    if (sourceHadWebgl && source.gpuRenderingEnabled && !source.webglDisabledAfterContextLoss) {
+      attachWebgl(source)
+    }
+    if (targetHadWebgl && target.gpuRenderingEnabled && !target.webglDisabledAfterContextLoss) {
+      attachWebgl(target)
+    }
     callbacks.safeFit(source)
     callbacks.safeFit(target)
     try {

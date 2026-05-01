@@ -1,13 +1,7 @@
 import type { ManagedPaneInternal, ScrollState } from './pane-manager-types'
 import { restoreScrollState } from './pane-scroll'
+import { attachWebgl } from './pane-lifecycle'
 
-// Why: wrapInSplit reparents the existing pane's container, which briefly
-// detaches the WebGL canvas from the DOM. The WebGL renderer's internal
-// render state can become stale after the re-attachment, leaving the canvas
-// blank even though the terminal buffer has data. This mirrors the explicit
-// refresh in resumeRendering() (pane-manager.ts) and the onContextLoss
-// handler (pane-lifecycle.ts) which address the same "frozen terminal"
-// symptom for analogous WebGL state transitions.
 function refreshAfterReparent(pane: ManagedPaneInternal): void {
   try {
     pane.terminal.refresh(0, pane.terminal.rows - 1)
@@ -20,11 +14,17 @@ function refreshAfterReparent(pane: ManagedPaneInternal): void {
 // scroll position (browser clears scrollTop on DOM move). This schedules a
 // two-phase restore: an early double-rAF (~32ms) to minimise the visible
 // flash, plus a 200ms authoritative restore that also clears the scroll lock.
+//
+// When `reattachWebgl` is true, the 200ms timer re-creates the WebGL addon
+// that splitPane disposed before wrapInSplit. Waiting 200ms ensures the DOM
+// has fully settled — attaching WebGL to a canvas that's mid-reparent can
+// silently produce a dead context.
 export function scheduleSplitScrollRestore(
   getPaneById: (id: number) => ManagedPaneInternal | undefined,
   paneId: number,
   scrollState: ScrollState,
-  isDestroyed: () => boolean
+  isDestroyed: () => boolean,
+  reattachWebgl?: boolean
 ): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -49,6 +49,16 @@ export function scheduleSplitScrollRestore(
     }
     live.pendingSplitScrollState = null
     restoreScrollState(live.terminal, scrollState)
+
+    // Why: splitPane() disposed WebGL before wrapInSplit to prevent Chromium
+    // from silently invalidating the context during the DOM reparent. Now that
+    // layout has settled, re-attach a fresh WebGL addon so the pane returns to
+    // GPU rendering. The refresh after attachment paints the buffer content
+    // that accumulated while the pane was on the DOM fallback renderer.
+    if (reattachWebgl && live.gpuRenderingEnabled && !live.webglDisabledAfterContextLoss) {
+      attachWebgl(live)
+    }
+
     refreshAfterReparent(live)
   }, 200)
 }

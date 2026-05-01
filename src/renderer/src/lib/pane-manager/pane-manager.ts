@@ -122,6 +122,13 @@ export class PaneManager {
     // the authoritative restore to the timeout below.
     existing.pendingSplitScrollState = scrollState
 
+    // Why: Chromium can silently invalidate a WebGL context when its canvas
+    // moves in the DOM without firing contextlost. Dispose before reparent,
+    // re-attach after layout settles (scheduleSplitScrollRestore 200ms timer).
+    const hadWebgl = !!existing.webglAddon
+    if (hadWebgl) {
+      disposeWebgl(existing)
+    }
     wrapInSplit(existing.container, newPane.container, isVertical, divider, opts)
 
     openTerminal(newPane)
@@ -144,7 +151,8 @@ export class PaneManager {
       (id) => this.panes.get(id),
       existing.id,
       scrollState,
-      () => this.destroyed
+      () => this.destroyed,
+      hadWebgl
     )
 
     return toPublicPane(newPane)
