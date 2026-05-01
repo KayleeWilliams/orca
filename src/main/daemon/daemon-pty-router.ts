@@ -6,6 +6,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
   private unsubscribersByAdapter = new Map<DaemonPtyAdapter, (() => void)[]>()
+  private discoveryFailedAdapters = new Set<DaemonPtyAdapter>()
   private onLegacyDrained?: (adapter: DaemonPtyAdapter) => void
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
@@ -42,10 +43,12 @@ export class DaemonPtyRouter implements IPtyProvider {
     for (const adapter of this.legacy) {
       try {
         const sessions = await adapter.listProcesses()
+        this.discoveryFailedAdapters.delete(adapter)
         for (const session of sessions) {
           this.sessionAdapters.set(session.id, adapter)
         }
       } catch (error) {
+        this.discoveryFailedAdapters.add(adapter)
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
       }
     }
@@ -204,10 +207,15 @@ export class DaemonPtyRouter implements IPtyProvider {
   private drainLegacyAdapterIfEmpty(adapter: DaemonPtyAdapter): void {
     // Why: only previous-version adapters are cleaned up here. The current
     // daemon lifecycle must remain byte-identical when its sessions exit.
-    if (!this.legacy.includes(adapter) || this.hasActiveSessionsOn(adapter)) {
+    if (
+      !this.legacy.includes(adapter) ||
+      this.discoveryFailedAdapters.has(adapter) ||
+      this.hasActiveSessionsOn(adapter)
+    ) {
       return
     }
     this.legacy = this.legacy.filter((a) => a !== adapter)
+    this.discoveryFailedAdapters.delete(adapter)
     this.unsubscribeAdapter(adapter)
     this.onLegacyDrained?.(adapter)
   }

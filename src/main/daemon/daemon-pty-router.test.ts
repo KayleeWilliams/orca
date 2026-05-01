@@ -11,7 +11,8 @@ type AdapterMock = DaemonPtyAdapter & {
 function createAdapter(
   label: string,
   sessions: string[] = [],
-  reconcileResult?: { alive: string[]; killed: string[] }
+  reconcileResult?: { alive: string[]; killed: string[] },
+  opts: { listProcessesRejects?: boolean } = {}
 ): AdapterMock {
   const writes: { id: string; data: string }[] = []
   const dataListeners: ((payload: { id: string; data: string }) => void)[] = []
@@ -22,13 +23,16 @@ function createAdapter(
       sessions.push(id)
       return { id }
     }),
-    listProcesses: vi.fn(async () =>
-      sessions.map((id) => ({
+    listProcesses: vi.fn(async () => {
+      if (opts.listProcessesRejects) {
+        throw new Error('discovery failed')
+      }
+      return sessions.map((id) => ({
         id,
         cwd: '',
         title: label
       }))
-    ),
+    }),
     write: vi.fn((id: string, data: string) => {
       writes.push({ id, data })
     }),
@@ -216,6 +220,23 @@ describe('DaemonPtyRouter', () => {
 
     expect(onLegacyDrained).toHaveBeenCalledTimes(1)
     expect(onLegacyDrained).toHaveBeenCalledWith(legacy)
+  })
+
+  it('does not drain an adapter when legacy discovery fails', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'], undefined, {
+      listProcessesRejects: true
+    })
+    const onLegacyDrained = vi.fn()
+    const router = new DaemonPtyRouter({ current, legacy: [legacy], onLegacyDrained })
+
+    await router.discoverLegacySessions()
+    router.sweepDrainedLegacyAdapters()
+    legacy.emitExit('legacy-session', 0)
+
+    expect(onLegacyDrained).not.toHaveBeenCalled()
+    await router.listProcesses()
+    expect(legacy.listProcesses).toHaveBeenCalledTimes(2)
   })
 
   it('merges startup reconciliation and updates route mappings', async () => {
