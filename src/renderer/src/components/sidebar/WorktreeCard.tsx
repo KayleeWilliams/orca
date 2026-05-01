@@ -365,7 +365,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
            now, so the rail only needs to render when the status dot is
            enabled — the 'unread' property is intentionally excluded here. */}
       {cardProps.includes('status') && (
-        <div className="flex flex-col items-center justify-start pt-[2px] gap-2 shrink-0">
+        <div className="flex items-center justify-start pt-[2px] shrink-0">
           <StatusIndicator status={status} aria-hidden="true" />
           <span className="sr-only">{getWorktreeStatusLabel(status)}</span>
         </div>
@@ -494,10 +494,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
                    hierarchy against the title. */}
               <span
                 className={cn(
-                  'text-[10px] truncate max-w-[6rem] leading-none lowercase',
-                  showUnreadEmphasis
-                    ? 'font-semibold text-foreground'
-                    : 'font-normal text-foreground'
+                  'text-[10px] truncate max-w-[6rem] leading-none lowercase text-foreground',
+                  showUnreadEmphasis ? 'font-semibold' : 'font-normal'
                 )}
               >
                 {repo.displayName}
