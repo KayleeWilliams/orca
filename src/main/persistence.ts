@@ -166,6 +166,10 @@ export class Store {
             // array when the experimental toggle is true; the flag prevents
             // re-firing so a deliberate uncheck from the Workspaces view
             // options menu sticks across restarts.
+            // The flag is stamped on every successful load — including when
+            // the experiment is off — so that a later flip-on is handled by
+            // the renderer's ExperimentalPane handler rather than re-firing
+            // this migration.
             const rawCardProps = parsed.ui?.worktreeCardProperties
             const inlineAgentsMigrated = parsed.ui?._inlineAgentsDefaultedForExperiment === true
             const experimentOn = parsed.settings?.experimentalAgentDashboard === true
@@ -174,9 +178,10 @@ export class Store {
               experimentOn &&
               Array.isArray(rawCardProps) &&
               !rawCardProps.includes('inline-agents')
-            const migratedCardProps = needsInlineAgentsMigration
-              ? [...(rawCardProps ?? []), 'inline-agents' as const]
-              : undefined
+            const migratedCardProps =
+              needsInlineAgentsMigration && Array.isArray(rawCardProps)
+                ? [...rawCardProps, 'inline-agents' as const]
+                : undefined
             return {
               ...defaults.ui,
               ...parsed.ui,
