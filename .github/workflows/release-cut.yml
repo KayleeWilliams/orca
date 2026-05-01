@@ -8,7 +8,7 @@ name: Cut Release
 # Flow:
 #   1. Resolve `ref` to a SHA.
 #   2. Read the latest stable release from GitHub.
-#   3. Compute the next version from `kind` (rc | patch | minor | major).
+#   3. Compute the next version from `kind` (rc | patch | minor | major | promote).
 #   4. For stable kinds, REFUSE if the new version is <= the latest stable.
 #      This is the only guard electron-updater actually needs — it compares
 #      semver within a channel, so a regressing "latest" is the one thing
@@ -17,12 +17,19 @@ name: Cut Release
 #   6. If ref was the tip of origin/main, fast-forward main to include the
 #      version-bump commit so developers see the right version locally.
 #   7. Invoke release.yml to build and publish artifacts.
+#
+# Promote kind:
+#   Takes a finished RC tag (e.g. v1.3.26-rc.2) via `ref` and ships the same
+#   commit as stable (v1.3.26). Electron bakes the version string into the
+#   installer, so we still rebuild — but from the exact tree QA signed off
+#   on, with only package.json's version field changed. main is NOT pushed
+#   for promotions; the stable tag is detached, same as any off-main release.
 
 on:
   workflow_dispatch:
     inputs:
       kind:
-        description: Release kind
+        description: Release kind (promote = ship an existing RC as stable)
         required: true
         type: choice
         default: rc
@@ -31,8 +38,9 @@ on:
           - patch
           - minor
           - major
+          - promote
       ref:
-        description: Branch, tag, or SHA to release from (default main)
+        description: Branch, tag, or SHA to release from (for promote, leave as `main` to auto-pick the latest unpromoted RC, or pass an RC tag like v1.3.26-rc.2)
         required: false
         type: string
         default: main
@@ -54,7 +62,10 @@ jobs:
       - name: Checkout ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          # Why: always fetch full history so the promote auto-pick step
+          # below can scan every `v*-rc.*` tag. For non-promote kinds this
+          # is the same behavior the workflow has always had.
+          ref: ${{ inputs.kind == 'promote' && inputs.ref == 'main' && 'main' || inputs.ref }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -67,11 +78,108 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Auto-pick RC to promote
+        id: autopick
+        if: inputs.kind == 'promote' && inputs.ref == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Why: make the common case ("promote the RC QA just finished")
+          # a one-click operation. Users can still type an explicit RC
+          # tag into `ref` to promote an older one — this only kicks in
+          # when they left it at the default.
+          #
+          # Pick rule: highest semver RC tag strictly greater than the
+          # latest stable. "Unpromoted" = no stable tag at the same
+          # base version yet. Sorted via `sort -V` on ubuntu which is
+          # semver-aware for dotted numeric versions.
+          latest_stable="$(gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts \
+              --limit 50 \
+              --json tagName \
+              --jq '[.[] | .tagName | select(test("-rc\\.") | not)] | .[0] // ""')"
+          latest_stable_plain="${latest_stable#v}"
+          : "${latest_stable_plain:=0.0.0}"
+
+          # Candidate RCs: published (non-draft) releases with -rc. suffix.
+          # We read from GitHub releases rather than git tags so an RC
+          # whose build failed (still a draft) is excluded automatically.
+          candidates="$(gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts \
+              --limit 50 \
+              --json tagName,isPrerelease \
+              --jq '.[] | select(.tagName | test("-rc\\.")) | .tagName')"
+
+          best=""
+          best_base=""
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            base="${tag#v}"
+            base="${base%%-rc.*}"
+            # Skip if a stable at this base already exists (already promoted).
+            if gh release view "v$base" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              continue
+            fi
+            # Skip if base <= latest_stable (stale RC from a shipped series).
+            if ! node -e '
+              const a = process.argv[1].split(".").map(Number);
+              const b = process.argv[2].split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if ((a[i]||0) > (b[i]||0)) process.exit(0);
+                if ((a[i]||0) < (b[i]||0)) process.exit(1);
+              }
+              process.exit(1);
+            ' "$base" "$latest_stable_plain"; then
+              continue
+            fi
+            # Keep the highest RC-number for the highest base.
+            if [[ -z "$best" ]] \
+               || [[ "$(printf '%s\n%s\n' "$best_base" "$base" | sort -V | tail -n1)" != "$best_base" ]] \
+               || { [[ "$best_base" == "$base" ]] && [[ "$(printf '%s\n%s\n' "$best" "$tag" | sort -V | tail -n1)" == "$tag" ]]; }; then
+              best="$tag"
+              best_base="$base"
+            fi
+          done <<< "$candidates"
+
+          if [[ -z "$best" ]]; then
+            echo "::error::promote with ref=main found no unpromoted RC greater than latest stable ($latest_stable_plain). Cut a new RC first, or pass an explicit RC tag as ref." >&2
+            exit 1
+          fi
+
+          echo "Auto-picked RC to promote: $best (latest stable: $latest_stable_plain)"
+          echo "picked=$best" >>"$GITHUB_OUTPUT"
+
+          # Re-checkout onto the picked RC tag so subsequent steps see
+          # the RC tree, not main. Fetch-depth: 0 above guarantees we
+          # have the tag locally.
+          git fetch origin "refs/tags/$best:refs/tags/$best" --quiet
+          git checkout "$best"
+
       - name: Resolve ref SHA
         id: resolve
+        env:
+          KIND: ${{ inputs.kind }}
+          # Why: if auto-pick ran, use its chosen RC tag as the effective
+          # ref for downstream steps. Otherwise fall through to the
+          # user-supplied ref.
+          REF: ${{ steps.autopick.outputs.picked || inputs.ref }}
         run: |
           sha="$(git rev-parse HEAD)"
           echo "sha=$sha" >>"$GITHUB_OUTPUT"
+          echo "ref=$REF" >>"$GITHUB_OUTPUT"
+
+          # Why: promote always ships a detached stable tag on top of an
+          # existing RC commit. Pushing main would rewrite main's version
+          # to the stable string and break the invariant that main's
+          # package.json matches the most-recent cut from main (the RC).
+          if [[ "$KIND" == "promote" ]]; then
+            echo "push_main=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Why: only push the version-bump commit back to main when the
           # caller is releasing the exact tip of main. For any older or
@@ -89,6 +197,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KIND: ${{ inputs.kind }}
+          # Why: for promote, this is either the user-supplied RC tag or
+          # the auto-picked one from the previous step. Either way, it's
+          # the effective ref.
+          REF: ${{ steps.resolve.outputs.ref }}
         run: |
           set -euo pipefail
 
@@ -178,6 +290,48 @@ jobs:
               # Updater-safety gate: stable must strictly increase.
               if ! semver_gt "$new" "$latest_stable"; then
                 echo "::error::Refusing to cut $KIND $new: not greater than latest stable $latest_stable." >&2
+                exit 1
+              fi
+              ;;
+            promote)
+              # Why: promotion ships an already-QA'd RC as stable by
+              # rebuilding the same commit with only package.json's
+              # version field changed (electron bakes version into the
+              # installer, so artifact copy is not an option).
+              #
+              # Require `ref` to point at an RC tag — promoting a branch
+              # or arbitrary SHA would silently pick up un-QA'd commits.
+              if [[ "$REF" != v*-rc.* ]]; then
+                echo "::error::promote requires ref to be an RC tag like v1.3.26-rc.2 (got: $REF)." >&2
+                exit 1
+              fi
+
+              # Require the RC release to exist and be published (not a
+              # draft). A draft means the rc build didn't finish, so we
+              # have no evidence QA exercised it.
+              rc_state="$(gh release view "$REF" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --json isDraft \
+                  --jq '.isDraft' 2>/dev/null || echo "missing")"
+              if [[ "$rc_state" == "missing" ]]; then
+                echo "::error::No GitHub release found for $REF. Promote only accepts RC tags that finished building." >&2
+                exit 1
+              fi
+              if [[ "$rc_state" == "true" ]]; then
+                echo "::error::RC release $REF is still a draft — its build did not finish publishing." >&2
+                exit 1
+              fi
+
+              # Strip the v prefix and -rc.N suffix: v1.3.26-rc.2 -> 1.3.26
+              new="${REF#v}"
+              new="${new%%-rc.*}"
+
+              # Updater-safety gate: same rule as patch/minor/major.
+              # Catches the case where someone tries to promote an RC
+              # that's already been superseded by a stable release in
+              # the same series.
+              if ! semver_gt "$new" "$latest_stable"; then
+                echo "::error::Refusing to promote $REF to $new: not greater than latest stable $latest_stable." >&2
                 exit 1
               fi
               ;;
