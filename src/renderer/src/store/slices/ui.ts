@@ -592,7 +592,12 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // they enable the experimental flag. Only an explicit Hide pet
         // dismissal persists a `false` value.
         petVisible: ui.petVisible ?? true,
-        customPetModels: Array.isArray(ui.customPetModels) ? ui.customPetModels : [],
+        // Why: drop pre-refactor GLB entries. The overlay now only renders
+        // <img>-compatible formats; leaving a .glb entry in the list would
+        // show a broken pet menu row that silently fails to render.
+        customPetModels: (Array.isArray(ui.customPetModels) ? ui.customPetModels : []).filter(
+          (m) => typeof m?.fileName === 'string' && !/\.glb$/i.test(m.fileName)
+        ),
         // Why: accept the persisted id if it matches the bundled default or a
         // known custom model; otherwise fall back so the overlay never
         // renders nothing (e.g. custom model was removed by another session).
@@ -604,7 +609,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           if (isBundledPetId(id)) {
             return id
           }
-          const custom = Array.isArray(ui.customPetModels) ? ui.customPetModels : []
+          const custom = (Array.isArray(ui.customPetModels) ? ui.customPetModels : []).filter(
+            (m) => typeof m?.fileName === 'string' && !/\.glb$/i.test(m.fileName)
+          )
           if (custom.some((m) => m.id === id)) {
             return id
           }
