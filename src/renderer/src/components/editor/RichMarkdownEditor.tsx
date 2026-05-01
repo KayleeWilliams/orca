@@ -26,6 +26,7 @@ import { createRichMarkdownKeyHandler } from './rich-markdown-key-handler'
 import { normalizeSoftBreaks } from './rich-markdown-normalize'
 import { autoFocusRichEditor } from './rich-markdown-auto-focus'
 import { handleRichMarkdownCut } from './rich-markdown-cut-handler'
+import { createMarkdownDocumentIndex, resolveMarkdownDocLink } from './markdown-doc-links'
 import { openHttpLink } from '@/lib/http-link-routing'
 import { toast } from 'sonner'
 import {
@@ -358,9 +359,9 @@ export default function RichMarkdownEditor({
     }
   }, [editor, filePath])
 
-  // Why: same pattern as Image storage above — the doc link NodeView reads the
-  // document list from storage to style resolved vs. missing links. A no-op
-  // transaction triggers ProseMirror to re-render the nodeViews with the new list.
+  // Why: the doc link NodeView reads the document list from storage to style
+  // resolved vs. missing links. ProseMirror may skip nodeView `update` callbacks
+  // on no-op transactions, so we also directly refresh the DOM classes.
   useEffect(() => {
     if (editor && markdownDocuments) {
       isApplyingProgrammaticUpdateRef.current = true
@@ -368,6 +369,15 @@ export default function RichMarkdownEditor({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ;(editor.storage as any).markdownDocLink.documents = markdownDocuments
         editor.view.dispatch(editor.state.tr)
+
+        const index = createMarkdownDocumentIndex(markdownDocuments)
+        editor.view.dom.querySelectorAll<HTMLElement>('.rich-markdown-doc-link').forEach((span) => {
+          const target = span.getAttribute('data-doc-link-target') ?? ''
+          const resolved = resolveMarkdownDocLink(target, index).status === 'resolved'
+          span.className = resolved
+            ? 'rich-markdown-doc-link'
+            : 'rich-markdown-doc-link rich-markdown-doc-link--missing'
+        })
       } finally {
         isApplyingProgrammaticUpdateRef.current = false
       }

@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { MarkdownDocument } from '../../../../shared/types'
 import {
   createMarkdownDocumentIndex,
@@ -13,6 +14,7 @@ const DOC_LINK_PLACEHOLDER_SUFFIX = ']]'
 const DOC_LINK_PATTERN = /\[\[([^[\]\r\n|]+)\]\]/g
 
 const docLinkAutoConvertKey = new PluginKey('docLinkAutoConvert')
+const docLinkInlinePreviewKey = new PluginKey('docLinkInlinePreview')
 
 function isDocLinkResolved(target: string, documents: MarkdownDocument[]): boolean {
   if (documents.length === 0) {
@@ -120,11 +122,40 @@ export const MarkdownDocLink = Node.create({
     }
   },
 
+  // Why: when the cursor is adjacent to a doc link atom and the user presses
+  // an arrow key toward it, dissolve the atom back to editable [[target]] text.
+  // Without this, atom nodes are un-enterable — the cursor jumps over them.
+  addKeyboardShortcuts() {
+    const dissolveDocLink = (direction: 'left' | 'right'): boolean => {
+      const { state, dispatch } = this.editor.view
+      const { $from } = state.selection
+      const adjacent = direction === 'left' ? $from.nodeBefore : $from.nodeAfter
+      if (!adjacent || adjacent.type.name !== 'markdownDocLink') {
+        return false
+      }
+      const target = typeof adjacent.attrs.target === 'string' ? adjacent.attrs.target : ''
+      const text = `[[${target}]]`
+      const nodeStart = direction === 'left' ? $from.pos - adjacent.nodeSize : $from.pos
+      const nodeEnd = nodeStart + adjacent.nodeSize
+      const tr = state.tr.replaceWith(nodeStart, nodeEnd, state.schema.text(text))
+      const cursorPos = direction === 'left' ? nodeStart + text.length - 2 : nodeStart + 2
+      tr.setSelection(TextSelection.create(tr.doc, cursorPos))
+      dispatch(tr)
+      return true
+    }
+
+    return {
+      ArrowLeft: () => dissolveDocLink('left'),
+      ArrowRight: () => dissolveDocLink('right')
+    }
+  },
+
   // Why: a ProseMirror plugin (not an input rule) so that [[target]] typed in
   // any order — brackets first then target, paste, etc. — converts to a doc
   // link node. Input rules only fire on sequential append at the cursor.
   addProseMirrorPlugins() {
     const nodeType = this.type
+    const storage = this.storage as { documents: MarkdownDocument[] }
     return [
       new Plugin({
         key: docLinkAutoConvertKey,
@@ -149,10 +180,10 @@ export const MarkdownDocLink = Node.create({
               const from = pos + match.index
               const to = from + match[0].length
 
-              // Why: skip matches where the cursor sits between [[ and ]].
-              // The user is still typing the target — converting now would
-              // swallow their in-progress text into an atomic node.
-              if (cursor > from && cursor < to) {
+              // Why: skip when the cursor is anywhere from just inside [[
+              // through the closing ]]. The inline preview decoration gives
+              // real-time resolution feedback while the user is still editing.
+              if (cursor > from && cursor <= to) {
                 continue
               }
 
@@ -163,6 +194,39 @@ export const MarkdownDocLink = Node.create({
           })
 
           return modified ? tr : null
+        }
+      }),
+
+      // Why: while the cursor is inside [[target]], the text hasn't converted
+      // to an atom node yet. This decoration gives real-time blue/grey feedback
+      // so the user knows whether the target resolves before moving the cursor out.
+      new Plugin({
+        key: docLinkInlinePreviewKey,
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = []
+            state.doc.descendants((node, pos) => {
+              if (node.type.name !== 'text' || !node.text) {
+                return
+              }
+              DOC_LINK_PATTERN.lastIndex = 0
+              let match: RegExpExecArray | null = null
+              while ((match = DOC_LINK_PATTERN.exec(node.text)) !== null) {
+                const target = getMarkdownDocLinkTarget(match[1])
+                if (!target) {
+                  continue
+                }
+                const from = pos + match.index
+                const to = from + match[0].length
+                const resolved = isDocLinkResolved(target, storage.documents)
+                const cls = resolved
+                  ? 'rich-markdown-doc-link-preview'
+                  : 'rich-markdown-doc-link-preview rich-markdown-doc-link-preview--missing'
+                decorations.push(Decoration.inline(from, to, { class: cls }))
+              }
+            })
+            return DecorationSet.create(state.doc, decorations)
+          }
         }
       })
     ]
