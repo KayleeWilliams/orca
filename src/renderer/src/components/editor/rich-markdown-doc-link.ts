@@ -73,6 +73,7 @@ export const MarkdownDocLink = Node.create({
         key: docLinkAutoConvertKey,
         appendTransaction(_transactions, _oldState, newState) {
           const { tr } = newState
+          const cursor = newState.selection.from
           let modified = false
 
           newState.doc.descendants((node, pos) => {
@@ -90,11 +91,15 @@ export const MarkdownDocLink = Node.create({
 
               const from = pos + match.index
               const to = from + match[0].length
-              const docLinkNode = nodeType.create({ target })
 
-              // Why: earlier replacements shift positions. Map through the
-              // transaction's current mapping so subsequent matches land at
-              // the correct offset.
+              // Why: skip matches where the cursor sits between [[ and ]].
+              // The user is still typing the target — converting now would
+              // swallow their in-progress text into an atomic node.
+              if (cursor > from && cursor < to) {
+                continue
+              }
+
+              const docLinkNode = nodeType.create({ target })
               tr.replaceWith(tr.mapping.map(from), tr.mapping.map(to), docLinkNode)
               modified = true
             }
