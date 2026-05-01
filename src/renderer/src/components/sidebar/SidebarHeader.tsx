@@ -68,7 +68,7 @@ const SidebarHeader = React.memo(function SidebarHeader() {
     : PROPERTY_OPTIONS.filter((opt) => opt.id !== 'inline-agents')
 
   return (
-    <div className="flex h-8 items-center justify-between px-2 mt-1 gap-2">
+    <div className="flex h-8 items-center justify-between px-2 gap-2">
       <span className="px-2 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80 select-none">
         Workspaces
       </span>
