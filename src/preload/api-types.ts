@@ -586,8 +586,8 @@ export type PreloadApi = {
   }
   pet: {
     importModel: () => Promise<CustomPetModel | null>
-    readModel: (id: string) => Promise<ArrayBuffer | null>
-    deleteModel: (id: string) => Promise<void>
+    readModel: (id: string, fileName: string) => Promise<ArrayBuffer | null>
+    deleteModel: (id: string, fileName: string) => Promise<void>
   }
   browser: BrowserApi
   hooks: {

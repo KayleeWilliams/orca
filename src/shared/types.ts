@@ -1075,12 +1075,10 @@ export type GlobalSettings = {
    *  takes effect on the next app launch. The in-pane status indicators and
    *  the cursor-agent hook path are unaffected by this toggle. */
   experimentalAgentDashboard: boolean
-  /** Experimental: floating animated pet overlay in the bottom-right corner.
-   *  Opt-in because it dynamically loads three.js + @react-three/fiber and a
-   *  GLB model; users who leave it off pay zero bytes — the PetOverlay is
-   *  never mounted and the three.js chunks are never imported. Unlike
-   *  experimentalAgentDashboard, toggling this takes effect immediately in
-   *  the current session (no relaunch) because it is purely renderer-side. */
+  /** Experimental: floating animated pet (claude.webp) in the bottom-right
+   *  corner. Opt-in because it's a cosmetic joke feature; users who leave it
+   *  off never mount the overlay. Toggling takes effect immediately in the
+   *  current session (no relaunch) because it is purely renderer-side. */
   experimentalPet: boolean
 }
 
@@ -1205,38 +1203,29 @@ export type PersistedUIState = {
    *  Absent = treated as true so existing users see the pet the first time
    *  they enable the experimental flag. */
   petVisible?: boolean
-  /** Which pet model is currently displayed. Stores a bundled id
-   *  ('gremlin' | 'dinosaur' | 'potted-plant' | 'sloth') or a custom model UUID. Unknown
-   *  ids fall back to the default at read time so removing a custom model the
-   *  user had selected doesn't leave the overlay rendering nothing. */
+  /** Active pet id: either 'default' (bundled claude.webp) or a custom
+   *  model UUID from customPetModels. Unknown ids fall back to 'default' at
+   *  read time so removing a custom model the user had selected doesn't
+   *  leave the overlay rendering nothing. */
   petModelId?: string
-  /** User-uploaded pet models. GLB bytes live under userData/pets/custom/;
-   *  this field is the metadata index. Keeping it here (vs a separate store)
-   *  means custom models ride the existing PersistedUIState save pipeline. */
+  /** User-uploaded pet images. Bytes live under userData/pets/custom/; this
+   *  field is the metadata index so custom pets ride the existing
+   *  PersistedUIState save pipeline. */
   customPetModels?: CustomPetModel[]
 }
 
-/** Metadata for a single user-uploaded GLB. The `id` is both the stable pet
- *  model id and (with `.glb` appended) the on-disk filename under
- *  userData/pets/custom/. Renderer never learns the absolute path — it asks
- *  main for the bytes via pet:read. */
-/** Discriminator for custom pet kinds:
- *  - 'glb': 3D GLB rendered via three.js in PetScene (supports drag-to-rotate).
- *  - 'image': 2D image (static or animated: png/jpg/webp/apng/gif/svg) rendered
- *    via a plain <img> tag in PetOverlay, skipping three.js entirely.
- *  Older entries without this field are implicitly 'glb' for back-compat.
- */
-export type CustomPetKind = 'glb' | 'image'
-
+/** Metadata for a user-uploaded pet image. `id` is the stable identifier; the
+ *  on-disk filename (preserving the original extension) lives in `fileName`.
+ *  The renderer never learns the absolute path — it asks main for the bytes
+ *  via pet:read using (id, fileName). */
 export type CustomPetModel = {
   id: string
   label: string
   fileName: string
-  kind?: CustomPetKind
-  /** MIME type for 'image' kinds — needed so the renderer builds a Blob with
-   *  the right Content-Type (especially image/svg+xml, which browsers won't
-   *  render from a misdeclared blob URL). Unused for 'glb'. */
-  mimeType?: string
+  /** MIME type needed so the renderer builds a Blob with the correct
+   *  Content-Type — especially image/svg+xml, which browsers won't render
+   *  from a misdeclared blob URL. */
+  mimeType: string
 }
 
 export type PersistedTrustedOrcaHookEntry = {

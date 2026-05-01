@@ -231,19 +231,19 @@ export function ExperimentalPane({
 
       {showPet ? (
         <SearchableSetting
-          title="Gremlin (pet)"
-          description="Floating animated 3D pet in the bottom-right corner."
+          title="Pet"
+          description="Floating animated pet in the bottom-right corner."
           keywords={EXPERIMENTAL_PANE_SEARCH_ENTRIES[1].keywords}
           className="space-y-3 px-1 py-2"
           id="experimental-pet"
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 shrink space-y-1.5">
-              <Label>Gremlin (pet)</Label>
+              <Label>Pet</Label>
               <p className="text-xs text-muted-foreground">
-                Shows a small animated 3D gremlin pinned to the bottom-right corner. Hide it any
-                time from the status-bar pet menu without disabling this setting. Loads three.js and
-                a GLB model only while enabled, so users who leave it off pay zero cost.
+                Shows a small animated pet pinned to the bottom-right corner. Upload your own PNG,
+                APNG, GIF, WebP, JPG, or SVG from the status-bar pet menu. Hide it any time from the
+                same menu without disabling this setting.
               </p>
             </div>
             <button

@@ -1,43 +1,52 @@
-// Why: bundled GLB URLs are Vite ?url asset imports so the renderer's asset
-// pipeline hashes them at build time — same approach as the original single-
-// model PetScene. Keeping them behind a single registry lets PetScene,
-// PetOverlay, and the status-bar picker all agree on the available set without
-// drifting.
-import demonUrl from '../../../../../resources/pets/demon.glb?url'
-import dinosaurUrl from '../../../../../resources/pets/dinosaur.glb?url'
-import pottedPlantUrl from '../../../../../resources/pets/potted-plant.glb?url'
-import slothUrl from '../../../../../resources/pets/sloth.glb?url'
+import theClaudeUrl from '../../../../../resources/claude.webp?url'
+import theOpencodeUrl from '../../../../../resources/opencode.webp?url'
+import theGremlinUrl from '../../../../../resources/gremlin.webp?url'
 
-export type PetModelId = 'gremlin' | 'dinosaur' | 'potted-plant' | 'sloth'
+// Why: bundled defaults so the overlay always has something to render when the
+// user hasn't uploaded a custom image. Vite's `?url` import hashes each asset
+// at build time so they participate in the normal caching pipeline.
+export const DEFAULT_PET_MODEL_ID = 'default'
+export const OPENCODE_PET_MODEL_ID = 'the-opencode'
+export const GREMLIN_PET_MODEL_ID = 'the-gremlin'
 
-export type PetModel = {
-  id: PetModelId
+export type BundledPetModelId =
+  | typeof DEFAULT_PET_MODEL_ID
+  | typeof OPENCODE_PET_MODEL_ID
+  | typeof GREMLIN_PET_MODEL_ID
+
+export type BundledPetModel = {
+  id: BundledPetModelId
   label: string
   url: string
 }
 
-// Why: declare the registry as a readonly tuple keyed on PetModelId so TS
-// catches any id/url drift at compile time and so consumers can iterate for
-// menus without a separate source of truth.
-export const PET_MODELS: readonly PetModel[] = [
-  { id: 'gremlin', label: 'Gremlin', url: demonUrl },
-  { id: 'dinosaur', label: 'Dinosaur', url: dinosaurUrl },
-  { id: 'potted-plant', label: 'Potted plant', url: pottedPlantUrl },
-  { id: 'sloth', label: 'Sloth', url: slothUrl }
+export const BUNDLED_PETS: readonly BundledPetModel[] = [
+  {
+    id: DEFAULT_PET_MODEL_ID,
+    label: 'The Claude',
+    url: theClaudeUrl
+  },
+  {
+    id: OPENCODE_PET_MODEL_ID,
+    label: 'The OpenCode',
+    url: theOpencodeUrl
+  },
+  {
+    id: GREMLIN_PET_MODEL_ID,
+    label: 'The Gremlin',
+    url: theGremlinUrl
+  }
 ] as const
 
-export const DEFAULT_PET_MODEL_ID: PetModelId = 'gremlin'
+// Why: keep the single-pet export around so existing call sites that refer to
+// "the" bundled pet (fallback URL while loading, default selection) continue
+// to resolve to the original Claude image.
+export const BUNDLED_PET: BundledPetModel = BUNDLED_PETS[0]
 
-/** Resolves a bundled pet model by id. For custom models (arbitrary UUID
- *  strings), returns null — the caller should fall back to the custom-model
- *  list on the ui slice. */
-export function findBundledPetModel(id: string | undefined): PetModel | null {
-  return PET_MODELS.find((m) => m.id === id) ?? null
+export function isBundledPetId(id: string | undefined): boolean {
+  return BUNDLED_PETS.some((p) => p.id === id)
 }
 
-/** Back-compat: any call site that needs a guaranteed bundled PetModel (e.g.
- *  the overlay during initial render before a custom blob URL resolves) can
- *  use this. Unknown ids fall back to the default bundled gremlin. */
-export function resolvePetModel(id: string | undefined): PetModel {
-  return findBundledPetModel(id) ?? PET_MODELS[0]
+export function findBundledPet(id: string | undefined): BundledPetModel | undefined {
+  return BUNDLED_PETS.find((p) => p.id === id)
 }

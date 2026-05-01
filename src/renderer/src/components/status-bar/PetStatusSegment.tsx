@@ -15,13 +15,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAppStore } from '../../store'
-import { findBundledPetModel, PET_MODELS } from '../pet/pet-models'
+import { BUNDLED_PET, BUNDLED_PETS, findBundledPet, isBundledPetId } from '../pet/pet-models'
 
-// Why: cluster pet-related controls (show/hide, model picker, custom GLB
-// upload + removal, jump-to-settings) behind a single status-bar segment.
-// Only rendered when experimentalPet is on (gated by the caller). Pet
-// visibility is independently tracked so users can dismiss without having to
-// find the experimental flag again.
+// Why: cluster pet-related controls (show/hide, image picker, custom upload +
+// removal, jump-to-settings) behind a single status-bar segment. Only
+// rendered when experimentalPet is on (gated by the caller). Pet visibility
+// is independently tracked so users can dismiss without having to find the
+// experimental flag again.
 function PetStatusSegmentInner({
   compact,
   iconOnly
@@ -39,15 +39,13 @@ function PetStatusSegmentInner({
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
 
-  const bundled = findBundledPetModel(petModelId)
+  const bundled = isBundledPetId(petModelId)
+  const activeBundled = bundled ? (findBundledPet(petModelId) ?? BUNDLED_PET) : null
   const activeCustom = bundled ? null : customPetModels.find((m) => m.id === petModelId)
-  const activeLabel = bundled?.label ?? activeCustom?.label ?? 'Pet'
+  const activeLabel = activeBundled ? activeBundled.label : (activeCustom?.label ?? 'Pet')
   const label = petVisible ? activeLabel : `${activeLabel} hidden`
 
   const handleImport = async (): Promise<void> => {
-    // Why: surface end-to-end diagnostics under a stable prefix so clicks on
-    // Upload GLB… that appear to do nothing (preload not reloaded, IPC not
-    // registered, dialog dismissed) leave a greppable trail in the console.
     console.log('[pet-overlay] upload: click')
     if (!window.api?.pet?.importModel) {
       console.warn('[pet-overlay] upload: window.api.pet.importModel missing — restart Orca')
@@ -79,7 +77,7 @@ function PetStatusSegmentInner({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="inline-flex items-center cursor-pointer gap-1 rounded px-1 py-0.5 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+              className="inline-flex items-center cursor-pointer gap-1 rounded pl-1 pr-3 py-0.5 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
               aria-label="Pet menu"
             >
               <Cat className={`size-3.5 ${petVisible ? '' : 'opacity-50'}`} aria-hidden />
@@ -104,30 +102,30 @@ function PetStatusSegmentInner({
           {petVisible ? 'Hide pet' : 'Show pet'}
         </DropdownMenuItem>
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger>Model</DropdownMenuSubTrigger>
+          <DropdownMenuSubTrigger>Customize pet</DropdownMenuSubTrigger>
           {/* Why: portal so the submenu escapes the parent Content's overflow
               clipping — without this, the submenu opens inside the scroll
-              container and gets clipped. Explicit portal matches the existing
-              convention used in BrowserToolbarMenu/BrowserProfileRow. */}
+              container and gets clipped. Matches the convention used in
+              BrowserToolbarMenu/BrowserProfileRow. */}
           <DropdownMenuPortal>
             <DropdownMenuSubContent className="min-w-[220px]">
-              {PET_MODELS.map((model) => {
-                const selected = model.id === petModelId
+              {BUNDLED_PETS.map((pet) => {
+                const selected = pet.id === petModelId
                 return (
                   <DropdownMenuItem
-                    key={model.id}
+                    key={pet.id}
                     onSelect={(event) => {
                       event.preventDefault()
                       if (!petVisible) {
                         setPetVisible(true)
                       }
-                      setPetModelId(model.id)
+                      setPetModelId(pet.id)
                     }}
                   >
                     <span className="flex w-4 items-center justify-center">
                       {selected ? <Check className="size-3.5" aria-hidden /> : null}
                     </span>
-                    {model.label}
+                    {pet.label}
                   </DropdownMenuItem>
                 )
               })}
@@ -150,10 +148,6 @@ function PetStatusSegmentInner({
                       {selected ? <Check className="size-3.5" aria-hidden /> : null}
                     </span>
                     <span className="flex-1 truncate">{model.label}</span>
-                    {/* Why: inline remove — a native button sits inside the menu
-                      item so the destructive action is discoverable without
-                      another menu level. stopPropagation prevents Radix from
-                      also triggering the item's onSelect. */}
                     <button
                       type="button"
                       className="ml-2 flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
@@ -176,13 +170,12 @@ function PetStatusSegmentInner({
                   // Why: let the menu close naturally (no preventDefault) before
                   // invoking the native file picker. Keeping the menu open when
                   // the OS dialog opens caused the dialog to appear behind the
-                  // dropdown overlay on macOS — clicks on "Upload GLB…" looked
-                  // like nothing happened.
+                  // dropdown overlay on macOS.
                   void handleImport()
                 }}
               >
                 <Upload className="size-3.5" aria-hidden />
-                Upload GLB or image…
+                Pick pet…
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuPortal>

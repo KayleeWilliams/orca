@@ -719,8 +719,10 @@ const api = {
 
   pet: {
     importModel: (): Promise<CustomPetModel | null> => ipcRenderer.invoke('pet:import'),
-    readModel: (id: string): Promise<ArrayBuffer | null> => ipcRenderer.invoke('pet:read', id),
-    deleteModel: (id: string): Promise<void> => ipcRenderer.invoke('pet:delete', id)
+    readModel: (id: string, fileName: string): Promise<ArrayBuffer | null> =>
+      ipcRenderer.invoke('pet:read', id, fileName),
+    deleteModel: (id: string, fileName: string): Promise<void> =>
+      ipcRenderer.invoke('pet:delete', id, fileName)
   },
 
   browser: {

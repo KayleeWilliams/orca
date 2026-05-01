@@ -39,7 +39,7 @@ import {
   DEFAULT_WORKTREE_CARD_PROPERTIES
 } from '../../../../shared/constants'
 import type { OrcaHookScriptKind } from '../../lib/orca-hook-trust'
-import { DEFAULT_PET_MODEL_ID, PET_MODELS } from '../../components/pet/pet-models'
+import { DEFAULT_PET_MODEL_ID, isBundledPetId } from '../../components/pet/pet-models'
 import { revokeCustomPetBlobUrl } from '../../components/pet/pet-blob-cache'
 
 const MIN_SIDEBAR_WIDTH = 220
@@ -199,12 +199,11 @@ export type UISlice = {
    *  overlay can ever render; this controls whether it does right now. */
   petVisible: boolean
   setPetVisible: (v: boolean) => void
-  /** Which pet model is active. May be a bundled PetModelId or a custom
-   *  model UUID. Persisted alongside petVisible via the PersistedUIState
-   *  pipeline. */
+  /** Which pet is active. 'default' for the bundled image or a custom model
+   *  UUID. Persisted alongside petVisible via the PersistedUIState pipeline. */
   petModelId: string
   setPetModelId: (id: string) => void
-  /** User-uploaded GLB models. Metadata only — bytes live in main's userData. */
+  /** User-uploaded pet images. Metadata only — bytes live in main's userData. */
   customPetModels: CustomPetModel[]
   addCustomPetModel: (model: CustomPetModel) => void
   removeCustomPetModel: (id: string) => void
@@ -516,13 +515,14 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }),
   removeCustomPetModel: (id) =>
     set((s) => {
-      if (!s.customPetModels.some((m) => m.id === id)) {
+      const target = s.customPetModels.find((m) => m.id === id)
+      if (!target) {
         return s
       }
       const next = s.customPetModels.filter((m) => m.id !== id)
       window.api.ui.set({ customPetModels: next }).catch(console.error)
-      // Why: if the user removes the currently-active custom model, fall back
-      // to the default bundled model so the overlay doesn't render nothing.
+      // Why: if the user removes the currently-active custom pet, fall back
+      // to the bundled default so the overlay doesn't render nothing.
       const fallback = s.petModelId === id ? DEFAULT_PET_MODEL_ID : s.petModelId
       if (fallback !== s.petModelId) {
         window.api.ui.set({ petModelId: fallback }).catch(console.error)
@@ -531,10 +531,10 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       // otherwise it stays in memory for the rest of the session.
       revokeCustomPetBlobUrl(id)
       // Why: best-effort — the bytes are owned by main. If the disk delete
-      // fails, the orphaned GLB stays in userData (~MBs); each import uses a
-      // fresh UUID so the file won't be hit again, and the renderer's
-      // metadata index no longer references it. Leaving it is acceptable.
-      window.api.pet.deleteModel(id).catch(console.error)
+      // fails, the orphaned image stays in userData; each import uses a fresh
+      // UUID so the file won't be hit again, and the renderer's metadata
+      // index no longer references it.
+      window.api.pet.deleteModel(id, target.fileName).catch(console.error)
       return { customPetModels: next, petModelId: fallback }
     }),
 
@@ -593,16 +593,15 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // dismissal persists a `false` value.
         petVisible: ui.petVisible ?? true,
         customPetModels: Array.isArray(ui.customPetModels) ? ui.customPetModels : [],
-        // Why: accept the persisted id if it matches a bundled model or a
-        // known custom model; otherwise fall back to the default so the
-        // overlay never renders nothing (e.g. custom model was removed by
-        // another window/session).
+        // Why: accept the persisted id if it matches the bundled default or a
+        // known custom model; otherwise fall back so the overlay never
+        // renders nothing (e.g. custom model was removed by another session).
         petModelId: ((): string => {
           const id = ui.petModelId
           if (typeof id !== 'string') {
             return DEFAULT_PET_MODEL_ID
           }
-          if (PET_MODELS.some((m) => m.id === id)) {
+          if (isBundledPetId(id)) {
             return id
           }
           const custom = Array.isArray(ui.customPetModels) ? ui.customPetModels : []

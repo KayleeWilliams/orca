@@ -22,20 +22,9 @@ export const EXPERIMENTAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ]
   },
   {
-    title: 'Gremlin (pet)',
-    description:
-      'Floating animated 3D pet in the bottom-right corner. Experimental — loads three.js and a GLB model only when enabled.',
-    keywords: [
-      'experimental',
-      'pet',
-      'gremlin',
-      'mascot',
-      'overlay',
-      '3d',
-      'three',
-      'animated',
-      'corner'
-    ]
+    title: 'Pet',
+    description: 'Floating animated pet in the bottom-right corner.',
+    keywords: ['experimental', 'pet', 'mascot', 'overlay', 'animated', 'corner']
   },
   {
     title: 'Agent Orchestration',

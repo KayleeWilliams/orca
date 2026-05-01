@@ -52,9 +52,8 @@ const Settings = lazy(() => import('./components/settings/Settings'))
 const QuickOpen = lazy(() => import('./components/QuickOpen'))
 const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
 const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
-// Why: pet overlay is the only entrypoint that imports three.js. Gating
-// it behind React.lazy + the experimentalPet+petVisible conditional means
-// users who leave the feature off never download the three.js chunk.
+// Why: lazy-loaded so the WebP asset + overlay module aren't fetched unless
+// the user opts into the experimental flag.
 const PetOverlay = lazy(() => import('./components/pet/PetOverlay'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
