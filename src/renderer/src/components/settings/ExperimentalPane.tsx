@@ -55,6 +55,13 @@ export function ExperimentalPane({
   hiddenExperimentalUnlocked = false
 }: ExperimentalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
+  // Why: when the user flips the experimental toggle ON, ensure the
+  // 'inline-agents' view-mode checkbox is added to the Workspaces view
+  // options so the inline agent activity list is visible without a second
+  // click. Users who previously had the toggle on in an earlier rc get the
+  // same behavior retroactively via the persistence migration in
+  // main/persistence.ts — this handler covers fresh opt-ins going forward.
+  const toggleWorktreeCardProperty = useAppStore((s) => s.toggleWorktreeCardProperty)
   // Why: the "enabled at startup" flags are the effective runtime state, read
   // directly from main once on mount. Each banner compares the user's current
   // setting against this snapshot to tell them a restart is still required.
@@ -168,11 +175,20 @@ export function ExperimentalPane({
               type="button"
               role="switch"
               aria-checked={settings.experimentalAgentDashboard}
-              onClick={() =>
-                updateSettings({
-                  experimentalAgentDashboard: !settings.experimentalAgentDashboard
-                })
-              }
+              onClick={() => {
+                const next = !settings.experimentalAgentDashboard
+                updateSettings({ experimentalAgentDashboard: next })
+                if (next) {
+                  // Why: mirrors the one-shot persistence migration for users
+                  // who already had the toggle on before 'inline-agents'
+                  // existed. Reading from the live store keeps this honest
+                  // instead of stale-propping through a parent re-render.
+                  const currentProps = useAppStore.getState().worktreeCardProperties ?? []
+                  if (!currentProps.includes('inline-agents')) {
+                    toggleWorktreeCardProperty('inline-agents')
+                  }
+                }
+              }}
               className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
                 settings.experimentalAgentDashboard ? 'bg-foreground' : 'bg-muted-foreground/30'
               }`}

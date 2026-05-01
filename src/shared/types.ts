@@ -1105,6 +1105,15 @@ export type PersistedUIState = {
    *  migration never re-fires — allowing users to intentionally select the
    *  new 'recent' (last-activity) sort without it being clobbered on restart. */
   _sortBySmartMigrated?: boolean
+  /** One-shot migration flag for the inline-agents view-mode rollout. The
+   *  'inline-agents' card property was introduced after the
+   *  experimentalAgentDashboard toggle — users on prior rcs who had the
+   *  toggle on already had `worktreeCardProperties` persisted without it,
+   *  so merging with the new defaults never added it for them. When this
+   *  flag is absent, the main-process load() appends 'inline-agents' to
+   *  the persisted array if experimentalAgentDashboard is true, then sets
+   *  the flag so a later uncheck from the view-options menu sticks. */
+  _inlineAgentsDefaultedForExperiment?: boolean
   /** Snapshot of totalAgentsSpawned captured the first time we see the current
    *  app version. Why: the nag threshold counts agents spawned *since the
    *  user's last update* so a fresh install or new release does not trigger

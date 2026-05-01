@@ -157,11 +157,35 @@ export class Store {
             const rawSort = parsed.ui?.sortBy
             const sort = normalizeSortBy(rawSort)
             const migrate = !parsed.ui?._sortBySmartMigrated && rawSort === 'recent'
+            // Why: the 'inline-agents' card property was added after the
+            // experimentalAgentDashboard toggle. Users who had the toggle on
+            // in a prior rc already had worktreeCardProperties persisted
+            // without the new entry, so a simple defaults merge wouldn't
+            // reach them and the inline agent list stayed hidden after
+            // upgrade. One-shot append 'inline-agents' to their persisted
+            // array when the experimental toggle is true; the flag prevents
+            // re-firing so a deliberate uncheck from the Workspaces view
+            // options menu sticks across restarts.
+            const rawCardProps = parsed.ui?.worktreeCardProperties
+            const inlineAgentsMigrated = parsed.ui?._inlineAgentsDefaultedForExperiment === true
+            const experimentOn = parsed.settings?.experimentalAgentDashboard === true
+            const needsInlineAgentsMigration =
+              !inlineAgentsMigrated &&
+              experimentOn &&
+              Array.isArray(rawCardProps) &&
+              !rawCardProps.includes('inline-agents')
+            const migratedCardProps = needsInlineAgentsMigration
+              ? [...(rawCardProps ?? []), 'inline-agents' as const]
+              : undefined
             return {
               ...defaults.ui,
               ...parsed.ui,
               sortBy: migrate ? ('smart' as const) : sort,
-              _sortBySmartMigrated: true
+              _sortBySmartMigrated: true,
+              ...(migratedCardProps !== undefined
+                ? { worktreeCardProperties: migratedCardProps }
+                : {}),
+              _inlineAgentsDefaultedForExperiment: true
             }
           })(),
           // Why: the workspace session is the most volatile persisted surface
