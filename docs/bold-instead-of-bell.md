@@ -80,7 +80,9 @@ the unread signal. This applies to:
 
 - The title (`displayName`) — today `font-semibold text-foreground`
   (`WorktreeCard.tsx:430`) → on read cards becomes
-  `font-normal text-muted-foreground`.
+  `font-normal text-foreground` (weight only; color stays at
+  `text-foreground` to preserve hierarchy against the muted branch
+  row below, same reasoning as the repo badge).
 - The repo badge label — today `font-semibold text-foreground`
   (`WorktreeCard.tsx:508`) → drops to `font-normal text-foreground`
   on read cards to preserve hierarchy (the repo label must not read
@@ -143,17 +145,14 @@ card property is enabled:**
   ```
 - Apply to the display name (`WorktreeCard.tsx:430`):
   ```tsx
-  {/* Why: bold = unread is the single attention signal on this card,
-      mirroring DashboardAgentRow.tsx:262. The base class drops the
-      always-on font-semibold that was safe when a separate bell carried
-      the signal; now the title IS the signal, so it must de-bold on
-      read cards. */}
+  {/* Why: weight alone carries the unread signal; color stays at
+      text-foreground in both states so the title keeps hierarchy
+      against the muted branch row below (muting the title as well
+      flattened the card — same reasoning as the repo chip below). */}
   <div
     className={cn(
-      'text-[12px] truncate leading-tight',
-      showUnreadEmphasis
-        ? 'font-semibold text-foreground'
-        : 'font-normal text-muted-foreground'
+      'text-[12px] truncate leading-tight text-foreground',
+      showUnreadEmphasis ? 'font-semibold' : 'font-normal'
     )}
   >
     {worktree.displayName}
@@ -263,9 +262,9 @@ becomes: *unread state is automatic; to clear it, open the workspace.*
 | Card state | Title | Repo badge | Bell | Notes |
 |---|---|---|---|---|
 | unread + property on | `font-semibold text-foreground` | `font-semibold text-foreground` | — | Primary target behavior |
-| unread + property off | `font-normal text-muted-foreground` | `font-normal text-foreground` | — | Opt-out active; store flag unchanged |
-| read + property on | `font-normal text-muted-foreground` | `font-normal text-foreground` | — | Baseline read |
-| read + property off | `font-normal text-muted-foreground` | `font-normal text-foreground` | — | Same as read + property on (no signal to hide) |
+| unread + property off | `font-normal text-foreground` | `font-normal text-foreground` | — | Opt-out active; store flag unchanged |
+| read + property on | `font-normal text-foreground` | `font-normal text-foreground` | — | Baseline read |
+| read + property off | `font-normal text-foreground` | `font-normal text-foreground` | — | Same as read + property on (no signal to hide) |
 | SSH disconnected + unread | bold + `opacity-60` (inherited from card root) | bold + `opacity-60` | — | Dimmed but still bolder than the read cards next to it |
 | Deleting + unread | bold + `opacity-50 grayscale` | bold + `opacity-50 grayscale` | — | Deleting takes visual priority; acceptable |
 

@@ -393,17 +393,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
               </Tooltip>
             )}
 
-            {/* Why: bold = unread is the single attention signal on this
-                 card, mirroring DashboardAgentRow.tsx:262. The base class
-                 drops the always-on font-semibold that was safe when a
-                 separate bell carried the signal; now the title IS the
-                 signal, so it must de-bold on read cards. */}
+            {/* Why: weight alone carries the unread signal; color stays
+                 at text-foreground in both states so the title keeps
+                 hierarchy against the muted branch row below (muting the
+                 title as well flattened the card — same reasoning as the
+                 repo chip comment below). */}
             <div
               className={cn(
-                'text-[12px] truncate leading-tight',
-                showUnreadEmphasis
-                  ? 'font-semibold text-foreground'
-                  : 'font-normal text-muted-foreground'
+                'text-[12px] truncate leading-tight text-foreground',
+                showUnreadEmphasis ? 'font-semibold' : 'font-normal'
               )}
             >
               {/* Why: the card root is a non-interactive <div>, so aria-label
