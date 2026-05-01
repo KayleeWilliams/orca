@@ -411,7 +411,7 @@ Drain hook behaviors:
 
 - `createLegacyDaemonAdapters` never calls `cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)`. Loop bound is `PREVIOUS_DAEMON_PROTOCOL_VERSIONS` (compile-time). Add a runtime assertion test: spy on `cleanupDaemonForProtocol`, run the full startup path, assert no call was made with the current version.
 - `types.ts` invariant — `PREVIOUS_DAEMON_PROTOCOL_VERSIONS` must not contain `PROTOCOL_VERSION`. Add a trivial test asserting this. Catches the "forgot to remove v4 when shipping v5" mistake.
-- `daemon-spawner.test.ts` unchanged — socket path scheme is untouched.
+- `daemon-spawner.test.ts` keeps the socket-path regression and adds a pid-file serialization assertion.
 - `daemon-server.test.ts` unchanged — wire protocol is untouched.
 - `daemon-entry.ts` unchanged — no new signal handlers, no timer, no idle-exit logic.
 
@@ -469,7 +469,9 @@ Before merge, confirm each of the following has not changed behaviorally:
 - `src/main/daemon/daemon-spawner.ts` — write `{ pid, startedAtMs }` pid-file JSON for newly spawned daemons.
 - `src/main/daemon/daemon-init.test.ts` — new file with `processLegacyVersion` and `createLegacyDaemonAdapters` unit tests.
 - `src/main/daemon/daemon-pty-router.test.ts` — new file with drain-hook tests.
+- `src/main/daemon/daemon-pty-adapter.test.ts` — add coverage for the exposed `protocolVersion` field.
 - `src/main/daemon/daemon-health.test.ts` — add pid-file compatibility and SIGKILL revalidation tests.
+- `src/main/daemon/daemon-spawner.test.ts` — add pid-file serialization coverage.
 - `src/main/daemon/types.test.ts` — trivial invariant tests on `PROTOCOL_VERSION` / `PREVIOUS_DAEMON_PROTOCOL_VERSIONS`.
 
 Explicitly **not** touched: `daemon-entry.ts`, `daemon-server.ts`, `daemon-main.ts`, `terminal-host.ts`, `session.ts`, `client.ts`, `pty-subprocess.ts`, `history-manager.ts`.
