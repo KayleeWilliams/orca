@@ -864,6 +864,13 @@ function App(): React.JSX.Element {
             </PopoverContent>
           </Popover>
         ) : null}
+        {/* Why: always rendered (not gated on showSidebar) because the
+            worktree palette is global — it mirrors the ⌘J/Ctrl+Shift+J
+            shortcut which is live from every view including Settings and
+            Landing. The `sidebar-toggle` class is the shared titlebar
+            icon-button style used by back/forward/sidebar-toggle/right-
+            sidebar neighbors; the name is historical and applies to any
+            titlebar icon button, not only sidebar toggles. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
