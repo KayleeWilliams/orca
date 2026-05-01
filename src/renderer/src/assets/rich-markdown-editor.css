@@ -592,6 +592,23 @@
   color: var(--muted-foreground);
 }
 
+/* ── Doc Links ───────────────────────────────────────── */
+
+.rich-markdown-editor .rich-markdown-doc-link {
+  color: #0969da;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.dark .rich-markdown-editor .rich-markdown-doc-link {
+  color: #58a6ff;
+}
+
+.rich-markdown-mod-held .rich-markdown-editor .rich-markdown-doc-link {
+  cursor: pointer;
+}
+
 /* ── Link Bubble ──────────────────────────────────────── */
 
 .rich-markdown-link-bubble {

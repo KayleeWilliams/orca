@@ -42,6 +42,7 @@ type RichMarkdownEditorProps = {
   onContentChange: (content: string) => void
   onDirtyStateHint: (dirty: boolean) => void
   onSave: (content: string) => void
+  onOpenDocLink?: (target: string) => void
   // Why: front-matter is stripped from the rich editor's content but we still
   // want it visible to the user. It renders between the toolbar and the editor
   // surface so the formatting toolbar stays at the top of the pane.
@@ -61,6 +62,7 @@ export default function RichMarkdownEditor({
   onContentChange,
   onDirtyStateHint,
   onSave,
+  onOpenDocLink,
   headerSlot
 }: RichMarkdownEditorProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -86,6 +88,7 @@ export default function RichMarkdownEditor({
   const onContentChangeRef = useRef(onContentChange)
   const onDirtyStateHintRef = useRef(onDirtyStateHint)
   const onSaveRef = useRef(onSave)
+  const onOpenDocLinkRef = useRef(onOpenDocLink)
   const handleLocalImagePickRef = useRef<() => void>(() => {})
   const openSearchRef = useRef<() => void>(() => {})
   // Why: ProseMirror keeps the initial handleKeyDown closure, so `editor` stays
@@ -111,6 +114,7 @@ export default function RichMarkdownEditor({
   onContentChangeRef.current = onContentChange
   onDirtyStateHintRef.current = onDirtyStateHint
   onSaveRef.current = onSave
+  onOpenDocLinkRef.current = onOpenDocLink
   isEditingLinkRef.current = isEditingLink
 
   const flushPendingSerialization = useCallback(() => {
@@ -182,6 +186,16 @@ export default function RichMarkdownEditor({
         const modKey = isMac ? event.metaKey : event.ctrlKey
         if (!ed || !modKey) {
           return false
+        }
+        // Why: doc links are atom nodes (not marks), so resolve(pos).marks()
+        // won't find them. Check nodeAt(pos) first for doc link navigation.
+        const clickedNode = view.state.doc.nodeAt(pos)
+        if (clickedNode?.type.name === 'markdownDocLink') {
+          const target = clickedNode.attrs.target as string
+          if (target && onOpenDocLinkRef.current) {
+            onOpenDocLinkRef.current(target)
+          }
+          return true
         }
         const linkMark = view.state.doc
           .resolve(pos)

@@ -4,9 +4,12 @@ import { useAppStore } from '@/store'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getConnectionId } from '@/lib/connection-context'
 import type { MarkdownViewMode, OpenFile } from '@/store/slices/editor'
+import { createMarkdownDocumentIndex, resolveMarkdownDocLink } from './markdown-doc-links'
 
 type UseMarkdownDocumentsResult = {
   markdownDocuments: MarkdownDocument[]
+  openMarkdownDocument: (document: MarkdownDocument) => Promise<void>
+  onOpenDocLink: (target: string) => void
   previewProps: {
     markdownDocuments: MarkdownDocument[]
     onOpenDocument: (document: MarkdownDocument) => Promise<void>
@@ -119,5 +122,20 @@ export function useMarkdownDocuments(
     [onSave, refreshMarkdownDocuments]
   )
 
-  return { markdownDocuments, previewProps, mdSave }
+  const docIndex = useMemo(
+    () => createMarkdownDocumentIndex(markdownDocuments),
+    [markdownDocuments]
+  )
+
+  const onOpenDocLink = useCallback(
+    (target: string) => {
+      const resolution = resolveMarkdownDocLink(target, docIndex)
+      if (resolution.status === 'resolved') {
+        void openMarkdownDocument(resolution.document)
+      }
+    },
+    [docIndex, openMarkdownDocument]
+  )
+
+  return { markdownDocuments, openMarkdownDocument, onOpenDocLink, previewProps, mdSave }
 }
