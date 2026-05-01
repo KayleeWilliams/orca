@@ -122,7 +122,7 @@ export class PaneManager {
     openTerminal(newPane)
     this.activePaneId = newPane.id
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
-    this.applyDividerStylesWrapped()
+    applyDividerStyles(this.root, this.styleOptions)
     newPane.terminal?.focus()
     updateMultiPaneState(this.getDragCallbacks())
     // Why: forward cwd hint so the new PTY spawns in the source pane's cwd.
@@ -165,13 +165,9 @@ export class PaneManager {
       paneContainer.remove()
     }
     if (this.activePaneId === paneId) {
-      const remaining = Array.from(this.panes.values())
-      if (remaining.length > 0) {
-        this.activePaneId = remaining[0].id
-        remaining[0].terminal.focus()
-      } else {
-        this.activePaneId = null
-      }
+      const next = this.panes.values().next().value as ManagedPaneInternal | undefined
+      this.activePaneId = next?.id ?? null
+      next?.terminal.focus()
     }
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
     for (const p of this.panes.values()) {
@@ -219,7 +215,7 @@ export class PaneManager {
   setPaneStyleOptions(opts: PaneStyleOptions): void {
     this.styleOptions = { ...opts }
     applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions)
-    this.applyDividerStylesWrapped()
+    applyDividerStyles(this.root, this.styleOptions)
     applyRootBackground(this.root, this.styleOptions)
   }
 
@@ -333,11 +329,6 @@ export class PaneManager {
     })
   }
 
-  private applyDividerStylesWrapped(): void {
-    applyDividerStyles(this.root, this.styleOptions)
-  }
-
-  /** Build the callbacks object for drag-reorder functions. */
   private getDragCallbacks() {
     return {
       getPanes: () => this.panes,
@@ -347,7 +338,7 @@ export class PaneManager {
       safeFit: (pane: ManagedPaneInternal) => safeFit(pane),
       applyPaneOpacity: () =>
         applyPaneOpacity(this.panes.values(), this.activePaneId, this.styleOptions),
-      applyDividerStyles: () => this.applyDividerStylesWrapped(),
+      applyDividerStyles: () => applyDividerStyles(this.root, this.styleOptions),
       refitPanesUnder: (el: HTMLElement) => refitPanesUnder(el, this.panes),
       onLayoutChanged: this.options.onLayoutChanged
     }
