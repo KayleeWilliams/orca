@@ -9,6 +9,7 @@ import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type {
   BaseRefDefaultResult,
+  CustomPetModel,
   FsChangedPayload,
   GitHubAssignableUser,
   GitHubCommentResult,
@@ -695,6 +696,12 @@ const api = {
 
     copyFile: (args: { srcPath: string; destPath: string }): Promise<void> =>
       ipcRenderer.invoke('shell:copyFile', args)
+  },
+
+  pet: {
+    importModel: (): Promise<CustomPetModel | null> => ipcRenderer.invoke('pet:import'),
+    readModel: (id: string): Promise<ArrayBuffer | null> => ipcRenderer.invoke('pet:read', id),
+    deleteModel: (id: string): Promise<void> => ipcRenderer.invoke('pet:delete', id)
   },
 
   browser: {

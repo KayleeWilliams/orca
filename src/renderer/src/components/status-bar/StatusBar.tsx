@@ -35,6 +35,7 @@ import { SshStatusSegment } from './SshStatusSegment'
 import { SessionsStatusSegment } from './SessionsStatusSegment'
 import { UpdateStatusSegment } from './UpdateStatusSegment'
 import { MemoryStatusSegment } from './MemoryStatusSegment'
+import { PetStatusSegment } from './PetStatusSegment'
 
 function getCodexAccountLabel(
   state: CodexRateLimitAccountsState,
@@ -705,6 +706,11 @@ function StatusBarInner(): React.JSX.Element | null {
   const refreshRateLimits = useAppStore((s) => s.refreshRateLimits)
   const statusBarVisible = useAppStore((s) => s.statusBarVisible)
   const statusBarItems = useAppStore((s) => s.statusBarItems)
+  // Why: pet segment intentionally does NOT participate in statusBarItems
+  // (see design doc — gating with both the experimental flag and a
+  // statusBarItems checkbox would double-toggle the surface). It is driven
+  // purely by the experimentalPet settings flag.
+  const petEnabled = useAppStore((s) => s.settings?.experimentalPet === true)
   const toggleStatusBarItem = useAppStore((s) => s.toggleStatusBarItem)
   const containerRef = useRef<HTMLDivElement>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -843,6 +849,7 @@ function StatusBarInner(): React.JSX.Element | null {
 
       <div className="flex items-center gap-3">
         <UpdateStatusSegment compact={compact} iconOnly={iconOnly} />
+        {petEnabled && <PetStatusSegment compact={compact} iconOnly={iconOnly} />}
         {showMemory && <MemoryStatusSegment compact={compact} iconOnly={iconOnly} />}
         {showSessions && <SessionsStatusSegment compact={compact} iconOnly={iconOnly} />}
         {showSsh && <SshStatusSegment compact={compact} iconOnly={iconOnly} />}
