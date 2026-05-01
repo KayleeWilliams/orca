@@ -41,6 +41,12 @@ import { toPublicPane } from './pane-public-view'
 
 export type { PaneManagerOptions, PaneStyleOptions, ManagedPane, DropZone }
 
+function reattachWebglIfNeeded(pane: ManagedPaneInternal): void {
+  if (pane.gpuRenderingEnabled && !pane.webglAddon && !pane.webglDisabledAfterContextLoss) {
+    attachWebgl(pane)
+  }
+}
+
 export class PaneManager {
   private root: HTMLElement
   private panes: Map<number, ManagedPaneInternal> = new Map()
@@ -126,22 +132,13 @@ export class PaneManager {
     )
     this.options.onLayoutChanged?.()
 
+    const reattach = hadWebgl ? reattachWebglIfNeeded : undefined
     scheduleSplitScrollRestore(
       (id) => this.panes.get(id),
       existing.id,
       scrollState,
       () => this.destroyed,
-      hadWebgl
-        ? (pane) => {
-            if (
-              pane.gpuRenderingEnabled &&
-              !pane.webglAddon &&
-              !pane.webglDisabledAfterContextLoss
-            ) {
-              attachWebgl(pane)
-            }
-          }
-        : undefined
+      reattach
     )
 
     return toPublicPane(newPane)
@@ -265,13 +262,13 @@ export class PaneManager {
     this.renderingSuspended = false
     for (const pane of this.panes.values()) {
       pane.webglAttachmentDeferred = false
-      if (pane.gpuRenderingEnabled && !pane.webglDisabledAfterContextLoss && !pane.webglAddon) {
-        attachWebgl(pane)
-        // Why: fresh WebGL canvas has no content — refresh prevents frozen terminal.
+      reattachWebglIfNeeded(pane)
+      // Why: fresh WebGL canvas has no content — refresh prevents frozen terminal.
+      if (pane.webglAddon) {
         try {
           pane.terminal.refresh(0, pane.terminal.rows - 1)
         } catch {
-          /* ignore — pane may not be fully initialised yet */
+          /* ignore */
         }
       }
     }
@@ -314,7 +311,6 @@ export class PaneManager {
     return pane
   }
 
-  // Why: overlays must be portals OUTSIDE .pane or mouseenter steals focus.
   private handlePaneMouseEnter(paneId: number, event: MouseEvent): void {
     if (
       shouldFollowMouseFocus({
