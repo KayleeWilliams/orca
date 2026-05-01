@@ -1,8 +1,13 @@
-import { Node, mergeAttributes, InputRule } from '@tiptap/core'
+import { Node, mergeAttributes } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { getMarkdownDocLinkTarget } from './markdown-doc-links'
 
 const DOC_LINK_PLACEHOLDER_PREFIX = '[[ORCA_DOC_LINK:'
 const DOC_LINK_PLACEHOLDER_SUFFIX = ']]'
+
+const DOC_LINK_PATTERN = /\[\[([^[\]\r\n|]+)\]\]/g
+
+const docLinkAutoConvertKey = new PluginKey('docLinkAutoConvert')
 
 export const MarkdownDocLink = Node.create({
   name: 'markdownDocLink',
@@ -58,20 +63,44 @@ export const MarkdownDocLink = Node.create({
   renderMarkdown: (node) =>
     `[[${typeof node.attrs?.target === 'string' ? node.attrs.target : ''}]]`,
 
-  addInputRules() {
+  // Why: a ProseMirror plugin (not an input rule) so that [[target]] typed in
+  // any order — brackets first then target, paste, etc. — converts to a doc
+  // link node. Input rules only fire on sequential append at the cursor.
+  addProseMirrorPlugins() {
+    const nodeType = this.type
     return [
-      new InputRule({
-        // Why: matches [[target]] at the end of input. The regex captures the
-        // target text between [[ and ]] so the input rule fires when the user
-        // types the closing ]].
-        find: /\[\[([^[\]\r\n|]+)\]\]$/,
-        handler: ({ state, range, match }) => {
-          const target = getMarkdownDocLinkTarget(match[1])
-          if (!target) {
-            return
-          }
-          const node = state.schema.nodes.markdownDocLink.create({ target })
-          state.tr.replaceWith(range.from, range.to, node)
+      new Plugin({
+        key: docLinkAutoConvertKey,
+        appendTransaction(_transactions, _oldState, newState) {
+          const { tr } = newState
+          let modified = false
+
+          newState.doc.descendants((node, pos) => {
+            if (node.type.name !== 'text' || !node.text) {
+              return
+            }
+
+            DOC_LINK_PATTERN.lastIndex = 0
+            let match: RegExpExecArray | null = null
+            while ((match = DOC_LINK_PATTERN.exec(node.text)) !== null) {
+              const target = getMarkdownDocLinkTarget(match[1])
+              if (!target) {
+                continue
+              }
+
+              const from = pos + match.index
+              const to = from + match[0].length
+              const docLinkNode = nodeType.create({ target })
+
+              // Why: earlier replacements shift positions. Map through the
+              // transaction's current mapping so subsequent matches land at
+              // the correct offset.
+              tr.replaceWith(tr.mapping.map(from), tr.mapping.map(to), docLinkNode)
+              modified = true
+            }
+          })
+
+          return modified ? tr : null
         }
       })
     ]
