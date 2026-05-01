@@ -16,7 +16,7 @@ const docLinkAutoConvertKey = new PluginKey('docLinkAutoConvert')
 
 function isDocLinkResolved(target: string, documents: MarkdownDocument[]): boolean {
   if (documents.length === 0) {
-    return true
+    return false
   }
   const index = createMarkdownDocumentIndex(documents)
   return resolveMarkdownDocLink(target, index).status === 'resolved'
@@ -82,8 +82,11 @@ export const MarkdownDocLink = Node.create({
 
   addNodeView() {
     const storage = this.storage as { documents: MarkdownDocument[] }
-    return ({ node }: { node: { type: { name: string }; attrs: { target?: string } } }) => {
-      const target = typeof node.attrs.target === 'string' ? node.attrs.target : ''
+    return ({ node }: { node: { type: { name: string }; attrs: Record<string, unknown> } }) => {
+      const getTarget = (n: { attrs: Record<string, unknown> }): string =>
+        typeof n.attrs.target === 'string' ? n.attrs.target : ''
+
+      const target = getTarget(node)
       const dom = document.createElement('span')
       dom.setAttribute('data-doc-link-target', target)
       dom.setAttribute('contenteditable', 'false')
@@ -100,12 +103,14 @@ export const MarkdownDocLink = Node.create({
 
       return {
         dom,
-        update: (updatedNode) => {
+        // Why: this fires on every transaction, including the no-op dispatched
+        // when the document list changes in storage. Re-checking resolution
+        // here keeps the blue/grey styling current without a full re-render.
+        update: (updatedNode: { type: { name: string }; attrs: Record<string, unknown> }) => {
           if (updatedNode.type.name !== 'markdownDocLink') {
             return false
           }
-          const newTarget =
-            typeof updatedNode.attrs.target === 'string' ? updatedNode.attrs.target : ''
+          const newTarget = getTarget(updatedNode)
           dom.setAttribute('data-doc-link-target', newTarget)
           dom.textContent = newTarget
           applyResolutionClass(newTarget)
