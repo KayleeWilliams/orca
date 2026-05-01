@@ -126,6 +126,7 @@ function SplitNode({
         isFocused={isWorktreeActive && node.groupId === focusedGroupId}
         hasSplitGroups={hasSplitGroups}
         touchesRightEdge={touchesRightEdge}
+        touchesLeftEdge={touchesLeftEdge}
         reserveClosedExplorerToggleSpace={touchesTopEdge && touchesRightEdge}
         reserveCollapsedSidebarHeaderSpace={touchesTopEdge && touchesLeftEdge}
         isTabDragActive={isTabDragActive}
