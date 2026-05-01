@@ -1,4 +1,5 @@
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes, InputRule } from '@tiptap/core'
+import { getMarkdownDocLinkTarget } from './markdown-doc-links'
 
 const DOC_LINK_PLACEHOLDER_PREFIX = '[[ORCA_DOC_LINK:'
 const DOC_LINK_PLACEHOLDER_SUFFIX = ']]'
@@ -56,6 +57,25 @@ export const MarkdownDocLink = Node.create({
 
   renderMarkdown: (node) =>
     `[[${typeof node.attrs?.target === 'string' ? node.attrs.target : ''}]]`,
+
+  addInputRules() {
+    return [
+      new InputRule({
+        // Why: matches [[target]] at the end of input. The regex captures the
+        // target text between [[ and ]] so the input rule fires when the user
+        // types the closing ]].
+        find: /\[\[([^[\]\r\n|]+)\]\]$/,
+        handler: ({ state, range, match }) => {
+          const target = getMarkdownDocLinkTarget(match[1])
+          if (!target) {
+            return
+          }
+          const node = state.schema.nodes.markdownDocLink.create({ target })
+          state.tr.replaceWith(range.from, range.to, node)
+        }
+      })
+    ]
+  },
 
   parseHTML() {
     return [{ tag: 'span[data-doc-link-target]' }]
