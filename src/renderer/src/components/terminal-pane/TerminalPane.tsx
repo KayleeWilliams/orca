@@ -114,9 +114,6 @@ export default function TerminalPane({
   useEffect(
     () =>
       onOverrideChange((event) => {
-        console.log(
-          `[mobile-fit] desktop onOverrideChange ptyId=${event.ptyId} mode=${event.mode} cols=${event.cols} rows=${event.rows}`
-        )
         setOverrideTick((n) => n + 1)
         if (event.mode === 'desktop-fit') {
           const paneIds = getPaneIdsForPty(event.ptyId)

@@ -1,16 +1,7 @@
 /* oxlint-disable max-lines -- Why: terminal RPC methods are co-located for discoverability; splitting would scatter related handlers across files. */
 import { z } from 'zod'
-import { appendFileSync } from 'fs'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod } from '../core'
 import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas'
-
-function mfLog(msg: string): void {
-  try {
-    appendFileSync('/tmp/mobile-fit-debug.log', `[${new Date().toISOString()}] [rpc] ${msg}\n`)
-  } catch {
-    /* ignore */
-  }
-}
 
 const TerminalHandle = z.object({
   terminal: requiredString('Missing terminal handle')
@@ -247,12 +238,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
     params: TerminalSetDisplayMode,
     handler: async (params, { runtime }) => {
       const leaf = runtime.resolveLeafForHandle(params.terminal)
-      mfLog(
-        `setDisplayMode handle=${params.terminal} mode=${params.mode} ptyId=${leaf?.ptyId ?? 'none'}`
-      )
-      console.log(
-        `[mobile-fit] setDisplayMode handle=${params.terminal} mode=${params.mode} ptyId=${leaf?.ptyId ?? 'none'}`
-      )
       if (!leaf?.ptyId) {
         throw new Error('no_connected_pty')
       }
@@ -280,15 +265,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
     handler: async (params, { runtime }, emit) => {
       let leaf = runtime.resolveLeafForHandle(params.terminal)
       const isMobile = params.client?.type === 'mobile'
-      if (isMobile) {
-        mfLog(`\n========== MOBILE SUBSCRIBE ==========`)
-      }
-      mfLog(
-        `terminal.subscribe handle=${params.terminal} ptyId=${leaf?.ptyId ?? 'none'} client=${params.client?.type ?? 'none'} viewport=${params.viewport ? `${params.viewport.cols}x${params.viewport.rows}` : 'none'}`
-      )
-      console.log(
-        `[mobile-fit] terminal.subscribe handle=${params.terminal} ptyId=${leaf?.ptyId ?? 'none'} client=${params.client?.type ?? 'none'} viewport=${params.viewport ? `${params.viewport.cols}x${params.viewport.rows}` : 'none'}`
-      )
 
       // Why: the left pane's PTY spawns asynchronously after the tab is created.
       // Mobile clients that subscribe before the PTY is ready would get a bare
@@ -298,22 +274,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         try {
           const ptyId = await runtime.waitForLeafPtyId(params.terminal)
           leaf = { ptyId }
-          mfLog(
-            `  terminal.subscribe handle=${params.terminal} ptyId resolved to ${ptyId} after wait`
-          )
-          console.log(
-            `[mobile-fit] terminal.subscribe handle=${params.terminal} ptyId resolved to ${ptyId} after wait`
-          )
         } catch {
-          mfLog(`  terminal.subscribe handle=${params.terminal} PTY wait timed out`)
-          console.log(
-            `[mobile-fit] terminal.subscribe handle=${params.terminal} PTY wait timed out, falling back`
-          )
+          // PTY wait timed out — fall through to scrollback-only path below
         }
       }
 
       if (!leaf?.ptyId) {
-        mfLog(`  terminal.subscribe handle=${params.terminal} no ptyId, sending scrollback+end`)
         const read = await runtime.readTerminal(params.terminal)
         emit({
           type: 'scrollback',
@@ -329,9 +295,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
 
       const ptyId = leaf.ptyId
       const clientId = params.client?.id
-      mfLog(
-        `  terminal.subscribe resolved ptyId=${ptyId} clientId=${clientId ?? 'none'} isMobile=${isMobile}`
-      )
 
       // Server-side auto-fit: resize PTY to phone dims before serializing scrollback
       if (isMobile && clientId) {
@@ -361,9 +324,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         // mobile clients. They include fresh serialized scrollback so the client
         // can reinitialize xterm without resubscribing.
         const unsubscribeResize = runtime.subscribeToTerminalResize(ptyId, async (event) => {
-          mfLog(
-            `  terminal.subscribe RESIZE event ptyId=${ptyId} cols=${event.cols} rows=${event.rows} displayMode=${event.displayMode} reason=${event.reason}`
-          )
           const fresh = await runtime.serializeTerminalBuffer(ptyId)
           emit({
             type: 'resized',
@@ -389,9 +349,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
 
         const subscriptionId = params.terminal
         runtime.registerSubscriptionCleanup(subscriptionId, () => {
-          mfLog(
-            `  terminal.subscribe CLEANUP ptyId=${ptyId} isMobile=${isMobile} clientId=${clientId ?? 'none'}`
-          )
           unsubscribeData()
           unsubscribeResize()
           unsubscribeFit()

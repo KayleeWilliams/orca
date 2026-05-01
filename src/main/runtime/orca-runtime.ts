@@ -11,18 +11,6 @@ import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
-import { appendFileSync } from 'fs'
-
-const MOBILE_FIT_LOG = '/tmp/mobile-fit-debug.log'
-function mfLog(msg: string): void {
-  const ts = new Date().toISOString()
-  const line = `[${ts}] ${msg}\n`
-  try {
-    appendFileSync(MOBILE_FIT_LOG, line)
-  } catch {
-    /* ignore */
-  }
-}
 import { rm } from 'fs/promises'
 import { OrchestrationDb } from './orchestration/db'
 import { formatMessagesForInjection } from './orchestration/formatter'
@@ -1106,14 +1094,7 @@ export class OrcaRuntimeService {
     viewport?: { cols: number; rows: number }
   ): boolean {
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
-    mfLog(
-      `handleMobileSubscribe ptyId=${ptyId} mode=${mode} viewport=${viewport ? `${viewport.cols}x${viewport.rows}` : 'none'}`
-    )
-    console.log(
-      `[mobile-fit] handleMobileSubscribe ptyId=${ptyId} mode=${mode} viewport=${viewport ? `${viewport.cols}x${viewport.rows}` : 'none'}`
-    )
     if (!viewport) {
-      console.log('[mobile-fit]   → skipped (no viewport)')
       return false
     }
 
@@ -1136,24 +1117,11 @@ export class OrcaRuntimeService {
     const previousCols = existing?.previousCols ?? rendererSize?.cols ?? currentSize?.cols ?? null
     const previousRows = existing?.previousRows ?? rendererSize?.rows ?? currentSize?.rows ?? null
 
-    mfLog(
-      `  existing.previousCols=${existing?.previousCols ?? 'null'} existing.previousRows=${existing?.previousRows ?? 'null'} existing.wasResized=${existing?.wasResizedToPhone ?? 'N/A'}`
-    )
-    mfLog(
-      `  currentSize=${currentSize ? `${currentSize.cols}x${currentSize.rows}` : 'null'} rendererSize=${rendererSize ? `${rendererSize.cols}x${rendererSize.rows}` : 'null'}`
-    )
-    mfLog(`  → previousCols=${previousCols} previousRows=${previousRows}`)
-    mfLog(
-      `  allRendererSizes: ${JSON.stringify([...this.lastRendererSizes.entries()].map(([k, v]) => [k.slice(-12), `${v.cols}x${v.rows}`]))}`
-    )
-
     // Why: always register the subscriber so applyMobileDisplayMode can find
     // the viewport when the user later toggles from desktop to auto/phone.
     // Without this, toggling to auto after subscribing in desktop mode sees
     // hasSubscriber=false and can't perform the phone resize.
     if (mode === 'desktop') {
-      mfLog(`  → SKIP (desktop mode), registering with null prev`)
-      console.log('[mobile-fit]   → registered subscriber but skipped resize (desktop mode)')
       // Why: set previousCols/Rows to null so we don't capture a stale PTY
       // size that may not match the actual pane geometry (e.g. 214 when the
       // pane is in a split at 105). When the user later toggles to auto/phone,
@@ -1184,14 +1152,6 @@ export class OrcaRuntimeService {
     // to a terminal that was left at phone dims (no restore on tab switch)
     // should not trigger another SIGWINCH → shell prompt redraw.
     const alreadyAtTarget = currentSize?.cols === clampedCols && currentSize?.rows === clampedRows
-    const prevSource =
-      existing?.previousCols != null ? 'existing' : rendererSize ? 'renderer' : 'pty'
-    mfLog(
-      `  → ${alreadyAtTarget ? 'ALREADY AT' : 'RESIZE TO'} ${clampedCols}x${clampedRows} src=${prevSource}`
-    )
-    console.log(
-      `[mobile-fit]   → ${alreadyAtTarget ? 'already at' : 'resizing PTY to'} ${clampedCols}x${clampedRows} (prev=${previousCols}x${previousRows} src=${prevSource}) notifier=${!!this.notifier}`
-    )
     if (!alreadyAtTarget) {
       this.ptyController?.resize?.(ptyId, clampedCols, clampedRows)
       this.resizeHeadlessTerminal(ptyId, clampedCols, clampedRows)
@@ -1217,20 +1177,12 @@ export class OrcaRuntimeService {
   // intermediate terminals keep their current dims harmlessly.
   handleMobileUnsubscribe(ptyId: string, clientId: string): void {
     const subscriber = this.mobileSubscribers.get(ptyId)
-    mfLog(
-      `handleMobileUnsubscribe ptyId=${ptyId} hasSub=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone} prev=${subscriber?.previousCols}x${subscriber?.previousRows}`
-    )
-    console.log(
-      `[mobile-fit] handleMobileUnsubscribe ptyId=${ptyId} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
-    )
     if (!subscriber || subscriber.clientId !== clientId) {
-      mfLog(`  → SKIP (no subscriber or clientId mismatch)`)
       return
     }
 
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
     this.mobileSubscribers.delete(ptyId)
-    mfLog(`  mode=${mode} deleted subscriber`)
 
     if (mode === 'auto' && subscriber.wasResizedToPhone) {
       const existing = this.pendingRestoreTimers.get(ptyId)
@@ -1239,14 +1191,11 @@ export class OrcaRuntimeService {
       }
 
       const { previousCols, previousRows } = subscriber
-      mfLog(`  scheduling delayed restore to ${previousCols}x${previousRows} in 300ms`)
       const timer = setTimeout(() => {
         this.pendingRestoreTimers.delete(ptyId)
         if (this.mobileSubscribers.has(ptyId)) {
-          mfLog(`  delayed restore CANCELLED — new subscriber exists`)
           return
         }
-        mfLog(`  delayed restore FIRING: ptyId=${ptyId} resize to ${previousCols}x${previousRows}`)
         if (previousCols != null && previousRows != null) {
           this.ptyController?.resize?.(ptyId, previousCols, previousRows)
           this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
@@ -1275,19 +1224,10 @@ export class OrcaRuntimeService {
   applyMobileDisplayMode(ptyId: string): void {
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
     const subscriber = this.mobileSubscribers.get(ptyId)
-    const rendererSize = this.lastRendererSizes.get(ptyId)
-    const currentSize = this.getTerminalSize(ptyId)
-    mfLog(
-      `applyMobileDisplayMode ptyId=${ptyId} mode=${mode} hasSub=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone} sub.prev=${subscriber?.previousCols}x${subscriber?.previousRows} rendererSize=${rendererSize ? `${rendererSize.cols}x${rendererSize.rows}` : 'null'} currentSize=${currentSize ? `${currentSize.cols}x${currentSize.rows}` : 'null'}`
-    )
-    console.log(
-      `[mobile-fit] applyMobileDisplayMode ptyId=${ptyId} mode=${mode} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
-    )
 
     if (mode === 'desktop') {
       if (subscriber?.wasResizedToPhone) {
         const { previousCols, previousRows } = subscriber
-        mfLog(`  DESKTOP RESTORE: previousCols=${previousCols} previousRows=${previousRows}`)
         if (previousCols != null && previousRows != null) {
           this.ptyController?.resize?.(ptyId, previousCols, previousRows)
           this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
@@ -1311,7 +1251,6 @@ export class OrcaRuntimeService {
         )
       }
       const size = this.getTerminalSize(ptyId)
-      mfLog(`  NOTIFY desktop resize: ${size?.cols}x${size?.rows}`)
       this.notifyTerminalResize(ptyId, {
         cols: size?.cols ?? 0,
         rows: size?.rows ?? 0,
@@ -1345,23 +1284,14 @@ export class OrcaRuntimeService {
   // the actual pane geometry instead of a stale PTY size for previousCols.
   onExternalPtyResize(ptyId: string, cols: number, rows: number): void {
     this.lastRendererSizes.set(ptyId, { cols, rows })
-    mfLog(`onExternalPtyResize ptyId=${ptyId} cols=${cols} rows=${rows}`)
 
     const subscriber = this.mobileSubscribers.get(ptyId)
     if (!subscriber) {
-      mfLog(`  no subscriber, stored in lastRendererSizes only`)
       return
     }
     if (!subscriber.wasResizedToPhone) {
-      mfLog(
-        `  updated subscriber.previousCols ${subscriber.previousCols}→${cols} previousRows ${subscriber.previousRows}→${rows}`
-      )
       subscriber.previousCols = cols
       subscriber.previousRows = rows
-    } else {
-      mfLog(
-        `  SKIPPED (wasResizedToPhone=true, keeping prev=${subscriber.previousCols}x${subscriber.previousRows})`
-      )
     }
   }
 
@@ -1399,9 +1329,6 @@ export class OrcaRuntimeService {
     event: { cols: number; rows: number; displayMode: string; reason: string }
   ): void {
     const listeners = this.resizeListeners.get(ptyId)
-    mfLog(
-      `notifyTerminalResize ptyId=${ptyId} cols=${event.cols} rows=${event.rows} mode=${event.displayMode} reason=${event.reason} listenerCount=${listeners?.size ?? 0}`
-    )
     if (!listeners) {
       return
     }

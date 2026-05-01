@@ -210,7 +210,6 @@ export default function SessionScreen() {
       if (terminalUnsubsRef.current.has(handle)) return
       if (subscribingHandlesRef.current.has(handle)) return
       if (!getTerminalRef(handle)) {
-        console.log(`[mobile-fit] subscribeToTerminal SKIP handle=${handle} reason=no-ref`)
         return
       }
 
@@ -319,12 +318,11 @@ export default function SessionScreen() {
       if (toggleInFlightRef.current.has(handle)) return
       const current = terminalModes.get(handle) ?? 'auto'
       const next: MobileDisplayMode = current === 'auto' || current === 'phone' ? 'desktop' : 'auto'
-      console.log(`[mobile-fit] toggleDisplayMode handle=${handle} current=${current} next=${next}`)
       toggleInFlightRef.current.add(handle)
       try {
         await client.sendRequest('terminal.setDisplayMode', { terminal: handle, mode: next })
-      } catch (err) {
-        console.log(`[mobile-fit] toggleDisplayMode FAILED handle=${handle}`, err)
+      } catch {
+        // Mode change failed — server state unchanged, UI stays in sync.
       } finally {
         toggleInFlightRef.current.delete(handle)
       }

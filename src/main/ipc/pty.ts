@@ -5,15 +5,6 @@ boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
 import { join, delimiter } from 'path'
 import { randomUUID } from 'crypto'
-import { appendFileSync } from 'fs'
-
-function mfLog(msg: string): void {
-  try {
-    appendFileSync('/tmp/mobile-fit-debug.log', `[${new Date().toISOString()}] [pty-ipc] ${msg}\n`)
-  } catch {
-    /* ignore */
-  }
-}
 import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -840,12 +831,8 @@ export function registerPtyHandlers(
     // of their correct split width. Suppressing ALL pty:resize during
     // this window prevents the cascade from corrupting PTY dimensions.
     if (runtime?.isResizeSuppressed()) {
-      mfLog(
-        `pty:resize SUPPRESSED (global window) id=${args.id} cols=${args.cols} rows=${args.rows}`
-      )
       return
     }
-    mfLog(`pty:resize id=${args.id} cols=${args.cols} rows=${args.rows}`)
     ptySizes.set(args.id, { cols: args.cols, rows: args.rows })
     getProviderForPty(args.id).resize(args.id, args.cols, args.rows)
     runtime?.onExternalPtyResize(args.id, args.cols, args.rows)
