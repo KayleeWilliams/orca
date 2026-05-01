@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- Why: integration tests cover the full mobile subscribe lifecycle across many scenarios; splitting would scatter related assertions. */
 /**
  * Integration tests for the server-authoritative mobile subscribe lifecycle.
  * Tests handleMobileSubscribe, handleMobileUnsubscribe, applyMobileDisplayMode,
@@ -393,6 +394,62 @@ describe('mobile subscribe integration', () => {
       runtime.setMobileDisplayMode('pty-1', 'auto')
       runtime.applyMobileDisplayMode('pty-1')
       expect(events.length).toBe(countBefore)
+    })
+  })
+
+  describe('onExternalPtyResize', () => {
+    it('updates previousCols when desktop renderer resizes PTY after desktop restore', () => {
+      const { runtime, ptySizes } = createRuntime()
+      runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
+
+      // Toggle to desktop — restores to previousCols (150x40)
+      runtime.setMobileDisplayMode('pty-1', 'desktop')
+      runtime.applyMobileDisplayMode('pty-1')
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 150, rows: 40 })
+
+      // Simulate desktop renderer's safeFit correcting to split-pane width
+      runtime.onExternalPtyResize('pty-1', 105, 40)
+
+      // Toggle back to auto — should capture previousCols=105 (not 150)
+      runtime.setMobileDisplayMode('pty-1', 'auto')
+      runtime.applyMobileDisplayMode('pty-1')
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 45, rows: 20 })
+
+      // Toggle to desktop again — should restore to 105 (the corrected value)
+      runtime.setMobileDisplayMode('pty-1', 'desktop')
+      runtime.applyMobileDisplayMode('pty-1')
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 105, rows: 40 })
+    })
+
+    it('uses lastRendererSize for previousCols on first subscribe', () => {
+      const { runtime, ptySizes } = createRuntime()
+
+      // Simulate: PTY spawned at 214 (ptySizes), but renderer already fit to 105
+      ptySizes.set('pty-1', { cols: 214, rows: 72 })
+      runtime.onExternalPtyResize('pty-1', 105, 40)
+
+      // First mobile subscribe — should use rendererSize (105) not ptySizes (214)
+      runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 45, rows: 20 })
+
+      // Toggle to desktop — should restore to 105, not 214
+      runtime.setMobileDisplayMode('pty-1', 'desktop')
+      runtime.applyMobileDisplayMode('pty-1')
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 105, rows: 40 })
+    })
+
+    it('does not update previousCols when PTY is phone-fitted', () => {
+      const { runtime, ptySizes } = createRuntime()
+      runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
+
+      // PTY is phone-fitted (wasResizedToPhone=true) — external resize should not
+      // overwrite previousCols with phone dims
+      runtime.onExternalPtyResize('pty-1', 45, 20)
+
+      // Toggle to desktop — should still restore to original 150x40
+      runtime.setMobileDisplayMode('pty-1', 'desktop')
+      runtime.applyMobileDisplayMode('pty-1')
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 150, rows: 40 })
     })
   })
 

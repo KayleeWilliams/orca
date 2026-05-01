@@ -11,6 +11,18 @@ import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
+import { appendFileSync } from 'fs'
+
+const MOBILE_FIT_LOG = '/tmp/mobile-fit-debug.log'
+function mfLog(msg: string): void {
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${msg}\n`
+  try {
+    appendFileSync(MOBILE_FIT_LOG, line)
+  } catch {
+    /* ignore */
+  }
+}
 import { rm } from 'fs/promises'
 import { OrchestrationDb } from './orchestration/db'
 import { formatMessagesForInjection } from './orchestration/formatter'
@@ -349,6 +361,24 @@ export class OrcaRuntimeService {
       previousRows: number | null
     }
   >()
+
+  // Why: tracks the last PTY size set by the desktop renderer (via pty:resize
+  // IPC). Unlike ptySizes (which is overwritten by server-side phone-fit
+  // resizes), this map preserves the actual pane geometry. Used as the
+  // preferred source for previousCols so desktop restore uses the correct
+  // split-pane width instead of a stale full-width value.
+  private lastRendererSizes = new Map<string, { cols: number; rows: number }>()
+
+  // Why: when a desktop-fit override change fires, the desktop renderer's
+  // re-render cascade (triggered by setOverrideTick) runs safeFit on ALL
+  // panes — not just the affected one. Background tab panes get measured at
+  // full-width (214) instead of their correct split width (105). The stale
+  // pty:resize IPCs overwrite both the actual PTY size and lastRendererSizes.
+  // This global window suppresses ALL pty:resize for 200ms after any
+  // desktop-fit notification. The server has already set the correct PTY
+  // size via ptyController.resize(), so desktop renderer resizes during
+  // this window are redundant (for the restored pane) or wrong (collateral).
+  private resizeSuppressedUntil = 0
 
   // Why: delays PTY restore by 300ms after mobile unsubscribe so rapid tab
   // switches don't cause unnecessary resize thrashing. Keyed by clientId
@@ -1016,6 +1046,7 @@ export class OrcaRuntimeService {
     this.mobileSubscribers.delete(ptyId)
     this.mobileDisplayModes.delete(ptyId)
     this.resizeListeners.delete(ptyId)
+    this.lastRendererSizes.delete(ptyId)
     const pendingRestore = this.pendingRestoreTimers.get(ptyId)
     if (pendingRestore) {
       clearTimeout(pendingRestore.timer)
@@ -1075,13 +1106,12 @@ export class OrcaRuntimeService {
     viewport?: { cols: number; rows: number }
   ): boolean {
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    mfLog(
+      `handleMobileSubscribe ptyId=${ptyId} mode=${mode} viewport=${viewport ? `${viewport.cols}x${viewport.rows}` : 'none'}`
+    )
     console.log(
       `[mobile-fit] handleMobileSubscribe ptyId=${ptyId} mode=${mode} viewport=${viewport ? `${viewport.cols}x${viewport.rows}` : 'none'}`
     )
-    if (mode === 'desktop') {
-      console.log('[mobile-fit]   → skipped (desktop mode)')
-      return false
-    }
     if (!viewport) {
       console.log('[mobile-fit]   → skipped (no viewport)')
       return false
@@ -1095,13 +1125,49 @@ export class OrcaRuntimeService {
       this.pendingRestoreTimers.delete(ptyId)
     }
 
-    // Preserve existing previous dims if re-subscribing to an already phone-fitted
-    // terminal. getTerminalSize would return phone dims, so we use the existing
-    // subscriber's previousCols/previousRows to avoid losing the original desktop size.
+    // Why: prefer lastRendererSizes (the actual pane geometry reported by the
+    // desktop renderer's safeFit via pty:resize IPC) over getTerminalSize (the
+    // server-side PTY size, which may be stale — e.g. 214 full-width when the
+    // pane is actually in a split at ~105). Fall back to existing subscriber's
+    // previousCols (re-subscribe case) then currentSize (first subscribe).
     const existing = this.mobileSubscribers.get(ptyId)
     const currentSize = this.getTerminalSize(ptyId)
-    const previousCols = existing?.previousCols ?? currentSize?.cols ?? null
-    const previousRows = existing?.previousRows ?? currentSize?.rows ?? null
+    const rendererSize = this.lastRendererSizes.get(ptyId)
+    const previousCols = existing?.previousCols ?? rendererSize?.cols ?? currentSize?.cols ?? null
+    const previousRows = existing?.previousRows ?? rendererSize?.rows ?? currentSize?.rows ?? null
+
+    mfLog(
+      `  existing.previousCols=${existing?.previousCols ?? 'null'} existing.previousRows=${existing?.previousRows ?? 'null'} existing.wasResized=${existing?.wasResizedToPhone ?? 'N/A'}`
+    )
+    mfLog(
+      `  currentSize=${currentSize ? `${currentSize.cols}x${currentSize.rows}` : 'null'} rendererSize=${rendererSize ? `${rendererSize.cols}x${rendererSize.rows}` : 'null'}`
+    )
+    mfLog(`  → previousCols=${previousCols} previousRows=${previousRows}`)
+    mfLog(
+      `  allRendererSizes: ${JSON.stringify([...this.lastRendererSizes.entries()].map(([k, v]) => [k.slice(-12), `${v.cols}x${v.rows}`]))}`
+    )
+
+    // Why: always register the subscriber so applyMobileDisplayMode can find
+    // the viewport when the user later toggles from desktop to auto/phone.
+    // Without this, toggling to auto after subscribing in desktop mode sees
+    // hasSubscriber=false and can't perform the phone resize.
+    if (mode === 'desktop') {
+      mfLog(`  → SKIP (desktop mode), registering with null prev`)
+      console.log('[mobile-fit]   → registered subscriber but skipped resize (desktop mode)')
+      // Why: set previousCols/Rows to null so we don't capture a stale PTY
+      // size that may not match the actual pane geometry (e.g. 214 when the
+      // pane is in a split at 105). When the user later toggles to auto/phone,
+      // handleMobileSubscribe will capture currentSize at that point, which
+      // will be correct because safeFit has had time to adjust the PTY.
+      this.mobileSubscribers.set(ptyId, {
+        clientId,
+        viewport,
+        wasResizedToPhone: false,
+        previousCols: null,
+        previousRows: null
+      })
+      return false
+    }
 
     this.mobileSubscribers.set(ptyId, {
       clientId,
@@ -1118,8 +1184,13 @@ export class OrcaRuntimeService {
     // to a terminal that was left at phone dims (no restore on tab switch)
     // should not trigger another SIGWINCH → shell prompt redraw.
     const alreadyAtTarget = currentSize?.cols === clampedCols && currentSize?.rows === clampedRows
+    const prevSource =
+      existing?.previousCols != null ? 'existing' : rendererSize ? 'renderer' : 'pty'
+    mfLog(
+      `  → ${alreadyAtTarget ? 'ALREADY AT' : 'RESIZE TO'} ${clampedCols}x${clampedRows} src=${prevSource}`
+    )
     console.log(
-      `[mobile-fit]   → ${alreadyAtTarget ? 'already at' : 'resizing PTY to'} ${clampedCols}x${clampedRows} (prev=${previousCols}x${previousRows}) notifier=${!!this.notifier}`
+      `[mobile-fit]   → ${alreadyAtTarget ? 'already at' : 'resizing PTY to'} ${clampedCols}x${clampedRows} (prev=${previousCols}x${previousRows} src=${prevSource}) notifier=${!!this.notifier}`
     )
     if (!alreadyAtTarget) {
       this.ptyController?.resize?.(ptyId, clampedCols, clampedRows)
@@ -1146,15 +1217,20 @@ export class OrcaRuntimeService {
   // intermediate terminals keep their current dims harmlessly.
   handleMobileUnsubscribe(ptyId: string, clientId: string): void {
     const subscriber = this.mobileSubscribers.get(ptyId)
+    mfLog(
+      `handleMobileUnsubscribe ptyId=${ptyId} hasSub=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone} prev=${subscriber?.previousCols}x${subscriber?.previousRows}`
+    )
     console.log(
       `[mobile-fit] handleMobileUnsubscribe ptyId=${ptyId} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
     )
     if (!subscriber || subscriber.clientId !== clientId) {
+      mfLog(`  → SKIP (no subscriber or clientId mismatch)`)
       return
     }
 
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
     this.mobileSubscribers.delete(ptyId)
+    mfLog(`  mode=${mode} deleted subscriber`)
 
     if (mode === 'auto' && subscriber.wasResizedToPhone) {
       const existing = this.pendingRestoreTimers.get(ptyId)
@@ -1163,15 +1239,20 @@ export class OrcaRuntimeService {
       }
 
       const { previousCols, previousRows } = subscriber
+      mfLog(`  scheduling delayed restore to ${previousCols}x${previousRows} in 300ms`)
       const timer = setTimeout(() => {
         this.pendingRestoreTimers.delete(ptyId)
         if (this.mobileSubscribers.has(ptyId)) {
+          mfLog(`  delayed restore CANCELLED — new subscriber exists`)
           return
         }
+        mfLog(`  delayed restore FIRING: ptyId=${ptyId} resize to ${previousCols}x${previousRows}`)
         if (previousCols != null && previousRows != null) {
           this.ptyController?.resize?.(ptyId, previousCols, previousRows)
           this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
         }
+        this.lastRendererSizes.delete(ptyId)
+        this.suppressResizesForMs(500)
         this.terminalFitOverrides.delete(ptyId)
         this.notifier?.terminalFitOverrideChanged(
           ptyId,
@@ -1194,6 +1275,11 @@ export class OrcaRuntimeService {
   applyMobileDisplayMode(ptyId: string): void {
     const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
     const subscriber = this.mobileSubscribers.get(ptyId)
+    const rendererSize = this.lastRendererSizes.get(ptyId)
+    const currentSize = this.getTerminalSize(ptyId)
+    mfLog(
+      `applyMobileDisplayMode ptyId=${ptyId} mode=${mode} hasSub=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone} sub.prev=${subscriber?.previousCols}x${subscriber?.previousRows} rendererSize=${rendererSize ? `${rendererSize.cols}x${rendererSize.rows}` : 'null'} currentSize=${currentSize ? `${currentSize.cols}x${currentSize.rows}` : 'null'}`
+    )
     console.log(
       `[mobile-fit] applyMobileDisplayMode ptyId=${ptyId} mode=${mode} hasSubscriber=${!!subscriber} wasResized=${subscriber?.wasResizedToPhone}`
     )
@@ -1201,11 +1287,21 @@ export class OrcaRuntimeService {
     if (mode === 'desktop') {
       if (subscriber?.wasResizedToPhone) {
         const { previousCols, previousRows } = subscriber
+        mfLog(`  DESKTOP RESTORE: previousCols=${previousCols} previousRows=${previousRows}`)
         if (previousCols != null && previousRows != null) {
           this.ptyController?.resize?.(ptyId, previousCols, previousRows)
           this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
         }
         subscriber.wasResizedToPhone = false
+        // Why: clear stale renderer size so the next mobile subscribe falls
+        // through to currentSize (which is correct after the server restore).
+        // Without this, a polluted 214 from a prior collateral safeFit cascade
+        // persists in lastRendererSizes and gets used as previousCols.
+        this.lastRendererSizes.delete(ptyId)
+        // Why: 500ms not 200ms — the desktop renderer's collateral safeFit
+        // cascade (IPC → React re-render → rAF → DOM measure → IPC back)
+        // takes ~360ms to propagate to background-tab terminals.
+        this.suppressResizesForMs(500)
         this.terminalFitOverrides.delete(ptyId)
         this.notifier?.terminalFitOverrideChanged(
           ptyId,
@@ -1215,28 +1311,69 @@ export class OrcaRuntimeService {
         )
       }
       const size = this.getTerminalSize(ptyId)
+      mfLog(`  NOTIFY desktop resize: ${size?.cols}x${size?.rows}`)
       this.notifyTerminalResize(ptyId, {
         cols: size?.cols ?? 0,
         rows: size?.rows ?? 0,
         displayMode: 'desktop',
         reason: 'mode-change'
       })
-    } else if (
-      (mode === 'phone' || mode === 'auto') &&
-      subscriber &&
-      !subscriber.wasResizedToPhone
-    ) {
-      const viewport = subscriber.viewport
-      if (viewport) {
-        this.handleMobileSubscribe(ptyId, subscriber.clientId, viewport)
-        this.notifyTerminalResize(ptyId, {
-          cols: viewport.cols,
-          rows: viewport.rows,
-          displayMode: mode,
-          reason: 'mode-change'
-        })
+    } else if (mode === 'phone' || mode === 'auto') {
+      if (subscriber && !subscriber.wasResizedToPhone) {
+        const viewport = subscriber.viewport
+        if (viewport) {
+          this.handleMobileSubscribe(ptyId, subscriber.clientId, viewport)
+        }
       }
+      // Why: always emit the mode change even when no resize occurred (e.g.
+      // subscriber missing, wasResizedToPhone already true, or no viewport).
+      // Without this the mobile client never learns the mode changed and its
+      // toggle button gets stuck showing the old state.
+      const size = this.getTerminalSize(ptyId)
+      this.notifyTerminalResize(ptyId, {
+        cols: size?.cols ?? 0,
+        rows: size?.rows ?? 0,
+        displayMode: mode,
+        reason: 'mode-change'
+      })
     }
+  }
+
+  // Why: called from the pty:resize IPC handler whenever the desktop renderer
+  // resizes a PTY (e.g. via safeFit after window resize, split, or desktop-mode
+  // restore). Stores the renderer-reported size so handleMobileSubscribe can use
+  // the actual pane geometry instead of a stale PTY size for previousCols.
+  onExternalPtyResize(ptyId: string, cols: number, rows: number): void {
+    this.lastRendererSizes.set(ptyId, { cols, rows })
+    mfLog(`onExternalPtyResize ptyId=${ptyId} cols=${cols} rows=${rows}`)
+
+    const subscriber = this.mobileSubscribers.get(ptyId)
+    if (!subscriber) {
+      mfLog(`  no subscriber, stored in lastRendererSizes only`)
+      return
+    }
+    if (!subscriber.wasResizedToPhone) {
+      mfLog(
+        `  updated subscriber.previousCols ${subscriber.previousCols}→${cols} previousRows ${subscriber.previousRows}→${rows}`
+      )
+      subscriber.previousCols = cols
+      subscriber.previousRows = rows
+    } else {
+      mfLog(
+        `  SKIPPED (wasResizedToPhone=true, keeping prev=${subscriber.previousCols}x${subscriber.previousRows})`
+      )
+    }
+  }
+
+  // Why: the pty:resize IPC handler calls this to check if the global
+  // suppress window is active. During this window, all desktop renderer
+  // pty:resize events are ignored to prevent collateral safeFit corruption.
+  isResizeSuppressed(): boolean {
+    return Date.now() < this.resizeSuppressedUntil
+  }
+
+  private suppressResizesForMs(ms: number): void {
+    this.resizeSuppressedUntil = Date.now() + ms
   }
 
   subscribeToTerminalResize(
@@ -1262,6 +1399,9 @@ export class OrcaRuntimeService {
     event: { cols: number; rows: number; displayMode: string; reason: string }
   ): void {
     const listeners = this.resizeListeners.get(ptyId)
+    mfLog(
+      `notifyTerminalResize ptyId=${ptyId} cols=${event.cols} rows=${event.rows} mode=${event.displayMode} reason=${event.reason} listenerCount=${listeners?.size ?? 0}`
+    )
     if (!listeners) {
       return
     }

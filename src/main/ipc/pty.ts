@@ -5,6 +5,15 @@ boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
 import { join, delimiter } from 'path'
 import { randomUUID } from 'crypto'
+import { appendFileSync } from 'fs'
+
+function mfLog(msg: string): void {
+  try {
+    appendFileSync('/tmp/mobile-fit-debug.log', `[${new Date().toISOString()}] [pty-ipc] ${msg}\n`)
+  } catch {
+    /* ignore */
+  }
+}
 import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -825,8 +834,21 @@ export function registerPtyHandlers(
   // empty acknowledgement message back to the renderer.
   ipcMain.removeAllListeners('pty:resize')
   ipcMain.on('pty:resize', (_event, args: { id: string; cols: number; rows: number }) => {
+    // Why: after a desktop-fit override change, the desktop renderer's
+    // re-render cascade runs safeFit on ALL panes (not just the affected
+    // one). Background-tab panes get measured at full-width (214) instead
+    // of their correct split width. Suppressing ALL pty:resize during
+    // this window prevents the cascade from corrupting PTY dimensions.
+    if (runtime?.isResizeSuppressed()) {
+      mfLog(
+        `pty:resize SUPPRESSED (global window) id=${args.id} cols=${args.cols} rows=${args.rows}`
+      )
+      return
+    }
+    mfLog(`pty:resize id=${args.id} cols=${args.cols} rows=${args.rows}`)
     ptySizes.set(args.id, { cols: args.cols, rows: args.rows })
     getProviderForPty(args.id).resize(args.id, args.cols, args.rows)
+    runtime?.onExternalPtyResize(args.id, args.cols, args.rows)
   })
 
   // Why: fire-and-forget — clears the DaemonPtyAdapter's sticky cold restore
