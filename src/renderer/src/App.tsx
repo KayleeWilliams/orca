@@ -2,7 +2,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
-import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight, Search } from 'lucide-react'
 import {
   FOCUS_TERMINAL_PANE_EVENT,
   SYNC_FIT_PANES_EVENT,
@@ -864,6 +864,20 @@ function App(): React.JSX.Element {
             </PopoverContent>
           </Popover>
         ) : null}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className="sidebar-toggle"
+              onClick={() => actions.openModal('worktree-palette')}
+              aria-label="Search worktrees and browser tabs"
+            >
+              <Search size={14} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6}>
+            {`Search (${isMac ? '⌘J' : 'Ctrl+Shift+J'})`}
+          </TooltipContent>
+        </Tooltip>
       </div>
       {/* Why: Back/Forward traverse mixed worktree + Tasks history, so the
           cluster is shown wherever the history shortcut is live (terminal or
