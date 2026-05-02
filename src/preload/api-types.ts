@@ -211,6 +211,32 @@ export type PreflightApi = {
   detectRemoteAgents: (args: { connectionId: string }) => Promise<string[]>
 }
 
+// Why: renderer-facing mirror of the daemon's `SessionInfo` + protocolVersion
+// annotation (src/main/daemon/types.ts `DaemonSessionInfo`). Kept here instead
+// of imported from main because the preload boundary must not depend on
+// main-only protocol types — those are subprocess-facing. Keep the two shapes
+// in sync when adding fields on either side; the Manage Sessions panel reads
+// these directly.
+export type PtyManagementSession = {
+  sessionId: string
+  state: 'created' | 'spawning' | 'running' | 'exiting' | 'exited'
+  shellState: 'pending' | 'ready' | 'timed_out' | 'unsupported'
+  isAlive: boolean
+  pid: number | null
+  cwd: string | null
+  cols: number
+  rows: number
+  createdAt: number
+  protocolVersion: number
+}
+
+export type PtyManagementApi = {
+  listSessions: () => Promise<{ sessions: PtyManagementSession[] }>
+  killAll: () => Promise<{ killedCount: number; remainingCount: number }>
+  killOne: (args: { sessionId: string }) => Promise<{ success: boolean }>
+  restart: () => Promise<{ success: boolean }>
+}
+
 export type ExportApi = {
   htmlToPdf: (args: {
     html: string
@@ -395,6 +421,7 @@ export type PreloadApi = {
     onData: (callback: (data: { id: string; data: string }) => void) => () => void
     onReplay: (callback: (data: { id: string; data: string }) => void) => () => void
     onExit: (callback: (data: { id: string; code: number }) => void) => () => void
+    management: PtyManagementApi
   }
   feedback: {
     submit: (args: {

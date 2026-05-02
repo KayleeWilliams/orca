@@ -382,6 +382,13 @@ const api = {
         callback(data)
       ipcRenderer.on('pty:exit', listener)
       return () => ipcRenderer.removeListener('pty:exit', listener)
+    },
+
+    management: {
+      listSessions: () => ipcRenderer.invoke('pty:management:listSessions'),
+      killAll: () => ipcRenderer.invoke('pty:management:killAll'),
+      killOne: (args: { sessionId: string }) => ipcRenderer.invoke('pty:management:killOne', args),
+      restart: () => ipcRenderer.invoke('pty:management:restart')
     }
   },
 
