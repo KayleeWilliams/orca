@@ -1309,12 +1309,17 @@ describe('registerPtyHandlers', () => {
   it('disposes PTY listeners before manual kill IPC', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    // Why: hold a stable reference to the kill spy. On POSIX, destroyPtyProcess
+    // in local-pty-provider reassigns proc.kill to a no-op to defuse the
+    // SIGHUP-to-recycled-pid hazard (see docs/fix-pty-fd-leak.md). Reading
+    // proc.kill.mock after that runs would yield a non-mock and crash.
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1329,22 +1334,23 @@ describe('registerPtyHandlers', () => {
     await handlers.get('pty:kill')!(null, { id: spawnResult.id })
 
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 
   it('disposes PTY listeners before runtime controller kill', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1368,22 +1374,23 @@ describe('registerPtyHandlers', () => {
 
     expect(runtimeController.kill(spawnResult.id)).toBe(true)
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 
   it('disposes PTY listeners before did-finish-load orphan cleanup', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1409,10 +1416,10 @@ describe('registerPtyHandlers', () => {
     didFinishLoad?.()
 
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 

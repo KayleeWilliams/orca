@@ -80,6 +80,27 @@ function clearPtyState(id: string): void {
   ptyLoadGeneration.delete(id)
 }
 
+function destroyPtyProcess(proc: pty.IPty): void {
+  // Why: node-pty's UnixTerminal.destroy() closes the master socket, which
+  // releases the ptmx fd to the OS — without this call the fd leaks until GC
+  // (see docs/fix-pty-fd-leak.md). destroy() also registers a close listener
+  // that fires `this.kill('SIGHUP')` AFTER the socket closes. On POSIX, by
+  // the time that listener runs the child may have exited and its pid been
+  // recycled to an unrelated user process — SIGHUP would land on a Chrome tab,
+  // editor, etc. Neutralize proc.kill on this instance before calling
+  // destroy() to defuse the hazard. Windows exempt: WindowsTerminal.destroy
+  // IS a kill() call via _deferNoArgs, so neutralizing it would leak the
+  // ConPTY agent.
+  if (process.platform !== 'win32') {
+    ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
+  }
+  try {
+    ;(proc as unknown as { destroy?: () => void }).destroy?.()
+  } catch {
+    /* swallow — already torn down */
+  }
+}
+
 function safeKillAndClean(id: string, proc: pty.IPty): void {
   disposePtyListeners(id)
   try {
@@ -87,6 +108,7 @@ function safeKillAndClean(id: string, proc: pty.IPty): void {
   } catch {
     /* Process may already be dead */
   }
+  destroyPtyProcess(proc)
   clearPtyState(id)
 }
 
@@ -310,12 +332,28 @@ export class LocalPtyProvider implements IPtyProvider {
     }
 
     const onExitDisposable = proc.onExit(({ exitCode }) => {
+      // Why: neutralize proc.kill the instant the child is reaped, before any
+      // other work in this callback. node-pty's UnixTerminal installs a
+      // `_socket.once('close', () => this.kill('SIGHUP'))` handler at destroy
+      // time, but the master socket can also emit 'close' on natural exit
+      // between this onExit callback starting and destroyPtyProcess() running
+      // below. If 'close' wins, SIGHUP is dispatched to proc.pid — which on
+      // POSIX has already been reaped and may have been recycled to an
+      // unrelated process. Synchronous neutralization here closes that window.
+      // Windows is exempt: WindowsTerminal.destroy is implemented via kill().
+      if (process.platform !== 'win32') {
+        ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
+      }
       if (shellReadyTimeout) {
         clearTimeout(shellReadyTimeout)
         shellReadyTimeout = null
       }
       startupCommandCleanup?.()
       clearPtyState(id)
+      // Why: release the master ptmx fd on the natural-exit path — without
+      // this, a shell that exits cleanly (the common case) never releases its
+      // fd until the next GC. See docs/fix-pty-fd-leak.md.
+      destroyPtyProcess(proc)
       this.opts.onExit?.(id, exitCode)
       for (const cb of exitListeners) {
         cb({ id, code: exitCode })
@@ -365,6 +403,7 @@ export class LocalPtyProvider implements IPtyProvider {
     } catch {
       /* Process may already be dead */
     }
+    destroyPtyProcess(proc)
     ptyProcesses.delete(id)
     ptyShellName.delete(id)
     ptyLoadGeneration.delete(id)

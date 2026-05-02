@@ -17,7 +17,8 @@ function createMockSubprocess(): SubprocessHandle {
     forceKill() {},
     signal() {},
     onData() {},
-    onExit() {}
+    onExit() {},
+    dispose() {}
   }
 }
 
