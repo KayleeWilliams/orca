@@ -8,6 +8,7 @@ import {
   getDaemonPidPath,
   getDaemonSocketPath,
   getDaemonTokenPath,
+  serializeDaemonPidFile,
   type DaemonLauncher
 } from './daemon-spawner'
 import { DaemonPtyAdapter } from './daemon-pty-adapter'
@@ -18,7 +19,7 @@ import {
   PROTOCOL_VERSION,
   type ListSessionsResult
 } from './types'
-import { healthCheckDaemon, killStaleDaemon } from './daemon-health'
+import { getProcessStartedAtMs, healthCheckDaemon, killStaleDaemon } from './daemon-health'
 import { setLocalPtyProvider } from '../ipc/pty'
 
 let spawner: DaemonSpawner | null = null
@@ -130,7 +131,18 @@ function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
         if (msg && typeof msg === 'object' && (msg as { type?: string }).type === 'ready') {
           clearTimeout(timer)
           if (child.pid) {
-            writeFileSync(getDaemonPidPath(runtimeDir), String(child.pid), { mode: 0o600 })
+            // Why: JSON pid file carries pid + process start time so later
+            // killStaleDaemon() can verify the pid still belongs to the daemon
+            // we forked before SIGTERMing it. Prevents pid-recycling hazard
+            // where the OS hands the daemon's old pid to an unrelated process.
+            writeFileSync(
+              getDaemonPidPath(runtimeDir),
+              serializeDaemonPidFile({
+                pid: child.pid,
+                startedAtMs: getProcessStartedAtMs(child.pid)
+              }),
+              { mode: 0o600 }
+            )
           }
           // Why: disconnect IPC channel and unref so Electron can exit
           // without waiting for the daemon. The daemon keeps running.
