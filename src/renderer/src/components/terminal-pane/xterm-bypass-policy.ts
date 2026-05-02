@@ -20,6 +20,7 @@
 export type XtermBypassEvent = {
   key: string
   code?: string
+  defaultPrevented?: boolean
   metaKey: boolean
   ctrlKey: boolean
   altKey: boolean
@@ -44,6 +45,16 @@ export function shouldBypassXtermKeydown(
   options: XtermBypassOptions
 ): boolean {
   const { isMac, hasSelection } = options
+  const platformModifierHeld = isMac
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey
+
+  if (event.defaultPrevented && platformModifierHeld) {
+    // Why: window-level Orca shortcuts may have already handled the chord but
+    // not stopped propagation. Match VS Code by preventing xterm's kitty
+    // encoder from also sending that app shortcut to the shell.
+    return true
+  }
 
   if (isMac) {
     // Narrow Ghostty rule to Cmd+C only: Ghostty bubbles every Cmd chord on

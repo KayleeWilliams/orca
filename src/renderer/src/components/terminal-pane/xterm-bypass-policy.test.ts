@@ -5,6 +5,7 @@ function event(overrides: Partial<XtermBypassEvent>): XtermBypassEvent {
   return {
     key: '',
     code: '',
+    defaultPrevented: false,
     metaKey: false,
     ctrlKey: false,
     altKey: false,
@@ -50,6 +51,30 @@ describe('shouldBypassXtermKeydown — macOS', () => {
     }
   })
 
+  it('bubbles already-handled Cmd app shortcuts so kitty does not also write to shell', () => {
+    // Why: some window-level shortcuts call preventDefault without stopping
+    // propagation. VS Code returns false for resolved Meta keybindings for the
+    // same kitty reason: app shortcuts must not also become terminal input.
+    expect(
+      shouldBypassXtermKeydown(
+        event({ key: 'b', code: 'KeyB', defaultPrevented: true, metaKey: true }),
+        opts
+      )
+    ).toBe(true)
+    expect(
+      shouldBypassXtermKeydown(
+        event({
+          key: 'ArrowLeft',
+          code: 'ArrowLeft',
+          defaultPrevented: true,
+          metaKey: true,
+          altKey: true
+        }),
+        opts
+      )
+    ).toBe(true)
+  })
+
   it('does not bubble Cmd+Shift+C — already intercepted in keyboard-handlers.ts', () => {
     expect(
       shouldBypassXtermKeydown(
@@ -73,6 +98,15 @@ describe('shouldBypassXtermKeydown — macOS', () => {
     expect(
       shouldBypassXtermKeydown(
         event({ key: 'c', code: 'KeyC', metaKey: true, ctrlKey: true }),
+        opts
+      )
+    ).toBe(false)
+  })
+
+  it('does not bubble already-handled Ctrl chords on macOS', () => {
+    expect(
+      shouldBypassXtermKeydown(
+        event({ key: 'c', code: 'KeyC', defaultPrevented: true, ctrlKey: true }),
         opts
       )
     ).toBe(false)
@@ -135,6 +169,27 @@ describe('shouldBypassXtermKeydown — Windows/Linux', () => {
         )
       ).toBe(false)
     }
+  })
+
+  it('bubbles already-handled Ctrl app shortcuts so kitty does not also write to shell', () => {
+    expect(
+      shouldBypassXtermKeydown(
+        event({ key: 'b', code: 'KeyB', defaultPrevented: true, ctrlKey: true }),
+        noSel
+      )
+    ).toBe(true)
+    expect(
+      shouldBypassXtermKeydown(
+        event({
+          key: 'ArrowLeft',
+          code: 'ArrowLeft',
+          defaultPrevented: true,
+          ctrlKey: true,
+          altKey: true
+        }),
+        noSel
+      )
+    ).toBe(true)
   })
 
   it('does not bubble plain letters', () => {
