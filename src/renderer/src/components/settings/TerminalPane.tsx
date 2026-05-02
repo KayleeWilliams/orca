@@ -32,6 +32,7 @@ import { matchesSettingsSearch } from './settings-search'
 import { useAppStore } from '../../store'
 import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import {
+  MANAGE_SESSIONS_SEARCH_ENTRIES,
   TERMINAL_ADVANCED_SEARCH_ENTRIES,
   TERMINAL_CURSOR_SEARCH_ENTRIES,
   TERMINAL_DARK_THEME_SEARCH_ENTRIES,
@@ -50,6 +51,7 @@ import { DarkTerminalThemeSection, LightTerminalThemeSection } from './TerminalT
 import { TerminalWindowSection } from './TerminalWindowSection'
 import { GhosttyImportModal } from './GhosttyImportModal'
 import type { UseGhosttyImportReturn } from './useGhosttyImport'
+import { ManageSessionsSection } from './ManageSessionsSection'
 
 type TerminalPaneProps = {
   settings: GlobalSettings
@@ -726,6 +728,9 @@ export function TerminalPane({
           </p>
         </SearchableSetting>
       </section>
+    ) : null,
+    matchesSettingsSearch(searchQuery, MANAGE_SESSIONS_SEARCH_ENTRIES) ? (
+      <ManageSessionsSection key="manage-sessions" />
     ) : null,
     matchesSettingsSearch(searchQuery, TERMINAL_ADVANCED_SEARCH_ENTRIES) ||
     (isMac && matchesSettingsSearch(searchQuery, TERMINAL_MAC_OPTION_SEARCH_ENTRIES)) ? (
