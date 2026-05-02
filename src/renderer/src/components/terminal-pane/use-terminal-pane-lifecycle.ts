@@ -664,6 +664,7 @@ export function useTerminalPaneLifecycle({
       // so PTYs survive navigation. Creating WebGL for those offscreen panes
       // still consumes Chromium's context budget and can blank visible panes.
       initialRenderingSuspended: !isVisibleRef.current,
+      terminalGpuAcceleration: settingsRef.current?.terminalGpuAcceleration ?? 'auto',
       debugLabel: `tab:${tabId}/wt:${worktreeId}`
     })
 
@@ -906,6 +907,10 @@ export function useTerminalPaneLifecycle({
     // immediately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, systemPrefersDark, effectiveMacOptionAsAlt])
+
+  useEffect(() => {
+    managerRef.current?.setTerminalGpuAcceleration(settings?.terminalGpuAcceleration ?? 'auto')
+  }, [settings?.terminalGpuAcceleration, managerRef])
 
   useEffect(() => {
     const manager = managerRef.current

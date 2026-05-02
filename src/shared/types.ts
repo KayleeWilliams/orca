@@ -954,6 +954,11 @@ export type GlobalSettings = {
   terminalFontFamily: string
   terminalFontWeight: number
   terminalLineHeight: number
+  /** Mirrors VS Code's terminal.integrated.gpuAcceleration shape.
+   *  - 'auto': try xterm WebGL and fall back to DOM if the renderer fails.
+   *  - 'on': always try xterm WebGL.
+   *  - 'off': keep terminal rendering on xterm's DOM renderer. */
+  terminalGpuAcceleration: 'auto' | 'on' | 'off'
   /** Whether to enable programming-ligatures rendering via
    *  `@xterm/addon-ligatures`.
    *  - `'auto'` (default): enabled only when the configured font is known to

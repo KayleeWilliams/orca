@@ -38,6 +38,7 @@ import {
   TERMINAL_LIGHT_THEME_SEARCH_ENTRIES,
   TERMINAL_MAC_OPTION_SEARCH_ENTRIES,
   TERMINAL_PANE_STYLE_SEARCH_ENTRIES,
+  TERMINAL_RENDERING_SEARCH_ENTRIES,
   TERMINAL_RIGHT_CLICK_TO_PASTE_SEARCH_ENTRY,
   TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES,
   TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES,
@@ -318,6 +319,58 @@ export function TerminalPane({
               ? 'enabled'
               : 'disabled'}
             .
+          </p>
+        </SearchableSetting>
+      </section>
+    ) : null,
+    matchesSettingsSearch(searchQuery, TERMINAL_RENDERING_SEARCH_ENTRIES) ? (
+      <section key="rendering" className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Rendering</h3>
+          <p className="text-xs text-muted-foreground">
+            Terminal renderer behavior for live panes and new panes.
+          </p>
+        </div>
+
+        <SearchableSetting
+          title="GPU Acceleration"
+          description="Controls whether the terminal uses xterm.js WebGL rendering. Auto mirrors VS Code: try GPU and fall back to DOM if WebGL fails."
+          keywords={[
+            'terminal',
+            'gpu',
+            'acceleration',
+            'webgl',
+            'renderer',
+            'rendering',
+            'graphics',
+            'linux',
+            'vscode'
+          ]}
+          className="space-y-2"
+        >
+          <Label>GPU Acceleration</Label>
+          <div className="flex w-fit gap-1 rounded-md border border-border/50 p-1">
+            {(['auto', 'on', 'off'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => updateSettings({ terminalGpuAcceleration: option })}
+                className={`rounded-sm px-3 py-1 text-sm capitalize transition-colors ${
+                  (settings.terminalGpuAcceleration ?? 'auto') === option
+                    ? 'bg-accent font-medium text-accent-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {option === 'auto' ? 'Auto' : option === 'on' ? 'On' : 'Off'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {settings.terminalGpuAcceleration === 'off'
+              ? 'WebGL is disabled; xterm uses the DOM renderer for maximum compatibility.'
+              : settings.terminalGpuAcceleration === 'on'
+                ? 'WebGL is always attempted for terminal panes.'
+                : 'Auto tries WebGL for performance and falls back to the DOM renderer if WebGL fails, matching VS Code.'}
           </p>
         </SearchableSetting>
       </section>

@@ -40,6 +40,25 @@ export const TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const TERMINAL_RENDERING_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'GPU Acceleration',
+    description:
+      'Controls whether the terminal uses xterm.js WebGL rendering. Auto mirrors VS Code: try GPU and fall back to DOM if WebGL fails.',
+    keywords: [
+      'terminal',
+      'gpu',
+      'acceleration',
+      'webgl',
+      'renderer',
+      'rendering',
+      'graphics',
+      'linux',
+      'vscode'
+    ]
+  }
+]
+
 export const TERMINAL_CURSOR_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Cursor Shape',
@@ -270,6 +289,7 @@ export function getTerminalPaneSearchEntries(platform: {
   // users from landing on an option the UI intentionally hides.
   return [
     ...TERMINAL_TYPOGRAPHY_SEARCH_ENTRIES,
+    ...TERMINAL_RENDERING_SEARCH_ENTRIES,
     ...TERMINAL_CURSOR_SEARCH_ENTRIES,
     ...TERMINAL_PANE_STYLE_SEARCH_ENTRIES,
     ...(platform.isWindows ? TERMINAL_WINDOWS_SEARCH_ENTRIES : []),
