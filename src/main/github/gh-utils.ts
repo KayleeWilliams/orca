@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { gitExecFileAsync, ghExecFileAsync } from '../git/runner'
-import type { ClassifiedError, GitHubOwnerRepo } from '../../shared/types'
+import type { ClassifiedError, GitHubOwnerRepo, IssueSourcePreference } from '../../shared/types'
 
 // Why: legacy generic execFile wrapper — only used by callers that don't need
 // WSL-aware routing (e.g. non-repo-scoped gh commands). Repo-scoped callers
@@ -54,6 +54,14 @@ export function classifyGhError(stderr: string): ClassifiedError {
   if (s.includes('http 404') || s.includes('could not resolve to a repository')) {
     return { type: 'not_found', message: 'Issue not found — it may have been deleted.' }
   }
+  // Why: `gh issue list` prints "the '<owner>/<repo>' repository has disabled
+  // issues" when Issues are turned off in repo settings (common on forks). This
+  // hits during feature-2 when a user flips the selector to an origin fork —
+  // without a dedicated branch the raw "Command failed: gh issue list …" line
+  // leaks verbatim into the banner via the `unknown` fallback.
+  if (s.includes('has disabled issues')) {
+    return { type: 'issues_disabled', message: 'Issues are disabled on this repository.' }
+  }
   if (s.includes('http 422') || s.includes('validation failed')) {
     return { type: 'validation_error', message: `Invalid update — ${stderr.trim()}` }
   }
@@ -89,6 +97,7 @@ export function classifyListIssuesError(stderr: string): ClassifiedError {
     permission_denied:
       "You don't have permission to read issues for this repository. Check your GitHub token scopes.",
     not_found: 'Repository not found.',
+    issues_disabled: 'Issues are disabled on this repository.',
     validation_error: `Invalid request — ${trimmed}`,
     rate_limited: 'GitHub rate limit hit. Try again in a few minutes.',
     network_error: 'Network error — check your connection.',
@@ -118,7 +127,7 @@ export function parseGitHubOwnerRepo(remoteUrl: string): OwnerRepo | null {
   return { owner: match[1], repo: match[2] }
 }
 
-async function getOwnerRepoForRemote(
+export async function getOwnerRepoForRemote(
   repoPath: string,
   remoteName: string
 ): Promise<OwnerRepo | null> {
@@ -152,4 +161,45 @@ export async function getIssueOwnerRepo(repoPath: string): Promise<OwnerRepo | n
     return upstream
   }
   return getOwnerRepoForRemote(repoPath, 'origin')
+}
+
+export type ResolvedIssueSource = {
+  source: OwnerRepo | null
+  /** True when the user preferred `upstream` but the upstream remote is no
+   *  longer configured and the resolver fell back to origin. Consumers
+   *  surface this as a one-time toast per session/repo. */
+  fellBack: boolean
+}
+
+/**
+ * Resolve the issue source for a repo honoring the user's per-repo preference.
+ *
+ * Do not delete `getIssueOwnerRepo`: it remains the right primitive for
+ * `'auto'` mode and for preference-agnostic callers like typed work-item
+ * detail lookups (where the issue-vs-PR disambiguation is orthogonal to
+ * user choice).
+ */
+export async function resolveIssueSource(
+  repoPath: string,
+  preference: IssueSourcePreference | undefined
+): Promise<ResolvedIssueSource> {
+  if (preference === 'upstream') {
+    const upstream = await getOwnerRepoForRemote(repoPath, 'upstream')
+    if (upstream) {
+      return { source: upstream, fellBack: false }
+    }
+    // Why: explicit upstream is gone — fall back to origin but only flag the
+    // fallback when it actually produced an origin source. If origin is also
+    // missing (or non-GitHub), there's nothing to "fall back to" and the
+    // UI toast "using origin" would be misleading. Do NOT auto-reset the
+    // preference: the user may be mid-way through a workflow and expect
+    // their choice to re-engage if `upstream` is re-added.
+    const origin = await getOwnerRepoForRemote(repoPath, 'origin')
+    return { source: origin, fellBack: origin !== null }
+  }
+  if (preference === 'origin') {
+    return { source: await getOwnerRepoForRemote(repoPath, 'origin'), fellBack: false }
+  }
+  // 'auto' or undefined
+  return { source: await getIssueOwnerRepo(repoPath), fellBack: false }
 }

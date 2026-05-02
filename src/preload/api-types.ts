@@ -312,7 +312,15 @@ export type PreloadApi = {
     update: (args: {
       repoId: string
       updates: Partial<
-        Pick<Repo, 'displayName' | 'badgeColor' | 'hookSettings' | 'worktreeBaseRef' | 'kind'>
+        Pick<
+          Repo,
+          | 'displayName'
+          | 'badgeColor'
+          | 'hookSettings'
+          | 'worktreeBaseRef'
+          | 'kind'
+          | 'issueSourcePreference'
+        >
       >
     }) => Promise<Repo>
     pickFolder: () => Promise<string | null>

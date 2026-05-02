@@ -1,10 +1,12 @@
 /* eslint-disable max-lines -- Why: the GitHub slice co-locates all cache + fetch logic for
 PR, issue, checks, and comments data so the dedup and invalidation patterns stay consistent. */
 import type { StateCreator } from 'zustand'
+import { toast } from 'sonner'
 import type { AppState } from '../types'
 import type {
   ClassifiedError,
   GitHubOwnerRepo,
+  IssueSourcePreference,
   PRInfo,
   IssueInfo,
   PRCheckDetail,
@@ -18,6 +20,11 @@ import { syncPRChecksStatus } from './github-checks'
 export type WorkItemsCacheSources = {
   issues: GitHubOwnerRepo | null
   prs: GitHubOwnerRepo | null
+  /** Raw upstream remote (if any) — present so the selector can render
+   *  independently of the currently-effective preference. Required-nullable
+   *  (matches siblings `issues`/`prs`) so consumers only branch on `null`
+   *  vs value, not a three-state (undefined | null | value). */
+  upstreamCandidate: GitHubOwnerRepo | null
 }
 
 // Why: the indicator and retry banner both need the resolved owner/repo for
@@ -42,6 +49,15 @@ export type CacheEntry<T> = {
    * render together.
    */
   error?: WorkItemsCacheError
+  /**
+   * True when the resolver fell back to origin because the user's preferred
+   * `'upstream'` remote is no longer configured for this repo. Consumers
+   * surface a one-time toast per session/repo; TaskPage tracks the
+   * already-toasted set so repeated refreshes don't re-toast.
+   * Typed as `?: true` (not `?: boolean`) to encode the invariant "present
+   * iff fell-back" — an explicit `false` write would be a bug.
+   */
+  issueSourceFellBack?: true
 }
 
 type FetchOptions = {
@@ -54,6 +70,10 @@ const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
 // source of truth, so 60s staleness is fine — stale data renders instantly
 // while a background refresh keeps it current.
 const WORK_ITEMS_CACHE_TTL = 60_000
+// Why: match repos.ts so error toasts surfaced from this slice share the same
+// long-lived duration — the user needs time to read + act on persist failures
+// rather than having the toast vanish behind default short-lived timings.
+const ERROR_TOAST_DURATION = 60_000
 
 const inflightPRRequests = new Map<
   string,
@@ -267,6 +287,30 @@ export type GitHubSlice = {
    */
   prefetchWorkItems: (repoId: string, repoPath: string, limit?: number, query?: string) => void
   patchWorkItem: (itemId: string, patch: Partial<GitHubWorkItem>) => void
+  /**
+   * Monotonic counter bumped whenever a repo's issue-source preference is
+   * flipped. Subscribers (TaskPage's fetch effect) include this in their
+   * dependency array to force a re-fetch after preference changes — the
+   * work-items cache eviction alone isn't enough because the effect keys on
+   * `selectedRepos`/`appliedTaskSearch`/`taskRefreshNonce` and wouldn't
+   * otherwise notice the cache went empty.
+   */
+  workItemsInvalidationNonce: number
+  /**
+   * Persist a per-repo issue-source preference, update the local Repo record
+   * for reactive UI, and invalidate all cached work-items entries that key
+   * off this repo's path so the Tasks list re-fetches against the new source.
+   *
+   * Why invalidate all `${repoPath}::*` keys and not only the primary entry:
+   * preferences flip the issue source for every list query (query-less +
+   * user-entered queries alike). Surgical eviction of the primary key alone
+   * would leave stale results in alternate-query cache lines.
+   */
+  setIssueSourcePreference: (
+    repoId: string,
+    repoPath: string,
+    preference: IssueSourcePreference
+  ) => Promise<void>
 }
 
 export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (set, get) => ({
@@ -275,6 +319,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
   checksCache: {},
   commentsCache: {},
   workItemsCache: {},
+  workItemsInvalidationNonce: 0,
 
   getCachedWorkItems: (repoPath, limit, query) => {
     const key = workItemsCacheKey(repoPath, limit, query)
@@ -366,7 +411,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
               data: items,
               fetchedAt: Date.now(),
               sources: envelope.sources,
-              ...(errorForCache ? { error: errorForCache } : {})
+              ...(errorForCache ? { error: errorForCache } : {}),
+              ...(envelope.issueSourceFellBack ? { issueSourceFellBack: true } : {})
             }
           }
         }))
@@ -821,6 +867,81 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         changed = true
       }
       return changed ? { workItemsCache: nextCache } : {}
+    })
+  },
+
+  setIssueSourcePreference: async (repoId, repoPath, preference) => {
+    // Why: optimistically patch the local Repo first so the segmented control
+    // reflects the new selection on the same frame. On IPC failure we resync
+    // from disk via `fetchRepos()` below so the UI doesn't lie about what's
+    // persisted.
+    set((s) => ({
+      repos: s.repos.map((r) =>
+        r.id === repoId
+          ? {
+              ...r,
+              issueSourcePreference: preference === 'auto' ? undefined : preference
+            }
+          : r
+      )
+    }))
+    try {
+      // Why: persist via the generic `repos:update` channel rather than a
+      // dedicated gh-namespaced handler. Single write path → single
+      // `repos:changed` broadcast → other windows re-fetch. The store layer
+      // normalizes `'auto'` to `undefined` so the persisted record drops
+      // the key entirely (see main/persistence.ts#updateRepo).
+      await window.api.repos.update({
+        repoId,
+        updates: { issueSourcePreference: preference === 'auto' ? undefined : preference }
+      })
+    } catch (err) {
+      console.error('Failed to persist issue-source preference:', err)
+      // Why: surface the persist failure so the user understands why the
+      // pill visually reverts (optimistic patch above → resync via
+      // fetchRepos below). Without this toast, the UI silently snaps back
+      // and the user has no clue the write failed.
+      toast.error('Failed to save issue-source preference', {
+        duration: ERROR_TOAST_DURATION
+      })
+      // Why: the optimistic patch above may now disagree with disk. Resync
+      // rather than leave a lie on screen. We only refetch repos — the cache
+      // eviction below is still safe to run; worst case we trigger a
+      // harmless re-fetch of work items against the pre-flip preference.
+      void get().fetchRepos()
+    }
+    // Why: wipe in-flight dedupe entries for this repo BEFORE bumping the
+    // invalidation nonce. The bump triggers a re-run of TaskPage's fetch
+    // effect; if the inflight map still held a pre-flip entry, the new
+    // dispatch could collapse onto it and skip the source swap. Clearing
+    // first makes the "new fetch gets a fresh request" invariant impossible
+    // to trip on later refactors that change zustand or React flush timing.
+    for (const key of Array.from(inflightWorkItemsRequests.keys())) {
+      if (key.startsWith(`${repoPath}::`)) {
+        inflightWorkItemsRequests.delete(key)
+      }
+    }
+    // Why: evict every cache entry keyed on this repo's path AFTER the IPC
+    // resolves. If we evicted before awaiting, an overlapping fetch triggered
+    // by a different subscriber would hit main with the pre-flip persisted
+    // preference and repopulate the cache with stale-source data. Work-items
+    // cache keys are `${repoPath}::${limit}::${query}` so we can't selectively
+    // invalidate by query — the preference change affects all queries against
+    // this repo.
+    set((s) => {
+      const prefix = `${repoPath}::`
+      const next: Record<string, CacheEntry<GitHubWorkItem[]>> = {}
+      for (const [key, entry] of Object.entries(s.workItemsCache)) {
+        if (!key.startsWith(prefix)) {
+          next[key] = entry
+        }
+      }
+      // Why: bump the invalidation nonce so the Tasks list's fetch effect
+      // — which keys on `[selectedRepos, appliedTaskSearch, taskRefreshNonce,
+      // taskSource, workItemsInvalidationNonce]` — re-runs and re-populates
+      // the just-evicted entries. Evicting alone wouldn't trigger the effect
+      // because it doesn't depend on the cache.
+      return { workItemsCache: next, workItemsInvalidationNonce: s.workItemsInvalidationNonce + 1 }
     })
   },
 

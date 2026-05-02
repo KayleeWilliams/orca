@@ -58,6 +58,7 @@ import RepoMultiCombobox from '@/components/ui/repo-multi-combobox'
 import TeamMultiCombobox from '@/components/ui/team-multi-combobox'
 import RepoDotLabel from '@/components/repo/RepoDotLabel'
 import IssueSourceIndicator, { sameGitHubOwnerRepo } from '@/components/github/IssueSourceIndicator'
+import IssueSourceSelector, { issueSourceChipClass } from '@/components/github/IssueSourceSelector'
 import { stripRepoQualifiers } from '../../../shared/task-query'
 import GitHubItemDialog from '@/components/GitHubItemDialog'
 import LinearItemDrawer from '@/components/LinearItemDrawer'
@@ -635,6 +636,20 @@ const hasDivergentSources = (
   sources: { issues: GitHubOwnerRepo; prs: GitHubOwnerRepo }
 } => !!s.sources?.issues && !!s.sources.prs && !sameGitHubOwnerRepo(s.sources.issues, s.sources.prs)
 
+// Why: the selector keeps rendering even after the user picks 'origin' (which
+// collapses `sources.issues` onto origin). Upstream-candidate divergence is
+// the right render gate — a repo that has an `upstream` remote pointing
+// somewhere different from origin is always a candidate for the toggle,
+// regardless of the current effective preference.
+const hasUpstreamCandidateDivergence = (
+  s: RepoSourceState
+): s is RepoSourceState & {
+  sources: { prs: GitHubOwnerRepo; upstreamCandidate: GitHubOwnerRepo }
+} =>
+  !!s.sources?.prs &&
+  !!s.sources.upstreamCandidate &&
+  !sameGitHubOwnerRepo(s.sources.prs, s.sources.upstreamCandidate)
+
 export default function TaskPage(): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const pageData = useAppStore((s) => s.taskPageData)
@@ -646,6 +661,12 @@ export default function TaskPage(): React.JSX.Element {
   const updateSettings = useAppStore((s) => s.updateSettings)
   const fetchWorkItemsAcrossRepos = useAppStore((s) => s.fetchWorkItemsAcrossRepos)
   const getCachedWorkItems = useAppStore((s) => s.getCachedWorkItems)
+  const setIssueSourcePreference = useAppStore((s) => s.setIssueSourcePreference)
+  // Why: bumped by `setIssueSourcePreference` after cache eviction so the
+  // fetch effect below re-runs and repopulates work-items against the new
+  // source. Eviction alone isn't enough because the effect's deps don't
+  // include `workItemsCache`.
+  const workItemsInvalidationNonce = useAppStore((s) => s.workItemsInvalidationNonce)
   const linearStatus = useAppStore((s) => s.linearStatus)
   const linearStatusChecked = useAppStore((s) => s.linearStatusChecked)
   const connectLinear = useAppStore((s) => s.connectLinear)
@@ -781,6 +802,12 @@ export default function TaskPage(): React.JSX.Element {
   // user clicking the refresh button (force=true) vs. re-running for any
   // other reason — e.g. a repo change while the nonce happens to be > 0.
   const lastFetchedNonceRef = useRef(-1)
+  // Why: analogous to `lastFetchedNonceRef` for the invalidation nonce. A
+  // preference flip should force the dispatch past fetch-dedupe (same repos +
+  // same query, cache just evicted — without `force: true` the fan-out could
+  // collapse onto a stale in-flight request that resolved against the
+  // pre-flip source).
+  const lastFetchedInvalidationNonceRef = useRef(0)
   // Why: pages holds all fetched pages of work items. Page 0 is seeded from
   // cache for instant first paint; subsequent pages are loaded via date cursors.
   const [pages, setPages] = useState<GitHubWorkItem[][]>(() => {
@@ -878,6 +905,36 @@ export default function TaskPage(): React.JSX.Element {
       }
     })
   }, [selectedRepos, appliedTaskSearch, workItemsCache])
+
+  // Why: surface a one-time toast per session per repo when the user's
+  // preferred `'upstream'` is no longer configured and we fell back to
+  // origin. Gated on a ref-backed set so repeated list refreshes don't
+  // re-toast. We deliberately do NOT auto-reset the preference — the user
+  // may re-add `upstream` later and expect it to pick up again.
+  const fellBackToastedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (taskSource !== 'github') {
+      return
+    }
+    const appliedQ = stripRepoQualifiers(appliedTaskSearch.trim())
+    for (const r of selectedRepos) {
+      const key = workItemsCacheKey(r.path, PER_REPO_FETCH_LIMIT, appliedQ)
+      const entry = workItemsCache[key]
+      if (!entry?.issueSourceFellBack) {
+        continue
+      }
+      if (fellBackToastedRef.current.has(r.id)) {
+        continue
+      }
+      const prSlug = entry.sources?.prs
+        ? `${entry.sources.prs.owner}/${entry.sources.prs.repo}`
+        : r.displayName
+      toast.message(
+        `Your preferred issue source (upstream) is no longer configured for ${prSlug}. Using origin.`
+      )
+      fellBackToastedRef.current.add(r.id)
+    }
+  }, [selectedRepos, appliedTaskSearch, workItemsCache, taskSource])
 
   // Why: on a partial-failure retry the cache still holds successful-side
   // data, so `tasksLoading` (which is gated on `anyUncached`) never flips
@@ -1186,6 +1243,13 @@ export default function TaskPage(): React.JSX.Element {
     // Preserve the existing nonce-gated force behavior.
     const forceRefresh = taskRefreshNonce !== lastFetchedNonceRef.current
     lastFetchedNonceRef.current = taskRefreshNonce
+    // Why: a preference flip bumps `workItemsInvalidationNonce`. Treat that
+    // bump as a forced refresh so the fan-out bypasses the in-flight dedupe
+    // map — otherwise an overlapping request started before the flip could
+    // resolve the new fetch and repopulate the cache with pre-flip data.
+    const preferenceInvalidated =
+      workItemsInvalidationNonce !== lastFetchedInvalidationNonceRef.current
+    lastFetchedInvalidationNonceRef.current = workItemsInvalidationNonce
 
     const repoArgs = selectedRepos.map((r) => ({ repoId: r.id, path: r.path }))
     // Why: snapshot the retrying paths at effect-dispatch so overlapping
@@ -1195,7 +1259,7 @@ export default function TaskPage(): React.JSX.Element {
     // when this effect dispatched preserves later additions.
     const dispatchedRetryPaths = retryingRepoPaths
     void fetchWorkItemsAcrossRepos(repoArgs, PER_REPO_FETCH_LIMIT, CROSS_REPO_DISPLAY_LIMIT, q, {
-      force: forceRefresh && taskRefreshNonce > 0
+      force: (forceRefresh && taskRefreshNonce > 0) || preferenceInvalidated
     })
       .then(({ items, failedCount: failed }) => {
         // Why: clear only the repos this effect was responsible for
@@ -1266,9 +1330,10 @@ export default function TaskPage(): React.JSX.Element {
     }
     // Why: getCachedWorkItems and fetchWorkItemsAcrossRepos are stable zustand
     // selectors; depending on them would re-run the effect on unrelated store
-    // updates.
+    // updates. `workItemsInvalidationNonce` is explicitly included so a
+    // preference flip (which only evicts cache) re-dispatches this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRepos, appliedTaskSearch, taskRefreshNonce, taskSource])
+  }, [selectedRepos, appliedTaskSearch, taskRefreshNonce, taskSource, workItemsInvalidationNonce])
 
   const handleApplyTaskSearch = useCallback((): void => {
     const trimmed = taskSearchInput.trim()
@@ -1927,43 +1992,71 @@ export default function TaskPage(): React.JSX.Element {
                     </div>
 
                     {(() => {
-                      // Why: compute the visible list once so the visibility
-                      // gate and the map don't re-run the same predicate.
-                      // `hasDivergentSources` lives at module scope so the
-                      // predicate isn't re-allocated on every render; the
-                      // narrowed return type means `sources.issues` and
-                      // `sources.prs` are known non-null inside the map.
-                      const visibleRepoSources = perRepoSourceState.filter(hasDivergentSources)
-                      if (visibleRepoSources.length === 0) {
+                      // Why: unify feature 1 (indicator) and feature 2 (selector)
+                      // into a single chip per repo. Rendering both separately
+                      // produced visually redundant output — two local-repo
+                      // dot-labels, duplicate slugs. The selector's active pill
+                      // + tooltip already announce the source, so the "Issues
+                      // from {slug}" chip is only shown when the selector does
+                      // not render (no upstream remote — nothing to toggle).
+                      const rows = perRepoSourceState.filter(
+                        (s) => hasUpstreamCandidateDivergence(s) || hasDivergentSources(s)
+                      )
+                      if (rows.length === 0) {
                         return null
                       }
-                      // Why: per parent design doc §2, the indicator lives near
-                      // the filter row. It's the self-announcing surface that
-                      // makes the convention-based routing in #1076 legitimate
-                      // — without it, a fork contributor filing a personal TODO
-                      // against `upstream` has no way to tell before submit.
                       return (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {visibleRepoSources.map((s) => {
-                            // Why: when multiple repos are selected, attach the
-                            // local dot-label so readers can tell which chip
-                            // describes which repo. Single-repo views omit it —
-                            // the repo is already unambiguous from context.
-                            const repo =
-                              selectedRepos.length > 1
-                                ? selectedRepos.find((r) => r.id === s.repoId)
-                                : undefined
+                          {rows.map((s) => {
+                            const repo = selectedRepos.find((r) => r.id === s.repoId)
+                            const showDotLabel = selectedRepos.length > 1 && repo
+                            const selectorRenderable = hasUpstreamCandidateDivergence(s)
+                            // Why: the static indicator has its own wrapping
+                            // chip styles, so we render it standalone and don't
+                            // nest it inside our own chip — nesting would
+                            // double-border it.
+                            if (!selectorRenderable && hasDivergentSources(s)) {
+                              return (
+                                <IssueSourceIndicator
+                                  key={s.repoId}
+                                  issues={s.sources.issues}
+                                  prs={s.sources.prs}
+                                  localRepo={
+                                    showDotLabel && repo
+                                      ? { displayName: repo.displayName, color: repo.badgeColor }
+                                      : undefined
+                                  }
+                                />
+                              )
+                            }
+                            if (!selectorRenderable || !repo) {
+                              return null
+                            }
+                            // Why: must be a <div> (not <span>) because the child
+                            // <IssueSourceSelector> renders a <div role="group">, and
+                            // a block-level <div> nested inside an inline <span> is
+                            // invalid HTML — React emits a hydration warning and
+                            // browsers may auto-close the span. `issueSourceChipClass`
+                            // uses `inline-flex`, so the visual rendering is identical.
                             return (
-                              <IssueSourceIndicator
-                                key={s.repoId}
-                                issues={s.sources.issues}
-                                prs={s.sources.prs}
-                                localRepo={
-                                  repo
-                                    ? { displayName: repo.displayName, color: repo.badgeColor }
-                                    : undefined
-                                }
-                              />
+                              <div key={s.repoId} className={issueSourceChipClass}>
+                                {showDotLabel ? (
+                                  <RepoDotLabel
+                                    name={repo.displayName}
+                                    color={repo.badgeColor}
+                                    dotClassName="size-1.5"
+                                    className="text-[10px] text-muted-foreground"
+                                  />
+                                ) : null}
+                                <IssueSourceSelector
+                                  preference={repo.issueSourcePreference}
+                                  origin={s.sources.prs}
+                                  upstream={s.sources.upstreamCandidate}
+                                  onChange={(next) => {
+                                    void setIssueSourcePreference(repo.id, repo.path, next)
+                                  }}
+                                />
+                              </div>
                             )
                           })}
                         </div>
@@ -2593,30 +2686,76 @@ export default function TaskPage(): React.JSX.Element {
         >
           <DialogHeader>
             <DialogTitle>New GitHub issue</DialogTitle>
-            <DialogDescription>
-              {(() => {
-                // Why: parent design doc §1 surface 2 — the composer is the
-                // non-negotiable surface because User D's regression (filing a
-                // personal TODO against upstream/fork after #1076 changed
-                // routing) is specifically about this dialog. The description
-                // line doubles as the source indicator: inlining the resolved
-                // `{owner}/{repo}` slug (e.g. "stablyai/orca") means the
-                // destination is impossible to miss before the user submits,
-                // without needing a secondary chip that duplicates the info.
-                // Falls back to the local displayName when the slug isn't
-                // resolved yet (pre-IPC cache hit, or non-GitHub remote). The
-                // multi-repo case uses the same computation — the Select below
-                // drives `newIssueTargetRepo`, so the active target is known.
-                const entry = newIssueTargetRepo
-                  ? perRepoSourceState.find((s) => s.repoId === newIssueTargetRepo.id)
-                  : undefined
-                const issuesSlug = entry?.sources?.issues
-                  ? `${entry.sources.issues.owner}/${entry.sources.issues.repo}`
-                  : null
-                const fallback = newIssueTargetRepo?.displayName ?? 'this repository'
-                return `Filing in ${issuesSlug ?? fallback}`
-              })()}
-            </DialogDescription>
+            {(() => {
+              // Why: parent design doc §1 surface 2 — the composer is the
+              // non-negotiable surface because User D's regression (filing a
+              // personal TODO against upstream/fork after #1076 changed
+              // routing) is specifically about this dialog. The description
+              // line doubles as the source indicator: inlining the resolved
+              // `{owner}/{repo}` slug (e.g. "stablyai/orca") means the
+              // destination is impossible to miss before the user submits,
+              // without needing a secondary chip that duplicates the info.
+              // Falls back to the local displayName when the slug isn't
+              // resolved yet (pre-IPC cache hit, or non-GitHub remote). The
+              // multi-repo case uses the same computation — the Select below
+              // drives `newIssueTargetRepo`, so the active target is known.
+              const entry = newIssueTargetRepo
+                ? perRepoSourceState.find((s) => s.repoId === newIssueTargetRepo.id)
+                : undefined
+              const issuesSlug = entry?.sources?.issues
+                ? `${entry.sources.issues.owner}/${entry.sources.issues.repo}`
+                : null
+              const fallback = newIssueTargetRepo?.displayName ?? 'this repository'
+              return <DialogDescription>Filing in {issuesSlug ?? fallback}</DialogDescription>
+            })()}
+            {(() => {
+              // Why: mirror the Tasks-view selector in the composer so User D
+              // (fork contributor filing a personal TODO against their own
+              // fork) can flip the target *at the moment of filing* — the
+              // only moment that matters for this regression. Reuses the
+              // same cache entry the description line reads so no extra
+              // IPC round-trip is needed.
+              //
+              // Why sibling of DialogDescription (not nested inside it):
+              // DialogDescription renders a <p>, and `IssueSourceSelector`
+              // renders a <div role="group"> with <button>s inside. Nesting
+              // a div inside a <p> is invalid HTML — React emits a hydration
+              // warning and some a11y tools flag it. Rendering the selector
+              // as a sibling keeps both surfaces in the same header band
+              // without the nesting violation.
+              if (!newIssueTargetRepo) {
+                return null
+              }
+              const entry = perRepoSourceState.find((s) => s.repoId === newIssueTargetRepo.id)
+              if (!entry || !entry.sources?.upstreamCandidate || !entry.sources?.prs) {
+                return null
+              }
+              if (sameGitHubOwnerRepo(entry.sources.prs, entry.sources.upstreamCandidate)) {
+                return null
+              }
+              return (
+                <div className="mt-1">
+                  <IssueSourceSelector
+                    preference={newIssueTargetRepo.issueSourcePreference}
+                    origin={entry.sources.prs}
+                    upstream={entry.sources.upstreamCandidate}
+                    disabled={newIssueSubmitting}
+                    // Why: the composer only files issues, so the "Issues from
+                    // <slug>" tooltip restates what the surrounding form already
+                    // implies. Keep it on the Tasks header (that page also lists
+                    // PRs, which the selector doesn't affect).
+                    suppressTooltip
+                    onChange={(next) => {
+                      void setIssueSourcePreference(
+                        newIssueTargetRepo.id,
+                        newIssueTargetRepo.path,
+                        next
+                      )
+                    }}
+                  />
+                </div>
+              )
+            })()}
           </DialogHeader>
           <div className="flex flex-col gap-3">
             {selectedRepos.length > 1 ? (
