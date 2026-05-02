@@ -1,3 +1,7 @@
+/* eslint-disable max-lines -- Why: this component is the central dispatcher
+that maps (language, viewMode, binary, conflict) onto the correct editor
+surface. Splitting the branches across files would force the view-mode state
+machine to live behind indirection that obscures the exhaustive conditionals. */
 import React, { lazy } from 'react'
 import { detectLanguage } from '@/lib/language-detect'
 import { useAppStore } from '@/store'
@@ -19,6 +23,7 @@ const MarkdownPreview = lazy(() => import('./MarkdownPreview'))
 const ImageViewer = lazy(() => import('./ImageViewer'))
 const ImageDiffViewer = lazy(() => import('./ImageDiffViewer'))
 const MermaidViewer = lazy(() => import('./MermaidViewer'))
+const CsvViewer = lazy(() => import('./CsvViewer'))
 
 const richMarkdownSizeEncoder = new TextEncoder()
 // Why: encodeInto() with a pre-allocated buffer avoids creating a new
@@ -42,6 +47,7 @@ export function EditorContent({
   resolvedLanguage,
   isMarkdown,
   isMermaid,
+  isCsv,
   mdViewMode,
   sideBySide,
   pendingEditorReveal,
@@ -58,6 +64,7 @@ export function EditorContent({
   resolvedLanguage: string
   isMarkdown: boolean
   isMermaid: boolean
+  isCsv: boolean
   mdViewMode: MarkdownViewMode
   sideBySide: boolean
   pendingEditorReveal: {
@@ -345,6 +352,12 @@ export function EditorContent({
             renderMarkdownContent(fc)
           ) : isMermaid && mdViewMode === 'rich' ? (
             <MermaidViewer
+              key={activeFile.id}
+              content={editBuffers[activeFile.id] ?? fc.content}
+              filePath={activeFile.filePath}
+            />
+          ) : isCsv && mdViewMode === 'rich' ? (
+            <CsvViewer
               key={activeFile.id}
               content={editBuffers[activeFile.id] ?? fc.content}
               filePath={activeFile.filePath}
