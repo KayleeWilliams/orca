@@ -172,19 +172,50 @@ describe('pty:management IPC handlers', () => {
   })
 
   describe('killAll', () => {
-    it('shuts down every session across adapters and reports counts', async () => {
-      const current = makeAdapter(4, [makeSession('new-1'), makeSession('new-2')])
-      const legacy = makeAdapter(3, [makeSession('old-1', { protocolVersion: 3 })])
-      // Each shutdown removes the session from the adapter's backing list so
-      // the retry loop observes convergence on the next listSessions() call.
+    // Why: the handler sleeps POLL_INTERVAL_MS between listSessions polls.
+    // Fake timers let the tests drive that loop deterministically — without
+    // them, a happy-path test that converges in ≥1 poll would take 100ms+
+    // of real wall time and the "refuses to die" test would take ~1s.
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    async function runKillAllWithPolls(
+      handler: (event: unknown, args?: unknown) => unknown,
+      pollCount: number = 65
+    ): Promise<{ killedCount: number; remainingCount: number }> {
+      const resultPromise = handler({}) as Promise<{
+        killedCount: number
+        remainingCount: number
+      }>
+      // Why: advance the loop's sleeps one at a time. Between each sleep the
+      // handler awaits collectSessions (a microtask), so we need to flush
+      // pending microtasks before advancing the next timer.
+      for (let i = 0; i < pollCount; i += 1) {
+        await Promise.resolve()
+        await Promise.resolve()
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      return resultPromise
+    }
+
+    it('fires one shutdown per initial session and polls until empty', async () => {
+      const currentSessions = [makeSession('new-1'), makeSession('new-2')]
+      const legacySessions = [makeSession('old-1', { protocolVersion: 3 })]
+      const current = makeAdapter(4, [])
+      const legacy = makeAdapter(3, [])
+      // Why: shutdown removes the session from the adapter's backing list so
+      // the next poll observes the shrinking set — mirrors a daemon that
+      // actually reaped the processes.
       const removeFrom = (list: DaemonSessionInfo[], id: string): void => {
         const idx = list.findIndex((s) => s.sessionId === id)
         if (idx !== -1) {
           list.splice(idx, 1)
         }
       }
-      const currentSessions = [makeSession('new-1'), makeSession('new-2')]
-      const legacySessions = [makeSession('old-1', { protocolVersion: 3 })]
       current.listSessions = vi.fn(async () =>
         currentSessions.map(({ protocolVersion: _pv, ...rest }) => rest)
       )
@@ -202,74 +233,104 @@ describe('pty:management IPC handlers', () => {
       registerDaemonManagementHandlers()
 
       const handlers = buildHandlerMap()
-      const result = (await handlers['pty:management:killAll']({})) as {
-        killedCount: number
-        remainingCount: number
-      }
+      const result = await runKillAllWithPolls(handlers['pty:management:killAll'])
 
       expect(result).toEqual({ killedCount: 3, remainingCount: 0 })
+      // Each initial session receives exactly one shutdown — no retries.
+      expect(current.shutdown).toHaveBeenCalledTimes(2)
       expect(current.shutdown).toHaveBeenCalledWith('new-1', true)
       expect(current.shutdown).toHaveBeenCalledWith('new-2', true)
+      expect(legacy.shutdown).toHaveBeenCalledTimes(1)
       expect(legacy.shutdown).toHaveBeenCalledWith('old-1', true)
     })
 
-    it('reports remainingCount when sessions refuse to die after max retries', async () => {
+    it('reports remainingCount when sessions refuse to die after the poll window', async () => {
       const sessions = [makeSession('stuck')]
       const current = makeAdapter(4, [])
       current.listSessions = vi.fn(async () =>
         sessions.map(({ protocolVersion: _pv, ...rest }) => rest)
       )
-      // Shutdown silently fails to remove the session — simulates a daemon
-      // that accepted the RPC but the underlying process ignored SIGKILL.
+      // Why: shutdown resolves but the session never leaves listSessions —
+      // simulates a process wedged in uninterruptible sleep. After the poll
+      // window (≈6.5s, past the daemon's 5s SIGTERM→SIGKILL ladder) the
+      // handler must return remainingCount=1 rather than loop forever.
       current.shutdown = vi.fn(async () => {})
       const { registerDaemonManagementHandlers } = await importFresh()
       getDaemonProviderMock.mockReturnValue(await makeRouter(current))
       registerDaemonManagementHandlers()
 
       const handlers = buildHandlerMap()
-      const result = (await handlers['pty:management:killAll']({})) as {
-        killedCount: number
-        remainingCount: number
-      }
+      const result = await runKillAllWithPolls(handlers['pty:management:killAll'])
 
       expect(result).toEqual({ killedCount: 0, remainingCount: 1 })
-      // Retries until MAX_KILL_ALL_RETRIES. The handler calls listSessions
-      // once for the initial count and once per retry attempt.
-      expect(current.shutdown).toHaveBeenCalledTimes(3)
+      // One shutdown fired — no per-session retry. Initial-snapshot
+      // accounting means the stuck session is counted once.
+      expect(current.shutdown).toHaveBeenCalledTimes(1)
     })
 
-    it('swallows per-session shutdown errors without blocking the batch', async () => {
-      const sessions = [makeSession('a'), makeSession('b')]
-      const live = sessions.map(({ protocolVersion: _pv, ...r }) => r)
+    it('does not count respawned sessions with fresh IDs against remainingCount', async () => {
+      // Why: mounted panes may re-call pty:spawn with brand-new session IDs
+      // while killAll is polling (tab remount, navigate-back). Those fresh
+      // IDs are not part of the initial snapshot and must not inflate the
+      // "refused to exit" count — the user asked to kill what was alive
+      // when the button was pressed, not to chase new spawns.
+      const liveSessions = [makeSession('a'), makeSession('b')]
       const current = makeAdapter(4, [])
-      // Why: the handler calls listSessions for (1) the initial count, (2) the
-      // retry-loop iteration that drives shutdown, then again after the
-      // shutdowns land to recompute remainingCount. Returning `live` until
-      // shutdowns remove entries — and [] after — mirrors a daemon that
-      // actually reaped the processes.
-      let shutdowns = 0
-      current.listSessions = vi.fn(async () => (shutdowns >= 2 ? [] : live))
+      let pollCalls = 0
+      current.listSessions = vi.fn(async () => {
+        pollCalls += 1
+        if (pollCalls === 1) {
+          // Initial snapshot: a and b are alive.
+          return liveSessions.map(({ protocolVersion: _pv, ...rest }) => rest)
+        }
+        // First poll onward: a and b have been reaped, but the renderer
+        // respawned a fresh pane with id 'c'. 'c' was never in the initial
+        // snapshot, so it must not count as remaining.
+        return [makeSession('c')].map(({ protocolVersion: _pv, ...rest }) => rest)
+      })
+      current.shutdown = vi.fn(async () => {})
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current))
+      registerDaemonManagementHandlers()
+
+      const handlers = buildHandlerMap()
+      const result = await runKillAllWithPolls(handlers['pty:management:killAll'])
+
+      expect(result).toEqual({ killedCount: 2, remainingCount: 0 })
+    })
+
+    it('swallows per-session shutdown rejections without stopping the batch', async () => {
+      const sessionsList = [makeSession('a'), makeSession('b')]
+      const current = makeAdapter(4, [])
+      current.listSessions = vi.fn(async () =>
+        sessionsList.map(({ protocolVersion: _pv, ...rest }) => rest)
+      )
+      // Why: a rejecting shutdown for 'a' must not block the shutdown of 'b'.
+      // Since shutdowns fire in parallel (Promise.allSettled), both must be
+      // invoked regardless of 'a' throwing.
+      const removeFrom = (id: string): void => {
+        const idx = sessionsList.findIndex((s) => s.sessionId === id)
+        if (idx !== -1) {
+          sessionsList.splice(idx, 1)
+        }
+      }
       current.shutdown = vi.fn(async (id: string) => {
-        shutdowns += 1
         if (id === 'a') {
           throw new Error('a is stuck')
         }
+        removeFrom(id)
       })
       const { registerDaemonManagementHandlers } = await importFresh()
       getDaemonProviderMock.mockReturnValue(await makeRouter(current))
       registerDaemonManagementHandlers()
 
       const handlers = buildHandlerMap()
-      const result = (await handlers['pty:management:killAll']({})) as {
-        killedCount: number
-        remainingCount: number
-      }
+      const result = await runKillAllWithPolls(handlers['pty:management:killAll'])
 
-      // Both shutdowns were attempted; second call to listSessions returned
-      // empty so remainingCount settles at 0.
       expect(current.shutdown).toHaveBeenCalledWith('a', true)
       expect(current.shutdown).toHaveBeenCalledWith('b', true)
-      expect(result.remainingCount).toBe(0)
+      // 'a' rejected and is still alive → counts as remaining; 'b' reaped.
+      expect(result).toEqual({ killedCount: 1, remainingCount: 1 })
     })
   })
 
