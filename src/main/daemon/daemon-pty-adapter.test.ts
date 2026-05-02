@@ -93,6 +93,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('spawn', () => {
+    it('exposes the protocol version used by the daemon client', () => {
+      const legacyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 3 })
+
+      expect(legacyAdapter.protocolVersion).toBe(3)
+      legacyAdapter.dispose()
+    })
+
     it('returns a result with an id', async () => {
       const result = await adapter.spawn({ cols: 80, rows: 24 })
       expect(result.id).toBeDefined()

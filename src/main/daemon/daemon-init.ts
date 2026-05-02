@@ -1,3 +1,6 @@
+/* oxlint-disable max-lines -- Why: legacy cleanup adds startup-only cleanup
+paths beside existing daemon lifecycle code; splitting would force tests to
+export more lifecycle internals across files. */
 import { join } from 'path'
 import { app } from 'electron'
 import { mkdirSync, existsSync, unlinkSync, writeFileSync } from 'fs'
@@ -8,6 +11,7 @@ import {
   getDaemonPidPath,
   getDaemonSocketPath,
   getDaemonTokenPath,
+  serializeDaemonPidFile,
   type DaemonLauncher
 } from './daemon-spawner'
 import { DaemonPtyAdapter } from './daemon-pty-adapter'
@@ -18,7 +22,7 @@ import {
   PROTOCOL_VERSION,
   type ListSessionsResult
 } from './types'
-import { healthCheckDaemon, killStaleDaemon } from './daemon-health'
+import { getProcessStartedAtMs, healthCheckDaemon, killStaleDaemon } from './daemon-health'
 import { setLocalPtyProvider } from '../ipc/pty'
 
 let spawner: DaemonSpawner | null = null
@@ -130,7 +134,14 @@ function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
         if (msg && typeof msg === 'object' && (msg as { type?: string }).type === 'ready') {
           clearTimeout(timer)
           if (child.pid) {
-            writeFileSync(getDaemonPidPath(runtimeDir), String(child.pid), { mode: 0o600 })
+            writeFileSync(
+              getDaemonPidPath(runtimeDir),
+              serializeDaemonPidFile({
+                pid: child.pid,
+                startedAtMs: getProcessStartedAtMs(child.pid)
+              }),
+              { mode: 0o600 }
+            )
           }
           // Why: disconnect IPC channel and unref so Electron can exit
           // without waiting for the daemon. The daemon keeps running.
@@ -191,16 +202,30 @@ export async function initDaemonPtyProvider(): Promise<void> {
     }
   })
 
-  const legacyAdapters = await createLegacyDaemonAdapters(runtimeDir)
-  const routedAdapter =
-    legacyAdapters.length > 0
-      ? new DaemonPtyRouter({
-          current: newAdapter,
-          legacy: legacyAdapters
-        })
-      : newAdapter
-  if (routedAdapter instanceof DaemonPtyRouter) {
+  const legacyAdapters = await getLegacyAdaptersForStartup(runtimeDir)
+  let routedAdapter: DaemonPtyAdapter | DaemonPtyRouter = newAdapter
+  if (legacyAdapters.length > 0) {
+    routedAdapter = new DaemonPtyRouter({
+      current: newAdapter,
+      legacy: legacyAdapters,
+      onLegacyDrained: async (drainedAdapter) => {
+        try {
+          drainedAdapter.dispose()
+          const result = await cleanupDaemonForProtocol(runtimeDir, drainedAdapter.protocolVersion)
+          console.log(
+            `[daemon] legacy v${drainedAdapter.protocolVersion} cleanup: reason=drain ` +
+              `killedSessions=${result.killedCount}`
+          )
+        } catch (err) {
+          console.warn(
+            `[daemon] legacy v${drainedAdapter.protocolVersion} drain cleanup failed:`,
+            err
+          )
+        }
+      }
+    })
     await routedAdapter.discoverLegacySessions()
+    routedAdapter.sweepDrainedLegacyAdapters()
   }
 
   spawner = newSpawner
@@ -239,7 +264,7 @@ export type OrphanedDaemonCleanupResult = {
   killedCount: number
 }
 
-async function cleanupDaemonForProtocol(
+export async function cleanupDaemonForProtocol(
   runtimeDir: string,
   protocolVersion: number
 ): Promise<OrphanedDaemonCleanupResult> {
@@ -313,33 +338,69 @@ async function cleanupDaemonForProtocol(
   return { cleaned: didRequestShutdown || didKillStaleDaemon, killedCount }
 }
 
-async function createLegacyDaemonAdapters(runtimeDir: string): Promise<DaemonPtyAdapter[]> {
-  const adapters: DaemonPtyAdapter[] = []
-  for (const protocolVersion of PREVIOUS_DAEMON_PROTOCOL_VERSIONS) {
-    const socketPath = getDaemonSocketPath(runtimeDir, protocolVersion)
-    const tokenPath = getDaemonTokenPath(runtimeDir, protocolVersion)
-    if (!(await probeSocket(socketPath))) {
-      continue
-    }
-    // Why: old daemon PTYs can be running long-lived agents during an app
-    // upgrade. Keep those sessions routed to their original daemon while new
-    // terminals use the current protocol, instead of killing background work.
-    // Legacy adapters intentionally do not respawn: respawning an old protocol
-    // daemon from new code would recreate stale env semantics and can be less
-    // predictable than letting the session fail if that old daemon dies.
-    // Why historyPath is still passed: checkpoint writes will fail silently
-    // (pre-v4 daemons don't support getSnapshot), but the HistoryManager is
-    // still needed for cleanup — close/exit events must remove history dirs
-    // and mark meta.json as ended. Without it, a later v4 session reusing
-    // the same ID could false-restore stale scrollback.bin.
-    adapters.push(
-      new DaemonPtyAdapter({
-        socketPath,
-        tokenPath,
-        protocolVersion,
-        historyPath: getHistoryDir()
-      })
-    )
+export async function getLegacyAdaptersForStartup(runtimeDir: string): Promise<DaemonPtyAdapter[]> {
+  if (process.env.ORCA_DISABLE_LEGACY_CLEANUP === '1') {
+    return []
   }
-  return adapters
+  return createLegacyDaemonAdapters(runtimeDir)
+}
+
+export async function createLegacyDaemonAdapters(runtimeDir: string): Promise<DaemonPtyAdapter[]> {
+  const results = await Promise.all(
+    PREVIOUS_DAEMON_PROTOCOL_VERSIONS.map((protocolVersion) =>
+      processLegacyVersion(runtimeDir, protocolVersion)
+    )
+  )
+  return results.filter((adapter): adapter is DaemonPtyAdapter => adapter !== null)
+}
+
+export async function processLegacyVersion(
+  runtimeDir: string,
+  protocolVersion: number
+): Promise<DaemonPtyAdapter | null> {
+  const socketPath = getDaemonSocketPath(runtimeDir, protocolVersion)
+  const tokenPath = getDaemonTokenPath(runtimeDir, protocolVersion)
+  if (!(await probeSocket(socketPath))) {
+    return null
+  }
+
+  let liveCount = 0
+  let wedged = false
+  const probeClient = new DaemonClient({ socketPath, tokenPath, protocolVersion })
+  try {
+    await probeClient.ensureConnected()
+    const { sessions } = await probeClient.request<ListSessionsResult>('listSessions', undefined)
+    liveCount = sessions.filter((session) => session.isAlive).length
+  } catch {
+    // Why: if an old daemon has a live socket but cannot answer RPC, no new
+    // client can safely reattach to its sessions; reclaim the wedged process.
+    wedged = true
+  } finally {
+    probeClient.disconnect()
+  }
+
+  if (liveCount === 0) {
+    const reason = wedged ? 'wedged' : 'idle'
+    try {
+      const result = await cleanupDaemonForProtocol(runtimeDir, protocolVersion)
+      console.log(
+        `[daemon] legacy v${protocolVersion} cleanup: reason=${reason} ` +
+          `killedSessions=${result.killedCount}`
+      )
+    } catch (err) {
+      console.warn(`[daemon] legacy v${protocolVersion} cleanup failed:`, err)
+    }
+    return null
+  }
+
+  // Why: old daemon PTYs can be running long-lived agents during an app
+  // upgrade. Keep those sessions routed to their original daemon while new
+  // terminals use the current protocol, instead of killing background work.
+  console.log(`[daemon] legacy v${protocolVersion} wrapped for drain: liveSessions=${liveCount}`)
+  return new DaemonPtyAdapter({
+    socketPath,
+    tokenPath,
+    protocolVersion,
+    historyPath: getHistoryDir()
+  })
 }

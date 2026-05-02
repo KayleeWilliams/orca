@@ -39,6 +39,7 @@ export class TerminalKilledError extends Error {
 }
 
 export class DaemonPtyAdapter implements IPtyProvider {
+  public readonly protocolVersion: number
   private client: DaemonClient
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
@@ -71,15 +72,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private static CHECKPOINT_INTERVAL_MS = 5_000
 
   constructor(opts: DaemonPtyAdapterOptions) {
+    this.protocolVersion = opts.protocolVersion ?? PROTOCOL_VERSION
     this.client = new DaemonClient({
       socketPath: opts.socketPath,
       tokenPath: opts.tokenPath,
-      protocolVersion: opts.protocolVersion
+      protocolVersion: this.protocolVersion
     })
     this.historyManager = opts.historyPath ? new HistoryManager(opts.historyPath) : null
     this.historyReader = opts.historyPath ? new HistoryReader(opts.historyPath) : null
     this.respawnFn = opts.respawn ?? null
-    this.supportsCheckpoints = (opts.protocolVersion ?? PROTOCOL_VERSION) >= 4
+    this.supportsCheckpoints = this.protocolVersion >= 4
   }
 
   getHistoryManager(): HistoryManager | null {

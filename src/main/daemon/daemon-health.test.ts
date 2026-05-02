@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { spawn, type ChildProcess } from 'child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createServer, connect, type Server } from 'net'
 import { DaemonServer } from './daemon-server'
-import { getDaemonPidPath } from './daemon-spawner'
-import { healthCheckDaemon, killStaleDaemon } from './daemon-health'
+import { getDaemonPidPath, serializeDaemonPidFile } from './daemon-spawner'
+import {
+  getProcessStartedAtMs,
+  healthCheckDaemon,
+  killStaleDaemon,
+  parseDaemonPidFile
+} from './daemon-health'
 import type { SubprocessHandle } from './session'
 
 function createMockSubprocess(): SubprocessHandle {
@@ -50,6 +56,27 @@ function canConnect(socketPath: string): Promise<boolean> {
   })
 }
 
+function waitForExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('child did not exit')), timeoutMs)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+function spawnDaemonLikeProcess(socketPath: string, tokenPath: string): ChildProcess {
+  return spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)', 'daemon-entry', socketPath, tokenPath],
+    { stdio: 'ignore' }
+  )
+}
+
 describe('daemon health', () => {
   let dir: string
   let socketPath: string
@@ -63,6 +90,15 @@ describe('daemon health', () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('parses JSON and legacy pid files', () => {
+    expect(parseDaemonPidFile('{"pid":123,"startedAtMs":456}')).toEqual({
+      pid: 123,
+      startedAtMs: 456
+    })
+    expect(parseDaemonPidFile('123')).toEqual({ pid: 123, startedAtMs: null })
+    expect(parseDaemonPidFile('not-json')).toBeNull()
   })
 
   it('passes when a daemon answers ping', async () => {
@@ -104,6 +140,41 @@ describe('daemon health', () => {
       await expect(canConnect(socketPath)).resolves.toBe(true)
     } finally {
       await closeServer(server)
+    }
+  })
+
+  it('kills a daemon-like process from a legacy integer pid file', async () => {
+    const child = spawnDaemonLikeProcess(socketPath, tokenPath)
+    expect(child.pid).toBeTypeOf('number')
+    writeFileSync(getDaemonPidPath(dir), String(child.pid), { mode: 0o600 })
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(true)
+      await expect(waitForExit(child)).resolves.toBeUndefined()
+    } finally {
+      if (!child.killed) {
+        child.kill('SIGKILL')
+      }
+    }
+  })
+
+  it('kills a daemon-like process from a JSON pid file', async () => {
+    const child = spawnDaemonLikeProcess(socketPath, tokenPath)
+    expect(child.pid).toBeTypeOf('number')
+    const pid = child.pid!
+    writeFileSync(
+      getDaemonPidPath(dir),
+      serializeDaemonPidFile({ pid, startedAtMs: getProcessStartedAtMs(pid) }),
+      { mode: 0o600 }
+    )
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(true)
+      await expect(waitForExit(child)).resolves.toBeUndefined()
+    } finally {
+      if (!child.killed) {
+        child.kill('SIGKILL')
+      }
     }
   })
 })

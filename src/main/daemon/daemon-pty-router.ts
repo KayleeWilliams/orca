@@ -5,16 +5,23 @@ export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
-  private unsubscribers: (() => void)[] = []
+  private unsubscribersByAdapter = new Map<DaemonPtyAdapter, (() => void)[]>()
+  private discoveryFailedAdapters = new Set<DaemonPtyAdapter>()
+  private onLegacyDrained?: (adapter: DaemonPtyAdapter) => void
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
 
-  constructor(opts: { current: DaemonPtyAdapter; legacy: DaemonPtyAdapter[] }) {
+  constructor(opts: {
+    current: DaemonPtyAdapter
+    legacy: DaemonPtyAdapter[]
+    onLegacyDrained?: (adapter: DaemonPtyAdapter) => void
+  }) {
     this.current = opts.current
     this.legacy = opts.legacy
+    this.onLegacyDrained = opts.onLegacyDrained
 
     for (const adapter of this.allAdapters()) {
-      this.unsubscribers.push(
+      const unsubscribers = [
         adapter.onData((payload) => {
           for (const listener of this.dataListeners) {
             listener(payload)
@@ -25,8 +32,10 @@ export class DaemonPtyRouter implements IPtyProvider {
           for (const listener of this.exitListeners) {
             listener(payload)
           }
+          this.drainLegacyAdapterIfEmpty(adapter)
         })
-      )
+      ]
+      this.unsubscribersByAdapter.set(adapter, unsubscribers)
     }
   }
 
@@ -34,12 +43,20 @@ export class DaemonPtyRouter implements IPtyProvider {
     for (const adapter of this.legacy) {
       try {
         const sessions = await adapter.listProcesses()
+        this.discoveryFailedAdapters.delete(adapter)
         for (const session of sessions) {
           this.sessionAdapters.set(session.id, adapter)
         }
       } catch (error) {
+        this.discoveryFailedAdapters.add(adapter)
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
       }
+    }
+  }
+
+  sweepDrainedLegacyAdapters(): void {
+    for (const adapter of Array.from(this.legacy)) {
+      this.drainLegacyAdapterIfEmpty(adapter)
     }
   }
 
@@ -172,23 +189,61 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   dispose(): void {
-    for (const unsubscribe of this.unsubscribers.splice(0)) {
-      unsubscribe()
-    }
+    this.unsubscribeAllAdapters()
     for (const adapter of this.allAdapters()) {
       adapter.dispose()
     }
   }
 
   async disconnectOnly(): Promise<void> {
-    for (const unsubscribe of this.unsubscribers.splice(0)) {
-      unsubscribe()
-    }
+    this.unsubscribeAllAdapters()
     await Promise.all([...this.allAdapters()].map((adapter) => adapter.disconnectOnly()))
   }
 
   private adapterFor(sessionId: string): DaemonPtyAdapter {
     return this.sessionAdapters.get(sessionId) ?? this.current
+  }
+
+  private drainLegacyAdapterIfEmpty(adapter: DaemonPtyAdapter): void {
+    // Why: only previous-version adapters are cleaned up here. The current
+    // daemon lifecycle must remain byte-identical when its sessions exit.
+    if (
+      !this.legacy.includes(adapter) ||
+      this.discoveryFailedAdapters.has(adapter) ||
+      this.hasActiveSessionsOn(adapter)
+    ) {
+      return
+    }
+    this.legacy = this.legacy.filter((a) => a !== adapter)
+    this.discoveryFailedAdapters.delete(adapter)
+    this.unsubscribeAdapter(adapter)
+    this.onLegacyDrained?.(adapter)
+  }
+
+  private hasActiveSessionsOn(adapter: DaemonPtyAdapter): boolean {
+    for (const mappedAdapter of this.sessionAdapters.values()) {
+      if (mappedAdapter === adapter) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private unsubscribeAdapter(adapter: DaemonPtyAdapter): void {
+    const unsubscribers = this.unsubscribersByAdapter.get(adapter)
+    if (!unsubscribers) {
+      return
+    }
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe()
+    }
+    this.unsubscribersByAdapter.delete(adapter)
+  }
+
+  private unsubscribeAllAdapters(): void {
+    for (const adapter of Array.from(this.unsubscribersByAdapter.keys())) {
+      this.unsubscribeAdapter(adapter)
+    }
   }
 
   private allAdapters(): DaemonPtyAdapter[] {
