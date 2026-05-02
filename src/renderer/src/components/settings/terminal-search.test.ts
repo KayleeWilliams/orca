@@ -22,6 +22,15 @@ describe('getTerminalPaneSearchEntries', () => {
     expect(entries.some((entry) => entry.title === 'Option as Alt')).toBe(false)
   })
 
+  it('includes the Manage Sessions entry on all platforms', () => {
+    const entriesWindows = getTerminalPaneSearchEntries({ isWindows: true, isMac: false })
+    const entriesMac = getTerminalPaneSearchEntries({ isWindows: false, isMac: true })
+    const entriesLinux = getTerminalPaneSearchEntries({ isWindows: false, isMac: false })
+    expect(entriesWindows.some((entry) => entry.title === 'Manage Sessions')).toBe(true)
+    expect(entriesMac.some((entry) => entry.title === 'Manage Sessions')).toBe(true)
+    expect(entriesLinux.some((entry) => entry.title === 'Manage Sessions')).toBe(true)
+  })
+
   it('includes the Ghostty import setting on all platforms', () => {
     const entriesWindows = getTerminalPaneSearchEntries({ isWindows: true, isMac: false })
     const entriesMac = getTerminalPaneSearchEntries({ isWindows: false, isMac: true })

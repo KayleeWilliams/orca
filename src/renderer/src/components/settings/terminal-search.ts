@@ -188,6 +188,30 @@ export const TERMINAL_GHOSTTY_IMPORT_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+export const MANAGE_SESSIONS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'Manage Sessions',
+    description:
+      'Recover from frozen terminals by killing sessions, clearing saved scrollback, or restarting the daemon.',
+    keywords: [
+      'daemon',
+      'pty',
+      'sessions',
+      'manage',
+      'kill',
+      'kill all',
+      'clear',
+      'history',
+      'scrollback',
+      'restart',
+      'terminal',
+      'recover',
+      'frozen',
+      'unfreeze'
+    ]
+  }
+]
+
 export const TERMINAL_WINDOW_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Background Opacity',
@@ -298,6 +322,7 @@ export function getTerminalPaneSearchEntries(platform: {
     ...TERMINAL_WINDOW_SEARCH_ENTRIES,
     ...TERMINAL_SETUP_SCRIPT_SEARCH_ENTRIES,
     ...TERMINAL_GHOSTTY_IMPORT_SEARCH_ENTRIES,
+    ...MANAGE_SESSIONS_SEARCH_ENTRIES,
     ...TERMINAL_ADVANCED_SEARCH_ENTRIES,
     ...(platform.isMac ? TERMINAL_MAC_OPTION_SEARCH_ENTRIES : [])
   ]

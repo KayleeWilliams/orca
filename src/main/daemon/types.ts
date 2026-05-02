@@ -224,6 +224,14 @@ export type SessionInfo = {
   createdAt: number
 }
 
+// Why: SessionInfo + source protocol version, so the Manage Sessions UI can
+// label legacy-backed sessions. Populated by the router/adapter at RPC time;
+// never transmitted over the daemon wire (daemon only speaks its own
+// protocol version and doesn't know about other versions).
+export type DaemonSessionInfo = SessionInfo & {
+  protocolVersion: number
+}
+
 // ─── Events (Daemon → Client, on stream socket) ────────────────────
 
 export type DataEvent = {
