@@ -233,7 +233,19 @@ export class TerminalHost {
 
     for (const [, session] of this.sessions) {
       session.detachAllClients()
-      session.kill()
+      // Why: live-vs-exited is load-bearing. For LIVE sessions we use
+      // forceKillAndDisposeSubprocess (SIGKILL + destroy) to reap stubborn
+      // children AND release the ptmx fd on the same tick, bypassing the 5s
+      // KILL_TIMEOUT_MS fallback that would otherwise outlive the daemon
+      // process. For sessions that have already exited but are still in the
+      // map, SIGKILL would target a reaped pid — on POSIX that pid can be
+      // recycled to an unrelated process, so we MUST only release the fd via
+      // disposeSubprocess() (destroy without kill). See docs/fix-pty-fd-leak.md.
+      if (session.isAlive) {
+        session.forceKillAndDisposeSubprocess()
+      } else {
+        session.disposeSubprocess()
+      }
     }
     this.sessions.clear()
     this.killedTombstones.clear()
