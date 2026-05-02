@@ -205,7 +205,7 @@ export function getProcessStartedAtMs(pid: number): number | null {
   }
 }
 
-function startTimeMatches(pid: number, expectedStartedAtMs: number | null): boolean {
+export function startTimeMatches(pid: number, expectedStartedAtMs: number | null): boolean {
   if (expectedStartedAtMs === null) {
     return true
   }
