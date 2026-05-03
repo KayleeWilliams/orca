@@ -4,6 +4,23 @@ import type { SshTarget } from './ssh-types'
 // ─── Repo ────────────────────────────────────────────────────────────
 export type RepoKind = 'git' | 'folder'
 
+/**
+ * Per-repo user choice for where issues are fetched and filed.
+ *
+ * Why three states, not two: storage must distinguish "user explicitly chose
+ * upstream" from "heuristic happens to resolve to upstream right now." Collapsing
+ * the two would let a remote-topology change (someone removes `upstream`, or
+ * adds one later) silently move the effective source — the exact silent-source-
+ * switch class the upstream-issue-source design rejects.
+ *
+ * - `'auto'` (or undefined): honor the heuristic in `getIssueOwnerRepo`
+ *   (upstream-if-exists, else origin). Initial state for every repo.
+ * - `'upstream'`: explicit upstream. Wins over heuristic and future topology
+ *   changes. Falls back to origin if `upstream` remote vanishes, with a toast.
+ * - `'origin'`: explicit origin. Same precedence.
+ */
+export type IssueSourcePreference = 'upstream' | 'origin' | 'auto'
+
 export type Repo = {
   id: string
   path: string
@@ -16,6 +33,10 @@ export type Repo = {
   hookSettings?: RepoHookSettings
   /** SSH target ID for remote repos. null/undefined = local. */
   connectionId?: string | null
+  /** Per-repo override for issue-source resolution. `undefined` is treated
+   *  identically to `'auto'`; writers leave it undefined on creation so
+   *  existing persisted records stay forward-compatible. */
+  issueSourcePreference?: IssueSourcePreference
 }
 
 export type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
@@ -48,6 +69,7 @@ export type GitWorktreeInfo = {
   head: string
   branch: string
   isBare: boolean
+  isSparse?: boolean
   /** True for the repo's main working tree (the first entry from `git worktree list`).
    *  Linked worktrees created via `git worktree add` have this set to false. */
   isMainWorktree: boolean
@@ -67,6 +89,11 @@ export type Worktree = {
   isPinned: boolean
   sortOrder: number
   lastActivityAt: number
+  sparseDirectories?: string[]
+  sparseBaseRef?: string
+  /** ID of the saved preset this worktree was created from, if any. Cleared
+   *  when the worktree is no longer sparse on refresh. */
+  sparsePresetId?: string
   diffComments?: DiffComment[]
 } & GitWorktreeInfo
 
@@ -82,6 +109,9 @@ export type WorktreeMeta = {
   isPinned: boolean
   sortOrder: number
   lastActivityAt: number
+  sparseDirectories?: string[]
+  sparseBaseRef?: string
+  sparsePresetId?: string
   diffComments?: DiffComment[]
 }
 
@@ -196,6 +226,24 @@ export type BrowserLoadError = {
   validatedUrl: string
 }
 
+// Why: BrowserPage persists the active viewport preset so CDP emulation can be
+// reapplied on reload/navigation without the user re-picking from the toolbar.
+export type BrowserViewportPresetId =
+  | 'mobile-s'
+  | 'mobile-m'
+  | 'mobile-l'
+  | 'tablet'
+  | 'laptop'
+  | 'laptop-l'
+  | 'desktop'
+
+export type BrowserViewportOverride = {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  mobile: boolean
+}
+
 export type BrowserPage = {
   id: string
   workspaceId: string
@@ -208,6 +256,8 @@ export type BrowserPage = {
   canGoForward: boolean
   loadError: BrowserLoadError | null
   createdAt: number
+  /** Active CDP viewport emulation preset. null = default (fill pane, no CDP override) */
+  viewportPresetId?: BrowserViewportPresetId | null
 }
 
 export type BrowserWorkspace = {
@@ -600,11 +650,57 @@ export type ClassifiedError = {
   type:
     | 'permission_denied'
     | 'not_found'
+    | 'issues_disabled'
     | 'validation_error'
     | 'rate_limited'
     | 'network_error'
     | 'unknown'
   message: string
+}
+
+// Why: declared here as a shared shape so IPC return envelopes and renderer
+// slices can reference the same structural type without importing from main.
+// Aliased as `OwnerRepo` in `src/main/github/gh-utils.ts` so main call sites
+// can continue using the short local name.
+export type GitHubOwnerRepo = { owner: string; repo: string }
+
+/**
+ * Envelope for `gh:listWorkItems`. Carries resolved issue/PR sources so the
+ * renderer can render the "Issues from owner/repo" indicator without an
+ * extra IPC round-trip, and per-source classified errors so the UI can show
+ * a retryable banner when (e.g.) a private upstream 403s.
+ *
+ * Why piggyback instead of adding `gh:resolveWorkItemSources`: the renderer
+ * already round-trips this endpoint on every Tasks refresh, and the source
+ * data is a 2-field-per-side metadata add — cheaper than another IPC call.
+ *
+ * Invariant: `items` always contains whatever succeeded; `errors.issues` indicates
+ * the issues-side fetch failed, but any PR-side items that succeeded are still
+ * present in `items`. Consumers should render `items` alongside the error banner.
+ */
+export type ListWorkItemsResult<T> = {
+  items: T[]
+  sources: {
+    issues: GitHubOwnerRepo | null
+    prs: GitHubOwnerRepo | null
+    /** Raw `upstream` remote resolved for this repo, independent of the
+     *  user's preference. Present so the renderer's issue-source selector
+     *  can always decide whether to render (upstream exists & differs from
+     *  origin) and show both slugs in its tooltips, even when the user has
+     *  picked 'origin' and `sources.issues` has collapsed onto origin. */
+    upstreamCandidate: GitHubOwnerRepo | null
+  }
+  errors?: {
+    issues?: ClassifiedError
+  }
+  /** True when the user's per-repo preference was `'upstream'` but no upstream
+   *  remote is configured, so the resolver fell back to origin. Renderer uses
+   *  this to surface a one-time-per-session toast. Omitted when absent so
+   *  existing consumers and test fixtures don't care about it.
+   *  Typed as `?: true` (not `?: boolean`) to encode the invariant "present
+   *  iff fell-back" — an explicit `false` write would be a bug, so make it a
+   *  compile error. */
+  issueSourceFellBack?: true
 }
 
 export type LinearWorkflowState = {
@@ -664,11 +760,32 @@ export type WorktreeStartupLaunch = {
   env?: Record<string, string>
 }
 
+export type CreateSparseCheckoutRequest = {
+  directories: string[]
+  /** Set when the directories came from a saved preset and the user did not
+   *  modify them — recorded on WorktreeMeta so the worktree can show "from
+   *  preset X" later. Cleared if the user edited the textarea. */
+  presetId?: string
+}
+
+/** A reusable per-repo sparse directory list. Saved by the user from the
+ *  composer; surfaced again the next time they create a worktree in the same
+ *  repo. The MVP scope (no preset) is `presetId === undefined`. */
+export type SparsePreset = {
+  id: string
+  repoId: string
+  name: string
+  directories: string[]
+  createdAt: number
+  updatedAt: number
+}
+
 export type CreateWorktreeArgs = {
   repoId: string
   name: string
   baseBranch?: string
   setupDecision?: SetupDecision
+  sparseCheckout?: CreateSparseCheckoutRequest
 }
 
 export type CreateWorktreeResult = {
@@ -858,10 +975,16 @@ export type GlobalSettings = {
   theme: 'system' | 'dark' | 'light'
   editorAutoSave: boolean
   editorAutoSaveDelayMs: number
+  editorMinimapEnabled: boolean
   terminalFontSize: number
   terminalFontFamily: string
   terminalFontWeight: number
   terminalLineHeight: number
+  /** Mirrors VS Code's terminal.integrated.gpuAcceleration shape.
+   *  - 'auto': try xterm WebGL and fall back to DOM if the renderer fails.
+   *  - 'on': always try xterm WebGL.
+   *  - 'off': keep terminal rendering on xterm's DOM renderer. */
+  terminalGpuAcceleration: 'auto' | 'on' | 'off'
   /** Whether to enable programming-ligatures rendering via
    *  `@xterm/addon-ligatures`.
    *  - `'auto'` (default): enabled only when the configured font is known to
@@ -899,6 +1022,9 @@ export type GlobalSettings = {
    *  user's preferred shell. Defaults to 'powershell.exe' which is the
    *  modern choice for an IDE context. Only consulted on Windows. */
   terminalWindowsShell: string
+  /** Why: "PowerShell" is the product-facing shell family. Auto resolves to
+   *  PowerShell 7+ when present and falls back to inbox Windows PowerShell. */
+  terminalWindowsPowerShellImplementation: 'auto' | 'powershell.exe' | 'pwsh.exe'
   terminalFocusFollowsMouse: boolean
   /** Why: mirrors X11 / gnome-terminal "copy on select" UX — making a terminal
    *  selection copies it to the system clipboard automatically, so users can
@@ -1020,6 +1146,11 @@ export type GlobalSettings = {
    *  the cursor-agent hook path are unaffected by this toggle. */
   experimentalAgentDashboard: boolean
   experimentalMobile: boolean
+  /** Experimental: floating animated sidekick (claude.webp) in the bottom-right
+   *  corner. Opt-in because it's a cosmetic joke feature; users who leave it
+   *  off never mount the overlay. Toggling takes effect immediately in the
+   *  current session (no relaunch) because it is purely renderer-side. */
+  experimentalSidekick: boolean
 }
 
 export type GhosttyImportPreview = {
@@ -1111,6 +1242,15 @@ export type PersistedUIState = {
    *  migration never re-fires — allowing users to intentionally select the
    *  new 'recent' (last-activity) sort without it being clobbered on restart. */
   _sortBySmartMigrated?: boolean
+  /** One-shot migration flag for the inline-agents view-mode rollout. The
+   *  'inline-agents' card property was introduced after the
+   *  experimentalAgentDashboard toggle — users on prior rcs who had the
+   *  toggle on already had `worktreeCardProperties` persisted without it,
+   *  so merging with the new defaults never added it for them. When this
+   *  flag is absent, the main-process load() appends 'inline-agents' to
+   *  the persisted array if experimentalAgentDashboard is true, then sets
+   *  the flag so a later uncheck from the view-options menu sticks. */
+  _inlineAgentsDefaultedForExperiment?: boolean
   /** Snapshot of totalAgentsSpawned captured the first time we see the current
    *  app version. Why: the nag threshold counts agents spawned *since the
    *  user's last update* so a fresh install or new release does not trigger
@@ -1128,6 +1268,35 @@ export type PersistedUIState = {
    *  suppress the nag — no further thresholds, no notifications. */
   starNagCompleted?: boolean
   trustedOrcaHooks?: PersistedTrustedOrcaHooks
+  /** Whether the experimental sidekick overlay is currently visible. Separate
+   *  from the experimentalSidekick settings flag so "Hide sidekick" from the
+   *  status-bar menu is a reversible dismiss (re-show without re-enabling the
+   *  feature). Absent = treated as true so existing users see the sidekick
+   *  the first time they enable the experimental flag. */
+  sidekickVisible?: boolean
+  /** Active sidekick id: one of the bundled ids or a custom UUID from
+   *  customSidekicks. Unknown ids fall back to the default at read time so
+   *  removing a custom sidekick the user had selected doesn't leave the
+   *  overlay rendering nothing. */
+  sidekickId?: string
+  /** User-uploaded sidekick images. Bytes live under userData/sidekicks/custom/;
+   *  this field is the metadata index so custom sidekicks ride the existing
+   *  PersistedUIState save pipeline. */
+  customSidekicks?: CustomSidekick[]
+}
+
+/** Metadata for a user-uploaded sidekick image. `id` is the stable identifier;
+ *  the on-disk filename (preserving the original extension) lives in `fileName`.
+ *  The renderer never learns the absolute path — it asks main for the bytes
+ *  via sidekick:read using (id, fileName). */
+export type CustomSidekick = {
+  id: string
+  label: string
+  fileName: string
+  /** MIME type needed so the renderer builds a Blob with the correct
+   *  Content-Type — especially image/svg+xml, which browsers won't render
+   *  from a misdeclared blob URL. */
+  mimeType: string
 }
 
 export type PersistedTrustedOrcaHookEntry = {
@@ -1150,6 +1319,9 @@ export type PersistedTrustedOrcaHooks = Record<string, PersistedTrustedOrcaHookR
 export type PersistedState = {
   schemaVersion: number
   repos: Repo[]
+  /** Sparse-checkout presets keyed by repoId. Empty record on first launch;
+   *  presets are managed from the new-workspace composer and repo settings. */
+  sparsePresetsByRepo: Record<string, SparsePreset[]>
   worktreeMeta: Record<string, WorktreeMeta>
   settings: GlobalSettings
   ui: PersistedUIState
@@ -1166,6 +1338,13 @@ export type DirEntry = {
   name: string
   isDirectory: boolean
   isSymlink: boolean
+}
+
+export type MarkdownDocument = {
+  filePath: string
+  relativePath: string
+  basename: string
+  name: string
 }
 
 // ─── Filesystem watcher ─────────────────────────────────────

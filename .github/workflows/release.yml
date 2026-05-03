@@ -245,3 +245,13 @@ jobs:
             --draft=false \
             --prerelease="$prerelease" \
             --repo "$GITHUB_REPOSITORY"
+
+  homebrew-bump:
+    needs:
+      - resolve-release
+      - publish-release
+    if: ${{ !contains(needs.resolve-release.outputs.tag, '-rc.') }}
+    uses: ./.github/workflows/homebrew-bump.yml
+    with:
+      tag: ${{ needs.resolve-release.outputs.tag }}
+    secrets: inherit

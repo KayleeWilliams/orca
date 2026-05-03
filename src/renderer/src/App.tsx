@@ -52,6 +52,9 @@ const Settings = lazy(() => import('./components/settings/Settings'))
 const QuickOpen = lazy(() => import('./components/QuickOpen'))
 const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
 const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
+// Why: lazy-loaded so the WebP asset + overlay module aren't fetched unless
+// the user opts into the experimental flag.
+const SidekickOverlay = lazy(() => import('./components/sidekick/SidekickOverlay'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -93,7 +96,6 @@ function App(): React.JSX.Element {
       hydrateEditorSession: s.hydrateEditorSession,
       hydrateBrowserSession: s.hydrateBrowserSession,
       fetchBrowserSessionProfiles: s.fetchBrowserSessionProfiles,
-      fetchDetectedBrowsers: s.fetchDetectedBrowsers,
       reconnectPersistedTerminals: s.reconnectPersistedTerminals,
       setDeferredSshReconnectTargets: s.setDeferredSshReconnectTargets,
       setSshConnectionState: s.setSshConnectionState,
@@ -146,6 +148,8 @@ function App(): React.JSX.Element {
   // subscriptions (agentStatusByPaneKey, agentStatusEpoch, etc.) instead of
   // keeping them alive behind an early-return inside the hook bodies.
   const agentDashboardEnabled = useAppStore((s) => s.settings?.experimentalAgentDashboard === true)
+  const sidekickEnabled = useAppStore((s) => s.settings?.experimentalSidekick === true)
+  const sidekickVisible = useAppStore((s) => s.sidekickVisible)
   const canGoBackWorktree = useAppStore(canGoBackWorktreeHistory)
   const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
@@ -228,7 +232,6 @@ function App(): React.JSX.Element {
           actions.hydrateEditorSession(session)
           actions.hydrateBrowserSession(session)
           await actions.fetchBrowserSessionProfiles()
-          await actions.fetchDetectedBrowsers()
 
           // Why: SSH connections must be re-established BEFORE terminal
           // reconnect so that reconnectPersistedTerminals can route SSH-backed
@@ -1084,6 +1087,15 @@ function App(): React.JSX.Element {
         {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
         {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
       </Suspense>
+      {/* Why: mount SidekickOverlay only when the experimental flag is on AND
+          the user hasn't hit "Hide sidekick" in the status-bar menu. Both
+          conditions must be true — see design doc (sidekick-overlay.md) on why
+          the two toggles are kept independent. */}
+      {sidekickEnabled && sidekickVisible ? (
+        <Suspense fallback={null}>
+          <SidekickOverlay />
+        </Suspense>
+      ) : null}
       <UpdateCard />
       <StarNagCard />
       <ZoomOverlay />

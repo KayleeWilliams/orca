@@ -42,6 +42,7 @@ function createPane(): ManagedPaneInternal {
     container: { dataset: {} } as never,
     xtermContainer: {} as never,
     linkTooltip: {} as never,
+    terminalGpuAcceleration: 'auto',
     gpuRenderingEnabled: true,
     webglAttachmentDeferred: false,
     webglDisabledAfterContextLoss: false,

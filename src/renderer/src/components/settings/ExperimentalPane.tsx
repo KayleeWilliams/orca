@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Copy, RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
-import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
+import type { GlobalSettings } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -9,33 +9,9 @@ import { useAppStore } from '../../store'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { EXPERIMENTAL_PANE_SEARCH_ENTRIES } from './experimental-search'
-import { AGENT_CATALOG, AgentIcon } from '@/lib/agent-catalog'
 import { MobilePane } from './MobilePane'
-
-// Why: agents with a per-agent hook-service module under src/main that posts
-// status to the shared agent-hooks server. Keep this list in sync with the
-// hook-service.ts files — any agent without one will not appear in the inline
-// per-workspace-card agent activity list even when the experimental setting
-// is on.
-const AGENT_DASHBOARD_SUPPORTED_AGENTS: readonly TuiAgent[] = [
-  'claude',
-  'codex',
-  'gemini',
-  'cursor',
-  'opencode'
-] as const
-
-// Why: both AGENT_DASHBOARD_SUPPORTED_AGENTS and AGENT_CATALOG are static
-// module-level constants, so the resolved {id, label} pairs never change at
-// runtime. Computing this inside SupportedAgentsDisclaimer was O(N×M) work on
-// every parent re-render — notably on every keystroke in the settings search —
-// for a list that can only change at build time. Hoisting it makes the cost
-// a one-time module-load expense.
-const SUPPORTED_AGENT_ENTRIES: readonly { id: TuiAgent; label: string }[] =
-  AGENT_DASHBOARD_SUPPORTED_AGENTS.map((id) => {
-    const entry = AGENT_CATALOG.find((a) => a.id === id)
-    return { id, label: entry?.label ?? id }
-  })
+import { SupportedAgentsDisclaimer } from './SupportedAgentsDisclaimer'
+import { HiddenExperimentalGroup } from './HiddenExperimentalGroup'
 
 export { EXPERIMENTAL_PANE_SEARCH_ENTRIES }
 
@@ -56,6 +32,13 @@ export function ExperimentalPane({
   hiddenExperimentalUnlocked = false
 }: ExperimentalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
+  // Why: when the user flips the experimental toggle ON, ensure the
+  // 'inline-agents' view-mode checkbox is added to the Workspaces view
+  // options so the inline agent activity list is visible without a second
+  // click. Users who previously had the toggle on in an earlier rc get the
+  // same behavior retroactively via the persistence migration in
+  // main/persistence.ts — this handler covers fresh opt-ins going forward.
+  const toggleWorktreeCardProperty = useAppStore((s) => s.toggleWorktreeCardProperty)
   // Why: the "enabled at startup" flags are the effective runtime state, read
   // directly from main once on mount. Each banner compares the user's current
   // setting against this snapshot to tell them a restart is still required.
@@ -86,8 +69,9 @@ export function ExperimentalPane({
     EXPERIMENTAL_PANE_SEARCH_ENTRIES[0]
   ])
   const showMobile = matchesSettingsSearch(searchQuery, [EXPERIMENTAL_PANE_SEARCH_ENTRIES[1]])
+  const showSidekick = matchesSettingsSearch(searchQuery, [EXPERIMENTAL_PANE_SEARCH_ENTRIES[2]])
   const showOrchestration = matchesSettingsSearch(searchQuery, [
-    EXPERIMENTAL_PANE_SEARCH_ENTRIES[2]
+    EXPERIMENTAL_PANE_SEARCH_ENTRIES[3]
   ])
 
   const [orchestrationEnabled, setOrchestrationEnabled] = useState<boolean>(() => {
@@ -170,11 +154,20 @@ export function ExperimentalPane({
               type="button"
               role="switch"
               aria-checked={settings.experimentalAgentDashboard}
-              onClick={() =>
-                updateSettings({
-                  experimentalAgentDashboard: !settings.experimentalAgentDashboard
-                })
-              }
+              onClick={() => {
+                const next = !settings.experimentalAgentDashboard
+                updateSettings({ experimentalAgentDashboard: next })
+                if (next) {
+                  // Why: mirrors the one-shot persistence migration for users
+                  // who already had the toggle on before 'inline-agents'
+                  // existed. Reading from the live store keeps this honest
+                  // instead of stale-propping through a parent re-render.
+                  const currentProps = useAppStore.getState().worktreeCardProperties ?? []
+                  if (!currentProps.includes('inline-agents')) {
+                    toggleWorktreeCardProperty('inline-agents')
+                  }
+                }
+              }}
               className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
                 settings.experimentalAgentDashboard ? 'bg-foreground' : 'bg-muted-foreground/30'
               }`}
@@ -258,11 +251,50 @@ export function ExperimentalPane({
         </SearchableSetting>
       ) : null}
 
+      {showSidekick ? (
+        <SearchableSetting
+          title="Sidekick"
+          description="Floating animated sidekick in the bottom-right corner."
+          keywords={EXPERIMENTAL_PANE_SEARCH_ENTRIES[2].keywords}
+          className="space-y-3 px-1 py-2"
+          id="experimental-sidekick"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 shrink space-y-1.5">
+              <Label>Sidekick</Label>
+              <p className="text-xs text-muted-foreground">
+                Shows a small animated sidekick pinned to the bottom-right corner. Pick a character
+                (Claudino, OpenCode, Gremlin) or upload your own PNG, APNG, GIF, WebP, JPG, or SVG
+                from the status-bar sidekick menu. Hide it any time from the same menu without
+                disabling this setting.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.experimentalSidekick}
+              onClick={() => {
+                updateSettings({ experimentalSidekick: !settings.experimentalSidekick })
+              }}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
+                settings.experimentalSidekick ? 'bg-foreground' : 'bg-muted-foreground/30'
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background shadow-sm transition-transform ${
+                  settings.experimentalSidekick ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
+        </SearchableSetting>
+      ) : null}
+
       {showOrchestration ? (
         <SearchableSetting
           title="Agent Orchestration"
           description="Coordinate multiple coding agents via messaging, task DAGs, dispatch, and decision gates."
-          keywords={EXPERIMENTAL_PANE_SEARCH_ENTRIES[1].keywords}
+          keywords={EXPERIMENTAL_PANE_SEARCH_ENTRIES[3].keywords}
           className="space-y-3 px-1 py-2"
         >
           <div className="flex items-start justify-between gap-4">
@@ -341,64 +373,5 @@ export function ExperimentalPane({
 
       {hiddenExperimentalUnlocked ? <HiddenExperimentalGroup /> : null}
     </div>
-  )
-}
-
-function SupportedAgentsDisclaimer(): React.JSX.Element {
-  return (
-    <div className="space-y-1 pt-0.5 text-xs text-muted-foreground">
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-        <span>Supported agents:</span>
-        {SUPPORTED_AGENT_ENTRIES.map(({ id, label }) => (
-          <span
-            key={id}
-            className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5"
-            title={label}
-          >
-            <AgentIcon agent={id} size={12} />
-            <span className="text-[11px] leading-none text-foreground/80">{label}</span>
-          </span>
-        ))}
-      </div>
-      <p className="text-[11px] italic">
-        We&apos;re currently working on support for more agent CLIs.
-      </p>
-    </div>
-  )
-}
-
-// Why: anything in this group is deliberately unfinished or staff-only. The
-// orange treatment (header tint, label colors) is the shared visual signal
-// for hidden-experimental items so future entries inherit the same
-// affordance without another round of styling decisions.
-function HiddenExperimentalGroup(): React.JSX.Element {
-  return (
-    <section className="space-y-3 rounded-lg border border-orange-500/40 bg-orange-500/5 p-3">
-      <div className="space-y-0.5">
-        <h4 className="text-sm font-semibold text-orange-500 dark:text-orange-300">
-          Hidden experimental
-        </h4>
-        <p className="text-xs text-orange-500/80 dark:text-orange-300/80">
-          Unlisted toggles for internal testing. Nothing here is supported.
-        </p>
-      </div>
-
-      <div className="flex items-start justify-between gap-4 rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2.5">
-        <div className="min-w-0 shrink space-y-0.5">
-          <Label className="text-orange-600 dark:text-orange-300">Placeholder toggle</Label>
-          <p className="text-xs text-orange-600/80 dark:text-orange-300/80">
-            Does nothing today. Reserved as the first slot for hidden experimental options.
-          </p>
-        </div>
-        <button
-          type="button"
-          aria-label="Placeholder toggle"
-          className="relative inline-flex h-5 w-9 shrink-0 cursor-not-allowed items-center rounded-full border border-orange-500/40 bg-orange-500/20 opacity-70"
-          disabled
-        >
-          <span className="inline-block h-3.5 w-3.5 translate-x-0.5 transform rounded-full bg-orange-200 shadow-sm dark:bg-orange-100" />
-        </button>
-      </div>
-    </section>
   )
 }

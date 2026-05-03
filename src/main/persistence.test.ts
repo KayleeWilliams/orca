@@ -249,6 +249,34 @@ describe('Store', () => {
     expect(store.updateRepo('nope', { displayName: 'x' })).toBeNull()
   })
 
+  it('updateRepo persists issueSourcePreference across reloads', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo())
+
+    const updated = store.updateRepo('r1', { issueSourcePreference: 'upstream' })
+    expect(updated!.issueSourcePreference).toBe('upstream')
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')!.issueSourcePreference).toBe('upstream')
+  })
+
+  it('updateRepo with issueSourcePreference=undefined clears the preference', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ issueSourcePreference: 'origin' }))
+    expect(store.getRepo('r1')!.issueSourcePreference).toBe('origin')
+
+    // Why: passing the key with value `undefined` must clear the preference.
+    // Plain `Object.assign` skips undefined values, so without the explicit
+    // delete branch in updateRepo, the persisted record would keep 'origin'.
+    store.updateRepo('r1', { issueSourcePreference: undefined })
+    expect(store.getRepo('r1')!.issueSourcePreference).toBeUndefined()
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')!.issueSourcePreference).toBeUndefined()
+  })
+
   // ── 8. setWorktreeMeta and getWorktreeMeta ─────────────────────────
 
   it('setWorktreeMeta creates meta with defaults for missing fields', async () => {
@@ -549,6 +577,98 @@ describe('Store', () => {
     const store = await createStore()
     expect(store.getSettings().terminalMacOptionAsAlt).toBe('auto')
     expect(store.getSettings().terminalMacOptionAsAltMigrated).toBe(true)
+  })
+
+  // ── inline-agents card-property migration ──────────────────────────
+  //
+  // Why: 'inline-agents' was added to DEFAULT_WORKTREE_CARD_PROPERTIES after
+  // the experimentalAgentDashboard toggle. Users who had the toggle on in a
+  // prior rc already had worktreeCardProperties persisted without the new
+  // entry, so the defaults-merge in load() wouldn't reach them and the
+  // inline agent list stayed hidden after upgrade. The migration appends
+  // 'inline-agents' once and sets a flag so a later deliberate uncheck
+  // from the Workspaces view options menu sticks across restarts.
+
+  it('adds inline-agents to persisted cardProps when experimental toggle is on', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { experimentalAgentDashboard: true },
+      ui: {
+        worktreeCardProperties: ['status', 'unread', 'ci', 'issue', 'pr', 'comment']
+      },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+    expect(store.getUI().worktreeCardProperties).toContain('inline-agents')
+    expect(store.getUI()._inlineAgentsDefaultedForExperiment).toBe(true)
+  })
+
+  it('does not add inline-agents when experimental toggle is off', async () => {
+    // Why: the experimental toggle gates whether inline agents render at all,
+    // so there's no value in checking the view-mode option for opted-out users.
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { experimentalAgentDashboard: false },
+      ui: {
+        worktreeCardProperties: ['status', 'unread', 'ci', 'issue', 'pr', 'comment']
+      },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
+    expect(store.getUI()._inlineAgentsDefaultedForExperiment).toBe(true)
+  })
+
+  it('respects a deliberate uncheck after migration flag is set', async () => {
+    // Why: once migrated, an empty-of-inline-agents array is treated as a
+    // user choice — not a legacy pre-migration state — so we must not
+    // re-add it on every subsequent launch.
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { experimentalAgentDashboard: true },
+      ui: {
+        worktreeCardProperties: ['status', 'unread', 'ci', 'issue', 'pr', 'comment'],
+        _inlineAgentsDefaultedForExperiment: true
+      },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
+  })
+
+  it('leaves cardProps alone when inline-agents is already present', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { experimentalAgentDashboard: true },
+      ui: {
+        worktreeCardProperties: [
+          'status',
+          'unread',
+          'ci',
+          'issue',
+          'pr',
+          'comment',
+          'inline-agents'
+        ]
+      },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+    const props = store.getUI().worktreeCardProperties
+    expect(props.filter((p) => p === 'inline-agents')).toHaveLength(1)
+    expect(store.getUI()._inlineAgentsDefaultedForExperiment).toBe(true)
   })
 
   // ── GitHub Cache ───────────────────────────────────────────────────

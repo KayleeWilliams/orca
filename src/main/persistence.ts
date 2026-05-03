@@ -6,7 +6,13 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkS
 import { writeFile, rename, mkdir, rm } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import type { PersistedState, Repo, WorktreeMeta, GlobalSettings } from '../shared/types'
+import type {
+  PersistedState,
+  Repo,
+  SparsePreset,
+  WorktreeMeta,
+  GlobalSettings
+} from '../shared/types'
 import type { SshTarget } from '../shared/ssh-types'
 import { isFolderRepo } from '../shared/repo-kind'
 import { getGitUsername } from './git/repo'
@@ -157,11 +163,40 @@ export class Store {
             const rawSort = parsed.ui?.sortBy
             const sort = normalizeSortBy(rawSort)
             const migrate = !parsed.ui?._sortBySmartMigrated && rawSort === 'recent'
+            // Why: the 'inline-agents' card property was added after the
+            // experimentalAgentDashboard toggle. Users who had the toggle on
+            // in a prior rc already had worktreeCardProperties persisted
+            // without the new entry, so a simple defaults merge wouldn't
+            // reach them and the inline agent list stayed hidden after
+            // upgrade. One-shot append 'inline-agents' to their persisted
+            // array when the experimental toggle is true; the flag prevents
+            // re-firing so a deliberate uncheck from the Workspaces view
+            // options menu sticks across restarts.
+            // The flag is stamped on every successful load — including when
+            // the experiment is off — so that a later flip-on is handled by
+            // the renderer's ExperimentalPane handler rather than re-firing
+            // this migration.
+            const rawCardProps = parsed.ui?.worktreeCardProperties
+            const inlineAgentsMigrated = parsed.ui?._inlineAgentsDefaultedForExperiment === true
+            const experimentOn = parsed.settings?.experimentalAgentDashboard === true
+            const needsInlineAgentsMigration =
+              !inlineAgentsMigrated &&
+              experimentOn &&
+              Array.isArray(rawCardProps) &&
+              !rawCardProps.includes('inline-agents')
+            const migratedCardProps =
+              needsInlineAgentsMigration && Array.isArray(rawCardProps)
+                ? [...rawCardProps, 'inline-agents' as const]
+                : undefined
             return {
               ...defaults.ui,
               ...parsed.ui,
               sortBy: migrate ? ('smart' as const) : sort,
-              _sortBySmartMigrated: true
+              _sortBySmartMigrated: true,
+              ...(migratedCardProps !== undefined
+                ? { worktreeCardProperties: migratedCardProps }
+                : {}),
+              _inlineAgentsDefaultedForExperiment: true
             }
           })(),
           // Why: the workspace session is the most volatile persisted surface
@@ -314,6 +349,9 @@ export class Store {
 
   removeRepo(id: string): void {
     this.state.repos = this.state.repos.filter((r) => r.id !== id)
+    // Why: presets are repo-scoped, so removing the repo means the presets
+    // can never be referenced again — drop them with the parent.
+    delete this.state.sparsePresetsByRepo[id]
     // Clean up worktree meta for this repo
     const prefix = `${id}::`
     for (const key of Object.keys(this.state.worktreeMeta)) {
@@ -327,14 +365,33 @@ export class Store {
   updateRepo(
     id: string,
     updates: Partial<
-      Pick<Repo, 'displayName' | 'badgeColor' | 'hookSettings' | 'worktreeBaseRef' | 'kind'>
+      Pick<
+        Repo,
+        | 'displayName'
+        | 'badgeColor'
+        | 'hookSettings'
+        | 'worktreeBaseRef'
+        | 'kind'
+        | 'issueSourcePreference'
+      >
     >
   ): Repo | null {
     const repo = this.state.repos.find((r) => r.id === id)
     if (!repo) {
       return null
     }
-    Object.assign(repo, updates)
+    // Why: `issueSourcePreference === undefined` in the patch means "reset to
+    // auto" (and the persisted record should drop the key, not preserve a
+    // stale explicit value via Object.assign's skip-on-undefined behavior).
+    // Without this delete branch, toggling explicit → auto would silently
+    // leave the old preference in place on disk.
+    if ('issueSourcePreference' in updates && updates.issueSourcePreference === undefined) {
+      delete repo.issueSourcePreference
+      const { issueSourcePreference: _drop, ...rest } = updates
+      Object.assign(repo, rest)
+    } else {
+      Object.assign(repo, updates)
+    }
     this.scheduleSave()
     return this.hydrateRepo(repo)
   }
@@ -362,6 +419,31 @@ export class Store {
         }
       }
     }
+  }
+
+  // ── Sparse Presets ─────────────────────────────────────────────────
+
+  getSparsePresets(repoId: string): SparsePreset[] {
+    return [...(this.state.sparsePresetsByRepo[repoId] ?? [])].sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )
+  }
+
+  saveSparsePreset(preset: SparsePreset): SparsePreset {
+    const existing = this.state.sparsePresetsByRepo[preset.repoId] ?? []
+    const index = existing.findIndex((entry) => entry.id === preset.id)
+    this.state.sparsePresetsByRepo[preset.repoId] =
+      index === -1
+        ? [...existing, preset]
+        : existing.map((entry, i) => (i === index ? preset : entry))
+    this.scheduleSave()
+    return preset
+  }
+
+  removeSparsePreset(repoId: string, presetId: string): void {
+    const existing = this.state.sparsePresetsByRepo[repoId] ?? []
+    this.state.sparsePresetsByRepo[repoId] = existing.filter((entry) => entry.id !== presetId)
+    this.scheduleSave()
   }
 
   // ── Worktree Meta ──────────────────────────────────────────────────
