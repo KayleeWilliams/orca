@@ -328,6 +328,8 @@ const api = {
       worktreeId?: string
       sessionId?: string
       shellOverride?: string
+      tabId?: string
+      leafId?: string
     }): Promise<{
       id: string
       snapshot?: string
