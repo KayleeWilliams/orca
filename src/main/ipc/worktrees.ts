@@ -277,9 +277,18 @@ export function registerWorktreeHandlers(
         await killAllProcessesForWorktree(args.worktreeId, {
           runtime,
           localProvider: getLocalPtyProvider()
-        }).catch((err) => {
-          console.warn(`[worktree-teardown] failed for ${args.worktreeId}:`, err)
         })
+          .then((r) => {
+            const total = r.runtimeStopped + r.providerStopped + r.registryStopped
+            if (total > 0) {
+              console.info(
+                `[worktree-teardown] ${args.worktreeId} killed runtime=${r.runtimeStopped} provider=${r.providerStopped} registry=${r.registryStopped}`
+              )
+            }
+          })
+          .catch((err) => {
+            console.warn(`[worktree-teardown] failed for ${args.worktreeId}:`, err)
+          })
       }
 
       if (repo.connectionId) {

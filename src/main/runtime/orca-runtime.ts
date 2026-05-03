@@ -1158,9 +1158,23 @@ export class OrcaRuntimeService {
       await killAllProcessesForWorktree(worktree.id, {
         runtime: this,
         localProvider
-      }).catch((err) => {
-        console.warn(`[worktree-teardown] failed for ${worktree.id}:`, err)
       })
+        .then((r) => {
+          const total = r.runtimeStopped + r.providerStopped + r.registryStopped
+          if (total > 0) {
+            // Why (design §4.4 observability): breadcrumb lets ops
+            // distinguish a renderer-state-induced leak (diff-path purge
+            // non-empty) from a backend-induced one (nothing to kill but
+            // memory still pinned). Emit only when the sweep actually did
+            // work so steady-state logs stay quiet.
+            console.info(
+              `[worktree-teardown] ${worktree.id} killed runtime=${r.runtimeStopped} provider=${r.providerStopped} registry=${r.registryStopped}`
+            )
+          }
+        })
+        .catch((err) => {
+          console.warn(`[worktree-teardown] failed for ${worktree.id}:`, err)
+        })
     }
 
     const hooks = getEffectiveHooks(repo)
