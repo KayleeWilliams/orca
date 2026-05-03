@@ -104,6 +104,7 @@ export type BrowserSlice = {
     profiles: { name: string; directory: string }[]
     selectedProfile: string
   }[]
+  detectedBrowsersLoaded: boolean
   fetchDetectedBrowsers: () => Promise<void>
   importCookiesFromBrowser: (
     profileId: string,
@@ -1283,8 +1284,12 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   },
 
   detectedBrowsers: [],
+  detectedBrowsersLoaded: false,
 
   fetchDetectedBrowsers: async () => {
+    if (get().detectedBrowsersLoaded) {
+      return
+    }
     try {
       const browsers = (await window.api.browser.sessionDetectBrowsers()) as {
         family: string
@@ -1292,9 +1297,10 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         profiles: { name: string; directory: string }[]
         selectedProfile: string
       }[]
-      set({ detectedBrowsers: browsers })
+      set({ detectedBrowsers: browsers, detectedBrowsersLoaded: true })
     } catch {
       /* best-effort — empty list is acceptable fallback */
+      set({ detectedBrowsersLoaded: true })
     }
   },
 

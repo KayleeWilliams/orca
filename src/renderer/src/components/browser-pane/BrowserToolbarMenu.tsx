@@ -42,6 +42,7 @@ export function BrowserToolbarMenu({
   const createBrowserSessionProfile = useAppStore((s) => s.createBrowserSessionProfile)
   const importCookiesFromBrowser = useAppStore((s) => s.importCookiesFromBrowser)
   const importCookiesToProfile = useAppStore((s) => s.importCookiesToProfile)
+  const fetchDetectedBrowsers = useAppStore((s) => s.fetchDetectedBrowsers)
   const browserSessionImportState = useAppStore((s) => s.browserSessionImportState)
 
   const [newProfileDialogOpen, setNewProfileDialogOpen] = useState(false)
@@ -171,7 +172,15 @@ export function BrowserToolbarMenu({
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuSub>
+          <DropdownMenuSub
+            onOpenChange={(open) => {
+              if (open) {
+                // Why: macOS treats other browsers' profile folders as app
+                // data. Only probe them when the user opens the import menu.
+                void fetchDetectedBrowsers()
+              }
+            }}
+          >
             <DropdownMenuSubTrigger disabled={browserSessionImportState?.status === 'importing'}>
               <Import className="mr-2 size-3.5" />
               Import Cookies
