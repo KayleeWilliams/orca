@@ -1141,6 +1141,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         issueCommand,
         ...(startupPlan ? { startup: { command: startupPlan.launchCommand } } : {})
       })
+      if (result.warning) {
+        toast.warning(result.warning)
+      }
       if (startupPlan) {
         void ensureAgentStartupInTerminal({
           worktreeId: worktree.id,
@@ -1258,6 +1261,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           setup: result.setup,
           ...(startupPlan ? { startup: { command: startupPlan.launchCommand } } : {})
         })
+        if (result.warning) {
+          toast.warning(result.warning)
+        }
         if (startupPlan) {
           void ensureAgentStartupInTerminal({
             worktreeId: worktree.id,

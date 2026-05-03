@@ -209,6 +209,9 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
       toast.error('Workspace created but could not be activated.')
       return
     }
+    if (result.warning) {
+      toast.warning(result.warning)
+    }
     primaryTabId = activation.primaryTabId
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to create workspace.'
@@ -330,6 +333,9 @@ export async function launchFromBranch(args: LaunchFromBranchArgs): Promise<void
     if (!activation) {
       toast.error('Workspace created but could not be activated.')
       return
+    }
+    if (result.warning) {
+      toast.warning(result.warning)
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to create workspace.'

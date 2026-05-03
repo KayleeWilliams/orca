@@ -415,10 +415,17 @@ export async function createLocalWorktree(
   invalidateAuthorizedRootsCache()
 
   let setup: CreateWorktreeResult['setup']
+  let warning: string | undefined
   const setupScript = getEffectiveHooks(repo, worktreePath)?.scripts.setup
   const setupMatchesPreview = setupScriptsMatch(repo, worktreePath, primarySetupScript)
   let shouldLaunchSetup = false
   if (setupScript && !setupMatchesPreview) {
+    // Why: surface the trust-gate skip to the renderer so users don't silently
+    // assume their orca.yaml setup ran. The primary checkout's script was what
+    // they authorized in SetupCommandPreview; running the target worktree's
+    // divergent script would be unauthorized execution, so we skip and tell them.
+    warning =
+      'Setup skipped: the target branch’s orca.yaml setup script differs from the one shown in the preview. Open the worktree and run setup manually if you trust it.'
     console.warn(
       `[hooks] setup hook skipped for ${worktreePath}: worktree setup script differs from the primary checkout setup script shown to the user`
     )
@@ -453,6 +460,7 @@ export async function createLocalWorktree(
   notifyWorktreesChanged(mainWindow, repo.id)
   return {
     worktree,
-    ...(setup ? { setup } : {})
+    ...(setup ? { setup } : {}),
+    ...(warning ? { warning } : {})
   }
 }

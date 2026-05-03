@@ -481,6 +481,33 @@ describe('registerWorktreeHandlers', () => {
     )
   })
 
+  it('returns a warning and skips setup when the worktree script differs from the preview', async () => {
+    listWorktreesMock.mockResolvedValue(createdWorktreeList)
+    getEffectiveHooksMock.mockReturnValue({
+      scripts: {
+        setup: 'pnpm worktree:setup'
+      }
+    })
+    setupScriptsMatchMock.mockReturnValue(false)
+    shouldRunSetupForCreateMock.mockReturnValue(true)
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard',
+      setupDecision: 'run'
+    })
+
+    expect(createSetupRunnerScriptMock).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      worktree: expect.objectContaining({
+        path: '/workspace/improve-dashboard'
+      }),
+      warning: expect.stringMatching(/differs.*preview/i)
+    })
+
+    setupScriptsMatchMock.mockReturnValue(true)
+  })
+
   it('creates a sparse worktree and persists its sparse metadata', async () => {
     listWorktreesMock.mockResolvedValue([
       {
