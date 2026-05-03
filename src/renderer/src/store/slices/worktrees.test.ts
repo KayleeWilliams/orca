@@ -668,7 +668,7 @@ describe('purgeWorktreeTerminalState direct (design §4.4)', () => {
         'tab-2': { panes: [] },
         'tab-3': { panes: [] }
       },
-      ptyIdsByTabId: { 'tab-1': 'pty-1', 'tab-2': 'pty-2', 'tab-3': 'pty-3' },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'], 'tab-2': ['pty-2'], 'tab-3': ['pty-3'] },
       runtimePaneTitlesByTabId: { 'tab-1': 'claude', 'tab-3': 'bash' },
       openFiles: [
         {
@@ -696,7 +696,7 @@ describe('purgeWorktreeTerminalState direct (design §4.4)', () => {
       'repoA::/a/wt2': [{ id: 'tab-3', worktreeId: 'repoA::/a/wt2' }]
     })
     expect(s.terminalLayoutsByTabId).toEqual({ 'tab-3': { panes: [] } })
-    expect(s.ptyIdsByTabId).toEqual({ 'tab-3': 'pty-3' })
+    expect(s.ptyIdsByTabId).toEqual({ 'tab-3': ['pty-3'] })
     expect(s.runtimePaneTitlesByTabId).toEqual({ 'tab-3': 'bash' })
     expect(s.openFiles).toEqual([])
     expect(s.editorDrafts).toEqual({ 'file-99': 'other' })
