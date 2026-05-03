@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: the checks panel co-locates PR header, checks, comments,
 merge actions, and conflict state in one component to keep the data flow straightforward. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { LoaderCircle, ExternalLink, RefreshCw, Check, X, Pencil } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Check, X, Pencil } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { useActiveWorktree, useRepoById } from '@/store/selectors'
 import { cn } from '@/lib/utils'
@@ -319,13 +319,6 @@ export default function ChecksPanel(): React.JSX.Element {
     }
   }, [repo, branch, fetchPRForBranch])
 
-  // Open PR in browser
-  const handleOpenPR = useCallback(() => {
-    if (pr?.url) {
-      window.api.shell.openUrl(pr.url)
-    }
-  }, [pr])
-
   // ── Empty state ──
   if (!activeWorktree) {
     return (
@@ -401,7 +394,14 @@ export default function ChecksPanel(): React.JSX.Element {
         {/* PR number + state badge + refresh + open link */}
         <div className="flex items-center gap-2">
           <PullRequestIcon className="size-4 text-muted-foreground shrink-0" />
-          <span className="text-[12px] font-semibold text-foreground">#{pr.number}</span>
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[12px] font-semibold text-foreground opacity-80 shrink-0 hover:text-foreground hover:underline"
+          >
+            #{pr.number}
+          </a>
           <span
             className={cn(
               'text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border',
@@ -418,13 +418,6 @@ export default function ChecksPanel(): React.JSX.Element {
             disabled={isRefreshing}
           >
             <RefreshCw className={cn('size-3.5', isRefreshing && 'animate-spin')} />
-          </button>
-          <button
-            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-            title="Open on GitHub"
-            onClick={handleOpenPR}
-          >
-            <ExternalLink className="size-3.5" />
           </button>
         </div>
 
