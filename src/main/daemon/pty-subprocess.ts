@@ -142,8 +142,21 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   // exiting and the JS onExit callback firing. An uncaught Napi::Error
   // propagates to std::terminate, killing the entire daemon process.
   let dead = false
+  let disposed = false
   proc.onExit(() => {
     dead = true
+    // Why: UnixTerminal.destroy() registers `_socket.once('close', () => this.kill('SIGHUP'))`
+    // (unixTerminal.js:219-229). After the child exits, the master socket's
+    // 'close' event can fire before our dispose() path gets to neutralize
+    // proc.kill — the child's pid may have already been recycled, so SIGHUP
+    // lands on an unrelated process. Neutralizing here, synchronously inside
+    // the onExit callback, closes that window: once the child is reaped,
+    // proc.kill is a no-op no matter which teardown ordering wins.
+    // Windows is excluded because WindowsTerminal.destroy relies on kill() to
+    // close the ConPTY agent — neutralizing would leak the agent + fds.
+    if (process.platform !== 'win32') {
+      ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
+    }
   })
 
   return {
@@ -182,6 +195,13 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
       }
     },
     forceKill: () => {
+      // Why: once the child has been reaped (dead=true via onExit) or dispose
+      // has run, proc.pid refers to a recycled pid. Sending SIGKILL would
+      // terminate an unrelated process. The fd release is handled by
+      // dispose()/destroy(); forceKill is strictly for signalling a live child.
+      if (dead) {
+        return
+      }
       try {
         process.kill(proc.pid, 'SIGKILL')
       } catch {
@@ -193,6 +213,11 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
       }
     },
     signal: (sig) => {
+      // Why: same recycled-pid hazard as forceKill. Once dead, silently drop
+      // the signal rather than risk sending it to an unrelated process.
+      if (dead) {
+        return
+      }
       try {
         process.kill(proc.pid, sig)
       } catch {
@@ -204,6 +229,35 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     },
     onExit: (cb) => {
       onExitCb = cb
+    },
+    dispose: () => {
+      if (disposed) {
+        return
+      }
+      disposed = true
+      dead = true
+      onDataCb = null
+      onExitCb = null
+      // Why: UnixTerminal.destroy() registers `_socket.once('close', () => this.kill('SIGHUP'))`
+      // (unixTerminal.js:219-229). The socket close fires asynchronously; by then
+      // the child may have exited and its pid been recycled to an unrelated
+      // process. Without this neutralization, SIGHUP can be delivered to a
+      // Chrome tab, editor, or other user process — silent cross-app corruption.
+      // `_socket.destroy()` still releases the fd; only the dangerous SIGHUP is
+      // removed.
+      //
+      // Platform guard: WindowsTerminal.destroy implements the ConPTY close by
+      // CALLING `this.kill()` via `_deferNoArgs` (windowsTerminal.js:141-146).
+      // Neutralizing kill on Windows turns destroy() into a no-op and leaks the
+      // ConPTY agent. The SIGHUP hazard is POSIX-only, so the guard is too.
+      if (process.platform !== 'win32') {
+        ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
+      }
+      try {
+        ;(proc as unknown as { destroy?: () => void }).destroy?.()
+      } catch {
+        /* swallow — already torn down, or native-side error we can't recover from */
+      }
     }
   }
 }
