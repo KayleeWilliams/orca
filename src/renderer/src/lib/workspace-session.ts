@@ -223,6 +223,7 @@ export function buildWorkspaceSessionPayload(
     // anything don't bloat the payload. See
     // docs/cmd-j-empty-query-ordering.md.
     lastVisitedAtByWorktreeId:
+      snapshot.lastVisitedAtByWorktreeId &&
       Object.keys(snapshot.lastVisitedAtByWorktreeId).length > 0
         ? snapshot.lastVisitedAtByWorktreeId
         : undefined
