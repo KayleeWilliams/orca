@@ -41,6 +41,13 @@ type CoordinatorState = {
 const DEFAULT_POLL_MS = 2000
 const MAX_CONCURRENT_DEFAULT = 4
 
+// Why: 10 min matches the preamble's documented heartbeat cadence (5 min) ×
+// 2, so a single missed heartbeat is the earliest a dispatch can look stale.
+// Keeping this in one place (not a per-call arg) ensures the preamble copy
+// and the detector logic stay aligned; moving it to a config would multiply
+// the places this constant must be kept in sync.
+const HUNG_THRESHOLD_MS = 10 * 60 * 1000
+
 export class Coordinator {
   private db: OrchestrationDb
   private runtime: CoordinatorRuntime
@@ -173,8 +180,25 @@ export class Coordinator {
     this.processMessages()
     this.processEscalations()
     this.processDecisionGates()
+    this.warnStaleDispatches()
     await this.dispatchReadyTasks()
     return this.checkConvergence()
+  }
+
+  // Why: emit a single warning per stale dispatch per tick. This intentionally
+  // does NOT auto-fail the dispatch — the false-positive cost (a slow worker
+  // producing correct output) is higher than the false-negative cost (a hung
+  // worker keeps its terminal slot until a human notices). Auto-fail policy
+  // is a separate decision documented in R6 of DESIGN_DOC_PREAMBLE_FIX.md.
+  private warnStaleDispatches(): void {
+    const thresholdIso = new Date(Date.now() - HUNG_THRESHOLD_MS).toISOString()
+    const stale = this.db.getStaleDispatches(thresholdIso)
+    for (const ctx of stale) {
+      const minutes = Math.round(HUNG_THRESHOLD_MS / 60000)
+      this.opts.onLog(
+        `Warning: worker ${ctx.assignee_handle ?? '<unknown>'} on task ${ctx.task_id} has not sent a heartbeat in ~${minutes} min (dispatch ${ctx.id})`
+      )
+    }
   }
 
   private processMessages(): void {
@@ -194,6 +218,9 @@ export class Coordinator {
         case 'decision_gate':
           this.handleDecisionGateMessage(msg)
           break
+        case 'heartbeat':
+          this.handleHeartbeat(msg)
+          break
         case 'status':
           this.opts.onLog(`Status from ${msg.from_handle}: ${msg.subject}`)
           break
@@ -203,6 +230,35 @@ export class Coordinator {
     }
 
     this.db.markAsRead(messages.map((m) => m.id))
+  }
+
+  // Why: attribute heartbeats to the specific dispatchId, not a
+  // (taskId, from_handle) lookup. A task that gets retried after a failed
+  // dispatch has multiple rows in dispatch_contexts — a late heartbeat from
+  // the previous (failed) assignee arriving while the new dispatch is active
+  // would falsely bump the new row's last_heartbeat_at if we resolved by
+  // "latest dispatch for this task" (§5.3.4). If the worker drops dispatchId
+  // from the payload, log-and-skip is the preferred failure mode: the stale
+  // detector will correctly flag the dispatch as hung because nothing
+  // refreshed last_heartbeat_at.
+  private handleHeartbeat(msg: MessageRow): void {
+    if (!msg.payload) {
+      this.opts.onLog(`Heartbeat from ${msg.from_handle} missing payload; ignored`)
+      return
+    }
+    let payload: { dispatchId?: unknown } = {}
+    try {
+      payload = JSON.parse(msg.payload)
+    } catch {
+      this.opts.onLog(`Heartbeat from ${msg.from_handle} has invalid JSON payload; ignored`)
+      return
+    }
+    const dispatchId = payload.dispatchId
+    if (typeof dispatchId !== 'string' || dispatchId.length === 0) {
+      this.opts.onLog(`Heartbeat from ${msg.from_handle} missing dispatchId; ignored`)
+      return
+    }
+    this.db.recordHeartbeat(dispatchId, msg.created_at)
   }
 
   private handleWorkerDone(msg: MessageRow): void {
@@ -389,6 +445,7 @@ export class Coordinator {
     // so they talk to the dev runtime's socket, not production (Section 6.4).
     const preamble = buildDispatchPreamble({
       taskId: task.id,
+      dispatchId: dispatch.id,
       taskSpec: task.spec,
       coordinatorHandle: this.opts.coordinatorHandle,
       devMode: process.env.ORCA_USER_DATA_PATH?.includes('orca-dev')

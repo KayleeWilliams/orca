@@ -355,6 +355,88 @@ describe('Coordinator', () => {
     expect(result.status).toBe('completed')
   })
 
+  it('logs a stale warning for dispatched rows past the threshold and does not auto-fail', async () => {
+    db = new OrchestrationDb(':memory:')
+    const runtime = createMockRuntime()
+    // No terminals available so dispatchReadyTasks creates one and we can
+    // drive the stale-scan deterministically via SQL backdating.
+    const task = db.createTask({ spec: 'work' })
+    const ctx = db.createDispatchContext(task.id, 'term_stale')
+
+    // Backdate dispatched_at and last_heartbeat_at beyond the 10-min threshold
+    // so getStaleDispatches returns this row on the first tick.
+    const sqlite = (
+      db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }
+    ).db
+    const iso = (ms: number) => new Date(Date.now() - ms).toISOString()
+    sqlite
+      .prepare('UPDATE dispatch_contexts SET dispatched_at = ?, last_heartbeat_at = ? WHERE id = ?')
+      .run(iso(60 * 60 * 1000), iso(30 * 60 * 1000), ctx.id)
+
+    const logs: string[] = []
+    const coordinator = new Coordinator(db, runtime, {
+      spec: 'go',
+      coordinatorHandle: 'coord',
+      pollIntervalMs: 20,
+      onLog: (m) => logs.push(m)
+    })
+
+    // Drive one tick then stop — we only need the stale warning to have fired.
+    const runPromise = coordinator.run()
+    await new Promise((r) => {
+      setTimeout(r, 80)
+    })
+    coordinator.stop()
+    await runPromise
+
+    expect(logs.some((l) => /has not sent a heartbeat/.test(l) && l.includes(task.id))).toBe(true)
+    // Task status must NOT have been auto-failed — logging only.
+    expect(db.getTask(task.id)?.status).toBe('dispatched')
+  })
+
+  it('records heartbeat by dispatchId on worker heartbeat messages', async () => {
+    db = new OrchestrationDb(':memory:')
+    const runtime = createMockRuntime()
+    runtime.terminals = [{ handle: 'term_a', worktreeId: 'wt1', connected: true, writable: true }]
+
+    const task = db.createTask({ spec: 'work' })
+    const ctx = db.createDispatchContext(task.id, 'term_a')
+
+    const coordinator = new Coordinator(db, runtime, {
+      spec: 'go',
+      coordinatorHandle: 'coord',
+      pollIntervalMs: 20
+    })
+
+    const runPromise = coordinator.run()
+
+    db.insertMessage({
+      from: 'term_a',
+      to: 'coord',
+      subject: 'alive',
+      type: 'heartbeat',
+      payload: JSON.stringify({ taskId: task.id, dispatchId: ctx.id, phase: 'implementing' })
+    })
+
+    await new Promise((r) => {
+      setTimeout(r, 80)
+    })
+
+    expect(db.getDispatchContext(task.id)?.last_heartbeat_at).toBeTruthy()
+
+    // Complete the task so the coordinator run finishes cleanly.
+    db.insertMessage({
+      from: 'term_a',
+      to: 'coord',
+      subject: 'Done',
+      type: 'worker_done',
+      payload: JSON.stringify({ taskId: task.id })
+    })
+
+    const result = await runPromise
+    expect(result.status).toBe('completed')
+  })
+
   it('can be stopped', async () => {
     db = new OrchestrationDb(':memory:')
     const runtime = createMockRuntime()
