@@ -240,6 +240,7 @@ export function getDefaultUIState(): PersistedUIState {
     groupBy: 'none',
     sortBy: 'recent',
     showActiveOnly: false,
+    hideDefaultBranchWorkspace: false,
     filterRepoIds: [],
     collapsedGroups: [],
     uiZoomLevel: 0,

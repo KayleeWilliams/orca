@@ -28,6 +28,7 @@ import {
   getStatus,
   detectConflictOperation,
   getDiff,
+  commitChanges,
   stageFile,
   unstageFile,
   bulkStageFiles,
@@ -479,18 +480,51 @@ export function registerFilesystemHandlers(store: Store): void {
     'git:diff',
     async (
       _event,
-      args: { worktreePath: string; filePath: string; staged: boolean; connectionId?: string }
+      args: {
+        worktreePath: string
+        filePath: string
+        staged: boolean
+        compareAgainstHead?: boolean
+        connectionId?: string
+      }
     ): Promise<GitDiffResult> => {
       if (args.connectionId) {
         const provider = getSshGitProvider(args.connectionId)
         if (!provider) {
           throw new Error(`No git provider for connection "${args.connectionId}"`)
         }
-        return provider.getDiff(args.worktreePath, args.filePath, args.staged)
+        return provider.getDiff(
+          args.worktreePath,
+          args.filePath,
+          args.staged,
+          args.compareAgainstHead
+        )
       }
       const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
       const filePath = validateGitRelativeFilePath(worktreePath, args.filePath)
-      return getDiff(worktreePath, filePath, args.staged)
+      return getDiff(worktreePath, filePath, args.staged, args.compareAgainstHead)
+    }
+  )
+
+  ipcMain.handle(
+    'git:commit',
+    async (
+      _event,
+      args: { worktreePath: string; message: string; connectionId?: string }
+    ): Promise<{ success: boolean; error?: string }> => {
+      // Why: validate at the IPC boundary so the renderer gets a clear error instead of an opaque execFile failure.
+      if (typeof args.message !== 'string' || args.message.trim().length === 0) {
+        throw new Error('Commit message is required')
+      }
+      if (args.connectionId) {
+        const provider = getSshGitProvider(args.connectionId)
+        if (!provider) {
+          throw new Error(`No git provider for connection "${args.connectionId}"`)
+        }
+        return provider.commit(args.worktreePath, args.message)
+      }
+      const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
+      return commitChanges(worktreePath, args.message)
     }
   )
 

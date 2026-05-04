@@ -19,7 +19,7 @@ import type {
   GitBranchCompareResult,
   GitConflictOperation,
   GitDiffResult,
-  GitStatusEntry,
+  GitStatusResult,
   GitHubAssignableUser,
   GitHubPRFile,
   GitHubPRFileContents,
@@ -576,6 +576,14 @@ export type PreloadApi = {
     complete: () => Promise<void>
     forceShow: () => Promise<void>
   }
+  /** Fire-and-forget track. Loose typing at the IPC boundary on purpose —
+   *  the main-side validator is the single enforcement point. Renderer call
+   *  sites should import `track<N>()` from `src/renderer/src/lib/telemetry.ts`
+   *  for the `EventMap`-based type safety, not reach for this directly. */
+  telemetryTrack: (name: string, props: Record<string, unknown>) => Promise<void>
+  /** Flip the persisted opt-in preference. Subject to a per-session
+   *  consent-mutation rate limit on the main side (≤5/session). */
+  telemetrySetOptIn: (optedIn: boolean) => Promise<void>
   settings: {
     get: () => Promise<GlobalSettings>
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
@@ -759,10 +767,7 @@ export type PreloadApi = {
     onFsChanged: (callback: (payload: FsChangedPayload) => void) => () => void
   }
   git: {
-    status: (args: {
-      worktreePath: string
-      connectionId?: string
-    }) => Promise<{ entries: GitStatusEntry[] }>
+    status: (args: { worktreePath: string; connectionId?: string }) => Promise<GitStatusResult>
     conflictOperation: (args: {
       worktreePath: string
       connectionId?: string
@@ -771,6 +776,7 @@ export type PreloadApi = {
       worktreePath: string
       filePath: string
       staged: boolean
+      compareAgainstHead?: boolean
       connectionId?: string
     }) => Promise<GitDiffResult>
     branchCompare: (args: {
@@ -790,6 +796,11 @@ export type PreloadApi = {
       oldPath?: string
       connectionId?: string
     }) => Promise<GitDiffResult>
+    commit: (args: {
+      worktreePath: string
+      message: string
+      connectionId?: string
+    }) => Promise<{ success: boolean; error?: string }>
     stage: (args: {
       worktreePath: string
       filePath: string

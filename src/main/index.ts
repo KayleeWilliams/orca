@@ -16,6 +16,7 @@ import { setAppRuntimeFlags } from './ipc/app'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
 import { registerMobileHandlers } from './ipc/mobile'
+import { initTelemetry, shutdownTelemetry } from './telemetry/client'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService } from './runtime/orca-runtime'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
@@ -45,7 +46,7 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
-import { getPtyIdForPaneKey, registerPaneKeyTeardownListener } from './ipc/pty'
+import { getPtyIdForPaneKey, registerPaneKeyTeardownListener, getLocalPtyProvider } from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
 
@@ -374,6 +375,13 @@ app.whenReady().then(async () => {
   }
 
   store = new Store()
+  // Why: telemetry must initialize before any IPC handler / renderer can
+  // call `track()`. The client is a no-op in dev/contributor builds
+  // (`IS_OFFICIAL_BUILD === false`) and a no-op while `TELEMETRY_ENABLED`
+  // is false in PR 2 — so this call is safe to run early; it only records
+  // the Store reference, seeds common props, and resets per-session burst
+  // caps. Actual transport initialization is still gated by both flags.
+  initTelemetry(store)
   stats = new StatsCollector()
   claudeUsage = new ClaudeUsageStore(store)
   codexUsage = new CodexUsageStore(store)
@@ -397,7 +405,14 @@ app.whenReady().then(async () => {
       .filter((account) => account.id !== settings.activeCodexManagedAccountId)
       .map((account) => ({ id: account.id, managedHomePath: account.managedHomePath }))
   })
-  runtime = new OrcaRuntimeService(store, stats)
+  runtime = new OrcaRuntimeService(store, stats, {
+    // Why: resolve the PTY provider lazily. initDaemonPtyProvider() runs later
+    // inside attachMainWindowServices and calls setLocalPtyProvider(routedAdapter)
+    // to swap the in-process provider for the daemon-routed one. Capturing the
+    // provider reference eagerly here would freeze the pre-daemon LocalPtyProvider
+    // and defeat the teardown helper's prefix sweep (design §4.3 wire-up).
+    getLocalProvider: () => getLocalPtyProvider()
+  })
   starNag = new StarNagService(store, stats)
   starNag.start()
   starNag.registerIpcHandlers()
@@ -623,10 +638,21 @@ app.on('will-quit', (e) => {
     // RPC stop + owned-metadata clear to complete before Electron exits.
     // Using allSettled (not all) preserves the existing fail-open posture:
     // if disconnectDaemon rejects, we still quit instead of hanging the app.
-    Promise.allSettled([disconnectDaemon(), rpcStopAndClear]).then(() => {
-      daemonDisconnectDone = true
-      app.quit()
-    })
+    //
+    // Telemetry shutdown folds in after the daemon/RPC teardown and BEFORE
+    // app.quit(): the PostHog client has up to 2s of bounded flush. Errors
+    // inside `shutdownTelemetry()` are caught by the client itself — we
+    // catch again here defensively so a flush failure cannot cancel the
+    // quit chain.
+    Promise.allSettled([disconnectDaemon(), rpcStopAndClear])
+      .then(() => shutdownTelemetry())
+      .catch(() => {
+        /* swallow — telemetry must never prevent app.quit() */
+      })
+      .then(() => {
+        daemonDisconnectDone = true
+        app.quit()
+      })
   }
 })
 

@@ -633,6 +633,16 @@ const api = {
     forceShow: (): Promise<void> => ipcRenderer.invoke('star-nag:forceShow')
   },
 
+  // Why: telemetry uses a loose untyped surface at the preload boundary on
+  // purpose — the main-side validator (src/main/telemetry/validator.ts) is
+  // the single enforcement point, not the preload types. The renderer gets
+  // typed `track<N>()` / `setOptIn()` wrappers via
+  // src/renderer/src/lib/telemetry.ts, which is what call sites import.
+  telemetryTrack: (name: string, props: Record<string, unknown>): Promise<void> =>
+    ipcRenderer.invoke('telemetry:track', name, props),
+  telemetrySetOptIn: (optedIn: boolean): Promise<void> =>
+    ipcRenderer.invoke('telemetry:setOptIn', optedIn),
+
   settings: {
     get: (): Promise<unknown> => ipcRenderer.invoke('settings:get'),
 
@@ -1265,6 +1275,7 @@ const api = {
       worktreePath: string
       filePath: string
       staged: boolean
+      compareAgainstHead?: boolean
       connectionId?: string
     }): Promise<unknown> => ipcRenderer.invoke('git:diff', args),
     branchCompare: (args: {
@@ -1279,6 +1290,11 @@ const api = {
       oldPath?: string
       connectionId?: string
     }): Promise<unknown> => ipcRenderer.invoke('git:branchDiff', args),
+    commit: (args: {
+      worktreePath: string
+      message: string
+      connectionId?: string
+    }): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('git:commit', args),
     stage: (args: {
       worktreePath: string
       filePath: string
