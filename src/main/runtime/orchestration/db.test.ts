@@ -202,6 +202,36 @@ describe('OrchestrationDb', () => {
       expect(d.listTasks()).toHaveLength(2)
     })
 
+    it('listTasksWithDispatch joins active dispatch metadata', () => {
+      const d = createDb()
+      const ready = d.createTask({ spec: 'ready task' })
+      const dispatched = d.createTask({ spec: 'active task' })
+      const ctx = d.createDispatchContext(dispatched.id, 'term_worker')
+
+      const rows = d.listTasksWithDispatch()
+      const readyRow = rows.find((r) => r.id === ready.id)
+      const dispatchedRow = rows.find((r) => r.id === dispatched.id)
+
+      expect(readyRow?.assignee_handle).toBeNull()
+      expect(readyRow?.dispatch_id).toBeNull()
+      expect(dispatchedRow?.assignee_handle).toBe('term_worker')
+      expect(dispatchedRow?.dispatch_id).toBe(ctx.id)
+    })
+
+    it('listTasksWithDispatch does not surface completed dispatches', () => {
+      const d = createDb()
+      const task = d.createTask({ spec: 'work' })
+      d.createDispatchContext(task.id, 'term_worker')
+      d.updateTaskStatus(task.id, 'completed')
+
+      const rows = d.listTasksWithDispatch()
+      const row = rows.find((r) => r.id === task.id)
+      // Task is completed — its dispatch is terminal and should not appear as
+      // an "active" assignee.
+      expect(row?.assignee_handle).toBeNull()
+      expect(row?.dispatch_id).toBeNull()
+    })
+
     it('supports parent_id for task decomposition', () => {
       const d = createDb()
       const parent = d.createTask({ spec: 'parent' })

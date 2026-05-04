@@ -50,8 +50,8 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['orchestration', 'inbox'],
     summary: 'Show messages across (or for) recipients',
-    usage: 'orca orchestration inbox [--limit <n>] [--terminal <handle>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'limit', 'terminal']
+    usage: 'orca orchestration inbox [--limit <n>] [--terminal <handle>] [--full] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit', 'terminal', 'full']
   },
   {
     path: ['orchestration', 'task-create'],
@@ -71,20 +71,22 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     summary: 'Update a task status',
     usage:
       'orca orchestration task-update --id <task_id> --status <status> [--result <json>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'status', 'result']
+    allowedFlags: [...GLOBAL_FLAGS, 'id', 'status', 'result'],
+    notes: ['Valid --status values: pending, ready, dispatched, completed, failed, blocked.']
   },
   {
     path: ['orchestration', 'dispatch'],
     summary: 'Dispatch a task to a terminal',
     usage:
-      'orca orchestration dispatch --task <task_id> --to <handle> [--from <handle>] [--inject] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'task', 'to', 'from', 'inject']
+      'orca orchestration dispatch --task <task_id> --to <handle> [--from <handle>] [--inject] [--dry-run] [--return-preamble] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'task', 'to', 'from', 'inject', 'dry-run', 'return-preamble']
   },
   {
     path: ['orchestration', 'dispatch-show'],
     summary: 'Show dispatch context for a task',
-    usage: 'orca orchestration dispatch-show --task <task_id> [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'task']
+    usage:
+      'orca orchestration dispatch-show --task <task_id> [--preamble] [--from <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'task', 'preamble', 'from']
   },
   {
     path: ['orchestration', 'ask'],

@@ -49,6 +49,7 @@ export class OrchestrationDb {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('synchronous = NORMAL')
     this.db.pragma('busy_timeout = 5000')
+    this.createTables()
     this.migrate()
   }
 
@@ -393,6 +394,50 @@ export class OrchestrationDb {
         .all(filter.status) as TaskRow[]
     }
     return this.db.prepare('SELECT * FROM tasks ORDER BY created_at').all() as TaskRow[]
+  }
+
+  // Why: surfaces the active dispatch (assignee handle + dispatch context id)
+  // alongside each task so coordinators can answer "who is working on task X?"
+  // from a single query. The LEFT JOIN keeps non-dispatched tasks in the result
+  // with NULL assignee/dispatch fields so non-dispatched output stays stable.
+  // The inner subquery picks the most recent active dispatch per task to match
+  // the semantics of getDispatchContext for dispatched tasks.
+  listTasksWithDispatch(filter?: { status?: TaskStatus; ready?: boolean }): (TaskRow & {
+    assignee_handle: string | null
+    dispatch_id: string | null
+  })[] {
+    const whereClauses: string[] = []
+    const params: unknown[] = []
+    if (filter?.ready) {
+      whereClauses.push("t.status = 'ready'")
+    } else if (filter?.status) {
+      whereClauses.push('t.status = ?')
+      params.push(filter.status)
+    }
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
+    const sql = `
+      SELECT
+        t.*,
+        d.assignee_handle AS assignee_handle,
+        d.id              AS dispatch_id
+      FROM tasks t
+      LEFT JOIN (
+        SELECT dc.*
+        FROM dispatch_contexts dc
+        INNER JOIN (
+          SELECT task_id, MAX(rowid) AS max_rowid
+          FROM dispatch_contexts
+          WHERE status IN ('pending', 'dispatched')
+          GROUP BY task_id
+        ) latest ON latest.task_id = dc.task_id AND latest.max_rowid = dc.rowid
+      ) d ON d.task_id = t.id
+      ${where}
+      ORDER BY t.created_at
+    `
+    return this.db.prepare(sql).all(...params) as (TaskRow & {
+      assignee_handle: string | null
+      dispatch_id: string | null
+    })[]
   }
 
   updateTaskStatus(id: string, status: TaskStatus, result?: string): TaskRow | undefined {

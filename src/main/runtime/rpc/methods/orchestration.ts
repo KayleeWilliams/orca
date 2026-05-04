@@ -109,14 +109,22 @@ const TaskUpdateParams = z.object({
 
 const DispatchParams = z.object({
   task: requiredString('Missing --task'),
-  to: requiredString('Missing --to'),
+  // Why: --to is only required for real dispatches. When --dry-run is set the
+  // caller is previewing the preamble and no terminal is targeted, so allow it
+  // to be absent. The handler enforces presence before any side-effecting work.
+  to: OptionalString,
   from: OptionalString,
   inject: OptionalBoolean,
+  dryRun: OptionalBoolean,
+  returnPreamble: OptionalBoolean,
   devMode: OptionalBoolean
 })
 
 const DispatchShowParams = z.object({
-  task: OptionalString
+  task: OptionalString,
+  preamble: OptionalBoolean,
+  from: OptionalString,
+  devMode: OptionalBoolean
 })
 
 const AskParams = z.object({
@@ -325,9 +333,20 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     params: TaskListParams,
     handler: (params, { runtime }) => {
       const db = runtime.getOrchestrationDb()
-      const tasks = db.listTasks({
+      // Why: listTasksWithDispatch returns the same rows as listTasks plus
+      // assignee_handle + dispatch_id joined in for tasks that currently have an
+      // active dispatch. Non-dispatched tasks get NULL for those fields, so
+      // consumers reading the legacy shape are unaffected.
+      const joined = db.listTasksWithDispatch({
         status: params.status as TaskStatus,
         ready: params.ready
+      })
+      const tasks = joined.map((row) => {
+        const { assignee_handle, dispatch_id, ...base } = row
+        if (base.status === 'dispatched') {
+          return { ...base, assignee_handle, dispatch_id }
+        }
+        return base
       })
       return { tasks, count: tasks.length }
     }
@@ -355,6 +374,30 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       if (!task) {
         throw new Error(`Task not found: ${params.task}`)
       }
+
+      // Why: --inject --dry-run lets a coordinator preview the exact preamble
+      // text that would be injected without mutating task state or touching the
+      // target terminal. Skips the ready-status check so coordinators can inspect
+      // the preamble for already-dispatched or blocked tasks too. No dispatch
+      // context exists yet (that happens after the ready-status check), so
+      // dispatchId is a placeholder — the real injected preamble gets a real
+      // ctx.id below.
+      if (params.dryRun) {
+        const preamble = buildDispatchPreamble({
+          taskId: task.id,
+          dispatchId: 'ctx_dryrun',
+          taskSpec: task.spec,
+          coordinatorHandle: params.from ?? 'coordinator',
+          devMode: params.devMode
+        })
+        return { dispatch: null, injected: false, dryRun: true, preamble }
+      }
+
+      if (!params.to) {
+        throw new Error('Missing --to')
+      }
+      const to = params.to
+
       if (task.status !== 'ready') {
         throw new Error(`Task ${params.task} is ${task.status}; only ready tasks can be dispatched`)
       }
@@ -364,29 +407,34 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       // status and foreground process — Claude Code doesn't emit recognized OSC
       // titles on startup, so title-only detection misses freshly spawned agents.
       if (params.inject) {
-        const hasAgent = await runtime.isTerminalRunningAgent(params.to)
+        const hasAgent = await runtime.isTerminalRunningAgent(to)
         if (!hasAgent) {
           throw new Error(
-            `Cannot dispatch --inject to terminal ${params.to}: no recognized agent detected. ` +
+            `Cannot dispatch --inject to terminal ${to}: no recognized agent detected. ` +
               'Start an agent CLI (e.g. claude, codex, gemini) in the terminal first, ' +
               'or dispatch without --inject and send the prompt manually.'
           )
         }
       }
 
-      const ctx = db.createDispatchContext(params.task, params.to)
+      const ctx = db.createDispatchContext(params.task, to)
+
+      // Why: preamble is built here (not before ctx) so `dispatchId` can be
+      // the real ctx.id — the preamble-hardening PR made dispatchId required
+      // so heartbeats can attribute liveness to a specific dispatch context,
+      // not just a task.
+      const preamble = buildDispatchPreamble({
+        taskId: task.id,
+        dispatchId: ctx.id,
+        taskSpec: task.spec,
+        coordinatorHandle: params.from ?? 'coordinator',
+        devMode: params.devMode
+      })
 
       let injected = false
       if (params.inject) {
         try {
-          const preamble = buildDispatchPreamble({
-            taskId: task.id,
-            dispatchId: ctx.id,
-            taskSpec: task.spec,
-            coordinatorHandle: params.from ?? 'coordinator',
-            devMode: params.devMode
-          })
-          await runtime.sendTerminal(params.to, { text: preamble, enter: true })
+          await runtime.sendTerminal(to, { text: preamble, enter: true })
           injected = true
         } catch (err) {
           db.failDispatch(ctx.id, err instanceof Error ? err.message : String(err))
@@ -394,6 +442,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         }
       }
 
+      // Why: returnPreamble is opt-in because the preamble is several hundred
+      // bytes and most callers don't need it in the response. Exposing it
+      // supports coordinators that want to log what was injected for auditing.
+      if (params.returnPreamble) {
+        return { dispatch: ctx, injected, preamble }
+      }
       return { dispatch: ctx, injected }
     }
   }),
@@ -407,6 +461,29 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         throw new Error('Missing --task')
       }
       const ctx = db.getDispatchContext(params.task)
+
+      // Why: --preamble lets callers inspect the exact preamble text that was
+      // (or would be) injected for this task. The preamble is derived from the
+      // current task spec, so even after dispatch completes the text can be
+      // regenerated deterministically.
+      if (params.preamble) {
+        const task = db.getTask(params.task)
+        if (!task) {
+          throw new Error(`Task not found: ${params.task}`)
+        }
+        const preamble = buildDispatchPreamble({
+          taskId: task.id,
+          // Why: prefer the existing dispatch context's id if we have one
+          // (so the preview matches what was actually injected); fall back
+          // to a placeholder when no dispatch has occurred yet.
+          dispatchId: ctx?.id ?? 'ctx_preview',
+          taskSpec: task.spec,
+          coordinatorHandle: params.from ?? 'coordinator',
+          devMode: params.devMode
+        })
+        return { dispatch: ctx ?? null, preamble }
+      }
+
       return { dispatch: ctx ?? null }
     }
   }),
