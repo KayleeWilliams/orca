@@ -141,6 +141,7 @@ function createPane(paneId: number) {
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() }))
     },
+    container: { dataset: {} },
     fitAddon: {
       fit: vi.fn()
     }
@@ -236,7 +237,8 @@ describe('connectPanePty', () => {
         },
         pty: {
           signal: vi.fn(),
-          ackColdRestore: vi.fn()
+          ackColdRestore: vi.fn(),
+          onSerializeBufferRequest: vi.fn(() => vi.fn())
         },
         notifications: {
           dispatch: vi.fn()

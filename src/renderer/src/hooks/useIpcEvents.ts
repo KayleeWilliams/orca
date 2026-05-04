@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { runSleepWorktree } from '@/components/sidebar/sleep-worktree-flow'
 import { SPLIT_TERMINAL_PANE_EVENT, CLOSE_TERMINAL_PANE_EVENT } from '@/constants/terminal'
 import type { SplitTerminalPaneDetail, CloseTerminalPaneDetail } from '@/constants/terminal'
 import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
@@ -13,11 +14,16 @@ import type { SshConnectionState } from '../../../shared/ssh-types'
 import { zoomLevelToPercent, ZOOM_MIN, ZOOM_MAX } from '@/components/settings/SettingsConstants'
 import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
-import { handleSwitchTab, handleSwitchTerminalTab } from './ipc-tab-switch'
+import {
+  handleSwitchTab,
+  handleSwitchTabAcrossAllTypes,
+  handleSwitchTerminalTab
+} from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
 import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
+import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -34,8 +40,31 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.worktrees.onChanged((data: { repoId: string }) => {
-        useAppStore.getState().fetchWorktrees(data.repoId)
+      window.api.worktrees.onChanged(async (data: { repoId: string }) => {
+        // Why: diff before vs. after fetchWorktrees to detect server-side
+        // deletions (CLI `orca worktree rm`, other window, out-of-band RPC)
+        // and purge worktree-scoped state for removed ids. Without this,
+        // `ptyIdsByTabId` would retain entries for tabs whose worktree is
+        // gone, and SessionsStatusSegment's `boundPtyIds` set would keep
+        // misclassifying the zombie as bound (design §2c, §4.4).
+        const state = useAppStore.getState()
+        const before = new Set((state.worktreesByRepo[data.repoId] ?? []).map((w) => w.id))
+        await state.fetchWorktrees(data.repoId)
+        const afterState = useAppStore.getState()
+        const after = new Set((afterState.worktreesByRepo[data.repoId] ?? []).map((w) => w.id))
+        const removed: string[] = []
+        for (const id of before) {
+          if (!after.has(id)) {
+            removed.push(id)
+          }
+        }
+        if (removed.length > 0) {
+          console.warn(
+            `[worktree-purge] diff-based purge removing state for ${removed.length} worktree(s):`,
+            removed
+          )
+          afterState.purgeWorktreeTerminalState(removed)
+        }
       })
     )
 
@@ -168,7 +197,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onActivateWorktree(({ repoId, worktreeId, setup }) => {
+      window.api.ui.onActivateWorktree(({ repoId, worktreeId, setup, startup }) => {
         void (async () => {
           // Why: fetch worktrees first so the activation helper can resolve
           // the CLI-created worktree via findWorktreeById — it arrived from
@@ -179,7 +208,7 @@ export function useIpcEvents(): void {
           // ones. This records the visit in the back/forward history stack
           // (recordWorktreeVisit), without which the nav buttons would
           // ignore the CLI-driven workspace switch.
-          activateAndRevealWorktree(worktreeId, { setup })
+          activateAndRevealWorktree(worktreeId, { setup, startup })
         })().catch((error) => {
           console.error('Failed to activate CLI-created worktree:', error)
         })
@@ -191,6 +220,11 @@ export function useIpcEvents(): void {
         const store = useAppStore.getState()
         store.setActiveView('terminal')
         store.setActiveWorktree(worktreeId)
+        // Why: CLI-driven terminal creation is a user-initiated worktree switch
+        // and must stamp focus recency for Cmd+J. Doesn't route through
+        // activateAndRevealWorktree because it has custom terminal-creation
+        // logic; see docs/cmd-j-empty-query-ordering.md.
+        store.markWorktreeVisited(worktreeId)
         const tab = store.createTab(worktreeId)
         store.setActiveTabType('terminal')
         store.setActiveTab(tab.id)
@@ -221,6 +255,9 @@ export function useIpcEvents(): void {
           }
           store.setActiveView('terminal')
           store.setActiveWorktree(worktreeId)
+          // Why: CLI-driven terminal-create request is user-initiated; stamp
+          // focus recency for Cmd+J. See docs/cmd-j-empty-query-ordering.md.
+          store.markWorktreeVisited(worktreeId)
           const tab = store.createTab(worktreeId)
           store.setActiveTabType('terminal')
           store.setActiveTab(tab.id)
@@ -262,6 +299,9 @@ export function useIpcEvents(): void {
       window.api.ui.onFocusTerminal(({ tabId, worktreeId }) => {
         const store = useAppStore.getState()
         store.setActiveWorktree(worktreeId)
+        // Why: CLI-driven focus is a user-initiated switch; stamp focus
+        // recency for Cmd+J. See docs/cmd-j-empty-query-ordering.md.
+        store.markWorktreeVisited(worktreeId)
         store.setActiveView('terminal')
         store.setActiveTab(tabId)
         store.revealWorktreeInSidebar(worktreeId)
@@ -279,6 +319,12 @@ export function useIpcEvents(): void {
         } else {
           useAppStore.getState().closeTab(tabId)
         }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onSleepWorktree(({ worktreeId }) => {
+        void runSleepWorktree(worktreeId)
       })
     )
 
@@ -515,6 +561,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(window.api.ui.onSwitchTab(handleSwitchTab))
+    unsubs.push(window.api.ui.onSwitchTabAcrossAllTypes(handleSwitchTabAcrossAllTypes))
     unsubs.push(window.api.ui.onSwitchTerminalTab(handleSwitchTerminalTab))
 
     // Hydrate initial rate limit state then subscribe to push updates
@@ -770,6 +817,18 @@ export function useIpcEvents(): void {
           return
         }
         store.setAgentStatus(data.paneKey, payload, title)
+      })
+    )
+
+    // Why: hydrate mobile-fit overrides before terminal panes run their first
+    // attach/fit logic, so a renderer reload doesn't undo active mobile fits.
+    void window.api.runtime.getTerminalFitOverrides().then((overrides) => {
+      hydrateOverrides(overrides)
+    })
+
+    unsubs.push(
+      window.api.runtime.onTerminalFitOverrideChanged((event) => {
+        setFitOverride(event.ptyId, event.mode, event.cols, event.rows)
       })
     )
 

@@ -34,6 +34,9 @@ import {
   notifyWorktreesChanged
 } from './worktree-remote'
 import { rebuildAuthorizedRootsCache, ensureAuthorizedRootsCache } from './filesystem-auth'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
+import { killAllProcessesForWorktree } from '../runtime/worktree-teardown'
+import { getLocalPtyProvider } from './pty'
 
 // Why: worktrees discovered on disk (not created via Orca's UI) have no
 // persisted WorktreeMeta, so mergeWorktree falls back to `lastActivityAt: 0`.
@@ -49,7 +52,11 @@ function resolveWorktreeMetaWithDiscoveryStamp(store: Store, worktreeId: string)
   return store.setWorktreeMeta(worktreeId, { lastActivityAt: Date.now() })
 }
 
-export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store): void {
+export function registerWorktreeHandlers(
+  mainWindow: BrowserWindow,
+  store: Store,
+  runtime: OrcaRuntimeService
+): void {
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
   ipcMain.removeHandler('worktrees:listAll')
@@ -153,7 +160,7 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
         return createRemoteWorktree(args, repo, store, mainWindow)
       }
 
-      return createLocalWorktree(args, repo, store, mainWindow)
+      return createLocalWorktree(args, repo, store, mainWindow, runtime)
     }
   )
 
@@ -271,6 +278,31 @@ export function registerWorktreeHandlers(mainWindow: BrowserWindow, store: Store
       }
       if (isFolderRepo(repo)) {
         throw new Error('Folder mode does not support deleting worktrees.')
+      }
+
+      // Why: kill every PTY belonging to this worktree BEFORE git-level
+      // removal. The renderer pre-kills via shutdownWorktreeTerminals, but
+      // defensive teardown here protects against: (a) a future renderer bug,
+      // (b) a disconnected window, (c) an out-of-band window.api.worktrees.remove
+      // caller. Placement is before the SSH early-return so local-host PTYs
+      // are still reaped for local repos; SSH-backed PTYs are handled by the
+      // remote provider's own teardown (design §4.3, §6).
+      if (!repo.connectionId) {
+        await killAllProcessesForWorktree(args.worktreeId, {
+          runtime,
+          localProvider: getLocalPtyProvider()
+        })
+          .then((r) => {
+            const total = r.runtimeStopped + r.providerStopped + r.registryStopped
+            if (total > 0) {
+              console.info(
+                `[worktree-teardown] ${args.worktreeId} killed runtime=${r.runtimeStopped} provider=${r.providerStopped} registry=${r.registryStopped}`
+              )
+            }
+          })
+          .catch((err) => {
+            console.warn(`[worktree-teardown] failed for ${args.worktreeId}:`, err)
+          })
       }
 
       if (repo.connectionId) {

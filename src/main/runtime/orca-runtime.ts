@@ -7,14 +7,19 @@ import {
   isShellProcess
 } from '../../shared/agent-detection'
 import type { AgentStatus } from '../../shared/agent-detection'
-import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
+import { gitExecFileAsync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { rm } from 'fs/promises'
 import { OrchestrationDb } from './orchestration/db'
 import { formatMessagesForInjection } from './orchestration/formatter'
-import type { CreateWorktreeResult, Repo } from '../../shared/types'
+import type {
+  CreateWorktreeResult,
+  Repo,
+  StatsSummary,
+  WorktreeStartupLaunch
+} from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import type {
   RuntimeGraphStatus,
@@ -32,6 +37,7 @@ import type {
   RuntimeTerminalWait,
   RuntimeTerminalWaitCondition,
   RuntimeWorktreePsSummary,
+  RuntimeWorktreeStatus,
   RuntimeTerminalShow,
   RuntimeTerminalSummary,
   RuntimeSyncedLeaf,
@@ -84,10 +90,19 @@ import {
   getBranchConflictKind,
   isGitRepo,
   getRepoName,
-  searchBaseRefs
+  searchBaseRefs,
+  getRemoteDrift,
+  getRecentDriftSubjects
 } from '../git/repo'
 import { listWorktrees, addWorktree, removeWorktree } from '../git/worktree'
-import { createSetupRunnerScript, getEffectiveHooks, runHook } from '../hooks'
+import {
+  createSetupRunnerScript,
+  getEffectiveHooks,
+  getEffectiveSetupRunPolicy,
+  hasHooksFile,
+  runHook,
+  shouldRunSetupForCreate
+} from '../hooks'
 import { REPO_COLORS } from '../../shared/constants'
 import { listRepoWorktrees } from '../repo-worktrees'
 import type { Store } from '../persistence'
@@ -105,6 +120,9 @@ import {
   areWorktreePathsEqual
 } from '../ipc/worktree-logic'
 import { invalidateAuthorizedRootsCache } from '../ipc/filesystem-auth'
+import { HeadlessEmulator } from '../daemon/headless-emulator'
+import { killAllProcessesForWorktree } from './worktree-teardown'
+import type { IPtyProvider } from '../providers/types'
 
 type RuntimeStore = {
   getRepos: Store['getRepos']
@@ -115,6 +133,8 @@ type RuntimeStore = {
   getWorktreeMeta: Store['getWorktreeMeta']
   setWorktreeMeta: Store['setWorktreeMeta']
   removeWorktreeMeta: Store['removeWorktreeMeta']
+  getGitHubCache: Store['getGitHubCache']
+  getWorkspaceSession?: Store['getWorkspaceSession']
   getSettings(): {
     workspaceDir: string
     nestWorkspaces: boolean
@@ -138,16 +158,42 @@ type RuntimeLeafRecord = RuntimeSyncedLeaf & {
   lastAgentStatus: AgentStatus | null
 }
 
+type RuntimePtyWorktreeRecord = {
+  ptyId: string
+  worktreeId: string
+  connected: boolean
+  lastOutputAt: number | null
+  tailBuffer: string[]
+  tailPartialLine: string
+  tailTruncated: boolean
+  tailLinesTotal: number
+  preview: string
+}
+
+type RuntimeHeadlessTerminal = {
+  emulator: HeadlessEmulator
+  writeChain: Promise<void>
+}
+
 type RuntimePtyController = {
   write(ptyId: string, data: string): boolean
   kill(ptyId: string): boolean
   getForegroundProcess(ptyId: string): Promise<string | null>
+  resize?(ptyId: string, cols: number, rows: number): boolean
+  listProcesses?(): Promise<{ id: string; cwd: string; title: string }[]>
+  serializeBuffer?(ptyId: string): Promise<{ data: string; cols: number; rows: number } | null>
+  getSize?(ptyId: string): { cols: number; rows: number } | null
 }
 
 type RuntimeNotifier = {
   worktreesChanged(repoId: string): void
   reposChanged(): void
-  activateWorktree(repoId: string, worktreeId: string, setup?: CreateWorktreeResult['setup']): void
+  activateWorktree(
+    repoId: string,
+    worktreeId: string,
+    setup?: CreateWorktreeResult['setup'],
+    startup?: WorktreeStartupLaunch
+  ): void
   createTerminal(worktreeId: string, opts: { command?: string; title?: string }): void
   splitTerminal(
     tabId: string,
@@ -157,6 +203,13 @@ type RuntimeNotifier = {
   renameTerminal(tabId: string, title: string | null): void
   focusTerminal(tabId: string, worktreeId: string): void
   closeTerminal(tabId: string, paneRuntimeId?: number): void
+  sleepWorktree(worktreeId: string): void
+  terminalFitOverrideChanged(
+    ptyId: string,
+    mode: 'mobile-fit' | 'desktop-fit',
+    cols: number,
+    rows: number
+  ): void
 }
 
 type TerminalHandleRecord = {
@@ -218,6 +271,13 @@ type ResolvedWorktreeCache = {
   worktrees: ResolvedWorktree[]
 }
 
+export type MobileNotificationEvent = {
+  source: 'agent-task-complete' | 'terminal-bell' | 'test'
+  title: string
+  body: string
+  worktreeId?: string
+}
+
 export class OrcaRuntimeService {
   private readonly runtimeId = randomUUID()
   private readonly startedAt = Date.now()
@@ -240,12 +300,141 @@ export class OrcaRuntimeService {
   private agentDetector: AgentDetector | null = null
   private _orchestrationDb: OrchestrationDb | null = null
   private messageWaitersByHandle = new Map<string, Set<MessageWaiter>>()
+  // Why: mobile clients subscribe to terminal output via terminal.subscribe.
+  // These listeners fire on every onPtyData call, enabling real-time streaming
+  // without polling. Keyed by ptyId for O(1) lookup per data event.
+  private dataListeners = new Map<string, Set<(data: string) => void>>()
+  // Why: mobile clients need to know when the desktop restores a terminal
+  // from mobile-fit so they can update their UI. These listeners are
+  // invoked from resizeForClient and onClientDisconnected/onPtyExit.
+  private fitOverrideListeners = new Map<
+    string,
+    Set<(event: { mode: 'mobile-fit' | 'desktop-fit'; cols: number; rows: number }) => void>
+  >()
+  private subscriptionCleanups = new Map<string, () => void>()
+  // Why: mobile clients subscribe to desktop notifications via
+  // notifications.subscribe. This set enables fan-out — each connected
+  // mobile client gets its own listener, and dispatchMobileNotification
+  // iterates them all. Listeners are cleaned up via subscriptionCleanups.
+  private notificationListeners = new Set<(event: MobileNotificationEvent) => void>()
+  private ptysById = new Map<string, RuntimePtyWorktreeRecord>()
+  private headlessTerminals = new Map<string, RuntimeHeadlessTerminal>()
+  // Why: mobile-fit overrides are keyed by ptyId (not terminal handle) because
+  // handles can be reissued while the PTY identity is stable. In-memory only —
+  // a stale phone override should not survive an app restart.
+  private terminalFitOverrides = new Map<
+    string,
+    {
+      mode: 'mobile-fit'
+      cols: number
+      rows: number
+      previousCols: number | null
+      previousRows: number | null
+      updatedAt: number
+      clientId: string
+    }
+  >()
 
-  constructor(store: RuntimeStore | null = null, stats?: StatsCollector) {
+  // Why: server-authoritative display mode per terminal. 'auto' (default) means
+  // phone-fit when mobile subscribes, desktop otherwise. 'phone'/'desktop' lock
+  // the mode regardless of subscriber state. In-memory only — modes reset on restart.
+  private mobileDisplayModes = new Map<string, 'auto' | 'phone' | 'desktop'>()
+
+  // Why: tracks active mobile subscriber per PTY so the runtime can restore
+  // desktop dimensions on unsubscribe and prevent orphaned overrides during
+  // rapid tab switches. Keyed by ptyId (single mobile client per terminal).
+  private mobileSubscribers = new Map<
+    string,
+    {
+      clientId: string
+      viewport: { cols: number; rows: number } | null
+      wasResizedToPhone: boolean
+      previousCols: number | null
+      previousRows: number | null
+    }
+  >()
+
+  // Why: tracks the last PTY size set by the desktop renderer (via pty:resize
+  // IPC). Unlike ptySizes (which is overwritten by server-side phone-fit
+  // resizes), this map preserves the actual pane geometry. Used as the
+  // preferred source for previousCols so desktop restore uses the correct
+  // split-pane width instead of a stale full-width value.
+  private lastRendererSizes = new Map<string, { cols: number; rows: number }>()
+
+  // Why: when a desktop-fit override change fires, the desktop renderer's
+  // re-render cascade (triggered by setOverrideTick) runs safeFit on ALL
+  // panes — not just the affected one. Background tab panes get measured at
+  // full-width (214) instead of their correct split width (105). The stale
+  // pty:resize IPCs overwrite both the actual PTY size and lastRendererSizes.
+  // This global window suppresses ALL pty:resize for 200ms after any
+  // desktop-fit notification. The server has already set the correct PTY
+  // size via ptyController.resize(), so desktop renderer resizes during
+  // this window are redundant (for the restored pane) or wrong (collateral).
+  private resizeSuppressedUntil = 0
+
+  // Why: delays PTY restore by 300ms after mobile unsubscribe so rapid tab
+  // switches don't cause unnecessary resize thrashing. Keyed by clientId
+  // Why: keyed by ptyId so each PTY gets its own independent restore timer.
+  // The old clientId-keyed design lost timers when two PTYs were unsubscribed
+  // back-to-back (only the last timer survived).
+  private pendingRestoreTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; clientId: string }
+  >()
+
+  // Why: inline resize events replace the unsubscribe→resubscribe pattern.
+  // Listeners are notified when mode changes or desktop restores, allowing
+  // the subscribe stream to emit a 'resized' event with fresh scrollback.
+  private resizeListeners = new Map<
+    string,
+    Set<(event: { cols: number; rows: number; displayMode: string; reason: string }) => void>
+  >()
+
+  private stats: StatsCollector | null = null
+  // Why (§3.3 + §7.1): the renderer-create path and coordinator
+  // `probeWorktreeDrift` share this cache so a create that already fetched
+  // `origin` within the last 30s does not re-fetch during dispatch, and
+  // vice-versa. Keyed by `<repoPath>::<remote>` so multi-remote repos (even
+  // though v1 only uses `origin`) don't cross-contaminate. The in-flight Map
+  // also provides serialization — two concurrent callers share a single
+  // underlying `git fetch`. Lifecycle rules are enforced in
+  // `fetchRemoteWithCache` and MUST NOT be duplicated elsewhere:
+  //   - entry inserted BEFORE await,
+  //   - `.finally()` removes the entry on BOTH success and rejection,
+  //   - timestamp written ONLY on success (rejection must not make the
+  //     30s freshness cache lie).
+  // A literal "insert before await / read-back after await" without these
+  // three rules wedges all future creates on the same repo after a single
+  // DNS hiccup until process restart (see §3.3 Lifecycle).
+  private fetchInflight = new Map<string, Promise<void>>()
+  private fetchLastCompletedAt = new Map<string, number>()
+  private readonly getLocalProviderFn: (() => IPtyProvider) | null
+
+  constructor(
+    store: RuntimeStore | null = null,
+    stats?: StatsCollector,
+    deps?: { getLocalProvider?: () => IPtyProvider }
+  ) {
     this.store = store
     if (stats) {
+      this.stats = stats
       this.agentDetector = new AgentDetector(stats)
     }
+    // Why: the daemon adapter is installed via `setLocalPtyProvider()` during
+    // attachMainWindowServices, AFTER this service is constructed. Capturing
+    // `getLocalPtyProvider()` at construction time would freeze a reference to
+    // the pre-daemon `LocalPtyProvider` and miss the routed adapter. Resolve
+    // lazily via thunk so teardown always sees the currently-installed
+    // provider (design §4.3 wire-up).
+    this.getLocalProviderFn = deps?.getLocalProvider ?? null
+  }
+
+  getLocalProvider(): IPtyProvider | null {
+    return this.getLocalProviderFn ? this.getLocalProviderFn() : null
+  }
+
+  getStatsSummary(): StatsSummary | null {
+    return this.stats?.getSummary() ?? null
   }
 
   // Why: lazy initialization — the DB path depends on Electron's userData
@@ -350,6 +539,14 @@ export class OrcaRuntimeService {
         lastAgentStatus: existing?.ptyId === ptyId ? existing.lastAgentStatus : null
       })
 
+      if (leaf.ptyId) {
+        this.recordPtyWorktree(leaf.ptyId, leaf.worktreeId, {
+          connected: true,
+          lastOutputAt: existing?.ptyId === leaf.ptyId ? existing.lastOutputAt : null,
+          preview: existing?.ptyId === leaf.ptyId ? existing.preview : ''
+        })
+      }
+
       if (existing && (existing.ptyId !== ptyId || existing.ptyGeneration !== ptyGeneration)) {
         this.invalidateLeafHandle(leafKey)
       }
@@ -428,6 +625,10 @@ export class OrcaRuntimeService {
   }
 
   onPtySpawned(ptyId: string): void {
+    const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
+    if (pty) {
+      pty.connected = true
+    }
     for (const leaf of this.leaves.values()) {
       if (leaf.ptyId === ptyId) {
         leaf.connected = true
@@ -437,10 +638,15 @@ export class OrcaRuntimeService {
     }
   }
 
+  registerPty(ptyId: string, worktreeId: string): void {
+    this.recordPtyWorktree(ptyId, worktreeId, { connected: true })
+  }
+
   onPtyData(ptyId: string, data: string, at: number): void {
     // Agent detection runs on raw data before leaf processing, since the
     // tail buffer logic normalizes away the OSC sequences we need.
     this.agentDetector?.onData(ptyId, data, at)
+    this.trackHeadlessTerminalData(ptyId, data)
 
     // Why: extract OSC title from raw PTY data before tail-buffer processing
     // strips the escape sequences. Agent CLIs (Claude Code, Gemini, etc.)
@@ -449,10 +655,27 @@ export class OrcaRuntimeService {
     const oscTitle = extractLastOscTitle(data)
     const agentStatus = oscTitle ? detectAgentStatusFromTitle(oscTitle) : null
 
+    const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
+    if (pty) {
+      pty.connected = true
+      pty.lastOutputAt = at
+      const nextTail = appendToTailBuffer(pty.tailBuffer, pty.tailPartialLine, data)
+      pty.tailBuffer = nextTail.lines
+      pty.tailPartialLine = nextTail.partialLine
+      pty.tailTruncated = pty.tailTruncated || nextTail.truncated
+      pty.tailLinesTotal += nextTail.newCompleteLines
+      pty.preview = buildPreview(pty.tailBuffer, pty.tailPartialLine)
+    }
+
     for (const leaf of this.leaves.values()) {
       if (leaf.ptyId !== ptyId) {
         continue
       }
+      this.recordPtyWorktree(ptyId, leaf.worktreeId, {
+        connected: true,
+        lastOutputAt: pty?.lastOutputAt ?? at,
+        preview: pty?.preview ?? leaf.preview
+      })
       leaf.connected = true
       leaf.writable = this.graphStatus === 'ready'
       leaf.lastOutputAt = at
@@ -478,10 +701,394 @@ export class OrcaRuntimeService {
         }
       }
     }
+
+    const listeners = this.dataListeners.get(ptyId)
+    if (listeners) {
+      for (const listener of listeners) {
+        listener(data)
+      }
+    }
+  }
+
+  subscribeToTerminalData(ptyId: string, listener: (data: string) => void): () => void {
+    let listeners = this.dataListeners.get(ptyId)
+    if (!listeners) {
+      listeners = new Set()
+      this.dataListeners.set(ptyId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        this.dataListeners.delete(ptyId)
+      }
+    }
+  }
+
+  subscribeToFitOverrideChanges(
+    ptyId: string,
+    listener: (event: { mode: 'mobile-fit' | 'desktop-fit'; cols: number; rows: number }) => void
+  ): () => void {
+    let listeners = this.fitOverrideListeners.get(ptyId)
+    if (!listeners) {
+      listeners = new Set()
+      this.fitOverrideListeners.set(ptyId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        this.fitOverrideListeners.delete(ptyId)
+      }
+    }
+  }
+
+  private notifyFitOverrideListeners(
+    ptyId: string,
+    mode: 'mobile-fit' | 'desktop-fit',
+    cols: number,
+    rows: number
+  ): void {
+    const listeners = this.fitOverrideListeners.get(ptyId)
+    if (!listeners) {
+      return
+    }
+    for (const listener of listeners) {
+      listener({ mode, cols, rows })
+    }
+  }
+
+  serializeTerminalBuffer(
+    ptyId: string
+  ): Promise<{ data: string; cols: number; rows: number } | null> {
+    return this.serializeTerminalBufferFromAvailableState(ptyId)
+  }
+
+  getTerminalSize(ptyId: string): { cols: number; rows: number } | null {
+    return this.ptyController?.getSize?.(ptyId) ?? null
+  }
+
+  private trackHeadlessTerminalData(ptyId: string, data: string): void {
+    const state = this.getOrCreateHeadlessTerminal(ptyId)
+    state.writeChain = state.writeChain
+      .then(() => state.emulator.write(data))
+      .catch(() => {
+        // Best-effort state tracking; live streaming must continue even if
+        // xterm rejects a malformed or raced write during shutdown.
+      })
+  }
+
+  private getOrCreateHeadlessTerminal(ptyId: string): RuntimeHeadlessTerminal {
+    const existing = this.headlessTerminals.get(ptyId)
+    if (existing) {
+      return existing
+    }
+    const size = this.getTerminalSize(ptyId) ?? { cols: 80, rows: 24 }
+    const state: RuntimeHeadlessTerminal = {
+      emulator: new HeadlessEmulator({ cols: size.cols, rows: size.rows }),
+      writeChain: Promise.resolve()
+    }
+    this.headlessTerminals.set(ptyId, state)
+    return state
+  }
+
+  private resizeHeadlessTerminal(ptyId: string, cols: number, rows: number): void {
+    this.headlessTerminals.get(ptyId)?.emulator.resize(cols, rows)
+  }
+
+  private async serializeTerminalBufferFromAvailableState(
+    ptyId: string
+  ): Promise<{ data: string; cols: number; rows: number } | null> {
+    const headlessSnapshot = await this.serializeHeadlessTerminalBuffer(ptyId)
+    if (headlessSnapshot) {
+      return headlessSnapshot
+    }
+
+    let rendererSnapshot: { data: string; cols: number; rows: number } | null = null
+    try {
+      rendererSnapshot = await (this.ptyController?.serializeBuffer?.(ptyId) ??
+        Promise.resolve(null))
+    } catch {
+      // Why: mobile scrollback should not depend on a mounted renderer pane.
+      // If renderer serialization races reload/unmount, the runtime snapshot
+      // below can still preserve colored terminal state.
+    }
+    if (rendererSnapshot && rendererSnapshot.data.length > 0) {
+      return rendererSnapshot
+    }
+    return rendererSnapshot
+  }
+
+  private async serializeHeadlessTerminalBuffer(
+    ptyId: string
+  ): Promise<{ data: string; cols: number; rows: number } | null> {
+    const state = this.headlessTerminals.get(ptyId)
+    if (!state) {
+      return null
+    }
+    await state.writeChain
+    // Why: terminal.subscribe needs the current visible screen, not the full
+    // launch history. Full scrollback plus a normal-buffer TUI can replay the
+    // shell prompt and active TUI frame together, which looks duplicated.
+    const snapshot = state.emulator.getSnapshot({ scrollbackRows: 0 })
+    const data = snapshot.rehydrateSequences + snapshot.snapshotAnsi
+    return data.length > 0 ? { data, cols: snapshot.cols, rows: snapshot.rows } : null
+  }
+
+  private disposeHeadlessTerminal(ptyId: string): void {
+    const state = this.headlessTerminals.get(ptyId)
+    if (!state) {
+      return
+    }
+    this.headlessTerminals.delete(ptyId)
+    state.writeChain.finally(() => state.emulator.dispose()).catch(() => state.emulator.dispose())
+  }
+
+  resolveLeafForHandle(handle: string): { ptyId: string | null } | null {
+    const record = this.handles.get(handle)
+    if (!record) {
+      return null
+    }
+    if (record.tabId.startsWith('pty:')) {
+      return { ptyId: record.ptyId }
+    }
+    const leaf = this.leaves.get(this.getLeafKey(record.tabId, record.leafId))
+    if (!leaf) {
+      return null
+    }
+    return { ptyId: leaf.ptyId }
+  }
+
+  registerSubscriptionCleanup(subscriptionId: string, cleanup: () => void): void {
+    // Why: mobile clients reconnect frequently (phone lock, network switch).
+    // The RPC client re-sends terminal.subscribe on reconnect, creating a new
+    // handler before the old one is cleaned up. Without this, the old data
+    // listener leaks in dataListeners and duplicates every PTY data event.
+    const existing = this.subscriptionCleanups.get(subscriptionId)
+    if (existing) {
+      existing()
+    }
+    this.subscriptionCleanups.set(subscriptionId, cleanup)
+  }
+
+  cleanupSubscription(subscriptionId: string): void {
+    const cleanup = this.subscriptionCleanups.get(subscriptionId)
+    if (cleanup) {
+      this.subscriptionCleanups.delete(subscriptionId)
+      cleanup()
+    }
+  }
+
+  // Why: mobile clients subscribe via notifications.subscribe streaming RPC.
+  // Each subscriber gets its own listener. Returns an unsubscribe function
+  // that the subscription cleanup mechanism calls on disconnect.
+  onNotificationDispatched(listener: (event: MobileNotificationEvent) => void): () => void {
+    this.notificationListeners.add(listener)
+    return () => {
+      this.notificationListeners.delete(listener)
+    }
+  }
+
+  getMobileNotificationListenerCount(): number {
+    return this.notificationListeners.size
+  }
+
+  dispatchMobileNotification(event: MobileNotificationEvent): void {
+    for (const listener of this.notificationListeners) {
+      listener(event)
+    }
+  }
+
+  // ─── Mobile Fit Override Management ─────────────────────────
+
+  resizeForClient(
+    ptyId: string,
+    mode: 'mobile-fit' | 'restore',
+    clientId: string,
+    cols?: number,
+    rows?: number
+  ): {
+    cols: number
+    rows: number
+    previousCols: number | null
+    previousRows: number | null
+    mode: 'mobile-fit' | 'desktop-fit'
+  } {
+    if (mode === 'mobile-fit') {
+      if (cols == null || rows == null || !Number.isFinite(cols) || !Number.isFinite(rows)) {
+        throw new Error('invalid_dimensions')
+      }
+      const clampedCols = Math.max(20, Math.min(240, Math.round(cols)))
+      const clampedRows = Math.max(8, Math.min(120, Math.round(rows)))
+
+      const currentSize = this.getTerminalSize(ptyId)
+      const existing = this.terminalFitOverrides.get(ptyId)
+      // Why: preserve the original desktop size from before any mobile-fit,
+      // so restore returns to the right dimensions even after multiple re-fits.
+      const previousCols = existing?.previousCols ?? currentSize?.cols ?? null
+      const previousRows = existing?.previousRows ?? currentSize?.rows ?? null
+
+      this.terminalFitOverrides.set(ptyId, {
+        mode: 'mobile-fit',
+        cols: clampedCols,
+        rows: clampedRows,
+        previousCols,
+        previousRows,
+        updatedAt: Date.now(),
+        clientId
+      })
+
+      const resized = this.ptyController?.resize?.(ptyId, clampedCols, clampedRows)
+      if (!resized) {
+        this.terminalFitOverrides.delete(ptyId)
+        throw new Error('resize_failed')
+      }
+      this.resizeHeadlessTerminal(ptyId, clampedCols, clampedRows)
+
+      console.log(
+        `[mobile-fit] handleMobileSubscribe notifier=${!!this.notifier} ptyId=${ptyId} mode=mobile-fit cols=${clampedCols} rows=${clampedRows}`
+      )
+      this.notifier?.terminalFitOverrideChanged(ptyId, 'mobile-fit', clampedCols, clampedRows)
+
+      return {
+        cols: clampedCols,
+        rows: clampedRows,
+        previousCols,
+        previousRows,
+        mode: 'mobile-fit'
+      }
+    }
+
+    // restore mode
+    const override = this.terminalFitOverrides.get(ptyId)
+    if (!override) {
+      throw new Error('no_active_override')
+    }
+    // Why: only the owning client can restore, preventing one phone from
+    // undoing another phone's active fit.
+    if (override.clientId !== clientId) {
+      throw new Error('not_override_owner')
+    }
+
+    const { previousCols: prevCols, previousRows: prevRows } = override
+    this.terminalFitOverrides.delete(ptyId)
+
+    // Why: always resize the PTY back to pre-fit dimensions immediately,
+    // even for mounted leaves. Relying solely on the renderer chain
+    // (IPC notification → safeFit → fitAddon.fit → onResize → transport.resize)
+    // is fragile — any async gap leaves the PTY at phone dims while xterm
+    // looks correct, causing text to wrap at the wrong column. The renderer
+    // will still run safeFit and may send a second resize with the exact
+    // current pane geometry, which is harmless (SIGWINCH is idempotent).
+    if (prevCols != null && prevRows != null) {
+      this.ptyController?.resize?.(ptyId, prevCols, prevRows)
+      this.resizeHeadlessTerminal(ptyId, prevCols, prevRows)
+    }
+
+    // Why: send the restored dimensions so the renderer can fall back to a
+    // direct terminal.resize() if fitAddon.fit() silently fails. The renderer
+    // normally computes desktop dims from the container, but passing them here
+    // provides a guaranteed fallback to avoid leaving xterm at phone dims.
+    this.notifier?.terminalFitOverrideChanged(ptyId, 'desktop-fit', prevCols ?? 0, prevRows ?? 0)
+    // Why: mobile clients subscribed to this terminal need to know the desktop
+    // restored, so they can update their UI (clear fitted state, resubscribe).
+    this.notifyFitOverrideListeners(ptyId, 'desktop-fit', prevCols ?? 0, prevRows ?? 0)
+
+    return {
+      cols: prevCols ?? 0,
+      rows: prevRows ?? 0,
+      previousCols: null,
+      previousRows: null,
+      mode: 'desktop-fit'
+    }
+  }
+
+  getTerminalFitOverride(ptyId: string) {
+    return this.terminalFitOverrides.get(ptyId) ?? null
+  }
+
+  getAllTerminalFitOverrides(): Map<string, { mode: 'mobile-fit'; cols: number; rows: number }> {
+    const result = new Map<string, { mode: 'mobile-fit'; cols: number; rows: number }>()
+    for (const [ptyId, override] of this.terminalFitOverrides) {
+      result.set(ptyId, { mode: override.mode, cols: override.cols, rows: override.rows })
+    }
+    return result
+  }
+
+  onClientDisconnected(clientId: string): void {
+    // Cancel all pending restore timers for this client — the client is gone,
+    // so the debounce is meaningless and could fire against a stale PTY state.
+    for (const [ptyId, entry] of this.pendingRestoreTimers) {
+      if (entry.clientId === clientId) {
+        clearTimeout(entry.timer)
+        this.pendingRestoreTimers.delete(ptyId)
+      }
+    }
+
+    // Immediately restore PTYs that this client had phone-fitted (no debounce —
+    // client is gone, no point waiting for a re-subscribe that won't come).
+    for (const [ptyId, subscriber] of this.mobileSubscribers) {
+      if (subscriber.clientId !== clientId) {
+        continue
+      }
+
+      this.mobileSubscribers.delete(ptyId)
+
+      if (subscriber.wasResizedToPhone) {
+        const { previousCols, previousRows } = subscriber
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+        this.notifyFitOverrideListeners(ptyId, 'desktop-fit', previousCols ?? 0, previousRows ?? 0)
+      }
+    }
+
+    // Legacy cleanup for any terminalFitOverrides not covered by mobileSubscribers
+    for (const [ptyId, override] of this.terminalFitOverrides) {
+      if (override.clientId !== clientId) {
+        continue
+      }
+      try {
+        this.resizeForClient(ptyId, 'restore', clientId)
+      } catch {
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(ptyId, 'desktop-fit', 0, 0)
+        this.notifyFitOverrideListeners(ptyId, 'desktop-fit', 0, 0)
+      }
+    }
   }
 
   onPtyExit(ptyId: string, exitCode: number): void {
+    // Clean up new mobile state for this PTY
+    this.mobileSubscribers.delete(ptyId)
+    this.mobileDisplayModes.delete(ptyId)
+    this.resizeListeners.delete(ptyId)
+    this.lastRendererSizes.delete(ptyId)
+    const pendingRestore = this.pendingRestoreTimers.get(ptyId)
+    if (pendingRestore) {
+      clearTimeout(pendingRestore.timer)
+      this.pendingRestoreTimers.delete(ptyId)
+    }
+
+    if (this.terminalFitOverrides.has(ptyId)) {
+      this.terminalFitOverrides.delete(ptyId)
+      this.notifier?.terminalFitOverrideChanged(ptyId, 'desktop-fit', 0, 0)
+      this.notifyFitOverrideListeners(ptyId, 'desktop-fit', 0, 0)
+    }
+    this.disposeHeadlessTerminal(ptyId)
     this.agentDetector?.onExit(ptyId)
+    const pty = this.ptysById.get(ptyId)
+    if (pty) {
+      pty.connected = false
+    }
 
     for (const leaf of this.leaves.values()) {
       if (leaf.ptyId !== ptyId) {
@@ -493,6 +1100,277 @@ export class OrcaRuntimeService {
       leaf.lastExitCode = exitCode
       this.resolveExitWaiters(leaf)
       this.failActiveDispatchOnExit(leaf, exitCode)
+    }
+  }
+
+  // ─── Server-Authoritative Mobile Display Mode ─────────────────────
+
+  setMobileDisplayMode(ptyId: string, mode: 'auto' | 'phone' | 'desktop'): void {
+    if (mode === 'auto') {
+      this.mobileDisplayModes.delete(ptyId)
+    } else {
+      this.mobileDisplayModes.set(ptyId, mode)
+    }
+  }
+
+  getMobileDisplayMode(ptyId: string): 'auto' | 'phone' | 'desktop' {
+    return this.mobileDisplayModes.get(ptyId) ?? 'auto'
+  }
+
+  isMobileSubscriberActive(ptyId: string): boolean {
+    return this.mobileSubscribers.has(ptyId)
+  }
+
+  // Why: server-side auto-fit on mobile subscribe. The runtime is the single
+  // source of truth — the mobile client just passes its viewport and the runtime
+  // decides whether to resize. This eliminates the measure→RPC→resubscribe
+  // pipeline that caused race conditions.
+  handleMobileSubscribe(
+    ptyId: string,
+    clientId: string,
+    viewport?: { cols: number; rows: number }
+  ): boolean {
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    if (!viewport) {
+      return false
+    }
+
+    // Why: only cancel the restore timer for THIS ptyId (re-subscribe case).
+    // Other terminals' timers must fire so their banners clear on the desktop.
+    const pendingRestore = this.pendingRestoreTimers.get(ptyId)
+    if (pendingRestore && pendingRestore.clientId === clientId) {
+      clearTimeout(pendingRestore.timer)
+      this.pendingRestoreTimers.delete(ptyId)
+    }
+
+    // Why: prefer lastRendererSizes (the actual pane geometry reported by the
+    // desktop renderer's safeFit via pty:resize IPC) over getTerminalSize (the
+    // server-side PTY size, which may be stale — e.g. 214 full-width when the
+    // pane is actually in a split at ~105). Fall back to existing subscriber's
+    // previousCols (re-subscribe case) then currentSize (first subscribe).
+    const existing = this.mobileSubscribers.get(ptyId)
+    const currentSize = this.getTerminalSize(ptyId)
+    const rendererSize = this.lastRendererSizes.get(ptyId)
+    const previousCols = existing?.previousCols ?? rendererSize?.cols ?? currentSize?.cols ?? null
+    const previousRows = existing?.previousRows ?? rendererSize?.rows ?? currentSize?.rows ?? null
+
+    // Why: always register the subscriber so applyMobileDisplayMode can find
+    // the viewport when the user later toggles from desktop to auto/phone.
+    // Without this, toggling to auto after subscribing in desktop mode sees
+    // hasSubscriber=false and can't perform the phone resize.
+    if (mode === 'desktop') {
+      // Why: set previousCols/Rows to null so we don't capture a stale PTY
+      // size that may not match the actual pane geometry (e.g. 214 when the
+      // pane is in a split at 105). When the user later toggles to auto/phone,
+      // handleMobileSubscribe will capture currentSize at that point, which
+      // will be correct because safeFit has had time to adjust the PTY.
+      this.mobileSubscribers.set(ptyId, {
+        clientId,
+        viewport,
+        wasResizedToPhone: false,
+        previousCols: null,
+        previousRows: null
+      })
+      return false
+    }
+
+    this.mobileSubscribers.set(ptyId, {
+      clientId,
+      viewport,
+      wasResizedToPhone: true,
+      previousCols,
+      previousRows
+    })
+
+    const clampedCols = Math.max(20, Math.min(240, Math.round(viewport.cols)))
+    const clampedRows = Math.max(8, Math.min(120, Math.round(viewport.rows)))
+
+    // Why: skip the PTY resize if already at the target dims. Re-subscribing
+    // to a terminal that was left at phone dims (no restore on tab switch)
+    // should not trigger another SIGWINCH → shell prompt redraw.
+    const alreadyAtTarget = currentSize?.cols === clampedCols && currentSize?.rows === clampedRows
+    if (!alreadyAtTarget) {
+      this.ptyController?.resize?.(ptyId, clampedCols, clampedRows)
+      this.resizeHeadlessTerminal(ptyId, clampedCols, clampedRows)
+    }
+    this.notifier?.terminalFitOverrideChanged(ptyId, 'mobile-fit', clampedCols, clampedRows)
+
+    // Update terminalFitOverrides for desktop safeFit compatibility
+    this.terminalFitOverrides.set(ptyId, {
+      mode: 'mobile-fit',
+      cols: clampedCols,
+      rows: clampedRows,
+      previousCols,
+      previousRows,
+      updatedAt: Date.now(),
+      clientId
+    })
+
+    return true
+  }
+
+  // Why: delayed restore prevents resize thrashing during rapid tab switches.
+  // The 300ms debounce means only the final tab triggers a PTY restore;
+  // intermediate terminals keep their current dims harmlessly.
+  handleMobileUnsubscribe(ptyId: string, clientId: string): void {
+    const subscriber = this.mobileSubscribers.get(ptyId)
+    if (!subscriber || subscriber.clientId !== clientId) {
+      return
+    }
+
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    this.mobileSubscribers.delete(ptyId)
+
+    if (mode === 'auto' && subscriber.wasResizedToPhone) {
+      const existing = this.pendingRestoreTimers.get(ptyId)
+      if (existing) {
+        clearTimeout(existing.timer)
+      }
+
+      const { previousCols, previousRows } = subscriber
+      const timer = setTimeout(() => {
+        this.pendingRestoreTimers.delete(ptyId)
+        if (this.mobileSubscribers.has(ptyId)) {
+          return
+        }
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        this.lastRendererSizes.delete(ptyId)
+        this.suppressResizesForMs(500)
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+        this.notifyFitOverrideListeners(ptyId, 'desktop-fit', previousCols ?? 0, previousRows ?? 0)
+      }, 300)
+
+      this.pendingRestoreTimers.set(ptyId, { timer, clientId })
+    }
+    // 'phone' mode: keep phone dims (no restore needed)
+    // 'desktop' mode: was never resized, nothing to restore
+  }
+
+  // Why: called when mode changes via terminal.setDisplayMode. Applies the
+  // mode change immediately if there's an active subscriber, and emits a
+  // 'resized' event so the mobile client can reinitialize xterm inline.
+  applyMobileDisplayMode(ptyId: string): void {
+    const mode = this.mobileDisplayModes.get(ptyId) ?? 'auto'
+    const subscriber = this.mobileSubscribers.get(ptyId)
+
+    if (mode === 'desktop') {
+      if (subscriber?.wasResizedToPhone) {
+        const { previousCols, previousRows } = subscriber
+        if (previousCols != null && previousRows != null) {
+          this.ptyController?.resize?.(ptyId, previousCols, previousRows)
+          this.resizeHeadlessTerminal(ptyId, previousCols, previousRows)
+        }
+        subscriber.wasResizedToPhone = false
+        // Why: clear stale renderer size so the next mobile subscribe falls
+        // through to currentSize (which is correct after the server restore).
+        // Without this, a polluted 214 from a prior collateral safeFit cascade
+        // persists in lastRendererSizes and gets used as previousCols.
+        this.lastRendererSizes.delete(ptyId)
+        // Why: 500ms not 200ms — the desktop renderer's collateral safeFit
+        // cascade (IPC → React re-render → rAF → DOM measure → IPC back)
+        // takes ~360ms to propagate to background-tab terminals.
+        this.suppressResizesForMs(500)
+        this.terminalFitOverrides.delete(ptyId)
+        this.notifier?.terminalFitOverrideChanged(
+          ptyId,
+          'desktop-fit',
+          previousCols ?? 0,
+          previousRows ?? 0
+        )
+      }
+      const size = this.getTerminalSize(ptyId)
+      this.notifyTerminalResize(ptyId, {
+        cols: size?.cols ?? 0,
+        rows: size?.rows ?? 0,
+        displayMode: 'desktop',
+        reason: 'mode-change'
+      })
+    } else if (mode === 'phone' || mode === 'auto') {
+      if (subscriber && !subscriber.wasResizedToPhone) {
+        const viewport = subscriber.viewport
+        if (viewport) {
+          this.handleMobileSubscribe(ptyId, subscriber.clientId, viewport)
+        }
+      }
+      // Why: always emit the mode change even when no resize occurred (e.g.
+      // subscriber missing, wasResizedToPhone already true, or no viewport).
+      // Without this the mobile client never learns the mode changed and its
+      // toggle button gets stuck showing the old state.
+      const size = this.getTerminalSize(ptyId)
+      this.notifyTerminalResize(ptyId, {
+        cols: size?.cols ?? 0,
+        rows: size?.rows ?? 0,
+        displayMode: mode,
+        reason: 'mode-change'
+      })
+    }
+  }
+
+  // Why: called from the pty:resize IPC handler whenever the desktop renderer
+  // resizes a PTY (e.g. via safeFit after window resize, split, or desktop-mode
+  // restore). Stores the renderer-reported size so handleMobileSubscribe can use
+  // the actual pane geometry instead of a stale PTY size for previousCols.
+  onExternalPtyResize(ptyId: string, cols: number, rows: number): void {
+    this.lastRendererSizes.set(ptyId, { cols, rows })
+
+    const subscriber = this.mobileSubscribers.get(ptyId)
+    if (!subscriber) {
+      return
+    }
+    if (!subscriber.wasResizedToPhone) {
+      subscriber.previousCols = cols
+      subscriber.previousRows = rows
+    }
+  }
+
+  // Why: the pty:resize IPC handler calls this to check if the global
+  // suppress window is active. During this window, all desktop renderer
+  // pty:resize events are ignored to prevent collateral safeFit corruption.
+  isResizeSuppressed(): boolean {
+    return Date.now() < this.resizeSuppressedUntil
+  }
+
+  private suppressResizesForMs(ms: number): void {
+    this.resizeSuppressedUntil = Date.now() + ms
+  }
+
+  subscribeToTerminalResize(
+    ptyId: string,
+    listener: (event: { cols: number; rows: number; displayMode: string; reason: string }) => void
+  ): () => void {
+    let listeners = this.resizeListeners.get(ptyId)
+    if (!listeners) {
+      listeners = new Set()
+      this.resizeListeners.set(ptyId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        this.resizeListeners.delete(ptyId)
+      }
+    }
+  }
+
+  private notifyTerminalResize(
+    ptyId: string,
+    event: { cols: number; rows: number; displayMode: string; reason: string }
+  ): void {
+    const listeners = this.resizeListeners.get(ptyId)
+    if (!listeners) {
+      return
+    }
+    for (const listener of listeners) {
+      listener(event)
     }
   }
 
@@ -552,13 +1430,44 @@ export class OrcaRuntimeService {
     const worktreesById = await this.getResolvedWorktreeMap()
     this.assertStableReadyGraph(graphEpoch)
 
+    const resolvedWorktrees = [...worktreesById.values()]
+    await this.refreshPtyWorktreeRecordsFromController(resolvedWorktrees)
+
+    const livePtyWorktreeIds = new Set<string>()
+    for (const pty of this.ptysById.values()) {
+      if (pty.connected) {
+        livePtyWorktreeIds.add(pty.worktreeId)
+      }
+    }
+
     const terminals: RuntimeTerminalSummary[] = []
+    const ptyIdsFromLeaves = new Set<string>()
     for (const leaf of this.leaves.values()) {
       if (targetWorktreeId && leaf.worktreeId !== targetWorktreeId) {
         continue
       }
+      if (!leaf.ptyId && livePtyWorktreeIds.has(leaf.worktreeId)) {
+        continue
+      }
+      if (leaf.ptyId) {
+        ptyIdsFromLeaves.add(leaf.ptyId)
+      }
       terminals.push(this.buildTerminalSummary(leaf, worktreesById))
     }
+
+    // Why: worktree.ps can classify active worktrees from PTY records even when
+    // the renderer graph is missing a leaf. terminal.list needs the same fallback
+    // so mobile does not show a false "No terminals" create flow.
+    for (const pty of this.ptysById.values()) {
+      if (!pty.connected || ptyIdsFromLeaves.has(pty.ptyId)) {
+        continue
+      }
+      if (targetWorktreeId && pty.worktreeId !== targetWorktreeId) {
+        continue
+      }
+      terminals.push(this.buildPtyTerminalSummary(pty, worktreesById))
+    }
+
     return {
       terminals: terminals.slice(0, limit),
       totalCount: terminals.length,
@@ -605,6 +1514,15 @@ export class OrcaRuntimeService {
     const graphEpoch = this.captureReadyGraphEpoch()
     const worktreesById = await this.getResolvedWorktreeMap()
     this.assertStableReadyGraph(graphEpoch)
+    const pty = this.getLivePtyForHandle(handle)
+    if (pty) {
+      return {
+        ...this.buildPtyTerminalSummary(pty.pty, worktreesById),
+        paneRuntimeId: -1,
+        ptyId: pty.pty.ptyId,
+        rendererGraphEpoch: this.rendererGraphEpoch
+      }
+    }
     const { leaf } = this.getLiveLeafForHandle(handle)
     const summary = this.buildTerminalSummary(leaf, worktreesById)
     return {
@@ -616,6 +1534,11 @@ export class OrcaRuntimeService {
   }
 
   async readTerminal(handle: string, opts: { cursor?: number } = {}): Promise<RuntimeTerminalRead> {
+    const pty = this.getLivePtyForHandle(handle)
+    if (pty) {
+      return this.readPtyTerminal(handle, pty.pty, opts)
+    }
+
     const { leaf } = this.getLiveLeafForHandle(handle)
     const allLines = buildTailLines(leaf.tailBuffer, leaf.tailPartialLine)
 
@@ -663,6 +1586,26 @@ export class OrcaRuntimeService {
       interrupt?: boolean
     }
   ): Promise<RuntimeTerminalSend> {
+    const pty = this.getLivePtyForHandle(handle)
+    if (pty) {
+      if (!pty.pty.connected) {
+        throw new Error('terminal_not_writable')
+      }
+      const payload = buildSendPayload(action)
+      if (payload === null) {
+        throw new Error('invalid_terminal_send')
+      }
+      const wrote = this.ptyController?.write(pty.pty.ptyId, payload) ?? false
+      if (!wrote) {
+        throw new Error('terminal_not_writable')
+      }
+      return {
+        handle,
+        accepted: true,
+        bytesWritten: Buffer.byteLength(payload, 'utf8')
+      }
+    }
+
     const { leaf } = this.getLiveLeafForHandle(handle)
     if (!leaf.writable || !leaf.ptyId) {
       throw new Error('terminal_not_writable')
@@ -802,41 +1745,123 @@ export class OrcaRuntimeService {
       throw new Error('invalid_limit')
     }
     const resolvedWorktrees = await this.listResolvedWorktrees()
+    await this.refreshPtyWorktreeRecordsFromController(resolvedWorktrees)
     const repoById = new Map((this.store?.getRepos() ?? []).map((repo) => [repo.id, repo]))
     const summaries = new Map<string, RuntimeWorktreePsSummary>()
 
+    // Why: the GitHub cache is keyed by `repoPath::branch` (no refs/heads/ prefix),
+    // matching how the renderer's fetchPRForBranch stores entries. We look up cached
+    // PR info so mobile clients can group worktrees by PR state without making
+    // expensive `gh` CLI calls. Falls back to meta.linkedPR if no cache entry exists.
+    const ghCache = this.store?.getGitHubCache?.()
     for (const worktree of resolvedWorktrees) {
       const meta =
         this.store?.getWorktreeMeta?.(worktree.id) ?? this.store?.getAllWorktreeMeta()[worktree.id]
+      const repo = repoById.get(worktree.repoId)
+      let linkedPR: { number: number; state: string } | null = null
+      const branch = worktree.branch.replace(/^refs\/heads\//, '')
+      if (repo?.path && branch && ghCache) {
+        const prCacheKey = `${repo.path}::${branch}`
+        const cached = ghCache.pr[prCacheKey]
+        if (cached?.data) {
+          linkedPR = { number: cached.data.number, state: cached.data.state }
+        }
+      }
+      if (!linkedPR && meta?.linkedPR != null) {
+        linkedPR = { number: meta.linkedPR, state: 'unknown' }
+      }
       summaries.set(worktree.id, {
         worktreeId: worktree.id,
         repoId: worktree.repoId,
-        repo: repoById.get(worktree.repoId)?.displayName ?? worktree.repoId,
+        repo: repo?.displayName ?? worktree.repoId,
         path: worktree.path,
         branch: worktree.branch,
+        displayName: worktree.displayName,
         linkedIssue: worktree.linkedIssue,
+        linkedPR,
+        isPinned: meta?.isPinned ?? false,
         unread: meta?.isUnread ?? false,
         liveTerminalCount: 0,
         hasAttachedPty: false,
         lastOutputAt: null,
-        preview: ''
+        preview: '',
+        status: 'inactive'
       })
     }
 
+    const countedPtyIds = new Set<string>()
     for (const leaf of this.leaves.values()) {
-      const summary = summaries.get(leaf.worktreeId)
+      const summary = this.getSummaryForRuntimeWorktreeId(
+        summaries,
+        resolvedWorktrees,
+        leaf.worktreeId
+      )
       if (!summary) {
         continue
+      }
+      if (leaf.ptyId) {
+        countedPtyIds.add(leaf.ptyId)
       }
       const previousLastOutputAt = summary.lastOutputAt
       summary.liveTerminalCount += 1
       summary.hasAttachedPty = summary.hasAttachedPty || leaf.connected
       summary.lastOutputAt = maxTimestamp(summary.lastOutputAt, leaf.lastOutputAt)
+      summary.status = mergeWorktreeStatus(
+        summary.status,
+        getLeafWorktreeStatus(leaf, this.tabs.get(leaf.tabId)?.title ?? null)
+      )
       if (
         leaf.preview &&
         (summary.preview.length === 0 || (leaf.lastOutputAt ?? -1) >= (previousLastOutputAt ?? -1))
       ) {
         summary.preview = leaf.preview
+      }
+    }
+
+    for (const pty of this.ptysById.values()) {
+      if (!pty.connected || countedPtyIds.has(pty.ptyId)) {
+        continue
+      }
+      const summary = this.getSummaryForRuntimeWorktreeId(
+        summaries,
+        resolvedWorktrees,
+        pty.worktreeId
+      )
+      if (!summary) {
+        continue
+      }
+      const previousLastOutputAt = summary.lastOutputAt
+      summary.liveTerminalCount += 1
+      summary.hasAttachedPty = true
+      summary.lastOutputAt = maxTimestamp(summary.lastOutputAt, pty.lastOutputAt)
+      summary.status = mergeWorktreeStatus(summary.status, 'active')
+      if (
+        pty.preview &&
+        (summary.preview.length === 0 || (pty.lastOutputAt ?? -1) >= (previousLastOutputAt ?? -1))
+      ) {
+        summary.preview = pty.preview
+      }
+    }
+
+    const session = this.store?.getWorkspaceSession?.()
+    for (const [worktreeId, tabs] of Object.entries(session?.tabsByWorktree ?? {})) {
+      if (tabs.length === 0) {
+        continue
+      }
+      const summary = this.getSummaryForRuntimeWorktreeId(summaries, resolvedWorktrees, worktreeId)
+      if (!summary) {
+        continue
+      }
+      // Why: desktop can show terminal tabs that are not mounted as renderer
+      // leaves and are not currently visible in the PTY provider list. Mobile
+      // still needs those worktrees to show as terminal-bearing entries.
+      summary.liveTerminalCount = Math.max(summary.liveTerminalCount, tabs.length)
+      summary.hasAttachedPty = summary.hasAttachedPty || tabs.some((tab) => tab.ptyId !== null)
+      for (const tab of tabs) {
+        summary.status = mergeWorktreeStatus(
+          summary.status,
+          getSavedTabWorktreeStatus(tab.title, tab.ptyId !== null)
+        )
       }
     }
 
@@ -922,6 +1947,19 @@ export class OrcaRuntimeService {
     }
   }
 
+  async getRepoHooks(repoSelector: string) {
+    const repo = await this.resolveRepoSelector(repoSelector)
+    const hasFile = hasHooksFile(repo.path)
+    const hooks = getEffectiveHooks(repo)
+    const setupRunPolicy = getEffectiveSetupRunPolicy(repo)
+    return {
+      hasHooksFile: hasFile,
+      hooks,
+      setupRunPolicy,
+      source: hasFile ? 'orca.yaml' : hooks ? 'legacy' : null
+    }
+  }
+
   async listManagedWorktrees(
     repoSelector?: string,
     limit = DEFAULT_WORKTREE_LIST_LIMIT
@@ -943,6 +1981,33 @@ export class OrcaRuntimeService {
     return await this.resolveWorktreeSelector(worktreeSelector)
   }
 
+  async sleepManagedWorktree(worktreeSelector: string): Promise<{ worktreeId: string }> {
+    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+    // Why: sleep is renderer-initiated on desktop (it tears down tab state
+    // before killing PTYs). The notifier tells the renderer to run its own
+    // sleep flow so all cleanup happens in the correct order.
+    this.notifier?.sleepWorktree(worktree.id)
+    return { worktreeId: worktree.id }
+  }
+
+  async activateManagedWorktree(worktreeSelector: string): Promise<{
+    repoId: string
+    worktreeId: string
+    activated: boolean
+  }> {
+    this.assertGraphReady()
+    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+    const repo = this.store?.getRepo(worktree.repoId)
+    if (!repo) {
+      throw new Error('repo_not_found')
+    }
+
+    // Why: inactive worktree terminal panes are renderer-owned and may not have
+    // live PTYs until the desktop activates the worktree and mounts them.
+    this.notifier?.activateWorktree(repo.id, worktree.id)
+    return { repoId: repo.id, worktreeId: worktree.id, activated: true }
+  }
+
   async createManagedWorktree(args: {
     repoSelector: string
     name: string
@@ -950,6 +2015,8 @@ export class OrcaRuntimeService {
     linkedIssue?: number | null
     comment?: string
     runHooks?: boolean
+    setupDecision?: 'run' | 'skip' | 'inherit'
+    startup?: WorktreeStartupLaunch
   }): Promise<CreateWorktreeResult> {
     if (!this.store) {
       throw new Error('runtime_unavailable')
@@ -1004,10 +2071,18 @@ export class OrcaRuntimeService {
     }
 
     const remote = baseBranch.includes('/') ? baseBranch.split('/')[0] : 'origin'
+    // Why (§3.3 Lifecycle): route through the shared fetch cache so back-to-back
+    // CLI creates on the same repo don't each pay the round-trip, and so a
+    // subsequent dispatch probe within the 30s window reuses this result. The
+    // helper swallows rejection (log-and-proceed) so a DNS hiccup never wedges
+    // future creates and CLI creation stays usable offline — same intent as
+    // the previous try/catch around gitExecFileSync.
     try {
-      gitExecFileSync(['fetch', remote], { cwd: repo.path })
+      await this.fetchRemoteWithCache(repo.path, remote)
     } catch {
-      // Why: matching the editor behavior keeps CLI creation usable offline.
+      // Why: belt-and-suspenders. fetchRemoteWithCache already logs and does
+      // not throw; the outer try/catch guarantees create-path tolerance even
+      // if future refactors change that contract.
     }
 
     await addWorktree(
@@ -1036,8 +2111,17 @@ export class OrcaRuntimeService {
 
     let setup: CreateWorktreeResult['setup']
     let warning: string | undefined
-    const hooks = getEffectiveHooks(repo)
-    if (hooks?.scripts.setup && args.runHooks === true) {
+    // Why: CLI-created worktrees do not have a renderer preview to mismatch
+    // against. Trust is granted by the direct CLI invocation (`--run-hooks`),
+    // so loading the setup hook from the created worktree is intentional here.
+    const hooks = getEffectiveHooks(repo, worktreePath)
+    // Why: setupDecision lets mobile/CLI callers control whether the setup
+    // script runs. 'skip' suppresses it, 'run' forces it, 'inherit' (default)
+    // defers to the repo's orca.yaml setupRunPolicy. runHooks === true maps
+    // to 'run' for backwards compatibility with the desktop create flow.
+    const effectiveDecision = args.runHooks ? 'run' : (args.setupDecision ?? 'inherit')
+    const shouldRunSetup = hooks?.scripts.setup && shouldRunSetupForCreate(repo, effectiveDecision)
+    if (shouldRunSetup && hooks?.scripts.setup) {
       if (this.authoritativeWindowId !== null) {
         try {
           // Why: CLI-created worktrees must use the same runner-script path as the
@@ -1052,7 +2136,7 @@ export class OrcaRuntimeService {
           console.error(`[hooks] Failed to prepare setup runner for ${worktreePath}:`, error)
         }
       } else {
-        void runHook('setup', worktreePath, repo).then((result) => {
+        void runHook('setup', worktreePath, repo, worktreePath).then((result) => {
           if (!result.success) {
             console.error(`[hooks] setup hook failed for ${worktreePath}:`, result.output)
           }
@@ -1069,7 +2153,11 @@ export class OrcaRuntimeService {
     // renderer-side consequence of activating a worktree. CLI-created
     // worktrees must trigger that same activation path or they will exist on
     // disk without becoming the active workspace in the UI.
-    this.notifier?.activateWorktree(repo.id, worktree.id, setup)
+    if (args.startup) {
+      this.notifier?.activateWorktree(repo.id, worktree.id, setup, args.startup)
+    } else {
+      this.notifier?.activateWorktree(repo.id, worktree.id, setup)
+    }
     this.invalidateResolvedWorktreeCache()
     // Why: the filesystem-auth layer maintains a separate cache of registered
     // worktree roots used by git IPC handlers (branchCompare, diff, status, etc.)
@@ -1084,12 +2172,103 @@ export class OrcaRuntimeService {
     }
   }
 
+  /**
+   * Fetch `remote` in `repoPath`, sharing the 30s freshness window + in-flight
+   * serialization with all other callers (renderer-create path, CLI create,
+   * dispatch drift probe). Never rejects — callers log-and-proceed on offline
+   * failures (§3.3 Lifecycle).
+   *
+   * Why a shared cache on the runtime instead of module-scoped: §7.1 relies on
+   * one cache for BOTH the renderer create path and `probeWorktreeDrift`. A
+   * dispatch tick that reuses a just-completed create-path fetch is the
+   * primary telemetry target; splitting the cache by call-site would double
+   * the fetch load on warm repos.
+   */
+  async fetchRemoteWithCache(repoPath: string, remote: string): Promise<void> {
+    const key = `${repoPath}::${remote}`
+    const lastAt = this.fetchLastCompletedAt.get(key)
+    if (lastAt !== undefined && Date.now() - lastAt < FETCH_FRESHNESS_MS) {
+      // Why: freshness window hit — skip the fetch entirely. Do NOT reuse any
+      // in-flight promise here; the timestamp is only written on success, so
+      // hitting this branch means a previous fetch did succeed recently.
+      return
+    }
+
+    const existing = this.fetchInflight.get(key)
+    if (existing) {
+      // Why: genuine serialization (not check-then-set). Two callers racing
+      // on the same repo+remote share the single underlying `git fetch`.
+      return existing
+    }
+
+    const promise = gitExecFileAsync(['fetch', remote], { cwd: repoPath })
+      .then(() => {
+        // Why (§3.3 Lifecycle): timestamp on success ONLY. Writing on rejection
+        // would make the freshness cache lie about the last known remote state.
+        this.fetchLastCompletedAt.set(key, Date.now())
+      })
+      .catch((err) => {
+        // Why: swallow here so awaiters don't throw at the await site. Outer
+        // create/dispatch paths are already tolerant of offline fetch failure;
+        // this is the behavioral contract of this helper.
+        console.warn(`[fetchRemoteWithCache] ${remote} fetch failed for ${repoPath}:`, err)
+      })
+      .finally(() => {
+        // Why (§3.3 Lifecycle): evict on BOTH success and rejection. A
+        // rejected entry that survived in the Map would wedge every future
+        // create on this repo until Orca restarted (the F2 bug §3.3 pins).
+        this.fetchInflight.delete(key)
+      })
+
+    this.fetchInflight.set(key, promise)
+    return promise
+  }
+
+  /**
+   * Probe how far the worktree's HEAD is behind its tracking remote. Returns
+   * null when the probe cannot establish a signal (no default base ref, or
+   * git failure). Dispatch treats null as "unknown — proceed" (§3.1); only
+   * knowing-and-stale refuses.
+   */
+  async probeWorktreeDrift(worktreeSelector: string): Promise<{
+    base: string
+    behind: number
+    recentSubjects: string[]
+  } | null> {
+    const wt = await this.resolveWorktreeSelector(worktreeSelector)
+    if (!this.store) {
+      return null
+    }
+    const repo = this.store.getRepos().find((r) => r.id === wt.repoId)
+    if (!repo) {
+      return null
+    }
+    const base = getDefaultBaseRef(repo.path)
+    if (!base) {
+      // Why: brand-new repo with no remote primary — nothing to compare
+      // against, so there's no meaningful drift to report. Dispatch should
+      // not block on a probe that cannot form an opinion.
+      return null
+    }
+    const remote = base.includes('/') ? base.split('/')[0] : 'origin'
+    // Why: fetch failures are non-fatal; we proceed with whatever the
+    // last-known remote ref points at. `fetchRemoteWithCache` never throws.
+    await this.fetchRemoteWithCache(wt.path, remote)
+    const drift = getRemoteDrift(wt.path, 'HEAD', base)
+    if (!drift) {
+      return null
+    }
+    const recentSubjects = getRecentDriftSubjects(wt.path, 'HEAD', base, DRIFT_PROBE_SUBJECT_LIMIT)
+    return { base, behind: drift.behind, recentSubjects }
+  }
+
   async updateManagedWorktreeMeta(
     worktreeSelector: string,
     updates: {
       displayName?: string
       linkedIssue?: number | null
       comment?: string
+      isPinned?: boolean
     }
   ) {
     if (!this.store) {
@@ -1099,7 +2278,8 @@ export class OrcaRuntimeService {
     const meta = this.store.setWorktreeMeta(worktree.id, {
       ...(updates.displayName !== undefined ? { displayName: updates.displayName } : {}),
       ...(updates.linkedIssue !== undefined ? { linkedIssue: updates.linkedIssue } : {}),
-      ...(updates.comment !== undefined ? { comment: updates.comment } : {})
+      ...(updates.comment !== undefined ? { comment: updates.comment } : {}),
+      ...(updates.isPinned !== undefined ? { isPinned: updates.isPinned } : {})
     })
     // Why: unlike renderer-initiated optimistic updates, CLI callers need an
     // explicit push so the editor refreshes metadata changed outside the UI.
@@ -1123,6 +2303,37 @@ export class OrcaRuntimeService {
     }
     if (isFolderRepo(repo)) {
       throw new Error('Folder mode does not support deleting worktrees.')
+    }
+
+    // Why: kill every PTY belonging to this worktree BEFORE the git-level
+    // removal. Some shells keep the worktree directory busy, and `git worktree
+    // remove` throws a confusing error if PTYs still hold it open. This also
+    // closes the headless-CLI leak (design §2a/§2b): without this call, the
+    // CLI path runs git removal and never touches PTYs, leaving zombies
+    // behind. Best-effort: any failure here must not prevent git removal —
+    // the worst case without the call is the status quo.
+    const localProvider = this.getLocalProvider()
+    if (localProvider) {
+      await killAllProcessesForWorktree(worktree.id, {
+        runtime: this,
+        localProvider
+      })
+        .then((r) => {
+          const total = r.runtimeStopped + r.providerStopped + r.registryStopped
+          if (total > 0) {
+            // Why (design §4.4 observability): breadcrumb lets ops
+            // distinguish a renderer-state-induced leak (diff-path purge
+            // non-empty) from a backend-induced one (nothing to kill but
+            // memory still pinned). Emit only when the sweep actually did
+            // work so steady-state logs stay quiet.
+            console.info(
+              `[worktree-teardown] ${worktree.id} killed runtime=${r.runtimeStopped} provider=${r.providerStopped} registry=${r.registryStopped}`
+            )
+          }
+        })
+        .catch((err) => {
+          console.warn(`[worktree-teardown] failed for ${worktree.id}:`, err)
+        })
     }
 
     const hooks = getEffectiveHooks(repo)
@@ -1261,6 +2472,54 @@ export class OrcaRuntimeService {
     })
   }
 
+  // Why: mobile clients may subscribe before the PTY spawns (the left pane
+  // of a new workspace). Instead of bailing with a bare scrollback+end,
+  // wait for the PTY to appear so the subscribe can proceed with phone-fit.
+  waitForLeafPtyId(handle: string, timeoutMs = 10_000): Promise<string> {
+    const leaf = this.resolveLeafForHandle(handle)
+    if (leaf?.ptyId) {
+      return Promise.resolve(leaf.ptyId)
+    }
+
+    // Why: when the ptyId changes from null to a real value, the old handle
+    // is invalidated (deleted from this.handles). Capture the tabId+leafId
+    // now so we can look up the leaf directly even after handle invalidation.
+    const record = this.handles.get(handle)
+    const savedTabId = record?.tabId ?? null
+    const savedLeafId = record?.leafId ?? null
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        reject(new Error('Timed out waiting for PTY to spawn'))
+      }, timeoutMs)
+
+      const check = (): void => {
+        // Try the handle first (works if handle wasn't invalidated yet)
+        let ptyId = this.resolveLeafForHandle(handle)?.ptyId
+        // Why: when ptyId transitions null→real, issueHandle invalidates the
+        // old handle. Fall back to direct leaf lookup by the saved coordinates.
+        if (!ptyId && savedTabId && savedLeafId) {
+          const directLeaf = this.leaves.get(this.getLeafKey(savedTabId, savedLeafId))
+          ptyId = directLeaf?.ptyId ?? null
+        }
+        if (ptyId) {
+          clearTimeout(timer)
+          const idx = this.graphSyncCallbacks.indexOf(check)
+          if (idx !== -1) {
+            this.graphSyncCallbacks.splice(idx, 1)
+          }
+          resolve(ptyId)
+        }
+      }
+      this.graphSyncCallbacks.push(check)
+      check()
+    })
+  }
+
   // Why: a leaf appears in the graph before its PTY spawns. If we issue a
   // handle while ptyId is null, the next graph sync after PTY spawn will
   // change ptyId and invalidate the handle. Wait for a connected PTY so
@@ -1286,6 +2545,10 @@ export class OrcaRuntimeService {
 
   async focusTerminal(handle: string): Promise<RuntimeTerminalFocus> {
     this.assertGraphReady()
+    const pty = this.getLivePtyForHandle(handle)
+    if (pty) {
+      return { handle, tabId: pty.record.tabId, worktreeId: pty.pty.worktreeId }
+    }
     const { leaf } = this.getLiveLeafForHandle(handle)
     this.notifier?.focusTerminal(leaf.tabId, leaf.worktreeId)
     return { handle, tabId: leaf.tabId, worktreeId: leaf.worktreeId }
@@ -1419,6 +2682,10 @@ export class OrcaRuntimeService {
     this.rememberDetachedPreAllocatedLeaves()
     this.handles.clear()
     this.handleByLeafKey.clear()
+    // Why: handleByPtyId maps ptyId → pre-allocated CLI handle (ORCA_TERMINAL_HANDLE).
+    // These must survive renderer reloads so CLI agents can keep controlling the
+    // same terminal across graph rebuilds — adoptPreAllocatedHandle re-links
+    // them when the new graph arrives.
     this.rejectAllWaiters('terminal_handle_stale')
     this.refreshWritableFlags()
   }
@@ -1447,6 +2714,8 @@ export class OrcaRuntimeService {
     this.leaves.clear()
     this.handles.clear()
     this.handleByLeafKey.clear()
+    // Why: same as markRendererReloading — pre-allocated CLI handles must
+    // survive graph unavailability so they can be re-adopted on reconnect.
     this.rejectAllWaiters('terminal_handle_stale')
   }
 
@@ -1587,6 +2856,108 @@ export class OrcaRuntimeService {
     this.resolvedWorktreeCache = null
   }
 
+  private recordPtyWorktree(
+    ptyId: string,
+    worktreeId: string,
+    state: Partial<Pick<RuntimePtyWorktreeRecord, 'connected' | 'lastOutputAt' | 'preview'>> = {}
+  ): RuntimePtyWorktreeRecord {
+    let pty = this.ptysById.get(ptyId)
+    if (!pty) {
+      pty = {
+        ptyId,
+        worktreeId,
+        connected: state.connected ?? true,
+        lastOutputAt: state.lastOutputAt ?? null,
+        tailBuffer: [],
+        tailPartialLine: '',
+        tailTruncated: false,
+        tailLinesTotal: 0,
+        preview: state.preview ?? ''
+      }
+      this.ptysById.set(ptyId, pty)
+      return pty
+    }
+
+    pty.worktreeId = worktreeId
+    if (state.connected !== undefined) {
+      pty.connected = state.connected
+    }
+    if (state.lastOutputAt !== undefined) {
+      pty.lastOutputAt = maxTimestamp(pty.lastOutputAt, state.lastOutputAt)
+    }
+    if (state.preview !== undefined && state.preview.length > 0) {
+      pty.preview = state.preview
+    }
+    return pty
+  }
+
+  private getOrCreatePtyWorktreeRecord(ptyId: string): RuntimePtyWorktreeRecord | null {
+    const existing = this.ptysById.get(ptyId)
+    if (existing) {
+      return existing
+    }
+    const inferredWorktreeId = inferWorktreeIdFromPtyId(ptyId)
+    if (!inferredWorktreeId) {
+      return null
+    }
+    // Why: daemon-backed PTY session IDs are prefixed with the worktree ID so
+    // mobile summaries survive renderer graph gaps and Electron reloads.
+    return this.recordPtyWorktree(ptyId, inferredWorktreeId)
+  }
+
+  private async refreshPtyWorktreeRecordsFromController(
+    resolvedWorktrees: ResolvedWorktree[]
+  ): Promise<void> {
+    if (!this.ptyController?.listProcesses) {
+      return
+    }
+    const sessions = await this.ptyController.listProcesses().catch(() => [])
+    const livePtyIds = new Set(sessions.map((session) => session.id))
+    for (const session of sessions) {
+      const worktreeId =
+        inferWorktreeIdFromPtyId(session.id) ??
+        findResolvedWorktreeIdForPath(resolvedWorktrees, session.cwd)
+      if (worktreeId) {
+        this.recordPtyWorktree(session.id, worktreeId, { connected: true })
+      }
+    }
+    for (const pty of this.ptysById.values()) {
+      if (!livePtyIds.has(pty.ptyId) && !this.leafExistsForPty(pty.ptyId)) {
+        pty.connected = false
+      }
+    }
+  }
+
+  private leafExistsForPty(ptyId: string): boolean {
+    for (const leaf of this.leaves.values()) {
+      if (leaf.ptyId === ptyId) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private getSummaryForRuntimeWorktreeId(
+    summaries: Map<string, RuntimeWorktreePsSummary>,
+    resolvedWorktrees: ResolvedWorktree[],
+    runtimeWorktreeId: string
+  ): RuntimeWorktreePsSummary | null {
+    const exact = summaries.get(runtimeWorktreeId)
+    if (exact) {
+      return exact
+    }
+    const parsed = parseRuntimeWorktreeId(runtimeWorktreeId)
+    if (!parsed) {
+      return null
+    }
+    const resolved = resolvedWorktrees.find(
+      (worktree) =>
+        worktree.repoId === parsed.repoId &&
+        areWorktreePathsEqual(worktree.path, parsed.worktreePath)
+    )
+    return resolved ? (summaries.get(resolved.id) ?? null) : null
+  }
+
   private buildTerminalSummary(
     leaf: RuntimeLeafRecord,
     worktreesById: Map<string, ResolvedWorktree>
@@ -1681,7 +3052,7 @@ export class OrcaRuntimeService {
 
   waitForMessage(
     handle: string,
-    options?: { typeFilter?: string[]; timeoutMs?: number }
+    options?: { typeFilter?: string[]; timeoutMs?: number; signal?: AbortSignal }
   ): Promise<void> {
     return new Promise((resolve) => {
       const timeoutMs = options?.timeoutMs ?? MESSAGE_WAIT_DEFAULT_TIMEOUT_MS
@@ -1693,7 +3064,27 @@ export class OrcaRuntimeService {
         timeout: null
       }
 
+      // Why: if the caller aborts (socket closed on the RPC side — see design
+      // doc §3.1 counter-lifecycle), resolve immediately so the long-poll slot
+      // is released instead of counting down the full timeoutMs with a dead
+      // client on the other end.
+      const signal = options?.signal
+      const onAbort = (): void => {
+        this.removeMessageWaiter(waiter)
+        resolve()
+      }
+      if (signal) {
+        if (signal.aborted) {
+          resolve()
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+
       waiter.timeout = setTimeout(() => {
+        if (signal) {
+          signal.removeEventListener('abort', onAbort)
+        }
         this.removeMessageWaiter(waiter)
         resolve()
       }, timeoutMs)
@@ -1726,6 +3117,27 @@ export class OrcaRuntimeService {
     }
   }
 
+  private buildPtyTerminalSummary(
+    pty: RuntimePtyWorktreeRecord,
+    worktreesById: Map<string, ResolvedWorktree>
+  ): RuntimeTerminalSummary {
+    const worktree = worktreesById.get(pty.worktreeId)
+
+    return {
+      handle: this.issuePtyHandle(pty),
+      worktreeId: pty.worktreeId,
+      worktreePath: worktree?.path ?? '',
+      branch: worktree?.branch ?? '',
+      tabId: `pty:${pty.ptyId}`,
+      leafId: `pty:${pty.ptyId}`,
+      title: null,
+      connected: pty.connected,
+      writable: pty.connected,
+      lastOutputAt: pty.lastOutputAt,
+      preview: pty.preview
+    }
+  }
+
   private getLiveLeafForHandle(handle: string): {
     record: TerminalHandleRecord
     leaf: RuntimeLeafRecord
@@ -1744,6 +3156,53 @@ export class OrcaRuntimeService {
       throw new Error('terminal_handle_stale')
     }
     return { record, leaf }
+  }
+
+  private getLivePtyForHandle(handle: string): {
+    record: TerminalHandleRecord
+    pty: RuntimePtyWorktreeRecord
+  } | null {
+    const record = this.handles.get(handle)
+    if (!record || record.runtimeId !== this.runtimeId || !record.tabId.startsWith('pty:')) {
+      return null
+    }
+    if (!record.ptyId) {
+      return null
+    }
+    const pty = this.ptysById.get(record.ptyId)
+    if (!pty || pty.ptyId !== record.ptyId) {
+      return null
+    }
+    return { record, pty }
+  }
+
+  private readPtyTerminal(
+    handle: string,
+    pty: RuntimePtyWorktreeRecord,
+    opts: { cursor?: number } = {}
+  ): RuntimeTerminalRead {
+    const allLines = buildTailLines(pty.tailBuffer, pty.tailPartialLine)
+
+    let tail: string[]
+    let truncated: boolean
+
+    if (typeof opts.cursor === 'number' && opts.cursor >= 0) {
+      const bufferStart = pty.tailLinesTotal - pty.tailBuffer.length
+      const sliceFrom = Math.max(0, opts.cursor - bufferStart)
+      tail = pty.tailBuffer.slice(sliceFrom)
+      truncated = opts.cursor < bufferStart
+    } else {
+      tail = allLines
+      truncated = pty.tailTruncated
+    }
+
+    return {
+      handle,
+      status: pty.connected ? 'running' : 'unknown',
+      tail,
+      truncated,
+      nextCursor: String(pty.tailLinesTotal)
+    }
   }
 
   private issueHandle(leaf: RuntimeLeafRecord): string {
@@ -1800,6 +3259,35 @@ export class OrcaRuntimeService {
     })
     this.handleByLeafKey.set(leafKey, preAllocated)
     return preAllocated
+  }
+
+  private issuePtyHandle(pty: RuntimePtyWorktreeRecord): string {
+    const existingHandle = this.handleByPtyId.get(pty.ptyId)
+    if (existingHandle) {
+      const existingRecord = this.handles.get(existingHandle)
+      if (
+        existingRecord &&
+        existingRecord.runtimeId === this.runtimeId &&
+        existingRecord.ptyId === pty.ptyId
+      ) {
+        return existingHandle
+      }
+    }
+
+    const handle = `term_${randomUUID()}`
+    const syntheticId = `pty:${pty.ptyId}`
+    this.handles.set(handle, {
+      handle,
+      runtimeId: this.runtimeId,
+      rendererGraphEpoch: this.rendererGraphEpoch,
+      worktreeId: pty.worktreeId,
+      tabId: syntheticId,
+      leafId: syntheticId,
+      ptyId: pty.ptyId,
+      ptyGeneration: 0
+    })
+    this.handleByPtyId.set(pty.ptyId, handle)
+    return handle
   }
 
   private refreshWritableFlags(): void {
@@ -1950,8 +3438,15 @@ export class OrcaRuntimeService {
 
     // Why: Claude Code treats large single PTY writes as paste events and
     // swallows a \r included in the same write. Send Enter separately after
-    // a delay so the agent processes the pasted message first. Mark messages
-    // as read only after \r is confirmed, so failed deliveries stay queued.
+    // a delay so the agent processes the pasted message first. Stamp
+    // `delivered_at` only after \r is confirmed, so failed deliveries stay
+    // queued.
+    //
+    // Important (design doc §3.2, feedback #2): we stamp `delivered_at` here
+    // instead of flipping `read`. `read` is reserved for "a check-caller
+    // consumed this message." Flipping `read` on push-on-idle would hide the
+    // message from the coordinator's next `check --unread`, which is the
+    // exact bug feedback #2 reported. The two bits must stay independent.
     const ptyId = leaf.ptyId
     setTimeout(() => {
       try {
@@ -1960,11 +3455,12 @@ export class OrcaRuntimeService {
         }
         const submitted = this.ptyController?.write(ptyId, '\r') ?? false
         if (submitted) {
-          this._orchestrationDb?.markAsRead(unread.map((m) => m.id))
+          this._orchestrationDb?.markAsDelivered(unread.map((m) => m.id))
         }
       } catch {
-        // Terminal may have closed during the delay — messages stay unread
-        // and will be re-delivered on the next idle transition.
+        // Terminal may have closed during the delay — messages stay queued
+        // (delivered_at still NULL) and will be re-delivered on the next
+        // idle transition.
       }
     }, 500)
   }
@@ -3076,11 +4572,25 @@ const MAX_TAIL_LINES = 120
 const MAX_TAIL_CHARS = 4000
 const MAX_PREVIEW_LINES = 6
 const MAX_PREVIEW_CHARS = 300
+const WORKTREE_STATUS_PRIORITY: Record<RuntimeWorktreeStatus, number> = {
+  inactive: 0,
+  active: 1,
+  done: 2,
+  working: 3,
+  permission: 4
+}
 const DEFAULT_REPO_SEARCH_REFS_LIMIT = 25
 const DEFAULT_TERMINAL_LIST_LIMIT = 200
 const DEFAULT_WORKTREE_LIST_LIMIT = 200
 const DEFAULT_WORKTREE_PS_LIMIT = 200
 const RESOLVED_WORKTREE_CACHE_TTL_MS = 1000
+// Why (§3.3): 30s freshness window. A second worktree-create or dispatch-probe
+// against the same repo+remote within this window reuses the previous successful
+// fetch instead of repeating the round-trip. Chosen so rapid "new worktree"
+// clicks and successive coordinator dispatches feel snappy, while still being
+// short enough that a genuinely-changed remote is observed on the next action.
+const FETCH_FRESHNESS_MS = 30_000
+const DRIFT_PROBE_SUBJECT_LIMIT = 5
 function buildPreview(lines: string[], partialLine: string): string {
   const previewLines = buildTailLines(lines, partialLine)
     .map((line) => line.trim())
@@ -3204,6 +4714,89 @@ function normalizeBranchRef(branch: string): string {
   return branch.startsWith('refs/heads/') ? branch.slice('refs/heads/'.length) : branch
 }
 
+function inferWorktreeIdFromPtyId(ptyId: string): string | null {
+  const separatorIndex = ptyId.lastIndexOf('@@')
+  if (separatorIndex <= 0) {
+    return null
+  }
+  const worktreeId = ptyId.slice(0, separatorIndex)
+  return parseRuntimeWorktreeId(worktreeId) ? worktreeId : null
+}
+
+function parseRuntimeWorktreeId(
+  worktreeId: string
+): { repoId: string; worktreePath: string } | null {
+  const separatorIndex = worktreeId.indexOf('::')
+  if (separatorIndex <= 0) {
+    return null
+  }
+  const worktreePath = worktreeId.slice(separatorIndex + 2)
+  if (!worktreePath) {
+    return null
+  }
+  return {
+    repoId: worktreeId.slice(0, separatorIndex),
+    worktreePath
+  }
+}
+
+function findResolvedWorktreeIdForPath(
+  resolvedWorktrees: ResolvedWorktree[],
+  cwd: string
+): string | null {
+  if (!cwd) {
+    return null
+  }
+  const matches = resolvedWorktrees
+    .filter(
+      (worktree) =>
+        areWorktreePathsEqual(worktree.path, cwd) || isPathInsideWorktree(cwd, worktree.path)
+    )
+    .sort((left, right) => right.path.length - left.path.length)
+  return matches[0]?.id ?? null
+}
+
+function isPathInsideWorktree(candidatePath: string, worktreePath: string): boolean {
+  if (candidatePath === worktreePath) {
+    return true
+  }
+  const normalizedCandidate = candidatePath.replace(/\\/g, '/').replace(/\/+$/, '')
+  const normalizedWorktree = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalizedCandidate.startsWith(`${normalizedWorktree}/`)
+}
+
+function getLeafWorktreeStatus(
+  leaf: RuntimeLeafRecord,
+  tabTitle: string | null
+): RuntimeWorktreeStatus {
+  const detected = leaf.lastAgentStatus ?? detectAgentStatusFromTitle(leaf.title ?? tabTitle ?? '')
+  if (detected === 'permission') {
+    return 'permission'
+  }
+  if (detected === 'working') {
+    return 'working'
+  }
+  return leaf.ptyId ? 'active' : 'inactive'
+}
+
+function getSavedTabWorktreeStatus(title: string, hasPty: boolean): RuntimeWorktreeStatus {
+  const detected = detectAgentStatusFromTitle(title)
+  if (detected === 'permission') {
+    return 'permission'
+  }
+  if (detected === 'working') {
+    return 'working'
+  }
+  return hasPty ? 'active' : 'inactive'
+}
+
+function mergeWorktreeStatus(
+  current: RuntimeWorktreeStatus,
+  next: RuntimeWorktreeStatus
+): RuntimeWorktreeStatus {
+  return WORKTREE_STATUS_PRIORITY[next] > WORKTREE_STATUS_PRIORITY[current] ? next : current
+}
+
 function normalizeTerminalChunk(chunk: string): string {
   return chunk
     .replace(/\r\n/g, '\n')
@@ -3229,6 +4822,13 @@ function compareWorktreePs(
   left: RuntimeWorktreePsSummary,
   right: RuntimeWorktreePsSummary
 ): number {
+  // Pinned and unread worktrees sort above others so they survive truncation.
+  if (left.isPinned !== right.isPinned) {
+    return left.isPinned ? -1 : 1
+  }
+  if (left.unread !== right.unread) {
+    return left.unread ? -1 : 1
+  }
   const leftLast = left.lastOutputAt ?? -1
   const rightLast = right.lastOutputAt ?? -1
   if (leftLast !== rightLast) {

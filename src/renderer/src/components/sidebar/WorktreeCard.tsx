@@ -40,6 +40,11 @@ type WorktreeCardProps = {
   hintNumber?: number
 }
 
+function formatSparseDirectoryPreview(directories: string[]): string {
+  const preview = directories.slice(0, 4).join(', ')
+  return directories.length <= 4 ? preview : `${preview}, +${directories.length - 4} more`
+}
+
 const WorktreeCard = React.memo(function WorktreeCard({
   worktree,
   repo,
@@ -323,10 +328,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
   const unreadTooltip = worktree.isUnread ? 'Mark read' : 'Mark unread'
 
+  // Why: the 'unread' card property is the user's opt-out. When off, we render
+  // as if the workspace is read so bold emphasis never appears. The persisted
+  // `worktree.isUnread` flag is unchanged; only the rendering changes.
+  const showUnreadEmphasis = cardProps.includes('unread') && worktree.isUnread
+
   const cardBody = (
     <div
       className={cn(
-        'group relative flex items-start gap-2.5 px-2 py-2 rounded-lg cursor-pointer transition-all duration-200 outline-none select-none ml-1',
+        'group relative flex items-start gap-1.5 px-2 py-2 rounded-lg cursor-pointer transition-all duration-200 outline-none select-none ml-1',
         isActive
           ? 'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] border border-black/[0.015] dark:bg-white/[0.10] dark:border-border/40 dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
           : 'border border-transparent hover:bg-accent/40',
@@ -422,7 +432,21 @@ const WorktreeCard = React.memo(function WorktreeCard({
               </Tooltip>
             )}
 
-            <div className="text-[12px] font-semibold text-foreground truncate leading-tight">
+            {/* Why: weight alone carries the unread signal; color stays
+                 at text-foreground in both states so the title keeps
+                 hierarchy against the muted branch row below (muting the
+                 title as well flattened the card — same reasoning as the
+                 repo chip comment below). */}
+            <div
+              className={cn(
+                'text-[12px] truncate leading-tight text-foreground',
+                showUnreadEmphasis ? 'font-semibold' : 'font-normal'
+              )}
+            >
+              {/* Why: the card root is a non-interactive <div>, so aria-label
+                   on it is announced inconsistently across screen readers.
+                   A visible-text prefix inside the accessible name is reliable. */}
+              {showUnreadEmphasis && <span className="sr-only">Unread: </span>}
               {worktree.displayName}
             </div>
 
@@ -442,6 +466,29 @@ const WorktreeCard = React.memo(function WorktreeCard({
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
                   Primary worktree (original clone directory)
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {worktree.isSparse && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="h-[16px] px-1.5 text-[10px] font-medium rounded shrink-0 leading-none text-amber-700 dark:text-amber-300 border-amber-500/30 bg-amber-500/5"
+                  >
+                    sparse
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="right" sideOffset={8} className="max-w-72">
+                  <div className="space-y-1">
+                    <div>Partial checkout. Files outside these paths are not on disk.</div>
+                    {worktree.sparseDirectories && worktree.sparseDirectories.length > 0 ? (
+                      <div className="font-mono text-[11px] opacity-80">
+                        {formatSparseDirectoryPreview(worktree.sparseDirectories)}
+                      </div>
+                    ) : null}
+                  </div>
                 </TooltipContent>
               </Tooltip>
             )}

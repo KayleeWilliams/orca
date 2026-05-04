@@ -9,7 +9,9 @@ import type { PtyConnectResult } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 import { shouldSeedCacheTimerOnInitialTitle } from './cache-timer-seeding'
 import type { PtyConnectionDeps } from './pty-connection-types'
-import { isPaneReplaying, replayIntoTerminal } from './replay-guard'
+import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
+import { getFitOverrideForPty, bindPanePtyId } from '@/lib/pane-manager/mobile-fit-overrides'
+import { isPaneReplaying, replayIntoTerminal, replayIntoTerminalAsync } from './replay-guard'
 import {
   paneLeafId,
   POST_REPLAY_MODE_RESET,
@@ -17,6 +19,7 @@ import {
 } from './layout-serialization'
 import { warnTerminalLifecycleAnomaly } from './terminal-lifecycle-diagnostics'
 import { detectDeveloperPermissionHint } from './developer-permission-hints'
+import { registerPtySerializer } from './pty-buffer-serializer'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
 const developerPermissionHintKeys = new Set<string>()
@@ -209,6 +212,8 @@ export function connectPanePty(
   }
 
   const onPtySpawn = (ptyId: string): void => {
+    bindPanePtyId(pane.id, ptyId, deps.tabId)
+    pane.container.dataset.ptyId = ptyId
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
     deps.updateTabPtyId(deps.tabId, ptyId)
     // Spawn completion is when a pane gains a concrete PTY ID. The initial
@@ -389,6 +394,14 @@ export function connectPanePty(
   })
 
   const onResizeDisposable = pane.terminal.onResize(({ cols, rows }) => {
+    // Why: when a mobile-fit override is active, the PTY is already at the
+    // correct phone dimensions. Suppress resize forwarding to avoid spurious
+    // SIGWINCH signals that could cause TUI flicker. Uses the transport's
+    // ptyId directly to avoid pane ID collisions across tabs.
+    const currentPtyId = transport.getPtyId()
+    if (currentPtyId && getFitOverrideForPty(currentPtyId)) {
+      return
+    }
     transport.resize(cols, rows)
   })
 
@@ -400,11 +413,7 @@ export function connectPanePty(
     if (disposed) {
       return
     }
-    try {
-      pane.fitAddon.fit()
-    } catch {
-      /* ignore */
-    }
+    safeFit(pane)
     const cols = pane.terminal.cols
     const rows = pane.terminal.rows
 
@@ -551,8 +560,38 @@ export function connectPanePty(
         startFreshSpawn()
         return
       }
+      bindPanePtyId(pane.id, ptyId, deps.tabId)
+      pane.container.dataset.ptyId = ptyId
       deps.syncPanePtyLayoutBinding(pane.id, ptyId)
       deps.updateTabPtyId(deps.tabId, ptyId)
+
+      // Why: mobile terminal streaming needs the exact screen state from
+      // xterm.js. Register a serializer for this ptyId so the main process
+      // can request a buffer snapshot when a mobile client subscribes.
+      const unregisterSerializer = registerPtySerializer(ptyId, async () => {
+        try {
+          const pending = deps.pendingWritesRef.current.get(pane.id)
+          if (pending) {
+            deps.pendingWritesRef.current.set(pane.id, '')
+            // Why: hidden/background panes buffer PTY output instead of writing
+            // to xterm. Mobile snapshots must include that pending output, and
+            // replay guard prevents xterm query auto-replies from hitting stdin.
+            await replayIntoTerminalAsync(pane, deps.replayingPanesRef, pending)
+          }
+          return {
+            data: pane.serializeAddon.serialize(),
+            cols: pane.terminal.cols,
+            rows: pane.terminal.rows
+          }
+        } catch {
+          return null
+        }
+      })
+      const origOnDataDisposableDispose = onDataDisposable.dispose.bind(onDataDisposable)
+      onDataDisposable.dispose = () => {
+        unregisterSerializer()
+        origOnDataDisposableDispose()
+      }
 
       if (connectResult?.coldRestore) {
         // Why: restoreScrollbackBuffers() already wrote the saved xterm
@@ -611,7 +650,12 @@ export function connectPanePty(
         })
       }
 
-      transport.resize(cols, rows)
+      // Why: when a mobile-fit override is active, skip sending desktop dims
+      // to the PTY — the PTY is already at phone dimensions and must stay there.
+      const reattachPtyId = transport.getPtyId()
+      if (!reattachPtyId || !getFitOverrideForPty(reattachPtyId)) {
+        transport.resize(cols, rows)
+      }
       // Why: POSIX only delivers SIGWINCH when terminal dimensions actually
       // change. Sending it explicitly guarantees restored TUIs repaint at
       // the correct cursor position after snapshot replay.
@@ -736,8 +780,17 @@ export function connectPanePty(
       isSessionOwnedByWorktree(candidateReattachSessionId, deps.worktreeId)
         ? candidateReattachSessionId
         : null
+    const _diagMsg = `pane=${pane.id} tab=${deps.tabId} restored=${restoredPtyId} existing=${existingPtyId} detached=${detachedLivePtyId} reattach=${deferredReattachSessionId} hasTransport=${hasExistingPaneTransport} pendingKey=${pendingSpawnKey}`
+    console.log(`[pty-connect] ${_diagMsg}`)
+    ;((globalThis as Record<string, unknown>).__ptyConnectDiag ??= [] as string[]) as string[]
+    ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[]).push(_diagMsg)
+
     if (deferredReattachSessionId) {
       allowInitialIdleCacheSeed = true
+      console.log(`[pty-connect] pane=${pane.id} → REATTACH ${deferredReattachSessionId}`)
+      ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+        `pane=${pane.id} → REATTACH`
+      )
 
       const reattachPromise = transport.connect({
         url: '',
@@ -771,6 +824,10 @@ export function connectPanePty(
           startFreshSpawn()
         })
     } else if (detachedLivePtyId) {
+      console.log(`[pty-connect] pane=${pane.id} → ATTACH detached=${detachedLivePtyId}`)
+      ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+        `pane=${pane.id} → ATTACH ${detachedLivePtyId}`
+      )
       allowInitialIdleCacheSeed = false
       // Why: surface synchronous attach failures (e.g., the PTY died between
       // mount and remount, so window.api.pty.resize rejects) through
@@ -805,6 +862,10 @@ export function connectPanePty(
         ? undefined
         : pendingSpawnByPaneKey.get(pendingSpawnKey)
       if (pendingSpawn) {
+        console.log(`[pty-connect] pane=${pane.id} → PENDING SPAWN (waiting on sibling)`)
+        ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+          `pane=${pane.id} → PENDING SPAWN`
+        )
         void pendingSpawn
           .then((spawnedPtyId) => {
             if (disposed) {
@@ -845,6 +906,10 @@ export function connectPanePty(
             reportError(err instanceof Error ? err.message : String(err))
           })
       } else {
+        console.log(`[pty-connect] pane=${pane.id} → FRESH SPAWN`)
+        ;((globalThis as Record<string, unknown>).__ptyConnectDiag as string[])?.push(
+          `pane=${pane.id} → FRESH SPAWN`
+        )
         startFreshSpawn()
       }
     }
