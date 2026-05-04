@@ -7,6 +7,48 @@ import {
 } from '../flags'
 import { getTerminalHandle } from '../selectors'
 
+// Why: 15 s is well under Claude Code's empirical ~2 min Bash-tool silence
+// budget and generates only ~40 lines per 10 min wait — enough to assure the
+// parent process the subprocess is alive without flooding logs. See design
+// doc §3.4.
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000
+
+// Why: test-only escape hatch so subprocess tests can verify the feature in
+// under 10 s rather than needing a full 15 s silence window. Production users
+// should never set this — there is no surface documentation. A bogus value
+// falls back to the default rather than disabling the heartbeat.
+function resolveHeartbeatIntervalMs(): number {
+  const raw = process.env.ORCA_HEARTBEAT_INTERVAL_MS
+  if (!raw) {
+    return DEFAULT_HEARTBEAT_INTERVAL_MS
+  }
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_HEARTBEAT_INTERVAL_MS
+  }
+  return parsed
+}
+
+function startCheckHeartbeat(deadlineMs: number | undefined): () => void {
+  const startedAt = Date.now()
+  const interval = setInterval(() => {
+    const payload = {
+      _heartbeat: true,
+      elapsedMs: Date.now() - startedAt,
+      deadlineMs: deadlineMs ?? null
+    }
+    // Why: `process.stderr.write` is line-flushed per-call in Node, whereas a
+    // fully-buffered writer would hold all heartbeat lines until exit and
+    // silently defeat the whole point of the ping. Subprocess test asserts
+    // this by reading stderr incrementally. See §3.4.
+    process.stderr.write(`${JSON.stringify(payload)}\n`)
+  }, resolveHeartbeatIntervalMs())
+  if (typeof interval.unref === 'function') {
+    interval.unref()
+  }
+  return () => clearInterval(interval)
+}
+
 type MessageSummary = {
   id: string
   from_handle: string
@@ -62,18 +104,36 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
 
   'orchestration check': async ({ flags, client, cwd, json }) => {
     const terminal = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'terminal')
-    const result = await client.call<{
+    const wait = flags.has('wait')
+    const timeoutMs = flags.has('timeout-ms') ? Number(flags.get('timeout-ms')) : undefined
+
+    // Why: Claude Code's Bash tool auto-backgrounds subprocesses that produce
+    // no output for ~2 min (shorter on the non-interactive path). Emit a
+    // heartbeat line to stderr every HEARTBEAT_INTERVAL_MS while the wait is
+    // active so the parent process can see the subprocess is still alive.
+    // Stderr rather than stdout so stdout stays a single final JSON payload,
+    // and JSON-shaped rather than `# …` so `2>&1 | jq` pipelines still work
+    // (jq refuses `#`-prefixed lines). See design doc §3.4.
+    const stopHeartbeat = wait ? startCheckHeartbeat(timeoutMs) : null
+    type CheckResult = {
       messages: MessageSummary[]
       count: number
       formatted?: string
-    }>('orchestration.check', {
-      terminal,
-      unread: flags.has('unread') ? true : undefined,
-      types: getOptionalStringFlag(flags, 'types'),
-      inject: flags.has('inject') ? true : undefined,
-      wait: flags.has('wait') ? true : undefined,
-      timeoutMs: flags.has('timeout-ms') ? Number(flags.get('timeout-ms')) : undefined
-    })
+    }
+    let result: Awaited<ReturnType<typeof client.call<CheckResult>>>
+    try {
+      result = await client.call<CheckResult>('orchestration.check', {
+        terminal,
+        unread: flags.has('unread') ? true : undefined,
+        all: flags.has('all') ? true : undefined,
+        types: getOptionalStringFlag(flags, 'types'),
+        inject: flags.has('inject') ? true : undefined,
+        wait: wait ? true : undefined,
+        timeoutMs
+      })
+    } finally {
+      stopHeartbeat?.()
+    }
     printResult(result, json, (r) => {
       if (r.formatted) {
         return r.formatted
@@ -102,7 +162,8 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       messages: MessageSummary[]
       count: number
     }>('orchestration.inbox', {
-      limit: getOptionalPositiveIntegerFlag(flags, 'limit')
+      limit: getOptionalPositiveIntegerFlag(flags, 'limit'),
+      terminal: getOptionalStringFlag(flags, 'terminal')
     })
     printResult(result, json, (r) => {
       if (r.count === 0) {

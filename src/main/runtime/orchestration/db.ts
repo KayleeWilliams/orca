@@ -42,6 +42,24 @@ export class OrchestrationDb {
     this.db.pragma('synchronous = NORMAL')
     this.db.pragma('busy_timeout = 5000')
     this.createTables()
+    // Why: migrations must run synchronously before any method can be called
+    // on this instance. The migration is idempotent (PRAGMA check) and
+    // hard-fails on error — a DB missing `delivered_at` would cause push-on-idle
+    // to throw inside markAsDelivered, which combined with the long-poll
+    // counter risks leaking slots. Better to crash startup than serve traffic
+    // on a broken schema. See design doc §3.2 / §3.3 / §7 risk #3.
+    this.runMigrations()
+  }
+
+  private runMigrations(): void {
+    const columns = this.db.prepare('PRAGMA table_info(messages)').all() as { name: string }[]
+    const hasDeliveredAt = columns.some((c) => c.name === 'delivered_at')
+    if (!hasDeliveredAt) {
+      // ALTER TABLE throws synchronously; any error other than
+      // "duplicate column name" (which is ruled out by the PRAGMA check above)
+      // must propagate so startup fails loudly.
+      this.db.exec('ALTER TABLE messages ADD COLUMN delivered_at TEXT')
+    }
   }
 
   private createTables(): void {
@@ -195,10 +213,35 @@ export class OrchestrationDb {
     this.db.prepare(`UPDATE messages SET read = 1 WHERE id IN (${placeholders})`).run(...ids)
   }
 
+  // Why: `delivered_at` is stamped via SQLite's datetime('now') rather than a
+  // JS ISO string so it uses the same 'YYYY-MM-DD HH:MM:SS' UTC shape as the
+  // other SQL-default timestamps on this table. A future ORDER BY or
+  // comparison against created_at relies on this format consistency.
+  // See design doc §3.2.
+  markAsDelivered(ids: string[]): void {
+    if (ids.length === 0) {
+      return
+    }
+    const placeholders = ids.map(() => '?').join(',')
+    this.db
+      .prepare(`UPDATE messages SET delivered_at = datetime('now') WHERE id IN (${placeholders})`)
+      .run(...ids)
+  }
+
   getInbox(limit = 20): MessageRow[] {
     return this.db
       .prepare('SELECT * FROM messages ORDER BY sequence DESC LIMIT ?')
       .all(limit) as MessageRow[]
+  }
+
+  // Why: used by `check --all` and `inbox --terminal <handle>` — returns every
+  // message for a handle regardless of read/delivered state; never touches the
+  // read bit. Stale-handle safe: if the handle no longer exists, the query
+  // just returns whatever historical rows remain (§3.3).
+  getAllMessagesForHandle(toHandle: string, limit = 100): MessageRow[] {
+    return this.db
+      .prepare('SELECT * FROM messages WHERE to_handle = ? ORDER BY sequence DESC LIMIT ?')
+      .all(toHandle, limit) as MessageRow[]
   }
 
   // ── Tasks ──

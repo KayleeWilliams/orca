@@ -1733,7 +1733,7 @@ export class OrcaRuntimeService {
 
   waitForMessage(
     handle: string,
-    options?: { typeFilter?: string[]; timeoutMs?: number }
+    options?: { typeFilter?: string[]; timeoutMs?: number; signal?: AbortSignal }
   ): Promise<void> {
     return new Promise((resolve) => {
       const timeoutMs = options?.timeoutMs ?? MESSAGE_WAIT_DEFAULT_TIMEOUT_MS
@@ -1745,7 +1745,27 @@ export class OrcaRuntimeService {
         timeout: null
       }
 
+      // Why: if the caller aborts (socket closed on the RPC side — see design
+      // doc §3.1 counter-lifecycle), resolve immediately so the long-poll slot
+      // is released instead of counting down the full timeoutMs with a dead
+      // client on the other end.
+      const signal = options?.signal
+      const onAbort = (): void => {
+        this.removeMessageWaiter(waiter)
+        resolve()
+      }
+      if (signal) {
+        if (signal.aborted) {
+          resolve()
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+
       waiter.timeout = setTimeout(() => {
+        if (signal) {
+          signal.removeEventListener('abort', onAbort)
+        }
         this.removeMessageWaiter(waiter)
         resolve()
       }, timeoutMs)
@@ -2002,8 +2022,15 @@ export class OrcaRuntimeService {
 
     // Why: Claude Code treats large single PTY writes as paste events and
     // swallows a \r included in the same write. Send Enter separately after
-    // a delay so the agent processes the pasted message first. Mark messages
-    // as read only after \r is confirmed, so failed deliveries stay queued.
+    // a delay so the agent processes the pasted message first. Stamp
+    // `delivered_at` only after \r is confirmed, so failed deliveries stay
+    // queued.
+    //
+    // Important (design doc §3.2, feedback #2): we stamp `delivered_at` here
+    // instead of flipping `read`. `read` is reserved for "a check-caller
+    // consumed this message." Flipping `read` on push-on-idle would hide the
+    // message from the coordinator's next `check --unread`, which is the
+    // exact bug feedback #2 reported. The two bits must stay independent.
     const ptyId = leaf.ptyId
     setTimeout(() => {
       try {
@@ -2012,11 +2039,12 @@ export class OrcaRuntimeService {
         }
         const submitted = this.ptyController?.write(ptyId, '\r') ?? false
         if (submitted) {
-          this._orchestrationDb?.markAsRead(unread.map((m) => m.id))
+          this._orchestrationDb?.markAsDelivered(unread.map((m) => m.id))
         }
       } catch {
-        // Terminal may have closed during the delay — messages stay unread
-        // and will be re-delivered on the next idle transition.
+        // Terminal may have closed during the delay — messages stay queued
+        // (delivered_at still NULL) and will be re-delivered on the next
+        // idle transition.
       }
     }, 500)
   }

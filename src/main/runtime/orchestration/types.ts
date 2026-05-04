@@ -30,6 +30,7 @@ export type MessageRow = {
   read: number
   sequence: number
   created_at: string
+  delivered_at: string | null
 }
 
 export type TaskRow = {

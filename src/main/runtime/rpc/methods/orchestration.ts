@@ -52,6 +52,10 @@ const SendParams = z.object({
 const CheckParams = z.object({
   terminal: OptionalString,
   unread: OptionalBoolean,
+  // Why: `all` surfaces every message for the handle and skips mark-read.
+  // Previously the only way to ask for "all" was the hidden RPC trick
+  // `{unread: false}`. See design doc §3.2 / §3.3.
+  all: OptionalBoolean,
   types: OptionalString,
   inject: OptionalBoolean,
   wait: OptionalBoolean,
@@ -65,7 +69,11 @@ const ReplyParams = z.object({
 })
 
 const InboxParams = z.object({
-  limit: OptionalFiniteNumber
+  limit: OptionalFiniteNumber,
+  // Why: filters the inbox listing to a specific handle so coordinators can
+  // ask "everything for this handle" with either `inbox` or `check --all`
+  // and get agreeing results. See design doc §3.3.
+  terminal: OptionalString
 })
 
 const TaskCreateParams = z.object({
@@ -177,7 +185,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.check',
     params: CheckParams,
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, signal }) => {
       const db = runtime.getOrchestrationDb()
       const handle = params.terminal ?? 'unknown'
       const typeFilter = params.types
@@ -191,12 +199,17 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         throw new Error(`Invalid --types: ${invalidTypes.join(',')}`)
       }
 
-      const showUnread = params.unread !== false
+      // Why: `all` short-circuits to "everything for the handle, no marking."
+      // Explicit `unread: false` is also honored for one release as a compat
+      // shim so in-flight callers don't break (see design doc §5). Otherwise
+      // today's behavior is preserved: default is unread-only + mark-read.
+      const showAll = params.all === true || params.unread === false
+      const showUnread = !showAll
 
       const readAndReturn = () => {
         const messages = showUnread
           ? db.getUnreadMessages(handle, typeFilter)
-          : db.getAllMessages(handle)
+          : db.getAllMessagesForHandle(handle)
 
         if (showUnread && messages.length > 0) {
           db.markAsRead(messages.map((m) => m.id))
@@ -216,10 +229,15 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       // Why: blocking wait lets coordinators replace sleep+poll loops with a
-      // single call that resolves when a message arrives or the timeout expires.
+      // single call that resolves when a message arrives or the timeout
+      // expires. The `signal` plumbed from the RPC transport aborts this
+      // waiter the moment the client socket closes, so a killed client
+      // releases its long-poll slot immediately rather than after the full
+      // timeoutMs. See design doc §3.1 counter-lifecycle.
       await runtime.waitForMessage(handle, {
         typeFilter: typeFilter as string[] | undefined,
-        timeoutMs: params.timeoutMs ?? undefined
+        timeoutMs: params.timeoutMs ?? undefined,
+        signal
       })
       return readAndReturn()
     }
@@ -255,7 +273,13 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     params: InboxParams,
     handler: (params, { runtime }) => {
       const db = runtime.getOrchestrationDb()
-      const messages = db.getInbox(params.limit)
+      // Why: when `terminal` is provided, mirror `check --all` output for that
+      // handle (same rows in the same sequence order). Stale/unknown handles
+      // return an empty list instead of erroring, matching the "historical
+      // rows survive handle deletion" rule in design doc §3.3.
+      const messages = params.terminal
+        ? db.getAllMessagesForHandle(params.terminal, params.limit)
+        : db.getInbox(params.limit)
       return { messages, count: messages.length }
     }
   }),
