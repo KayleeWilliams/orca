@@ -347,9 +347,45 @@ test.describe('Terminal restart persistence', () => {
       // Split vertically — a new pane is created with its own ptyId
       await splitActiveTerminalPane(firstLaunch.page, 'vertical')
       await waitForPaneCount(firstLaunch.page, 2, 15_000)
-      // Why: splitActiveTerminalPane makes the new pane active, so the next
-      // discoverActivePtyId returns the *new* pane's pty.
-      const secondPtyId = await discoverActivePtyId(firstLaunch.page)
+      // Why: don't use discoverActivePtyId here — it works by broadcasting a
+      // marker to every candidate pty in the tab and reading the active
+      // pane's xterm buffer. Right after a split the new pane's PTY may not
+      // be registered in ptyIdsByTabId yet (CI is slower than local), which
+      // makes the probe time out. Instead, poll the store directly for the
+      // tab's ptyId list to grow to 2, then pick the id that isn't firstPtyId.
+      const tabId = await firstLaunch.page.evaluate(() => {
+        const store = window.__store
+        if (!store) {
+          return null
+        }
+        const s = store.getState()
+        const worktreeId = s.activeWorktreeId
+        if (!worktreeId) {
+          return null
+        }
+        return s.activeTabIdByWorktree[worktreeId] ?? null
+      })
+      if (!tabId) {
+        throw new Error('2-pane split test: active tabId unavailable')
+      }
+      await expect
+        .poll(
+          async () =>
+            firstLaunch.page.evaluate((tabId) => {
+              return (window.__store?.getState().ptyIdsByTabId[tabId] ?? []).length
+            }, tabId),
+          { timeout: 15_000, message: 'Split pane never registered its PTY in the store' }
+        )
+        .toBeGreaterThanOrEqual(2)
+      const ptyIds = await firstLaunch.page.evaluate((tabId) => {
+        return window.__store?.getState().ptyIdsByTabId[tabId] ?? []
+      }, tabId)
+      const secondPtyId = ptyIds.find((id: string) => id !== firstPtyId)
+      if (!secondPtyId) {
+        throw new Error(
+          `2-pane split test: could not identify second ptyId from ${JSON.stringify(ptyIds)}`
+        )
+      }
       expect(secondPtyId).not.toBe(firstPtyId)
 
       const markerB = `SPLIT_PANE_B_${Date.now()}`
