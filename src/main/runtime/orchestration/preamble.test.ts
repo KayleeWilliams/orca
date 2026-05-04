@@ -79,4 +79,72 @@ describe('buildDispatchPreamble', () => {
     expect(result).toContain('orca orchestration send')
     expect(result).toContain('orca orchestration check')
   })
+
+  it('appends a BASE DRIFT section when baseDrift.behind > 0', () => {
+    const result = buildDispatchPreamble({
+      taskId: 'task_x',
+      taskSpec: 'do stuff',
+      coordinatorHandle: 'term_c',
+      baseDrift: {
+        base: 'origin/main',
+        behind: 7,
+        recentSubjects: ['fix: A', 'feat: B', 'chore: C']
+      }
+    })
+
+    expect(result).toContain('--- BASE DRIFT ---')
+    expect(result).toContain('7 commits behind origin/main')
+    expect(result).toContain('  - fix: A')
+    expect(result).toContain('  - feat: B')
+    expect(result).toContain('  - chore: C')
+    // drift section must appear before the task spec
+    expect(result.indexOf('--- BASE DRIFT ---')).toBeLessThan(result.indexOf('--- TASK ---'))
+  })
+
+  it('omits the drift section when baseDrift.behind is 0', () => {
+    const result = buildDispatchPreamble({
+      taskId: 'task_x',
+      taskSpec: 'do stuff',
+      coordinatorHandle: 'term_c',
+      baseDrift: {
+        base: 'origin/main',
+        behind: 0,
+        recentSubjects: []
+      }
+    })
+
+    expect(result).not.toContain('--- BASE DRIFT ---')
+    expect(result).not.toContain('commits behind')
+  })
+
+  it('omits the drift section when baseDrift is undefined', () => {
+    const result = buildDispatchPreamble({
+      taskId: 'task_x',
+      taskSpec: 'do stuff',
+      coordinatorHandle: 'term_c'
+    })
+
+    expect(result).not.toContain('--- BASE DRIFT ---')
+    expect(result).not.toContain('commits behind')
+  })
+
+  it('lists drift subjects in the order provided, each prefixed with two spaces and dash', () => {
+    const result = buildDispatchPreamble({
+      taskId: 'task_x',
+      taskSpec: 'do stuff',
+      coordinatorHandle: 'term_c',
+      baseDrift: {
+        base: 'origin/main',
+        behind: 3,
+        recentSubjects: ['first', 'second', 'third']
+      }
+    })
+
+    const firstIdx = result.indexOf('  - first')
+    const secondIdx = result.indexOf('  - second')
+    const thirdIdx = result.indexOf('  - third')
+    expect(firstIdx).toBeGreaterThanOrEqual(0)
+    expect(secondIdx).toBeGreaterThan(firstIdx)
+    expect(thirdIdx).toBeGreaterThan(secondIdx)
+  })
 })
