@@ -478,6 +478,12 @@ app.whenReady().then(async () => {
       emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('ui:toggleRightSidebar')
     },
+    // Why: intentionally does NOT call emitConsumedShortcut. The Appearance
+    // submenu items (statusBarVisible, showTasksButton, showTitlebarAgentActivity)
+    // have no keyboard accelerators — they're menu-click only — so there is no
+    // intercepted chord and no modifier hint to clear. If any appearance item
+    // gains an accelerator in the future, add
+    // `emitConsumedShortcut(mainWindow?.webContents)` at the top of this callback.
     onToggleAppearance: (key) => {
       if (!store) {
         return

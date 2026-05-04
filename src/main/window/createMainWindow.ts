@@ -546,10 +546,11 @@ export function createMainWindow(
     // before-input-event fires, but still emit Electron's zoom command. We
     // reroute that command to terminal zoom so zoom-out remains reachable.
     event.preventDefault()
-    emitConsumedShortcut(mainWindow.webContents)
     if (zoomDirection === 'in') {
+      emitConsumedShortcut(mainWindow.webContents)
       mainWindow.webContents.send('terminal:zoom', 'in')
     } else if (zoomDirection === 'out') {
+      emitConsumedShortcut(mainWindow.webContents)
       mainWindow.webContents.send('terminal:zoom', 'out')
     }
   })
