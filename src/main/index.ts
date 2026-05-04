@@ -36,6 +36,7 @@ import { acquireSingleInstanceLock } from './startup/single-instance-lock'
 import { RateLimitService } from './rate-limits/service'
 import { attachMainWindowServices } from './window/attach-main-window-services'
 import { createMainWindow } from './window/createMainWindow'
+import { emitConsumedShortcut } from './window/emit-consumed-shortcut'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
 import { ClaudeAccountService } from './claude-accounts/service'
@@ -452,21 +453,29 @@ app.whenReady().then(async () => {
   registerAppMenu({
     onCheckForUpdates: (options) => checkForUpdatesFromMenu(options),
     onOpenSettings: () => {
+      // Why: menu accelerator (e.g. Cmd+,) is intercepted at the OS level
+      // before the renderer's keydown listener. See emit-consumed-shortcut.ts.
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('ui:openSettings')
     },
     onZoomIn: () => {
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('terminal:zoom', 'in')
     },
     onZoomOut: () => {
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('terminal:zoom', 'out')
     },
     onZoomReset: () => {
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('terminal:zoom', 'reset')
     },
     onToggleLeftSidebar: () => {
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('ui:toggleLeftSidebar')
     },
     onToggleRightSidebar: () => {
+      emitConsumedShortcut(mainWindow?.webContents)
       mainWindow?.webContents.send('ui:toggleRightSidebar')
     },
     onToggleAppearance: (key) => {

@@ -177,6 +177,7 @@ describe('useIpcEvents updater integration', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -373,6 +374,7 @@ describe('useIpcEvents updater integration', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -568,6 +570,7 @@ describe('useIpcEvents updater integration', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -774,6 +777,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -965,6 +969,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -1151,6 +1156,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -1214,9 +1220,13 @@ describe('useIpcEvents shortcut hint clearing', () => {
     vi.unstubAllGlobals()
   })
 
-  it('clears modifier hints for main-process-forwarded shortcuts', async () => {
+  it('clears modifier hints when main signals a consumed shortcut', async () => {
+    const shortcutConsumedRef: { current: (() => void) | null } = { current: null }
     const toggleLeftSidebarRef: { current: (() => void) | null } = { current: null }
     const jumpToWorktreeRef: { current: ((index: number) => void) | null } = { current: null }
+    const terminalZoomRef: { current: ((direction: 'in' | 'out' | 'reset') => void) | null } = {
+      current: null
+    }
     const toggleSidebar = vi.fn()
     const dispatchEvent = vi.fn()
     const activateAndRevealWorktree = vi.fn()
@@ -1304,6 +1314,12 @@ describe('useIpcEvents shortcut hint clearing', () => {
       dispatchZoomLevelChanged: vi.fn()
     }))
 
+    vi.stubGlobal('document', {
+      activeElement: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      hidden: false
+    })
     vi.stubGlobal('window', {
       dispatchEvent,
       api: {
@@ -1345,7 +1361,14 @@ describe('useIpcEvents shortcut hint clearing', () => {
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
-          onTerminalZoom: () => () => {},
+          onTerminalZoom: (listener: (direction: 'in' | 'out' | 'reset') => void) => {
+            terminalZoomRef.current = listener
+            return () => {}
+          },
+          onShortcutConsumed: (listener: () => void) => {
+            shortcutConsumedRef.current = listener
+            return () => {}
+          },
           getZoomLevel: () => 0,
           set: vi.fn()
         },
@@ -1391,20 +1414,40 @@ describe('useIpcEvents shortcut hint clearing', () => {
     useIpcEvents()
     await Promise.resolve()
 
+    if (typeof shortcutConsumedRef.current !== 'function') {
+      throw new Error('Expected shortcut-consumed listener to be registered')
+    }
     if (typeof toggleLeftSidebarRef.current !== 'function') {
       throw new Error('Expected toggle-left-sidebar listener to be registered')
     }
     if (typeof jumpToWorktreeRef.current !== 'function') {
       throw new Error('Expected jump-to-worktree listener to be registered')
     }
+    if (typeof terminalZoomRef.current !== 'function') {
+      throw new Error('Expected terminal-zoom listener to be registered')
+    }
 
-    toggleLeftSidebarRef.current()
-    jumpToWorktreeRef.current(1)
+    // Core behavior: the single ui:shortcutConsumed subscriber dispatches the
+    // DOM clear event. Main emits this whenever it intercepts a Cmd/Ctrl chord
+    // via before-input-event preventDefault or a native menu accelerator.
+    shortcutConsumedRef.current()
 
     expect(dispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'orca:clear-modifier-hints' })
     )
-    expect(dispatchEvent).toHaveBeenCalledTimes(2)
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+
+    // Regression guard: individual forwarded-IPC handlers must NOT dispatch
+    // the clear themselves. The single ui:shortcutConsumed subscriber is the
+    // authoritative source; duplicating the dispatch in every handler is the
+    // pattern that caused the original Cmd+/- stuck-hints bug to lurk (any
+    // newly-added handler had to remember to dispatch).
+    dispatchEvent.mockClear()
+    toggleLeftSidebarRef.current()
+    jumpToWorktreeRef.current(1)
+    terminalZoomRef.current('in')
+
+    expect(dispatchEvent).not.toHaveBeenCalled()
     expect(toggleSidebar).toHaveBeenCalledTimes(1)
     expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-2')
   })
@@ -1548,6 +1591,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
+          onShortcutConsumed: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
         },

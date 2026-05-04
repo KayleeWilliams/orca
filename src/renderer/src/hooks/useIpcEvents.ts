@@ -33,6 +33,19 @@ export function useIpcEvents(): void {
   useEffect(() => {
     const unsubs: (() => void)[] = []
 
+    // Why: single authoritative clear for modifier-hint badges. Main fires
+    // `ui:shortcutConsumed` whenever it intercepts a Cmd/Ctrl chord via
+    // before-input-event preventDefault or a native menu accelerator, so
+    // the chord's non-modifier key never reaches useModifierHint's keydown
+    // listener. One subscriber here covers every current and future
+    // main-intercepted shortcut — individual IPC handlers do not need to
+    // remember to dispatch a clear. See src/main/window/emit-consumed-shortcut.ts.
+    unsubs.push(
+      window.api.ui.onShortcutConsumed(() => {
+        dispatchClearModifierHints()
+      })
+    )
+
     unsubs.push(
       window.api.repos.onChanged(() => {
         useAppStore.getState().fetchRepos()
@@ -100,21 +113,18 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onToggleLeftSidebar(() => {
-        dispatchClearModifierHints()
         useAppStore.getState().toggleSidebar()
       })
     )
 
     unsubs.push(
       window.api.ui.onToggleRightSidebar(() => {
-        dispatchClearModifierHints()
         useAppStore.getState().toggleRightSidebar()
       })
     )
 
     unsubs.push(
       window.api.ui.onToggleWorktreePalette(() => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeModal === 'worktree-palette') {
           store.closeModal()
@@ -126,7 +136,6 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onOpenQuickOpen(() => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeView === 'terminal' && store.activeWorktreeId !== null) {
           store.openModal('quick-open')
@@ -143,7 +152,6 @@ export function useIpcEvents(): void {
         if (!store.repos.some((repo) => isGitRepoKind(repo))) {
           return
         }
-        dispatchClearModifierHints()
         // Why: if the composer is already open, switch tabs in place so
         // repeated Cmd+N / Cmd+Shift+N presses toggle between Quick and
         // Create-from without remounting and losing in-flight composer state
@@ -158,7 +166,6 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onJumpToWorktreeIndex((index) => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeView !== 'terminal') {
           return
@@ -172,7 +179,6 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onWorktreeHistoryNavigate((direction) => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         // Why: mirror the button-visibility rule — worktree history navigation
         // is only meaningful in the terminal (worktree) view. Settings/Tasks
