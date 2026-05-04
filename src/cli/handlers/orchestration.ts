@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: orchestration CLI handlers share flag-parsing helpers and dispatch/preamble logic; splitting by verb would fragment the RuntimeClient call shape without reducing complexity. */
 import type { CommandHandler } from '../dispatch'
 import { printResult } from '../format'
 import {
@@ -5,7 +6,19 @@ import {
   getOptionalStringFlag,
   getRequiredStringFlag
 } from '../flags'
+import { RuntimeClientError } from '../runtime-client'
 import { getTerminalHandle } from '../selectors'
+
+// Why: mirrors TaskStatus (orchestration/types.ts) so the CLI can surface a
+// clear enum-aware error before the generic RPC Zod "Missing --status" message.
+const TASK_STATUS_VALUES = [
+  'pending',
+  'ready',
+  'dispatched',
+  'completed',
+  'failed',
+  'blocked'
+] as const
 
 type MessageSummary = {
   id: string
@@ -13,6 +26,8 @@ type MessageSummary = {
   to_handle?: string
   subject: string
   type?: string
+  body?: string
+  payload?: string | null
 }
 
 async function resolveOrchestrationTerminalHandle(
@@ -98,6 +113,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
   },
 
   'orchestration inbox': async ({ flags, client, json }) => {
+    const full = flags.has('full')
     const result = await client.call<{
       messages: MessageSummary[]
       count: number
@@ -108,9 +124,24 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       if (r.count === 0) {
         return 'No messages.'
       }
+      // Why: default output omits body/payload for at-a-glance sweeps; --full
+      // prints them verbatim so callers can audit without parsing --json.
       return r.messages
-        .map((m) => `${m.id} ${m.from_handle} -> ${m.to_handle ?? '?'}: "${m.subject}"`)
-        .join('\n')
+        .map((m) => {
+          const head = `${m.id} ${m.from_handle} -> ${m.to_handle ?? '?'}: "${m.subject}"`
+          if (!full) {
+            return head
+          }
+          const parts = [head]
+          if (m.body && m.body.length > 0) {
+            parts.push(m.body)
+          }
+          if (m.payload) {
+            parts.push(`[payload] ${m.payload}`)
+          }
+          return parts.join('\n')
+        })
+        .join(full ? '\n\n' : '\n')
     })
   },
 
@@ -128,7 +159,13 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
 
   'orchestration task-list': async ({ flags, client, json }) => {
     const result = await client.call<{
-      tasks: { id: string; spec: string; status: string }[]
+      tasks: {
+        id: string
+        spec: string
+        status: string
+        assignee_handle?: string | null
+        dispatch_id?: string | null
+      }[]
       count: number
     }>('orchestration.taskList', {
       status: getOptionalStringFlag(flags, 'status'),
@@ -138,16 +175,31 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       if (r.count === 0) {
         return 'No tasks.'
       }
-      return r.tasks.map((t) => `${t.id} [${t.status}] ${t.spec.slice(0, 60)}`).join('\n')
+      return r.tasks
+        .map((t) => {
+          const head = `${t.id} [${t.status}] ${t.spec.slice(0, 60)}`
+          if (t.status === 'dispatched' && t.assignee_handle) {
+            return `${head} -> ${t.assignee_handle} (${t.dispatch_id ?? '?'})`
+          }
+          return head
+        })
+        .join('\n')
     })
   },
 
   'orchestration task-update': async ({ flags, client, json }) => {
+    const status = getRequiredStringFlag(flags, 'status')
+    if (!TASK_STATUS_VALUES.includes(status as (typeof TASK_STATUS_VALUES)[number])) {
+      throw new RuntimeClientError(
+        'invalid_argument',
+        `invalid status '${status}', expected one of: ${TASK_STATUS_VALUES.join(', ')}`
+      )
+    }
     const result = await client.call<{ task: { id: string; status: string } }>(
       'orchestration.taskUpdate',
       {
         id: getRequiredStringFlag(flags, 'id'),
-        status: getRequiredStringFlag(flags, 'status'),
+        status,
         result: getOptionalStringFlag(flags, 'result')
       }
     )
@@ -156,29 +208,53 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
 
   'orchestration dispatch': async ({ flags, client, cwd, json }) => {
     const from = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'from')
-    const result = await client.call<{
-      dispatch: { id: string; task_id: string; status: string }
-    }>('orchestration.dispatch', {
-      task: getRequiredStringFlag(flags, 'task'),
-      to: getRequiredStringFlag(flags, 'to'),
-      from,
-      inject: flags.has('inject') ? true : undefined,
-      devMode: isDevCliInvocation()
-    })
-    printResult(
-      result,
-      json,
-      (r) => `Dispatched ${r.dispatch.task_id} -> ${r.dispatch.id} [${r.dispatch.status}]`
-    )
-  },
-
-  'orchestration dispatch-show': async ({ flags, client, json }) => {
+    const dryRun = flags.has('dry-run') ? true : undefined
+    const returnPreamble = flags.has('return-preamble') ? true : undefined
+    // Why: --to is only required for non-dry-run; the RPC handler re-enforces.
+    const to = dryRun ? getOptionalStringFlag(flags, 'to') : getRequiredStringFlag(flags, 'to')
     const result = await client.call<{
       dispatch: { id: string; task_id: string; status: string } | null
-    }>('orchestration.dispatchShow', {
-      task: getRequiredStringFlag(flags, 'task')
+      injected?: boolean
+      dryRun?: boolean
+      preamble?: string
+    }>('orchestration.dispatch', {
+      task: getRequiredStringFlag(flags, 'task'),
+      to,
+      from,
+      inject: flags.has('inject') ? true : undefined,
+      dryRun,
+      returnPreamble,
+      devMode: isDevCliInvocation()
     })
     printResult(result, json, (r) => {
+      if (r.dryRun) {
+        return r.preamble ?? ''
+      }
+      const base = `Dispatched ${r.dispatch?.task_id} -> ${r.dispatch?.id} [${r.dispatch?.status}]`
+      return r.preamble ? `${base}\n\n--- Preamble ---\n${r.preamble}` : base
+    })
+  },
+
+  'orchestration dispatch-show': async ({ flags, client, cwd, json }) => {
+    const showPreamble = flags.has('preamble') ? true : undefined
+    // Why: resolve --from when previewing so the preamble embeds a real
+    // coordinator handle, matching what an actual dispatch would produce.
+    const from = showPreamble
+      ? await resolveOrchestrationTerminalHandle(flags, cwd, client, 'from')
+      : undefined
+    const result = await client.call<{
+      dispatch: { id: string; task_id: string; status: string } | null
+      preamble?: string
+    }>('orchestration.dispatchShow', {
+      task: getRequiredStringFlag(flags, 'task'),
+      preamble: showPreamble,
+      from,
+      devMode: isDevCliInvocation()
+    })
+    printResult(result, json, (r) => {
+      if (r.preamble && showPreamble) {
+        return r.preamble
+      }
       if (!r.dispatch) {
         return 'No dispatch context found.'
       }
