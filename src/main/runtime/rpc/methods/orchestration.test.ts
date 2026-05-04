@@ -275,6 +275,79 @@ describe('orchestration RPC methods', () => {
         })
       ).rejects.toThrow('Invalid --types')
     })
+
+    it('default (unread only) marks returned rows as read', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+      db.insertMessage({ from: 'a', to: 'b', subject: 'two' })
+
+      const first = (await call('orchestration.check', { terminal: 'b' })) as {
+        count: number
+      }
+      expect(first.count).toBe(2)
+
+      const second = (await call('orchestration.check', { terminal: 'b' })) as {
+        count: number
+      }
+      expect(second.count).toBe(0)
+    })
+
+    it('--all returns every message for the handle without marking read', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+      const second = db.insertMessage({ from: 'a', to: 'b', subject: 'two' })
+      db.markAsRead([second.id])
+
+      const result = (await call('orchestration.check', {
+        terminal: 'b',
+        all: true
+      })) as { messages: { read: number }[]; count: number }
+
+      expect(result.count).toBe(2)
+      // Must not have flipped the remaining unread row
+      const stillUnread = db.getUnreadMessages('b')
+      expect(stillUnread).toHaveLength(1)
+    })
+
+    it('--all returns rows with delivered_at set after push-on-idle stamped them', async () => {
+      setup()
+      const msg = db.insertMessage({ from: 'a', to: 'b', subject: 'hi' })
+      // Why: simulate push-on-idle stamping delivered_at without the runtime loop.
+      db.markAsDelivered([msg.id])
+
+      const result = (await call('orchestration.check', {
+        terminal: 'b',
+        all: true
+      })) as { messages: { id: string; delivered_at: string | null }[]; count: number }
+
+      expect(result.count).toBe(1)
+      expect(result.messages[0].delivered_at).not.toBeNull()
+    })
+
+    it('--all --terminal <unknown> returns empty list', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+
+      const result = (await call('orchestration.check', {
+        terminal: 'does_not_exist',
+        all: true
+      })) as { count: number }
+      expect(result.count).toBe(0)
+    })
+
+    it('unread:false compat shim behaves like --all (one-release bridge)', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+
+      const result = (await call('orchestration.check', {
+        terminal: 'b',
+        unread: false
+      })) as { count: number }
+      expect(result.count).toBe(1)
+
+      // Must not have marked read
+      expect(db.getUnreadMessages('b')).toHaveLength(1)
+    })
   })
 
   describe('orchestration.reply', () => {
@@ -309,6 +382,38 @@ describe('orchestration RPC methods', () => {
 
       const result = (await call('orchestration.inbox', {})) as { count: number }
       expect(result.count).toBe(2)
+    })
+
+    it('--terminal <handle> matches check --all output for the same handle', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+      db.insertMessage({ from: 'a', to: 'b', subject: 'two' })
+      db.insertMessage({ from: 'a', to: 'c', subject: 'other' })
+
+      const inbox = (await call('orchestration.inbox', { terminal: 'b' })) as {
+        messages: { id: string; to_handle: string }[]
+        count: number
+      }
+      const check = (await call('orchestration.check', {
+        terminal: 'b',
+        all: true
+      })) as { messages: { id: string; to_handle: string }[]; count: number }
+
+      expect(inbox.count).toBe(2)
+      expect(check.count).toBe(2)
+      // Same rows in the same order — both use sequence DESC
+      expect(inbox.messages.map((m) => m.id)).toEqual(check.messages.map((m) => m.id))
+      expect(inbox.messages.every((m) => m.to_handle === 'b')).toBe(true)
+    })
+
+    it('--terminal <unknown_handle> returns empty list without erroring', async () => {
+      setup()
+      db.insertMessage({ from: 'a', to: 'b', subject: 'one' })
+
+      const result = (await call('orchestration.inbox', {
+        terminal: 'does_not_exist'
+      })) as { count: number }
+      expect(result.count).toBe(0)
     })
   })
 

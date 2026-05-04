@@ -23,8 +23,23 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     path: ['orchestration', 'check'],
     summary: 'Check messages for a terminal',
     usage:
-      'orca orchestration check [--terminal <handle>] [--unread] [--types <type,...>] [--inject] [--wait] [--timeout-ms <n>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'terminal', 'unread', 'types', 'inject', 'wait', 'timeout-ms']
+      'orca orchestration check [--terminal <handle>] [--unread | --all] [--types <type,...>] [--inject] [--wait] [--timeout-ms <n>] [--json]\n' +
+      '  --unread (default): return only unread messages and mark them read.\n' +
+      '  --all: return every message for the handle; does not mark read.\n' +
+      '  --wait: block until a matching message arrives or --timeout-ms expires.\n' +
+      '          Emits JSON heartbeat lines to stderr every 15s so the caller can\n' +
+      '          tell the process is alive. Filter with `grep -v _heartbeat` or\n' +
+      '          `jq "select(._heartbeat|not)"` when merging streams with 2>&1.',
+    allowedFlags: [
+      ...GLOBAL_FLAGS,
+      'terminal',
+      'unread',
+      'all',
+      'types',
+      'inject',
+      'wait',
+      'timeout-ms'
+    ]
   },
   {
     path: ['orchestration', 'reply'],
@@ -34,9 +49,9 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
   },
   {
     path: ['orchestration', 'inbox'],
-    summary: 'Show all messages across recipients',
-    usage: 'orca orchestration inbox [--limit <n>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'limit']
+    summary: 'Show messages across (or for) recipients',
+    usage: 'orca orchestration inbox [--limit <n>] [--terminal <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'limit', 'terminal']
   },
   {
     path: ['orchestration', 'task-create'],
