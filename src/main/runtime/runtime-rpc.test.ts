@@ -747,7 +747,39 @@ describe('OrcaRuntimeRpcServer', () => {
       // Simulate a migration error by monkey-patching better-sqlite3's exec.
       // If ALTER TABLE throws for any reason (e.g. disk full, permissions),
       // the constructor must propagate — not swallow and serve half-broken.
+      //
+      // Why the pre-seeded v2 DB: after the schema bundle, fresh DBs are
+      // initialized directly at v3 via createTables() (which already includes
+      // `delivered_at`), so the v2 → v3 ALTER is a no-op for new installs.
+      // To exercise the hard-fail path we need a DB that actually has work
+      // to migrate — a v2-shape file without the delivered_at column — so
+      // the guarded ALTER runs and the stub can fire.
       const tmpPath = join(mkdtempSync(join(tmpdir(), 'orca-orch-mig-')), 'orch.sqlite')
+      const seed = new Database(tmpPath)
+      seed.exec(`
+        CREATE TABLE messages (
+          id            TEXT NOT NULL,
+          from_handle   TEXT NOT NULL,
+          to_handle     TEXT NOT NULL,
+          subject       TEXT NOT NULL,
+          body          TEXT NOT NULL DEFAULT '',
+          type          TEXT NOT NULL DEFAULT 'status'
+            CHECK(type IN (
+              'status', 'dispatch', 'worker_done', 'merge_ready',
+              'escalation', 'handoff', 'decision_gate', 'heartbeat'
+            )),
+          priority      TEXT NOT NULL DEFAULT 'normal'
+            CHECK(priority IN ('normal', 'high', 'urgent')),
+          thread_id     TEXT,
+          payload       TEXT,
+          read          INTEGER NOT NULL DEFAULT 0,
+          sequence      INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `)
+      seed.pragma('user_version = 2')
+      seed.close()
+
       const realPrototype = Database.prototype as unknown as {
         exec: (sql: string) => unknown
       }
