@@ -1717,6 +1717,9 @@ const api = {
     getState: (args: { targetId: string }): Promise<SshConnectionState | null> =>
       ipcRenderer.invoke('ssh:getState', args),
 
+    needsPassphrasePrompt: (args: { targetId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('ssh:needsPassphrasePrompt', args),
+
     testConnection: (args: {
       targetId: string
     }): Promise<{ success: boolean; error?: string; state?: SshConnectionState }> =>
