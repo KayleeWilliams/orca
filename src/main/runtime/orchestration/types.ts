@@ -6,6 +6,7 @@ export type MessageType =
   | 'escalation'
   | 'handoff'
   | 'decision_gate'
+  | 'heartbeat'
 
 export type MessagePriority = 'normal' | 'high' | 'urgent'
 
@@ -53,6 +54,7 @@ export type DispatchContextRow = {
   dispatched_at: string | null
   completed_at: string | null
   created_at: string
+  last_heartbeat_at: string | null
 }
 
 export type DecisionGateRow = {

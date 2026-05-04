@@ -33,6 +33,13 @@ function generateId(prefix: string): string {
   return `${prefix}_${randomBytes(6).toString('hex')}`
 }
 
+// Why: bumped from implicit 1 → 2 in the preamble-hardening PR. Existing
+// on-disk DBs were created before `'heartbeat'` was a valid MessageType
+// and before the `last_heartbeat_at` column existed; without this gate the
+// coordinator would throw `no such column` on first tick and silently drop
+// every heartbeat INSERT on the CHECK constraint.
+const SCHEMA_VERSION = 2
+
 export class OrchestrationDb {
   private db: Database.Database
 
@@ -42,6 +49,7 @@ export class OrchestrationDb {
     this.db.pragma('synchronous = NORMAL')
     this.db.pragma('busy_timeout = 5000')
     this.createTables()
+    this.migrate()
   }
 
   private createTables(): void {
@@ -55,7 +63,7 @@ export class OrchestrationDb {
         type          TEXT NOT NULL DEFAULT 'status'
           CHECK(type IN (
             'status', 'dispatch', 'worker_done', 'merge_ready',
-            'escalation', 'handoff', 'decision_gate'
+            'escalation', 'handoff', 'decision_gate', 'heartbeat'
           )),
         priority      TEXT NOT NULL DEFAULT 'normal'
           CHECK(priority IN ('normal', 'high', 'urgent')),
@@ -89,16 +97,17 @@ export class OrchestrationDb {
       CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 
       CREATE TABLE IF NOT EXISTS dispatch_contexts (
-        id              TEXT PRIMARY KEY,
-        task_id         TEXT NOT NULL,
-        assignee_handle TEXT,
-        status          TEXT NOT NULL DEFAULT 'pending'
+        id                  TEXT PRIMARY KEY,
+        task_id             TEXT NOT NULL,
+        assignee_handle     TEXT,
+        status              TEXT NOT NULL DEFAULT 'pending'
           CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'circuit_broken')),
-        failure_count   INTEGER NOT NULL DEFAULT 0,
-        last_failure    TEXT,
-        dispatched_at   TEXT,
-        completed_at    TEXT,
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        failure_count       INTEGER NOT NULL DEFAULT 0,
+        last_failure        TEXT,
+        dispatched_at       TEXT,
+        completed_at        TEXT,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+        last_heartbeat_at   TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_dispatch_task ON dispatch_contexts(task_id);
@@ -130,6 +139,100 @@ export class OrchestrationDb {
         completed_at        TEXT
       );
     `)
+  }
+
+  // Why: `CREATE TABLE IF NOT EXISTS` is a no-op against an existing on-disk
+  // DB, so new schema shapes (added columns, widened CHECK constraints) do
+  // not reach an upgraded user unless we migrate explicitly. The transaction
+  // guarantees atomicity — a mid-migration crash leaves the DB at the prior
+  // version because `user_version` is bumped only on success. Idempotent
+  // re-invocation is a no-op (current >= SCHEMA_VERSION short-circuit).
+  private migrate(): void {
+    const current = this.db.pragma('user_version', { simple: true }) as number
+    if (current >= SCHEMA_VERSION) {
+      return
+    }
+
+    // v1 → v2: add last_heartbeat_at column; widen messages.type CHECK to
+    // include 'heartbeat'. SQLite cannot ALTER a CHECK constraint, so we
+    // rebuild the messages table.
+    if (current < 2) {
+      this.db.exec('BEGIN')
+      try {
+        if (!this.hasColumn('dispatch_contexts', 'last_heartbeat_at')) {
+          this.db.exec(`ALTER TABLE dispatch_contexts ADD COLUMN last_heartbeat_at TEXT`)
+        }
+
+        if (!this.messagesTypeCheckAllowsHeartbeat()) {
+          // Why — index list is not optional. createTables() already attached
+          // idx_messages_id / idx_inbox / idx_thread to the old messages table;
+          // DROP TABLE removes those indexes with it. CREATE INDEX IF NOT
+          // EXISTS in createTables() only runs on the next process startup,
+          // so skipping explicit recreation here would leave every
+          // getUnreadMessages / getMessageById call full-scanning for the
+          // rest of this process's lifetime — a silent O(N) perf regression.
+          // The three CREATE INDEX statements below mirror createTables()
+          // verbatim so the two definitions cannot drift.
+          this.db.exec(`
+            CREATE TABLE messages_new (
+              id            TEXT NOT NULL,
+              from_handle   TEXT NOT NULL,
+              to_handle     TEXT NOT NULL,
+              subject       TEXT NOT NULL,
+              body          TEXT NOT NULL DEFAULT '',
+              type          TEXT NOT NULL DEFAULT 'status'
+                CHECK(type IN (
+                  'status', 'dispatch', 'worker_done', 'merge_ready',
+                  'escalation', 'handoff', 'decision_gate', 'heartbeat'
+                )),
+              priority      TEXT NOT NULL DEFAULT 'normal'
+                CHECK(priority IN ('normal', 'high', 'urgent')),
+              thread_id     TEXT,
+              payload       TEXT,
+              read          INTEGER NOT NULL DEFAULT 0,
+              sequence      INTEGER PRIMARY KEY AUTOINCREMENT,
+              created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO messages_new (
+              id, from_handle, to_handle, subject, body, type, priority,
+              thread_id, payload, read, sequence, created_at
+            )
+            SELECT
+              id, from_handle, to_handle, subject, body, type, priority,
+              thread_id, payload, read, sequence, created_at
+            FROM messages;
+            DROP TABLE messages;
+            ALTER TABLE messages_new RENAME TO messages;
+
+            CREATE UNIQUE INDEX idx_messages_id ON messages(id);
+            CREATE INDEX idx_inbox ON messages(to_handle, read);
+            CREATE INDEX idx_thread ON messages(thread_id);
+          `)
+        }
+
+        this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
+        this.db.exec('COMMIT')
+      } catch (err) {
+        this.db.exec('ROLLBACK')
+        throw err
+      }
+    }
+  }
+
+  private hasColumn(table: string, column: string): boolean {
+    const rows = this.db.pragma(`table_info(${table})`) as { name: string }[]
+    return rows.some((r) => r.name === column)
+  }
+
+  // Why: sqlite_master stores the original CREATE TABLE SQL including the
+  // CHECK clause. Inspecting that text is the cheapest reliable way to tell
+  // whether the pre-rebuild schema already knows about 'heartbeat' without
+  // needing a dedicated schema_meta row.
+  private messagesTypeCheckAllowsHeartbeat(): boolean {
+    const row = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
+      .get() as { sql: string } | undefined
+    return !!row && row.sql.includes("'heartbeat'")
   }
 
   // ── Messages ──
@@ -199,6 +302,25 @@ export class OrchestrationDb {
     return this.db
       .prepare('SELECT * FROM messages ORDER BY sequence DESC LIMIT ?')
       .all(limit) as MessageRow[]
+  }
+
+  // Why: thread-scoped read for the `orchestration.ask` wait loop. Filtered
+  // by `to_handle` so a worker only sees replies addressed to it (not
+  // messages it sent), and ordered by `sequence` so the first post-ask
+  // reply is returned first. `afterSequence` lets the caller resume past an
+  // already-seen marker without re-reading the outbound ask itself. Uses
+  // the existing idx_thread index (see createTables) — no new index.
+  getThreadMessagesFor(threadId: string, toHandle: string, afterSequence?: number): MessageRow[] {
+    if (afterSequence !== undefined) {
+      return this.db
+        .prepare(
+          'SELECT * FROM messages WHERE thread_id = ? AND to_handle = ? AND sequence > ? ORDER BY sequence ASC'
+        )
+        .all(threadId, toHandle, afterSequence) as MessageRow[]
+    }
+    return this.db
+      .prepare('SELECT * FROM messages WHERE thread_id = ? AND to_handle = ? ORDER BY sequence ASC')
+      .all(threadId, toHandle) as MessageRow[]
   }
 
   // ── Tasks ──
@@ -360,6 +482,40 @@ export class OrchestrationDb {
       )
       .get(taskId) as DispatchContextRow | undefined
     return active ? this.failDispatch(active.id, error) : undefined
+  }
+
+  // Why: only touch rows that are currently dispatched. A straggler heartbeat
+  // from a dispatch that already transitioned to `completed` / `failed` /
+  // `circuit_broken` MUST NOT retroactively bump `last_heartbeat_at`, because
+  // the stale-dispatch detector is the signal the coordinator uses to know a
+  // newer dispatch for the same task has hung. Silently no-op'ing keeps the
+  // zombie-heartbeat race from masking a hung retry (§5.3.4).
+  recordHeartbeat(dispatchId: string, at: string): void {
+    this.db
+      .prepare(
+        "UPDATE dispatch_contexts SET last_heartbeat_at = ? WHERE id = ? AND status = 'dispatched'"
+      )
+      .run(at, dispatchId)
+  }
+
+  // Why: the query restricts to currently-dispatched contexts AND respects a
+  // dispatched-at grace. Without `status = 'dispatched'`, every completed /
+  // failed / circuit_broken row with an old-or-null last_heartbeat_at would
+  // warn every tick (warning storm). Without `dispatched_at < :threshold`,
+  // a freshly-dispatched worker would trip the warning during its first
+  // heartbeat interval (false positive). Callers supply the threshold as an
+  // ISO timestamp so the SQLite string-compare ordering works correctly
+  // (ISO-8601 compares lexicographically in time order).
+  getStaleDispatches(thresholdIso: string): DispatchContextRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM dispatch_contexts
+         WHERE status = 'dispatched'
+           AND dispatched_at IS NOT NULL
+           AND dispatched_at < ?
+           AND (last_heartbeat_at IS NULL OR last_heartbeat_at < ?)`
+      )
+      .all(thresholdIso, thresholdIso) as DispatchContextRow[]
   }
 
   failDispatch(ctxId: string, error: string): DispatchContextRow | undefined {
