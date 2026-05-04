@@ -15,7 +15,8 @@ const MESSAGE_TYPES: MessageType[] = [
   'merge_ready',
   'escalation',
   'handoff',
-  'decision_gate'
+  'decision_gate',
+  'heartbeat'
 ]
 
 const TASK_STATUSES: TaskStatus[] = [
@@ -40,7 +41,8 @@ const SendParams = z.object({
       'merge_ready',
       'escalation',
       'handoff',
-      'decision_gate'
+      'decision_gate',
+      'heartbeat'
     ])
     .optional(),
   priority: z.enum(['normal', 'high', 'urgent']).optional(),
@@ -107,6 +109,14 @@ const DispatchParams = z.object({
 
 const DispatchShowParams = z.object({
   task: OptionalString
+})
+
+const AskParams = z.object({
+  to: requiredString('Missing --to'),
+  question: requiredString('Missing --question'),
+  options: OptionalString,
+  timeoutMs: OptionalFiniteNumber,
+  from: OptionalString
 })
 
 const ResetParams = z.object({
@@ -347,6 +357,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         try {
           const preamble = buildDispatchPreamble({
             taskId: task.id,
+            dispatchId: ctx.id,
             taskSpec: task.spec,
             coordinatorHandle: params.from ?? 'coordinator',
             devMode: params.devMode
@@ -373,6 +384,73 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
       const ctx = db.getDispatchContext(params.task)
       return { dispatch: ctx ?? null }
+    }
+  }),
+
+  defineMethod({
+    name: 'orchestration.ask',
+    params: AskParams,
+    handler: async (params, { runtime }) => {
+      // Why: group addresses have no unambiguous answer semantics (whose
+      // reply wins? first? consensus?) and the ~60-LOC scope is not the
+      // place to design that. Rejecting here closes the silent-timeout
+      // footgun where a worker passing `--to @reviewers` would have the
+      // decision_gate inserted against a literal string no one subscribes
+      // to. Workers that need fan-out fall back to `send --type decision_gate`.
+      if (isGroupAddress(params.to)) {
+        throw new Error(
+          'ask does not support group addresses; use send --type decision_gate for fan-out questions'
+        )
+      }
+
+      const db = runtime.getOrchestrationDb()
+      const from = params.from ?? 'unknown'
+      const timeoutMs = params.timeoutMs ?? 600_000
+      const options =
+        params.options
+          ?.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean) ?? []
+
+      const payload = JSON.stringify({ question: params.question, options })
+      const outbound = db.insertMessage({
+        from,
+        to: params.to,
+        subject: 'Question',
+        body: params.question,
+        type: 'decision_gate',
+        payload
+      })
+      runtime.deliverPendingMessagesForHandle(params.to)
+      runtime.notifyMessageArrived(params.to)
+
+      const threadId = outbound.id
+      const deadline = Date.now() + timeoutMs
+      const afterSequence = outbound.sequence
+
+      // Why: loop with a remaining-budget guard so an unrelated distractor
+      // message that wakes waitForMessage does not cause indefinite iteration.
+      // waitForMessage is handle-scoped, so we re-query by thread on every
+      // wake-up to separate "reply in my thread arrived" from "something
+      // else was delivered to this handle."
+      while (true) {
+        const replies = db.getThreadMessagesFor(threadId, from, afterSequence)
+        if (replies.length > 0) {
+          const reply = replies[0]
+          db.markAsRead([reply.id])
+          return {
+            answer: reply.body,
+            messageId: reply.id,
+            threadId,
+            timedOut: false
+          }
+        }
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) {
+          return { answer: null, messageId: null, threadId, timedOut: true }
+        }
+        await runtime.waitForMessage(from, { timeoutMs: remainingMs })
+      }
     }
   }),
 

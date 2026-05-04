@@ -38,7 +38,7 @@ describe('orchestration RPC methods', () => {
 
   it('registers all expected methods', () => {
     const registry = buildRegistry(ORCHESTRATION_METHODS)
-    expect(registry.size).toBe(15)
+    expect(registry.size).toBe(16)
     expect(registry.has('orchestration.send')).toBe(true)
     expect(registry.has('orchestration.check')).toBe(true)
     expect(registry.has('orchestration.reply')).toBe(true)
@@ -48,6 +48,7 @@ describe('orchestration RPC methods', () => {
     expect(registry.has('orchestration.taskUpdate')).toBe(true)
     expect(registry.has('orchestration.dispatch')).toBe(true)
     expect(registry.has('orchestration.dispatchShow')).toBe(true)
+    expect(registry.has('orchestration.ask')).toBe(true)
     expect(registry.has('orchestration.run')).toBe(true)
     expect(registry.has('orchestration.runStop')).toBe(true)
     expect(registry.has('orchestration.gateCreate')).toBe(true)
@@ -618,6 +619,145 @@ describe('orchestration RPC methods', () => {
     it('rejects invalid status filters', () => {
       const method = findMethod('orchestration.gateList')
       expect(() => method.params!.parse({ status: 'closed' })).toThrow()
+    })
+  })
+
+  describe('orchestration.ask', () => {
+    it('sends a decision_gate and returns the first thread reply', async () => {
+      setup()
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+      vi.spyOn(runtime, 'waitForMessage').mockImplementation(async () => {
+        // Simulate coordinator replying in the thread during the wait
+        const outbound = db.getInbox(10).find((m) => m.type === 'decision_gate')
+        if (outbound) {
+          db.insertMessage({
+            from: 'term_coord',
+            to: 'term_worker',
+            subject: 'Re: Question',
+            body: 'go ahead',
+            threadId: outbound.id
+          })
+        }
+      })
+
+      const result = (await call('orchestration.ask', {
+        from: 'term_worker',
+        to: 'term_coord',
+        question: 'proceed?',
+        options: 'yes, no',
+        timeoutMs: 500
+      })) as {
+        answer: string
+        messageId: string
+        threadId: string
+        timedOut: boolean
+      }
+
+      expect(result.timedOut).toBe(false)
+      expect(result.answer).toBe('go ahead')
+      expect(result.messageId).toMatch(/^msg_/)
+
+      // Outbound decision_gate message was persisted with parsed options.
+      const outbound = db.getInbox(10).find((m) => m.type === 'decision_gate')
+      expect(outbound).toBeTruthy()
+      expect(outbound?.subject).toBe('Question')
+      expect(outbound?.body).toBe('proceed?')
+      const payload = JSON.parse(outbound!.payload ?? '{}')
+      expect(payload.question).toBe('proceed?')
+      expect(payload.options).toEqual(['yes', 'no'])
+    })
+
+    it('returns timedOut when no reply arrives in the window', async () => {
+      setup()
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+      vi.spyOn(runtime, 'waitForMessage').mockResolvedValue()
+
+      const result = (await call('orchestration.ask', {
+        from: 'term_worker',
+        to: 'term_coord',
+        question: 'still there?',
+        timeoutMs: 1
+      })) as { answer: string | null; timedOut: boolean; messageId: string | null }
+
+      expect(result.timedOut).toBe(true)
+      expect(result.answer).toBeNull()
+      expect(result.messageId).toBeNull()
+      // Outbound message still persisted (coordinator can still see it).
+      const outbound = db.getInbox(10).find((m) => m.type === 'decision_gate')
+      expect(outbound).toBeTruthy()
+    })
+
+    it('rejects group addresses with a dedicated error (no message persisted)', async () => {
+      setup()
+      await expect(
+        call('orchestration.ask', {
+          from: 'term_worker',
+          to: '@reviewers',
+          question: 'ok?'
+        })
+      ).rejects.toThrow(/does not support group addresses/)
+      expect(db.getInbox(10)).toHaveLength(0)
+    })
+
+    it('does not return distractor messages on a different thread', async () => {
+      setup()
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+      let wakeCount = 0
+      vi.spyOn(runtime, 'waitForMessage').mockImplementation(async () => {
+        wakeCount++
+        const outbound = db.getInbox(20).find((m) => m.type === 'decision_gate')
+        if (wakeCount === 1 && outbound) {
+          // First wake: distractor in a DIFFERENT thread — must be ignored.
+          db.insertMessage({
+            from: 'term_coord',
+            to: 'term_worker',
+            subject: 'unrelated',
+            body: 'other',
+            threadId: 'thread_other'
+          })
+        } else if (wakeCount === 2 && outbound) {
+          // Second wake: correct thread reply.
+          db.insertMessage({
+            from: 'term_coord',
+            to: 'term_worker',
+            subject: 'Re: Question',
+            body: 'correct answer',
+            threadId: outbound.id
+          })
+        }
+      })
+
+      const result = (await call('orchestration.ask', {
+        from: 'term_worker',
+        to: 'term_coord',
+        question: 'filter?',
+        timeoutMs: 2_000
+      })) as { answer: string; timedOut: boolean }
+
+      expect(result.timedOut).toBe(false)
+      expect(result.answer).toBe('correct answer')
+    })
+
+    it('parses options CSV with whitespace and empty entries', async () => {
+      setup()
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+      vi.spyOn(runtime, 'waitForMessage').mockResolvedValue()
+
+      await call('orchestration.ask', {
+        from: 'w',
+        to: 'c',
+        question: 'q',
+        options: 'a, b ,,c',
+        timeoutMs: 1
+      })
+
+      const outbound = db.getInbox(10).find((m) => m.type === 'decision_gate')
+      const payload = JSON.parse(outbound!.payload ?? '{}')
+      expect(payload.options).toEqual(['a', 'b', 'c'])
     })
   })
 

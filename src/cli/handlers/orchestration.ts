@@ -172,6 +172,48 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     )
   },
 
+  'orchestration ask': async ({ flags, client, cwd, json }) => {
+    const from = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'from')
+    const timeoutMs = flags.has('timeout-ms') ? Number(flags.get('timeout-ms')) : 600_000
+    const result = await client.call<{
+      answer: string | null
+      messageId: string | null
+      threadId: string
+      timedOut: boolean
+    }>(
+      'orchestration.ask',
+      {
+        to: getRequiredStringFlag(flags, 'to'),
+        question: getRequiredStringFlag(flags, 'question'),
+        options: getOptionalStringFlag(flags, 'options'),
+        timeoutMs: flags.has('timeout-ms') ? Number(flags.get('timeout-ms')) : undefined,
+        from
+      },
+      // Why: the runtime's `waitForMessage` can block up to `timeoutMs`, but
+      // the RPC transport has its own 60s default timeout that would fire
+      // first. Extend the per-call timeout by a small grace window so the
+      // RPC doesn't abort before the runtime's internal timeout resolves.
+      { timeoutMs: timeoutMs + 5_000 }
+    )
+    // Why: deliberate bypass of `printResult`. `--json` on `ask` emits a
+    // single-line bare JSON object (no RPC envelope, no multi-line pretty-
+    // print) so workers can pipe `orca orchestration ask … --json | jq -r
+    // .answer` without reaching into a `result` envelope. This diverges from
+    // every other orchestration verb; called out in the commit message and
+    // guarded by a unit test in orchestration.test.ts.
+    if (json) {
+      console.log(JSON.stringify(result.result))
+    } else if (result.result.answer !== null) {
+      console.log(result.result.answer)
+    }
+    if (result.result.timedOut) {
+      if (!json) {
+        console.error(`ask timeout after ${timeoutMs}ms (thread ${result.result.threadId})`)
+      }
+      process.exitCode = 1
+    }
+  },
+
   'orchestration dispatch-show': async ({ flags, client, json }) => {
     const result = await client.call<{
       dispatch: { id: string; task_id: string; status: string } | null

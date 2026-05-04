@@ -72,6 +72,13 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     allowedFlags: [...GLOBAL_FLAGS, 'task']
   },
   {
+    path: ['orchestration', 'ask'],
+    summary: 'Ask the coordinator a question and block until answered',
+    usage:
+      'orca orchestration ask --to <handle> --question <text> [--options <csv>] [--timeout-ms <n>] [--from <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'to', 'question', 'options', 'timeout-ms', 'from']
+  },
+  {
     path: ['orchestration', 'run'],
     summary: 'Start the coordinator loop',
     usage:
