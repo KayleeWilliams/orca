@@ -191,12 +191,16 @@ jobs:
           # compute-next-version math here). Filtering by tag format is
           # the authoritative signal — an `-rc.N` tag is never stable,
           # regardless of what the release metadata says.
+          #
+          # Why: restrict to the desktop `v<digit>...` tag shape so sibling
+          # release namespaces in this monorepo (e.g. `mobile-v0.0.1`) cannot
+          # be picked up as the "latest stable" and poison version math.
           latest_stable="$(gh release list \
               --repo "$GITHUB_REPOSITORY" \
               --exclude-drafts \
               --limit 50 \
               --json tagName \
-              --jq '[.[] | .tagName | select(test("-rc\\.") | not)] | .[0] // ""')"
+              --jq '[.[] | .tagName | select(test("^v[0-9]") and (test("-rc\\.") | not))] | .[0] // ""')"
           latest_stable="${latest_stable#v}"
           echo "Latest stable: ${latest_stable:-<none>}"
 

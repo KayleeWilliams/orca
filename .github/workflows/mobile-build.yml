@@ -58,5 +58,7 @@ jobs:
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Orca Mobile $tag" \
+            --prerelease \
+            --latest=false \
             --generate-notes \
             android/app/build/outputs/apk/release/*.apk
