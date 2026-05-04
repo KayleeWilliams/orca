@@ -145,7 +145,7 @@ export const AGENT_CATALOG: AgentCatalogEntry[] = [
     label: 'Kimi',
     cmd: 'kimi',
     faviconDomain: 'moonshot.cn',
-    homepageUrl: 'https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html'
+    homepageUrl: 'https://www.kimi.com/code/docs/en/kimi-code-cli/getting-started.html'
   },
   {
     id: 'mistral-vibe',
