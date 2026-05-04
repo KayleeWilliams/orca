@@ -33,7 +33,7 @@ import { PostHog } from 'posthog-node'
 import type { CommonProps, EventName, EventProps, OptInVia } from '../../shared/telemetry-events'
 import type { Store } from '../persistence'
 import { consumeBurstToken, resetBurstCapsForSession } from './burst-cap'
-import { resolveConsent } from './consent'
+import { resolveConsent, type ConsentState } from './consent'
 import { commonPropsSchema, validate } from './validator'
 
 // Compile-time feature flag. PR 2 shipped with this `false` so the SDK was
@@ -77,6 +77,8 @@ let sessionId: string | null = null
 let commonProps: CommonProps | null = null
 let shuttingDown = false
 let storeRef: Store | null = null
+
+const OPT_OUT_CAPTURE_ENQUEUE_TIMEOUT_MS = 1_000
 
 // Test-only override for the transport gate. Set by `_enableTransportForTests`
 // so the client.test.ts suite can exercise the full pipeline (burst cap,
@@ -195,15 +197,70 @@ export function initTelemetry(store: Store): void {
     maxQueueSize: 5000
   })
 
-  // Re-apply the user's persisted opt-out on every boot: the PostHog SDK's
-  // in-memory opt-out flag does NOT persist across process restarts, and
-  // `GlobalSettings.telemetry.optedIn` is what actually gates whether a user
-  // has said yes. Do not remove this re-apply thinking it is redundant with
-  // the persisted setting; the SDK flag is the thing that gates capture().
-  const consent = resolveConsent(settings)
-  if (consent.effective !== 'enabled') {
+  if (shouldOptOutSdkAtInit(resolveConsent(settings))) {
     posthog.optOut()
   }
+}
+
+/**
+ * Decide whether to flip the PostHog SDK's in-memory `optedOut` flag at boot.
+ *
+ * Applied to DISABLED cohorts only (`user_opt_out` / CI / DO_NOT_TRACK /
+ * ORCA_TELEMETRY_DISABLED). The SDK flag does not persist across process
+ * restarts, so we re-apply on every boot as defense-in-depth: any direct
+ * `posthog.capture()` that bypasses `track()` (and therefore bypasses the
+ * consent gate in this module) must still drop at the SDK boundary for a
+ * user who has opted out.
+ *
+ * Intentionally NOT applied to `pending_banner`: the existing-user Turn-off
+ * path in `setOptIn(_, false)` does a direct `posthog.capture()` for the
+ * `telemetry_opted_out { via: 'first_launch_banner' }` signal, bypassing
+ * `track()` (see the long comment in the opt-out branch below explaining
+ * why). If the SDK were already opted-out at that point, the capture would
+ * silently drop inside posthog-core's `enqueue()` — losing the one signal
+ * that tells us the opt-out flow works. `track()`'s own consent gate
+ * (`resolveConsent() !== 'enabled'`) still drops every other event while
+ * the cohort is `pending_banner`, so there is no risk of stray transmission
+ * during the pre-banner window.
+ *
+ * Exported for tests; production has exactly one call site above.
+ */
+export function shouldOptOutSdkAtInit(consent: ConsentState): boolean {
+  return consent.effective === 'disabled'
+}
+
+function waitForCaptureEnqueue(client: PostHog, event: EventName, uuid: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    let stopListening: (() => void) | null = null
+    let timeout: ReturnType<typeof setTimeout> | null = null
+
+    const settle = (enqueued: boolean): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+      stopListening?.()
+      resolve(enqueued)
+    }
+
+    // Why: posthog-node's capture() prepares/enqueues asynchronously; this
+    // public SDK event is the durable boundary we need before calling optOut().
+    stopListening = client.on('capture', (payload: unknown) => {
+      if (!payload || typeof payload !== 'object') {
+        return
+      }
+      const message = payload as { event?: unknown; uuid?: unknown }
+      if (message.event === event && message.uuid === uuid) {
+        settle(true)
+      }
+    })
+
+    timeout = setTimeout(() => settle(false), OPT_OUT_CAPTURE_ENQUEUE_TIMEOUT_MS)
+  })
 }
 
 export function track<N extends EventName>(name: N, props: EventProps<N>): void {
@@ -268,7 +325,7 @@ export function track<N extends EventName>(name: N, props: EventProps<N>): void 
   })
 }
 
-export function setOptIn(via: OptInVia, optedIn: boolean): void {
+export async function setOptIn(via: OptInVia, optedIn: boolean): Promise<void> {
   if (!storeRef) {
     return
   }
@@ -296,11 +353,12 @@ export function setOptIn(via: OptInVia, optedIn: boolean): void {
     firstAppOpenedFired = true
   }
 
-  if (!posthog) {
+  const client = posthog
+  if (!client) {
     return
   }
   if (optedIn) {
-    posthog.optIn()
+    await client.optIn()
     track('telemetry_opted_in', { via })
   } else {
     // Fire opt-out event BEFORE disabling the SDK. This is the one event
@@ -315,21 +373,37 @@ export function setOptIn(via: OptInVia, optedIn: boolean): void {
     // Burst cap + validator still run; consent is the only gate bypassed,
     // and it is bypassed exactly once per user per session at most (IPC
     // consent-mutation cap is 5/session).
-    if (!shuttingDown && commonProps && consumeBurstToken('telemetry_opted_out')) {
-      const validated = validate('telemetry_opted_out', { via })
-      if (validated.ok) {
-        posthog.capture({
-          distinctId: commonProps.install_id,
-          event: 'telemetry_opted_out',
-          properties: {
-            ...commonProps,
-            ...validated.props,
-            $process_person_profile: false
+    //
+    // posthog-node prepares capture() asynchronously, so "call capture
+    // before optOut" is not enough; wait until the SDK confirms enqueue.
+    // We do not wait for network flush here — the SDK queue and shutdown
+    // flush own delivery, while the enqueue boundary owns the optOut race.
+    try {
+      if (!shuttingDown && commonProps && consumeBurstToken('telemetry_opted_out')) {
+        const validated = validate('telemetry_opted_out', { via })
+        if (validated.ok) {
+          const uuid = randomUUID()
+          const enqueued = waitForCaptureEnqueue(client, 'telemetry_opted_out', uuid)
+          client.capture({
+            distinctId: commonProps.install_id,
+            event: 'telemetry_opted_out',
+            uuid,
+            properties: {
+              ...commonProps,
+              ...validated.props,
+              $process_person_profile: false
+            }
+          })
+          if (!(await enqueued)) {
+            console.warn('[telemetry] telemetry_opted_out did not enqueue before SDK opt-out')
           }
-        })
+        }
       }
+    } catch (err) {
+      console.warn('[telemetry] telemetry_opted_out capture failed before SDK opt-out:', err)
+    } finally {
+      await client.optOut()
     }
-    posthog.optOut()
   }
 }
 

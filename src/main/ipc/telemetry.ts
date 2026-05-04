@@ -122,7 +122,7 @@ export function registerTelemetryHandlers(store: Store): void {
     track(name as EventName, (props ?? {}) as EventProps<EventName>)
   })
 
-  ipcMain.handle('telemetry:setOptIn', (_event, optedIn: unknown): void => {
+  ipcMain.handle('telemetry:setOptIn', (_event, optedIn: unknown): Promise<void> | void => {
     // Strict input typing — renderer can pass anything over IPC.
     if (typeof optedIn !== 'boolean') {
       return
@@ -145,7 +145,7 @@ export function registerTelemetryHandlers(store: Store): void {
     // notice still presents as (optedIn=null → false) at the moment `via`
     // is computed, not (optedIn=false → false) after the write lands.
     const via = deriveOptInVia(storeRef, optedIn)
-    setOptIn(via, optedIn)
+    return setOptIn(via, optedIn)
   })
 
   // Read-only view of the effective consent state. The Privacy pane needs

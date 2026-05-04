@@ -101,31 +101,34 @@ export function FirstLaunchBanner({
     // this container. `pr-8` reserves space on the right edge so the ✕
     // does not visually overlap the "Turn off" button.
     <div
-      className="fixed left-1/2 top-11 z-40 flex max-w-3xl -translate-x-1/2 items-start gap-4 rounded-xl border border-border bg-card/95 px-4 py-3 pr-8 text-sm shadow-lg backdrop-blur"
+      className="fixed left-1/2 top-11 z-40 max-w-3xl -translate-x-1/2 rounded-xl border border-border bg-card/95 px-4 py-3 pr-8 text-sm shadow-lg backdrop-blur"
       role="region"
       aria-label="Telemetry notice"
       aria-live="polite"
     >
-      <div className="flex-1 space-y-1">
-        <p className="font-medium">Orca sends anonymous usage data</p>
-        <p className="text-muted-foreground">
-          We never send your file contents, prompts, terminal output, or anything that could
-          identify you. Anonymous counts help us decide what to build next. You can change this
-          anytime in Settings &rarr; Privacy.{' '}
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-foreground"
-            onClick={() => void window.api.shell.openUrl(PRIVACY_URL)}
-          >
-            Privacy policy
-          </button>
-          .
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button variant="outline" size="sm" onClick={handleTurnOff} disabled={inFlight}>
-          Turn off
-        </Button>
+      <div className="space-y-2">
+        <div className="space-y-1">
+          <p className="font-medium">Help us figure out what to build next</p>
+          <p className="text-muted-foreground">
+            We&apos;re building Orca in the open, and the features we ship are shaped by how people
+            actually use it. We&apos;d like to start sending anonymous counts of which features you
+            use and where things break — no file contents, prompts, terminal output, or anything
+            that identifies you. You can change this anytime in Settings &rarr; Privacy.{' '}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={() => void window.api.shell.openUrl(PRIVACY_URL)}
+            >
+              Privacy policy
+            </button>
+            .
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={handleTurnOff} disabled={inFlight}>
+            Turn off
+          </Button>
+        </div>
       </div>
       {/* ✕ in the top-right corner. aria-label names the semantic
           explicitly — "Dismiss" rather than "Close" — because the action

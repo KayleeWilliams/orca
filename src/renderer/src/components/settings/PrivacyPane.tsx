@@ -208,8 +208,9 @@ export function PrivacyPane({ settings }: PrivacyPaneProps): React.JSX.Element {
             <Label>Share anonymous usage data</Label>
           </div>
           <p className="text-xs text-muted-foreground">
-            Orca never sends your file contents, prompts, terminal output, branch names, or anything
-            that could identify you. Anonymous counts help us decide what to build next.{' '}
+            Help us figure out what to build next. Orca sends anonymous counts of which features you
+            use and where things break — no file contents, prompts, terminal output, branch names,
+            or anything that identifies you.{' '}
             <button
               type="button"
               className="underline underline-offset-2 hover:text-foreground"
