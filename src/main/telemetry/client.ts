@@ -30,18 +30,17 @@ import { randomUUID } from 'node:crypto'
 import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { app } from 'electron'
 import { PostHog } from 'posthog-node'
-import type { CommonProps, EventName, EventProps } from '../../shared/telemetry-events'
+import type { CommonProps, EventName, EventProps, OptInVia } from '../../shared/telemetry-events'
 import type { Store } from '../persistence'
 import { consumeBurstToken, resetBurstCapsForSession } from './burst-cap'
 import { resolveConsent } from './consent'
 import { commonPropsSchema, validate } from './validator'
 
-// Compile-time feature flag. PR 2 ships with this `false` — the SDK is wired
-// but no event transmits. PR 3 flips it to `true` once the PostHog project
-// is live and dashboards are verified. Independent of the build-identity
-// gate below: both must be satisfied to transmit, so flipping the flag
-// alone still leaves contributor builds silent.
-const TELEMETRY_ENABLED = false
+// Compile-time feature flag. PR 2 shipped with this `false` so the SDK was
+// wired but no event transmitted. PR 3 flips it to `true`. Independent of
+// the build-identity gate below: both must be satisfied to transmit, so
+// flipping the flag alone still leaves contributor builds silent.
+const TELEMETRY_ENABLED = true
 
 // Eligible-to-transmit only if the CI release pipeline injected BOTH the
 // build-identity constant and a write key. One without the other is treated
@@ -86,11 +85,31 @@ let storeRef: Store | null = null
 // be bounded by `resolveConsent` + the validator.
 let testTransportEnabled = false
 
-function buildCommonProps(
-  installId: string,
-  sid: string,
-  channel: 'stable' | 'rc'
-): CommonProps {
+// First-launch `app_opened` gate. The existing-user banner contract in
+// telemetry-plan.md:177 is: zero events — *not even* `app_opened` — transmit
+// until the user clicks "Sure". The mechanism is: PR 4's `app_opened` call
+// site checks `hasFirstAppOpenedFired()` before firing, and `setOptIn(_,
+// true)` flips the gate via `markFirstAppOpenedFired()`.
+//
+// Why this gate exists at all, and why it lives in the client module:
+//   - The consent resolver already returns `pending_banner` for an existing
+//     user with `optedIn === null`, so `track()` would drop `app_opened`
+//     during the pre-consent window anyway. The gate is a belt-and-suspenders
+//     guard for the transition second: between the moment `setOptIn(_, true)`
+//     writes `optedIn = true` to disk and the moment the PR 4 call site fires
+//     `app_opened`, nothing else must sneak a bare `app_opened` onto the wire
+//     using the now-enabled consent. Keeping the gate here — next to
+//     `setOptIn` — means the "flip" is one module-local assignment that no
+//     call-site can bypass accidentally.
+//   - The gate resets to `false` per session by `initTelemetry()` (via the
+//     `resetSessionState()` call below). New users who kept default-on do
+//     not go through `setOptIn` on launch, so PR 4 will also call
+//     `markFirstAppOpenedFired()` once for non-banner cohorts immediately
+//     before firing the session's `app_opened`. PR 3 ships only the state
+//     machinery; PR 4 wires both call sites.
+let firstAppOpenedFired = false
+
+function buildCommonProps(installId: string, sid: string, channel: 'stable' | 'rc'): CommonProps {
   // `.max(64)` on every free-form string field in `commonPropsSchema` is the
   // upper bound; node's platform / arch / release strings are always well
   // under that in practice. We do not truncate here because the validator's
@@ -114,6 +133,10 @@ export function initTelemetry(store: Store): void {
   storeRef = store
   resetBurstCapsForSession()
   shuttingDown = false
+  // Gate reset per session: the "no app_opened until Sure" invariant is
+  // per-launch, not across the lifetime of the install. See the comment on
+  // `firstAppOpenedFired` above.
+  firstAppOpenedFired = false
 
   if (!TELEMETRY_ENABLED || !IS_OFFICIAL_BUILD) {
     return
@@ -245,10 +268,7 @@ export function track<N extends EventName>(name: N, props: EventProps<N>): void 
   })
 }
 
-export function setOptIn(
-  via: 'settings' | 'first_launch_banner' | 'first_launch_notice',
-  optedIn: boolean
-): void {
+export function setOptIn(via: OptInVia, optedIn: boolean): void {
   if (!storeRef) {
     return
   }
@@ -263,6 +283,18 @@ export function setOptIn(
       optedIn
     }
   })
+
+  // Unlock the first-session `app_opened` after a successful opt-in. The
+  // PR 4 call site is responsible for consulting `hasFirstAppOpenedFired()`
+  // before firing; flipping the gate here is what makes the existing-user
+  // "Sure, help improve Orca" path work — telemetry-plan.md:177 is explicit
+  // that `app_opened` fires only after that click, and this assignment is
+  // the "completes" half of that invariant. Flipping before the
+  // `!posthog` early-return keeps console-mirror builds consistent with
+  // transmitting builds (the gate is semantic, not transport-gated).
+  if (optedIn) {
+    firstAppOpenedFired = true
+  }
 
   if (!posthog) {
     return
@@ -299,6 +331,66 @@ export function setOptIn(
     }
     posthog.optOut()
   }
+}
+
+// Banner ✕ path. Writes `optedIn = true` permanently and emits NO event.
+// That outcome cannot route through `setOptIn()` — `setOptIn()` always
+// fires a `telemetry_opted_in/out` event and the IPC handler always
+// derives a non-`null` `via` value, which would tag a ✕ click as
+// `first_launch_banner` + `telemetry_opted_in`. The ✕-as-silent-
+// acknowledge contract is explicit: the user did not explicitly opt in,
+// they declined to intervene, so no event transmits.
+//
+// So this primitive exists as a named, non-overloaded code path: persist
+// the opt-in, flip the first-app-opened gate, unlock the SDK, and emit
+// nothing. The corresponding `telemetry:acknowledgeBanner` IPC channel
+// routes renderer ✕ clicks here instead of through `telemetry:setOptIn`.
+//
+// Do NOT extend this with a `via` parameter or emission flag. If a future
+// surface also needs a silent persisted opt-in, give it its own named
+// function rather than overloading this one — the grep'ability of
+// `persistBannerAcknowledgeWithoutEmitting` is the whole point.
+export function persistBannerAcknowledgeWithoutEmitting(): void {
+  if (!storeRef) {
+    return
+  }
+  const settings = storeRef.getSettings()
+  // Defensive merge mirrors `setOptIn`: updateSettings deep-merges the
+  // telemetry block (persistence.ts:560), so the fallback object here only
+  // matters if the migration invariant has been violated and `telemetry`
+  // is somehow absent — in which case we still want to persist an opt-in
+  // rather than no-op.
+  storeRef.updateSettings({
+    telemetry: {
+      ...(settings.telemetry ?? { installId: '', existedBeforeTelemetryRelease: true }),
+      optedIn: true
+    }
+  })
+  // Mirror the opt-in half of `setOptIn`: flip the first-app-opened gate
+  // and re-enable the SDK. Without these, a ✕ acknowledge would persist
+  // `optedIn: true` on disk but leave the in-memory SDK flag opted-out
+  // (seeded by `initTelemetry` for pre-banner users whose consent resolver
+  // returned `pending_banner`), so the next `track()` would drop despite
+  // the persisted opt-in. The first-app-opened gate is the "no events
+  // until the user resolves the banner" half of the contract — flipping
+  // it here unlocks PR 4's `app_opened` call site the same way `setOptIn`
+  // does for the Turn-off path.
+  firstAppOpenedFired = true
+  if (posthog) {
+    posthog.optIn()
+  }
+}
+
+// First-launch `app_opened` gate accessors. Used by PR 4's `app_opened`
+// call site to enforce the "no events transmit for existing users until
+// Sure" invariant in telemetry-plan.md:177. PR 3 ships the state machinery
+// only — the call site itself lands in PR 4.
+export function hasFirstAppOpenedFired(): boolean {
+  return firstAppOpenedFired
+}
+
+export function markFirstAppOpenedFired(): void {
+  firstAppOpenedFired = true
 }
 
 export async function shutdownTelemetry(): Promise<void> {
@@ -347,4 +439,8 @@ export function _getSessionIdForTests(): string | null {
 
 export function _enableTransportForTests(enabled: boolean): void {
   testTransportEnabled = enabled
+}
+
+export function _resetFirstAppOpenedFiredForTests(): void {
+  firstAppOpenedFired = false
 }
