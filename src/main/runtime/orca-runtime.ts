@@ -7,7 +7,7 @@ import {
   isShellProcess
 } from '../../shared/agent-detection'
 import type { AgentStatus } from '../../shared/agent-detection'
-import { gitExecFileAsync, gitExecFileSync } from '../git/runner'
+import { gitExecFileAsync } from '../git/runner'
 import { isWslPath, parseWslPath, getWslHome } from '../wsl'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
@@ -84,7 +84,9 @@ import {
   getBranchConflictKind,
   isGitRepo,
   getRepoName,
-  searchBaseRefs
+  searchBaseRefs,
+  getRemoteDrift,
+  getRecentDriftSubjects
 } from '../git/repo'
 import { listWorktrees, addWorktree, removeWorktree } from '../git/worktree'
 import { createSetupRunnerScript, getEffectiveHooks, runHook } from '../hooks'
@@ -242,6 +244,23 @@ export class OrcaRuntimeService {
   private agentDetector: AgentDetector | null = null
   private _orchestrationDb: OrchestrationDb | null = null
   private messageWaitersByHandle = new Map<string, Set<MessageWaiter>>()
+  // Why (§3.3 + §7.1): the renderer-create path and coordinator
+  // `probeWorktreeDrift` share this cache so a create that already fetched
+  // `origin` within the last 30s does not re-fetch during dispatch, and
+  // vice-versa. Keyed by `<repoPath>::<remote>` so multi-remote repos (even
+  // though v1 only uses `origin`) don't cross-contaminate. The in-flight Map
+  // also provides serialization — two concurrent callers share a single
+  // underlying `git fetch`. Lifecycle rules are enforced in
+  // `fetchRemoteWithCache` and MUST NOT be duplicated elsewhere:
+  //   - entry inserted BEFORE await,
+  //   - `.finally()` removes the entry on BOTH success and rejection,
+  //   - timestamp written ONLY on success (rejection must not make the
+  //     30s freshness cache lie).
+  // A literal "insert before await / read-back after await" without these
+  // three rules wedges all future creates on the same repo after a single
+  // DNS hiccup until process restart (see §3.3 Lifecycle).
+  private fetchInflight = new Map<string, Promise<void>>()
+  private fetchLastCompletedAt = new Map<string, number>()
   private readonly getLocalProviderFn: (() => IPtyProvider) | null
 
   constructor(
@@ -1022,10 +1041,18 @@ export class OrcaRuntimeService {
     }
 
     const remote = baseBranch.includes('/') ? baseBranch.split('/')[0] : 'origin'
+    // Why (§3.3 Lifecycle): route through the shared fetch cache so back-to-back
+    // CLI creates on the same repo don't each pay the round-trip, and so a
+    // subsequent dispatch probe within the 30s window reuses this result. The
+    // helper swallows rejection (log-and-proceed) so a DNS hiccup never wedges
+    // future creates and CLI creation stays usable offline — same intent as
+    // the previous try/catch around gitExecFileSync.
     try {
-      gitExecFileSync(['fetch', remote], { cwd: repo.path })
+      await this.fetchRemoteWithCache(repo.path, remote)
     } catch {
-      // Why: matching the editor behavior keeps CLI creation usable offline.
+      // Why: belt-and-suspenders. fetchRemoteWithCache already logs and does
+      // not throw; the outer try/catch guarantees create-path tolerance even
+      // if future refactors change that contract.
     }
 
     await addWorktree(
@@ -1103,6 +1130,96 @@ export class OrcaRuntimeService {
       ...(setup ? { setup } : {}),
       ...(warning ? { warning } : {})
     }
+  }
+
+  /**
+   * Fetch `remote` in `repoPath`, sharing the 30s freshness window + in-flight
+   * serialization with all other callers (renderer-create path, CLI create,
+   * dispatch drift probe). Never rejects — callers log-and-proceed on offline
+   * failures (§3.3 Lifecycle).
+   *
+   * Why a shared cache on the runtime instead of module-scoped: §7.1 relies on
+   * one cache for BOTH the renderer create path and `probeWorktreeDrift`. A
+   * dispatch tick that reuses a just-completed create-path fetch is the
+   * primary telemetry target; splitting the cache by call-site would double
+   * the fetch load on warm repos.
+   */
+  async fetchRemoteWithCache(repoPath: string, remote: string): Promise<void> {
+    const key = `${repoPath}::${remote}`
+    const lastAt = this.fetchLastCompletedAt.get(key)
+    if (lastAt !== undefined && Date.now() - lastAt < FETCH_FRESHNESS_MS) {
+      // Why: freshness window hit — skip the fetch entirely. Do NOT reuse any
+      // in-flight promise here; the timestamp is only written on success, so
+      // hitting this branch means a previous fetch did succeed recently.
+      return
+    }
+
+    const existing = this.fetchInflight.get(key)
+    if (existing) {
+      // Why: genuine serialization (not check-then-set). Two callers racing
+      // on the same repo+remote share the single underlying `git fetch`.
+      return existing
+    }
+
+    const promise = gitExecFileAsync(['fetch', remote], { cwd: repoPath })
+      .then(() => {
+        // Why (§3.3 Lifecycle): timestamp on success ONLY. Writing on rejection
+        // would make the freshness cache lie about the last known remote state.
+        this.fetchLastCompletedAt.set(key, Date.now())
+      })
+      .catch((err) => {
+        // Why: swallow here so awaiters don't throw at the await site. Outer
+        // create/dispatch paths are already tolerant of offline fetch failure;
+        // this is the behavioral contract of this helper.
+        console.warn(`[fetchRemoteWithCache] ${remote} fetch failed for ${repoPath}:`, err)
+      })
+      .finally(() => {
+        // Why (§3.3 Lifecycle): evict on BOTH success and rejection. A
+        // rejected entry that survived in the Map would wedge every future
+        // create on this repo until Orca restarted (the F2 bug §3.3 pins).
+        this.fetchInflight.delete(key)
+      })
+
+    this.fetchInflight.set(key, promise)
+    return promise
+  }
+
+  /**
+   * Probe how far the worktree's HEAD is behind its tracking remote. Returns
+   * null when the probe cannot establish a signal (no default base ref, or
+   * git failure). Dispatch treats null as "unknown — proceed" (§3.1); only
+   * knowing-and-stale refuses.
+   */
+  async probeWorktreeDrift(worktreeSelector: string): Promise<{
+    base: string
+    behind: number
+    recentSubjects: string[]
+  } | null> {
+    const wt = await this.resolveWorktreeSelector(worktreeSelector)
+    if (!this.store) {
+      return null
+    }
+    const repo = this.store.getRepos().find((r) => r.id === wt.repoId)
+    if (!repo) {
+      return null
+    }
+    const base = getDefaultBaseRef(repo.path)
+    if (!base) {
+      // Why: brand-new repo with no remote primary — nothing to compare
+      // against, so there's no meaningful drift to report. Dispatch should
+      // not block on a probe that cannot form an opinion.
+      return null
+    }
+    const remote = base.includes('/') ? base.split('/')[0] : 'origin'
+    // Why: fetch failures are non-fatal; we proceed with whatever the
+    // last-known remote ref points at. `fetchRemoteWithCache` never throws.
+    await this.fetchRemoteWithCache(wt.path, remote)
+    const drift = getRemoteDrift(wt.path, 'HEAD', base)
+    if (!drift) {
+      return null
+    }
+    const recentSubjects = getRecentDriftSubjects(wt.path, 'HEAD', base, DRIFT_PROBE_SUBJECT_LIMIT)
+    return { base, behind: drift.behind, recentSubjects }
   }
 
   async updateManagedWorktreeMeta(
@@ -3133,6 +3250,13 @@ const DEFAULT_TERMINAL_LIST_LIMIT = 200
 const DEFAULT_WORKTREE_LIST_LIMIT = 200
 const DEFAULT_WORKTREE_PS_LIMIT = 200
 const RESOLVED_WORKTREE_CACHE_TTL_MS = 1000
+// Why (§3.3): 30s freshness window. A second worktree-create or dispatch-probe
+// against the same repo+remote within this window reuses the previous successful
+// fetch instead of repeating the round-trip. Chosen so rapid "new worktree"
+// clicks and successive coordinator dispatches feel snappy, while still being
+// short enough that a genuinely-changed remote is observed on the next action.
+const FETCH_FRESHNESS_MS = 30_000
+const DRIFT_PROBE_SUBJECT_LIMIT = 5
 function buildPreview(lines: string[], partialLine: string): string {
   const previewLines = buildTailLines(lines, partialLine)
     .map((line) => line.trim())

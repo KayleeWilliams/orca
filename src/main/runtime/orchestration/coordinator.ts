@@ -19,6 +19,45 @@ export type CoordinatorRuntime = {
     handle: string,
     options?: { condition?: string; timeoutMs?: number }
   ): Promise<{ handle: string; condition: string }>
+  // Why (§3.1): dispatch pre-flight drift check lives on the runtime because
+  // it needs to resolve a worktree selector, load the repo, and fetch. The
+  // coordinator only knows about handles + specs; resolving a git worktree
+  // from this layer would leak transport details here.
+  probeWorktreeDrift(worktreeSelector: string): Promise<{
+    base: string
+    behind: number
+    recentSubjects: string[]
+  } | null>
+}
+
+// Why (§3.1): single threshold, no warn/refuse split. Coordinator picked 20
+// in msg_eff3a646110d — lets normal day-of-velocity on active monorepos pass
+// while still tripping on the 168-commit harm observed in ORCHESTRATOR_FEEDBACK.md.
+export const DISPATCH_STALE_THRESHOLD = 20
+
+// Why (§3.4): the flag is stashed in the task spec text rather than a DB
+// column in v1. The regex is intentionally narrow — only the canonical form
+// matches, so typos fail closed (dispatch refuses). Returning the stripped
+// spec alongside the boolean keeps this infra line out of the worker's
+// `--- TASK ---` block (workers would otherwise read it as an instruction).
+//
+// Trade-off (§7.9): the regex matches any line of the spec including lines
+// inside fenced code blocks. Acceptable v1 limitation — the failure mode is
+// "dispatches through when the author didn't intend to," which the preamble
+// drift section surfaces to the worker. Skill doc directs authors to place
+// the flag as the last line and avoid the literal flag in code examples.
+const ALLOW_STALE_BASE_RE = /^[ \t]*allow-stale-base:[ \t]*true[ \t]*\r?$/im
+const ALLOW_STALE_BASE_STRIP_RE = /^[ \t]*allow-stale-base:[ \t]*true[ \t]*\r?\n?/im
+
+export function parseAllowStaleBaseFromSpec(spec: string): {
+  allowStale: boolean
+  strippedSpec: string
+} {
+  if (!ALLOW_STALE_BASE_RE.test(spec)) {
+    return { allowStale: false, strippedSpec: spec }
+  }
+  const strippedSpec = spec.replace(ALLOW_STALE_BASE_STRIP_RE, '')
+  return { allowStale: true, strippedSpec }
 }
 
 export type CoordinatorOptions = {
@@ -383,15 +422,64 @@ export class Coordinator {
   }
 
   private async dispatchTask(task: TaskRow, targetHandle: string): Promise<void> {
+    // Why (§3.1): pre-flight drift check BEFORE `createDispatchContext` so a
+    // refusal does NOT increment failure_count. createDispatchContext carries
+    // `MAX(failure_count)` forward across contexts (db.ts:301-306), so burning
+    // the circuit-breaker budget here would convert a recoverable "fetch and
+    // retry" into a hard `failed` task within ~6s of polling. Silent return
+    // leaves the task in `ready`; the next `dispatchReadyTasks` tick retries
+    // naturally, and once the coordinator's worktree has been refreshed
+    // dispatch proceeds cleanly.
+    const { allowStale, strippedSpec } = parseAllowStaleBaseFromSpec(task.spec)
+    let baseDrift: {
+      base: string
+      behind: number
+      recentSubjects: string[]
+    } | null = null
+
+    if (!this.opts.worktree) {
+      // Why (§7.4): CoordinatorOptions.worktree is optional. When undefined,
+      // probeWorktreeDrift cannot resolve a selector; log once so operators
+      // can see the guard did not run for this task and proceed. v2 may
+      // always resolve a worktree via the coordinator-terminal handle.
+      this.opts.onLog(`stale-base guard inert for ${task.id}: coordinator has no worktree selector`)
+    } else {
+      baseDrift = await this.runtime.probeWorktreeDrift(this.opts.worktree).catch((err) => {
+        this.opts.onLog(`probeWorktreeDrift failed for ${this.opts.worktree}: ${err}`)
+        return null
+      })
+
+      if (baseDrift && baseDrift.behind > DISPATCH_STALE_THRESHOLD && !allowStale) {
+        // Why (§3.1): silent-return, NOT failDispatch (which would burn the
+        // circuit-breaker budget). The message lists three remediations so
+        // the operator can recover via any of them.
+        this.opts.onLog(
+          `Skipping dispatch of ${task.id}: worktree is ${baseDrift.behind} commits ` +
+            `behind ${baseDrift.base}. Pull/rebase the worktree, recreate it with ` +
+            `--base-branch ${baseDrift.base}, or include 'allow-stale-base: true' ` +
+            `in the task spec to override. Task remains in 'ready'; coordinator ` +
+            `will retry on the next tick.`
+        )
+        return
+      }
+    }
+
     const dispatch = this.db.createDispatchContext(task.id, targetHandle)
 
     // Why: agents dispatched by the coordinator must use orca-dev in dev mode
     // so they talk to the dev runtime's socket, not production (Section 6.4).
+    // Why (§3.4): `strippedSpec` drops the `allow-stale-base: true` line so
+    // the worker's `--- TASK ---` block does not contain the infra flag (which
+    // the worker would otherwise read as part of its instructions).
     const preamble = buildDispatchPreamble({
       taskId: task.id,
-      taskSpec: task.spec,
+      taskSpec: strippedSpec,
       coordinatorHandle: this.opts.coordinatorHandle,
-      devMode: process.env.ORCA_USER_DATA_PATH?.includes('orca-dev')
+      devMode: process.env.ORCA_USER_DATA_PATH?.includes('orca-dev'),
+      // Why (§3.2): drift section fires only when behind > 0. The preamble
+      // builder gates on this itself; passing the object unconditionally lets
+      // the coordinator stay dumb about the display rule.
+      ...(baseDrift ? { baseDrift } : {})
     })
 
     // Why: check if the task was previously blocked by a decision gate that
