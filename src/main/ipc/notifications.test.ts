@@ -103,6 +103,16 @@ describe('registerNotificationHandlers', () => {
     return call[1] as (event: unknown) => Promise<unknown>
   }
 
+  function getResolveSoundPathHandler(): (event: unknown) => unknown {
+    const call = handleMock.mock.calls.find(
+      (c: unknown[]) => c[0] === 'notifications:resolveSoundPath'
+    )
+    if (!call) {
+      throw new Error('notifications:resolveSoundPath handler not registered')
+    }
+    return call[1] as (event: unknown) => unknown
+  }
+
   it('registers the IPC handler', () => {
     registerNotificationHandlers({
       getSettings: () => ({
@@ -326,6 +336,42 @@ describe('registerNotificationHandlers', () => {
       ok: false,
       reason: 'unsupported-type'
     })
+  })
+
+  it('resolves the sound path without reading the file', () => {
+    const soundPath = join(tempDir, 'sound.ogg')
+    writeFileSync(soundPath, Buffer.from([1, 2, 3]))
+    registerNotificationHandlers({
+      getSettings: () => ({
+        notifications: {
+          enabled: true,
+          agentTaskComplete: true,
+          terminalBell: true,
+          suppressWhenFocused: false,
+          customSoundPath: soundPath
+        }
+      })
+    } as never)
+
+    const handler = getResolveSoundPathHandler()
+    expect(handler({})).toEqual({ ok: true, path: soundPath })
+  })
+
+  it('rejects unsupported types from resolveSoundPath without touching the disk', () => {
+    registerNotificationHandlers({
+      getSettings: () => ({
+        notifications: {
+          enabled: true,
+          agentTaskComplete: true,
+          terminalBell: true,
+          suppressWhenFocused: false,
+          customSoundPath: '/some/where/sound.txt'
+        }
+      })
+    } as never)
+
+    const handler = getResolveSoundPathHandler()
+    expect(handler({})).toEqual({ ok: false, reason: 'unsupported-type' })
   })
 })
 

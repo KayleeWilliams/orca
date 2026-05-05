@@ -1273,6 +1273,7 @@ export type NotificationSoundResult = {
     | 'too-large'
     | 'read-failed'
     | 'playback-failed'
+    | 'deduped'
 }
 
 export type NotificationSoundDataResult =
@@ -1280,11 +1281,16 @@ export type NotificationSoundDataResult =
       ok: true
       data: Uint8Array
       mimeType: string
+      path: string
     }
   | {
       ok: false
       reason: Exclude<NotificationSoundResult['reason'], 'playback-failed'>
     }
+
+export type NotificationSoundPathResult =
+  | { ok: true; path: string }
+  | { ok: false; reason: 'missing-path' | 'invalid-path' | 'unsupported-type' }
 
 export type WorktreeCardProperty =
   | 'status'

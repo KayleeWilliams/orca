@@ -7,7 +7,6 @@ import { Separator } from '../ui/separator'
 import { BellRing, Bot, FileAudio, Siren, X } from 'lucide-react'
 import type { SettingsSearchEntry } from './settings-search'
 import { basename } from '@/lib/path'
-import { playDesktopNotificationSound } from '@/lib/desktop-notification-sound'
 
 export const NOTIFICATIONS_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
@@ -66,8 +65,13 @@ export function NotificationsPane({
   const handleSendTestNotification = async (): Promise<void> => {
     const result = await window.api.notifications.dispatch({ source: 'test' })
     if (result.delivered) {
-      const played = await playDesktopNotificationSound(notificationSettings.customSoundPath)
-      if (notificationSettings.customSoundPath && !played) {
+      // Why: the Test button must always play through, even if the user clicks
+      // it twice in quick succession — the in-flight dedupe is for incidental
+      // bursts of real notifications, not for an explicit user action.
+      const soundResult = notificationSettings.customSoundPath
+        ? await window.api.notifications.playSound({ force: true })
+        : null
+      if (notificationSettings.customSoundPath && soundResult && !soundResult.played) {
         toast.error('Custom notification sound could not be played')
         return
       }

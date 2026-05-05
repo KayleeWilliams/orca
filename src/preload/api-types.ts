@@ -721,7 +721,7 @@ export type PreloadApi = {
   notifications: {
     dispatch: (args: NotificationDispatchRequest) => Promise<NotificationDispatchResult>
     openSystemSettings: () => Promise<void>
-    playSound: () => Promise<NotificationSoundResult>
+    playSound: (options?: { force?: boolean }) => Promise<NotificationSoundResult>
   }
   developerPermissions: {
     getStatus: () => Promise<DeveloperPermissionState[]>

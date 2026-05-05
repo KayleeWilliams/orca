@@ -159,6 +159,31 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
     }
   )
 
+  // Why: the preload caches the decoded blob keyed by path. Returning just
+  // the validated path lets it skip the 10MB IPC round-trip on every dispatch
+  // when the user's selection hasn't changed — terminal-bell bursts can fire
+  // many notifications in seconds.
+  ipcMain.removeHandler('notifications:resolveSoundPath')
+  ipcMain.handle(
+    'notifications:resolveSoundPath',
+    ():
+      | { ok: true; path: string }
+      | { ok: false; reason: 'missing-path' | 'invalid-path' | 'unsupported-type' } => {
+      const pathValue = store.getSettings().notifications.customSoundPath
+      if (!pathValue) {
+        return { ok: false, reason: 'missing-path' }
+      }
+      const normalizedPath = normalize(pathValue)
+      if (!isAbsolute(normalizedPath)) {
+        return { ok: false, reason: 'invalid-path' }
+      }
+      if (!NOTIFICATION_SOUND_MIME_BY_EXTENSION.has(extname(normalizedPath).toLowerCase())) {
+        return { ok: false, reason: 'unsupported-type' }
+      }
+      return { ok: true, path: normalizedPath }
+    }
+  )
+
   ipcMain.removeHandler('notifications:loadSound')
   ipcMain.handle('notifications:loadSound', async (): Promise<NotificationSoundDataResult> => {
     const pathValue = store.getSettings().notifications.customSoundPath
@@ -186,7 +211,7 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
       }
 
       const data = await readFile(normalizedPath)
-      return { ok: true, data: new Uint8Array(data), mimeType }
+      return { ok: true, data: new Uint8Array(data), mimeType, path: normalizedPath }
     } catch {
       return { ok: false, reason: 'read-failed' }
     }

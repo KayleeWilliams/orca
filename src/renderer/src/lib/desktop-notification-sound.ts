@@ -7,7 +7,8 @@ export async function playDesktopNotificationSound(
 
   try {
     const result = await window.api.notifications.playSound()
-    if (!result.played) {
+    // Why: 'deduped' is expected when bursts of notifications coalesce — not a failure.
+    if (!result.played && result.reason !== 'deduped') {
       console.warn('Failed to play custom notification sound:', result.reason)
     }
     return result.played
