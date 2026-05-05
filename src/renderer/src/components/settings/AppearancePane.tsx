@@ -93,8 +93,8 @@ const ZOOM_ENTRIES: SettingsSearchEntry[] = [
 const TYPOGRAPHY_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'IDE Font',
-    description: 'Choose the font used by Orca interface chrome.',
-    keywords: ['font', 'typeface', 'typography', 'ide', 'app', 'ui']
+    description: 'Choose the font used by the Orca interface.',
+    keywords: ['font', 'typeface', 'typography', 'ide', 'orca', 'interface', 'app', 'ui']
   }
 ]
 
@@ -209,14 +209,14 @@ export function AppearancePane({
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Typography</h3>
           <p className="text-xs text-muted-foreground">
-            Choose the font used by Orca interface chrome.
+            Choose the font used by the Orca interface.
           </p>
         </div>
 
         <SearchableSetting
           title="IDE Font"
-          description="Choose the font used by Orca interface chrome."
-          keywords={['font', 'typeface', 'typography', 'ide', 'app', 'ui']}
+          description="Choose the font used by the Orca interface."
+          keywords={['font', 'typeface', 'typography', 'ide', 'orca', 'interface', 'app', 'ui']}
           className="space-y-2"
         >
           <Label>IDE Font</Label>
