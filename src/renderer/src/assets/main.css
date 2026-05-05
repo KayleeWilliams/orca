@@ -16,6 +16,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.theme-transition-disabled *,
+.theme-transition-disabled *::before,
+.theme-transition-disabled *::after {
+  /* Why: theme swaps flip many CSS variables at once; transitions make parts of
+     the UI fade at different speeds. Animations stay enabled for spinners. */
+  transition: none !important;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
