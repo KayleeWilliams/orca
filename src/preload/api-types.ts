@@ -44,6 +44,7 @@ import type {
   GetRateLimitResult,
   NotificationDispatchRequest,
   NotificationDispatchResult,
+  NotificationSoundResult,
   OrcaHooks,
   PersistedUIState,
   PRCheckDetail,
@@ -720,6 +721,7 @@ export type PreloadApi = {
   notifications: {
     dispatch: (args: NotificationDispatchRequest) => Promise<NotificationDispatchResult>
     openSystemSettings: () => Promise<void>
+    playSound: () => Promise<NotificationSoundResult>
   }
   developerPermissions: {
     getStatus: () => Promise<DeveloperPermissionState[]>
@@ -734,6 +736,7 @@ export type PreloadApi = {
     pathExists: (path: string) => Promise<boolean>
     pickAttachment: () => Promise<string | null>
     pickImage: () => Promise<string | null>
+    pickAudio: () => Promise<string | null>
     pickDirectory: (args: { defaultPath?: string }) => Promise<string | null>
     copyFile: (args: { srcPath: string; destPath: string }) => Promise<void>
   }

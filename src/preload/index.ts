@@ -21,6 +21,8 @@ import type {
   ListWorkItemsResult,
   MemorySnapshot,
   NotificationDispatchResult,
+  NotificationSoundDataResult,
+  NotificationSoundResult,
   SearchResult
 } from '../shared/types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../shared/runtime-types'
@@ -78,6 +80,8 @@ type NativeDropResolution =
   // could be resolved. The caller must suppress the drop entirely instead of
   // falling back to 'editor' — fail-closed behavior per design §7.1.
   | { target: 'rejected' }
+
+const activeNotificationSounds = new Set<HTMLAudioElement>()
 
 /**
  * Walk the composed event path to classify which UI surface the native OS drop
@@ -843,7 +847,39 @@ const api = {
   notifications: {
     dispatch: (args: Record<string, unknown>): Promise<NotificationDispatchResult> =>
       ipcRenderer.invoke('notifications:dispatch', args),
-    openSystemSettings: (): Promise<void> => ipcRenderer.invoke('notifications:openSystemSettings')
+    openSystemSettings: (): Promise<void> => ipcRenderer.invoke('notifications:openSystemSettings'),
+    playSound: async (): Promise<NotificationSoundResult> => {
+      try {
+        const sound = (await ipcRenderer.invoke(
+          'notifications:loadSound'
+        )) as NotificationSoundDataResult
+        if (!sound.ok) {
+          return { played: false, reason: sound.reason }
+        }
+
+        const arrayBuffer = new ArrayBuffer(sound.data.byteLength)
+        new Uint8Array(arrayBuffer).set(sound.data)
+        const blob = new Blob([arrayBuffer], { type: sound.mimeType })
+        const url = URL.createObjectURL(blob)
+        const audio = new Audio(url)
+        activeNotificationSounds.add(audio)
+        const cleanup = (): void => {
+          activeNotificationSounds.delete(audio)
+          URL.revokeObjectURL(url)
+        }
+        audio.addEventListener('ended', cleanup, { once: true })
+        audio.addEventListener('error', cleanup, { once: true })
+        try {
+          await audio.play()
+        } catch {
+          cleanup()
+          return { played: false, reason: 'playback-failed' }
+        }
+        return { played: true }
+      } catch {
+        return { played: false, reason: 'playback-failed' }
+      }
+    }
   },
 
   developerPermissions: {
@@ -868,6 +904,8 @@ const api = {
     pickAttachment: (): Promise<string | null> => ipcRenderer.invoke('shell:pickAttachment'),
 
     pickImage: (): Promise<string | null> => ipcRenderer.invoke('shell:pickImage'),
+
+    pickAudio: (): Promise<string | null> => ipcRenderer.invoke('shell:pickAudio'),
 
     pickDirectory: (args: { defaultPath?: string }): Promise<string | null> =>
       ipcRenderer.invoke('shell:pickDirectory', args),

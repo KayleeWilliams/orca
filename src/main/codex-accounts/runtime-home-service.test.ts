@@ -73,7 +73,8 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
       enabled: true,
       agentTaskComplete: true,
       terminalBell: false,
-      suppressWhenFocused: true
+      suppressWhenFocused: true,
+      customSoundPath: null
     },
     promptCacheTimerEnabled: false,
     promptCacheTtlMs: 300_000,

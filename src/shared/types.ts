@@ -886,6 +886,7 @@ export type NotificationSettings = {
   agentTaskComplete: boolean
   terminalBell: boolean
   suppressWhenFocused: boolean
+  customSoundPath: string | null
 }
 
 export type CodexManagedAccount = {
@@ -1262,6 +1263,28 @@ export type NotificationDispatchResult = {
   /** Present when delivered is false. Tells the caller why delivery was skipped. */
   reason?: 'disabled' | 'source-disabled' | 'suppressed-focus' | 'cooldown' | 'not-supported'
 }
+
+export type NotificationSoundResult = {
+  played: boolean
+  reason?:
+    | 'missing-path'
+    | 'invalid-path'
+    | 'unsupported-type'
+    | 'too-large'
+    | 'read-failed'
+    | 'playback-failed'
+}
+
+export type NotificationSoundDataResult =
+  | {
+      ok: true
+      data: Uint8Array
+      mimeType: string
+    }
+  | {
+      ok: false
+      reason: Exclude<NotificationSoundResult['reason'], 'playback-failed'>
+    }
 
 export type WorktreeCardProperty =
   | 'status'

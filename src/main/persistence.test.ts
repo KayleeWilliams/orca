@@ -79,6 +79,7 @@ describe('Store', () => {
     expect(settings.terminalFontWeight).toBe(500)
     expect(settings.rightSidebarOpenByDefault).toBe(true)
     expect(settings.showTasksButton).toBe(true)
+    expect(settings.notifications.customSoundPath).toBeNull()
   })
 
   it('returns default UI state when no data file exists', async () => {
@@ -147,8 +148,34 @@ describe('Store', () => {
     expect(store.getSettings().refreshLocalBaseRefOnWorktreeCreate).toBe(false)
     expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
     expect(store.getSettings().showTasksButton).toBe(true)
+    expect(store.getSettings().notifications.customSoundPath).toBeNull()
     // repos should be loaded
     expect(store.getRepos()).toHaveLength(1)
+  })
+
+  it('preserves custom notification sound paths from persisted settings', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {
+        notifications: {
+          customSoundPath: '/Users/kaylee/Downloads/Note_block_pling.ogg'
+        }
+      },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().notifications).toMatchObject({
+      enabled: true,
+      agentTaskComplete: true,
+      terminalBell: false,
+      suppressWhenFocused: true,
+      customSoundPath: '/Users/kaylee/Downloads/Note_block_pling.ogg'
+    })
   })
 
   it('preserves editorAutoSaveDelayMs when set in persisted data', async () => {

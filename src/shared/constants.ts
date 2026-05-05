@@ -107,7 +107,8 @@ export function getDefaultNotificationSettings(): NotificationSettings {
     enabled: true,
     agentTaskComplete: true,
     terminalBell: false,
-    suppressWhenFocused: true
+    suppressWhenFocused: true,
+    customSoundPath: null
   }
 }
 

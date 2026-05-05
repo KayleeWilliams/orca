@@ -1,9 +1,24 @@
 import { app, BrowserWindow, Notification, ipcMain, shell } from 'electron'
+import { readFile, stat } from 'node:fs/promises'
+import { extname, isAbsolute, normalize } from 'node:path'
 import type { Store } from '../persistence'
-import type { NotificationDispatchRequest, NotificationDispatchResult } from '../../shared/types'
+import type {
+  NotificationDispatchRequest,
+  NotificationDispatchResult,
+  NotificationSoundDataResult
+} from '../../shared/types'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 
 const NOTIFICATION_COOLDOWN_MS = 5000
+const MAX_NOTIFICATION_SOUND_BYTES = 10 * 1024 * 1024
+const NOTIFICATION_SOUND_MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
+  ['.ogg', 'audio/ogg'],
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav'],
+  ['.m4a', 'audio/mp4'],
+  ['.aac', 'audio/aac'],
+  ['.flac', 'audio/flac']
+])
 
 // Why: Electron Notification objects are normal JS objects — if the only
 // reference is a local variable inside the ipcMain handler, the GC can
@@ -90,7 +105,11 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
         }
       }
 
-      const notification = new Notification(buildNotificationOptions(args))
+      const notificationOptions = buildNotificationOptions(args)
+      if (settings.customSoundPath) {
+        notificationOptions.silent = true
+      }
+      const notification = new Notification(notificationOptions)
 
       // Why: prevent GC from collecting the notification (and its click
       // handler) while it's still visible in macOS Notification Center.
@@ -139,6 +158,39 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
       return { delivered: true }
     }
   )
+
+  ipcMain.removeHandler('notifications:loadSound')
+  ipcMain.handle('notifications:loadSound', async (): Promise<NotificationSoundDataResult> => {
+    const pathValue = store.getSettings().notifications.customSoundPath
+    if (!pathValue) {
+      return { ok: false, reason: 'missing-path' }
+    }
+
+    const normalizedPath = normalize(pathValue)
+    if (!isAbsolute(normalizedPath)) {
+      return { ok: false, reason: 'invalid-path' }
+    }
+
+    const mimeType = NOTIFICATION_SOUND_MIME_BY_EXTENSION.get(extname(normalizedPath).toLowerCase())
+    if (!mimeType) {
+      return { ok: false, reason: 'unsupported-type' }
+    }
+
+    try {
+      const fileStat = await stat(normalizedPath)
+      if (!fileStat.isFile()) {
+        return { ok: false, reason: 'invalid-path' }
+      }
+      if (fileStat.size > MAX_NOTIFICATION_SOUND_BYTES) {
+        return { ok: false, reason: 'too-large' }
+      }
+
+      const data = await readFile(normalizedPath)
+      return { ok: true, data: new Uint8Array(data), mimeType }
+    } catch {
+      return { ok: false, reason: 'read-failed' }
+    }
+  })
 }
 
 /**
