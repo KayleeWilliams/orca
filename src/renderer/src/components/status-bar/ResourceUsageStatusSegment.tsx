@@ -715,23 +715,23 @@ function SessionsTabPanel({
 
   if (sessionsError && sessions.length === 0) {
     return (
-      <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">
+      <div className="flex h-full items-center justify-center px-3 py-4 text-center text-[11px] text-muted-foreground">
         Terminal sessions unavailable.
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col">
-      <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground shrink-0">
         Terminal Sessions ({sessions.length})
       </div>
       {sessions.length === 0 ? (
-        <div className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground">
           No active sessions
         </div>
       ) : (
-        <div className="max-h-[240px] overflow-y-auto scrollbar-sleek">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-sleek">
           {[...sessions]
             .sort((a, b) => {
               const aBound = workspaceSessionReady && boundPtyIds.has(a.id) ? 0 : 1
@@ -777,7 +777,7 @@ function SessionsTabPanel({
         </div>
       )}
       {orphanCount > 0 && (
-        <div className="border-t border-border/50 px-2 py-2">
+        <div className="border-t border-border/50 px-2 py-2 shrink-0">
           <button
             type="button"
             onClick={() => void handleKillOrphans()}
@@ -1137,98 +1137,107 @@ export function ResourceUsageStatusSegment({
           </div>
         )}
 
-        {activeTab === 'resources' ? (
-          <>
-            {snapshot && (
-              <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-b border-border/50 text-[10px] uppercase tracking-wide">
-                <button
-                  type="button"
-                  onClick={() => setSortOption('name')}
-                  className={cn(
-                    'hover:text-foreground transition-colors',
-                    sortOption === 'name'
-                      ? 'font-semibold text-foreground'
-                      : 'text-muted-foreground/80'
-                  )}
-                  aria-pressed={sortOption === 'name'}
-                >
-                  Name
-                </button>
-                <div className={cn(METRIC_COLUMNS_CLS, 'text-[10px]')}>
-                  <button
-                    type="button"
-                    onClick={() => setSortOption('cpu')}
-                    className={cn(
-                      CPU_COLUMN_CLS,
-                      'hover:text-foreground transition-colors',
-                      sortOption === 'cpu'
-                        ? 'font-semibold text-foreground'
-                        : 'text-muted-foreground/80'
-                    )}
-                    aria-pressed={sortOption === 'cpu'}
-                  >
-                    CPU
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSortOption('memory')}
-                    className={cn(
-                      MEM_COLUMN_CLS,
-                      'hover:text-foreground transition-colors',
-                      sortOption === 'memory'
-                        ? 'font-semibold text-foreground'
-                        : 'text-muted-foreground/80'
-                    )}
-                    aria-pressed={sortOption === 'memory'}
-                  >
-                    Memory
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="max-h-[50vh] overflow-y-auto scrollbar-sleek">
-              {snapshot && snapshot.worktrees.length > 0 && (
-                <WorktreeSection
-                  worktrees={snapshot.worktrees}
-                  sortOption={sortOption}
-                  collapsedRepos={collapsedRepos}
-                  toggleRepo={toggleRepo}
-                  collapsedWorktrees={collapsedWorktrees}
-                  toggleWorktree={toggleWorktree}
-                  navigateToWorktree={navigateToWorktree}
-                  onSleep={handleSleep}
-                  onDelete={deleteWorktree}
-                />
-              )}
-
-              {snapshot && snapshot.worktrees.length === 0 && (
-                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  Nothing running right now
-                </div>
-              )}
-
+        {/* Why: pin the body to a constant height so toggling between
+            Resources and Sessions doesn't reflow the popover. The inner
+            panels each take h-full and own their own scrolling, so short
+            content (e.g. zero sessions) leaves whitespace instead of
+            collapsing the surface. */}
+        <div className="flex h-[420px] flex-col">
+          {activeTab === 'resources' ? (
+            <>
               {snapshot && (
-                <AppSection
-                  app={snapshot.app}
-                  isCollapsed={appCollapsed}
-                  onToggle={() => setAppCollapsed((v) => !v)}
-                />
+                <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-b border-border/50 text-[10px] uppercase tracking-wide shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSortOption('name')}
+                    className={cn(
+                      'hover:text-foreground transition-colors',
+                      sortOption === 'name'
+                        ? 'font-semibold text-foreground'
+                        : 'text-muted-foreground/80'
+                    )}
+                    aria-pressed={sortOption === 'name'}
+                  >
+                    Name
+                  </button>
+                  <div className={cn(METRIC_COLUMNS_CLS, 'text-[10px]')}>
+                    <button
+                      type="button"
+                      onClick={() => setSortOption('cpu')}
+                      className={cn(
+                        CPU_COLUMN_CLS,
+                        'hover:text-foreground transition-colors',
+                        sortOption === 'cpu'
+                          ? 'font-semibold text-foreground'
+                          : 'text-muted-foreground/80'
+                      )}
+                      aria-pressed={sortOption === 'cpu'}
+                    >
+                      CPU
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSortOption('memory')}
+                      className={cn(
+                        MEM_COLUMN_CLS,
+                        'hover:text-foreground transition-colors',
+                        sortOption === 'memory'
+                          ? 'font-semibold text-foreground'
+                          : 'text-muted-foreground/80'
+                      )}
+                      aria-pressed={sortOption === 'memory'}
+                    >
+                      Memory
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {!snapshot && !daemonUnreachable && (
-                <div className="px-3 py-4 text-center text-xs text-muted-foreground">Loading…</div>
-              )}
-            </div>
-          </>
-        ) : (
-          <SessionsTabPanel
-            sessions={sessions}
-            sessionsError={sessionsError}
-            onCloseSegment={closeSegment}
-            onSessionsChanged={() => void refreshSessions()}
-          />
-        )}
+              <div className="flex-1 overflow-y-auto scrollbar-sleek">
+                {snapshot && snapshot.worktrees.length > 0 && (
+                  <WorktreeSection
+                    worktrees={snapshot.worktrees}
+                    sortOption={sortOption}
+                    collapsedRepos={collapsedRepos}
+                    toggleRepo={toggleRepo}
+                    collapsedWorktrees={collapsedWorktrees}
+                    toggleWorktree={toggleWorktree}
+                    navigateToWorktree={navigateToWorktree}
+                    onSleep={handleSleep}
+                    onDelete={deleteWorktree}
+                  />
+                )}
+
+                {snapshot && snapshot.worktrees.length === 0 && (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    Nothing running right now
+                  </div>
+                )}
+
+                {snapshot && (
+                  <AppSection
+                    app={snapshot.app}
+                    isCollapsed={appCollapsed}
+                    onToggle={() => setAppCollapsed((v) => !v)}
+                  />
+                )}
+
+                {!snapshot && !daemonUnreachable && (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    Loading…
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <SessionsTabPanel
+              sessions={sessions}
+              sessionsError={sessionsError}
+              onCloseSegment={closeSegment}
+              onSessionsChanged={() => void refreshSessions()}
+            />
+          )}
+        </div>
       </PopoverContent>
       <DaemonActionDialog api={daemonActions} />
     </Popover>
