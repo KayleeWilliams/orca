@@ -1,36 +1,21 @@
 // Privacy pane — the permanent surface for the telemetry opt-in toggle.
 // Two responsibilities:
 //   1. Flip `optedIn` when the user toggles the switch. All renderer-
-//      initiated opt-in flips route through `window.api.telemetrySetOptIn`,
-//      where main derives `via = 'settings'` and fires
-//      `telemetry_opted_in` / `telemetry_opted_out`.
+//      initiated opt-in flips route through `window.api.telemetrySetOptIn`;
+//      main derives the `via` tag and fires `telemetry_opted_in` /
+//      `telemetry_opted_out`.
 //   2. Render the correct "blocked by X" helper text when an environment
 //      variable (DO_NOT_TRACK, ORCA_TELEMETRY_DISABLED) or CI presence
-//      disables transmission at runtime, or when the existing-user opt-in
-//      banner has not yet been resolved. Env vars are main-side state so
-//      the pane reads effective consent via `telemetry:getConsentState`;
-//      banner-pending state lives on the settings object
-//      (`telemetry.optedIn`, `telemetry.existedBeforeTelemetryRelease`).
+//      disables transmission at runtime. Env vars are main-side process
+//      state, so the pane reads effective consent via
+//      `telemetry:getConsentState`.
 //
-// Why the toggle is gated while the banner is pending:
-//
-// The main-side IPC handler in `src/main/ipc/telemetry.ts` derives the
-// `via` discriminator from persisted `telemetry.*` fields before any state
-// mutation. The existing-user banner-pending state
-// (`existedBeforeTelemetryRelease=true`, `optedIn=null`) collides with a
-// hypothetical Privacy-pane opt-in from the same cohort. Making the
-// toggle inert while the banner is still pending makes the two `via`
-// derivation cases mutually exclusive by construction — the banner is
-// the only surface that can produce `'first_launch_banner'`, and the
-// pane is the only surface that can produce `'settings'`.
-//
-// New users have no first-launch surface at all (see telemetry-plan.md
-// §First-launch experience), so there is no new-user gate to worry about.
-//
-// Precedence between blocked reasons: env-var wins over banner-pending.
-// Env var is the harder constraint — resolving the banner cannot
-// un-disable a toggle the OS env already blocked, so naming the OS env
-// as the reason is the more actionable signal.
+// The toggle is NOT gated while the existing-user notice is pending — the
+// whole point of the pane is to let the user flip consent, and disabling
+// it would create a chicken-and-egg where the notice pushes the user at
+// Settings and the pane points back at the notice. Flipping the toggle
+// moves `optedIn` off `null`, which un-mounts `TelemetryFirstLaunchSurface`
+// on its own — so "toggle in Settings" IS a way to dismiss the notice.
 //
 // Structural note: the pane mimics NotificationsPane / DeveloperPermissionsPane
 // — a small toggle-heavy surface with inline helper text. A single-row
@@ -52,12 +37,12 @@ import { useAppStore } from '../../store'
 // mapping as plain functions that tests can call without rendering.
 export type EnvBlockedReason = 'do_not_track' | 'orca_disabled' | 'ci'
 
-// Reasons the toggle is read-only. The banner-pending reason is transient
-// (resolves by clicking Sure/No thanks); the three env reasons persist
-// until the operator unsets the variable and relaunches.
-export type BlockedReason =
-  | { kind: 'env'; reason: EnvBlockedReason }
-  | { kind: 'first_launch_banner' }
+// Reasons the toggle is read-only. Only env/CI overrides block the toggle:
+// they persist until the operator unsets the variable and relaunches, so
+// the user's flip cannot take effect until then. The existing-user notice
+// is NOT a blocked reason — flipping the toggle is one of the valid ways
+// to resolve it.
+export type BlockedReason = { kind: 'env'; reason: EnvBlockedReason }
 
 export function isEnvBlocked(consent: TelemetryConsentState | null): consent is {
   effective: 'disabled'
@@ -81,29 +66,16 @@ export function envVarNameForReason(reason: EnvBlockedReason): string {
   return 'CI'
 }
 
-// Compute the reason the toggle should be inert, if any. Env-var wins over
-// banner-pending because the OS env is a harder constraint than a transient
-// UI surface — resolving the banner cannot un-disable a toggle the user's
-// shell blocked at the process level.
+// Compute the reason the toggle should be inert, if any. Only env-var /
+// CI overrides block the toggle — they persist until the operator unsets
+// the variable and relaunches. The existing-user notice does not gate the
+// toggle; flipping it is a valid way to resolve the notice.
 //
 // Exported for test coverage. The component renders helper text by
 // pattern-matching the returned shape.
-export function computeBlockedReason(
-  consent: TelemetryConsentState | null,
-  telemetry: GlobalSettings['telemetry'] | undefined
-): BlockedReason | null {
+export function computeBlockedReason(consent: TelemetryConsentState | null): BlockedReason | null {
   if (isEnvBlocked(consent)) {
     return { kind: 'env', reason: consent.reason }
-  }
-  if (!telemetry) {
-    return null
-  }
-  // Existing user awaiting banner — `telemetry.optedIn === null` AND the
-  // cohort marker is true. Both conditions must hold: a new user whose
-  // `optedIn` somehow lands at `null` (migration bug) should not be told
-  // to dismiss a banner that will never mount.
-  if (telemetry.existedBeforeTelemetryRelease === true && telemetry.optedIn === null) {
-    return { kind: 'first_launch_banner' }
   }
   return null
 }
@@ -153,7 +125,7 @@ export function PrivacyPane({ settings }: PrivacyPaneProps): React.JSX.Element {
     }
   }, [settings.telemetry?.optedIn])
 
-  const blocked = computeBlockedReason(consent, settings.telemetry)
+  const blocked = computeBlockedReason(consent)
 
   // Display the user's stored preference, not the effective state. An env
   // var blocks transmission without overwriting the persisted preference
@@ -165,14 +137,13 @@ export function PrivacyPane({ settings }: PrivacyPaneProps): React.JSX.Element {
 
   const handleToggle = async (): Promise<void> => {
     if (blocked || inFlight) {
-      // Belt-and-suspenders: the button is disabled, but the click handler
-      // is the single source of truth for "did the user actually flip
-      // consent?" If a CSS or a11y bug ever makes the disabled button
-      // clickable, we must not route the flip through `telemetrySetOptIn`
-      // while the existing-user banner is still pending — that is the
-      // whole point of the gate. The `inFlight` arm additionally
-      // suppresses duplicate sends while a previous flip is still
-      // round-tripping through IPC.
+      // Belt-and-suspenders: the button is disabled when env/CI overrides
+      // block transmission, but the click handler is the single source of
+      // truth for "did the user actually flip consent?" If a CSS or a11y
+      // bug ever makes the disabled button clickable, we must not route a
+      // flip through `telemetrySetOptIn` against an env-blocked state. The
+      // `inFlight` arm additionally suppresses duplicate sends while a
+      // previous flip is still round-tripping through IPC.
       return
     }
     setInFlight(true)
@@ -245,19 +216,13 @@ export function PrivacyPane({ settings }: PrivacyPaneProps): React.JSX.Element {
   )
 }
 
-// Per-reason copy so each blocked state is named explicitly in the UI.
-// `ci` is included for symmetry with `resolveConsent`'s branches but
-// should be rare on a desktop install — the pane is accessible only once
-// the app boots past CI detection. The banner-pending reason points the
-// user at the one-time surface they need to resolve.
+// Per-reason copy for the env/CI blocked states. The pane is accessible
+// only once the app boots past CI detection, so `ci` is rare on a
+// desktop install — but it's included for symmetry with the resolver.
 function BlockedHelper({ blocked, id }: { blocked: BlockedReason; id: string }): React.JSX.Element {
   return (
     <div id={id} className="px-1 pb-2 text-xs text-muted-foreground">
-      {blocked.kind === 'env' ? (
-        <EnvHelperBody reason={blocked.reason} />
-      ) : (
-        <p>Respond to the welcome banner to change this setting.</p>
-      )}
+      <EnvHelperBody reason={blocked.reason} />
     </div>
   )
 }

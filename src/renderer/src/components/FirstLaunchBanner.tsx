@@ -9,13 +9,15 @@
 // covered by the install-time disclosure and receive no first-launch UI —
 // see telemetry-plan.md §First-launch experience.
 //
-// Three actions, three semantics:
-//   - ✕ (top-right) → silent acknowledge. Persists `optedIn: true`, fires
-//     nothing. Routes through `window.api.telemetryAcknowledgeBanner()` to
-//     a dedicated main-side channel so no `via` derivation can tag this
-//     path. The ✕ IS the opt-in action for this cohort: the user sees the
-//     notice, chooses not to intervene, and is opted in silently — the
-//     same shape every direct-shape competitor ships.
+// Three actions, two semantics:
+//   - "Got it" and the ✕ in the corner → silent acknowledge. Both persist
+//     `optedIn: true`, fire nothing, route through
+//     `window.api.telemetryAcknowledgeBanner()` to a dedicated main-side
+//     channel so no `via` derivation can tag this path. Two surfaces for
+//     the same action because the ✕ alone is easy to miss; "Got it" is
+//     the discoverable primary, ✕ is the keyboard/notification-style
+//     escape. Either way the user sees the notice, chooses not to
+//     intervene, and is opted in silently.
 //   - "Turn off" → explicit opt-out. Routes through
 //     `window.api.telemetrySetOptIn(false)`; main derives
 //     `via = 'first_launch_banner'` from the pre-mutation state
@@ -24,12 +26,12 @@
 //     BEFORE disabling the SDK — the one signal that tells us the
 //     opt-out flow is working must not be silenced by the opt-out it
 //     announces.
-//   - "Privacy policy" → opens the privacy doc URL, no state change, no
-//     dismiss.
+//   - "Privacy policy" link → opens the privacy doc URL, no state change,
+//     no dismiss.
 //
-// No auto-dismiss, no delayed re-ask: once resolved (✕ or Turn off), the
-// notice never returns, because the cohort condition (`optedIn === null`)
-// clears in both paths.
+// No auto-dismiss, no delayed re-ask: once resolved (Got it / ✕ / Turn
+// off), the notice never returns, because the cohort condition
+// (`optedIn === null`) clears in all three resolving paths.
 
 import { useState } from 'react'
 import { X } from 'lucide-react'
@@ -50,10 +52,10 @@ export function FirstLaunchBanner({
   // would re-enter telemetrySetOptIn(false); on the second call, main's
   // deriveOptInVia sees currentOptedIn=false (just persisted by click 1)
   // and falls through to the 'settings' branch, producing one opt-out
-  // intent tagged as two different `via` values. The ✕ path is guarded
-  // symmetrically — a second click there would be a wasted IPC round-trip,
-  // but the guard also blocks a Turn-off click that arrives mid-flight
-  // after a ✕ click (or vice versa).
+  // intent tagged as two different `via` values. The acknowledge paths
+  // are guarded symmetrically — a second Got-it/✕ click would be a
+  // wasted IPC round-trip, but the guard also blocks a Turn-off click
+  // arriving mid-flight after an acknowledge (or vice versa).
   const [inFlight, setInFlight] = useState(false)
 
   const handleAcknowledge = async (): Promise<void> => {
@@ -91,57 +93,61 @@ export function FirstLaunchBanner({
 
   return (
     // Fixed-top strip so the notice overlays whatever is beneath without
-    // shifting the rest of the layout (the titlebar is ~42px; the notice
-    // sits just below it). `top-11` ≈ 44px clears the titlebar on mac +
-    // the full-width titlebar on other views; the notice is non-modal and
-    // intentionally does not occlude the main content — clicks pass
-    // through to below-notice regions outside this box.
+    // shifting the rest of the layout. `top-2` hugs the top edge of the
+    // window; on macOS the titlebar is drawn over the same region but the
+    // banner stays below the traffic lights via centering + narrow width.
+    // The notice is non-modal and intentionally does not occlude the main
+    // content — clicks pass through to below-notice regions outside this
+    // box.
     //
     // `relative` is load-bearing: the absolutely-positioned ✕ anchors to
-    // this container. `pr-8` reserves space on the right edge so the ✕
-    // does not visually overlap the "Turn off" button.
+    // this container.
     <div
-      className="fixed left-1/2 top-11 z-40 max-w-3xl -translate-x-1/2 rounded-xl border border-border bg-card/95 px-4 py-3 pr-8 text-sm shadow-lg backdrop-blur"
+      className="fixed left-1/2 top-2 z-40 flex w-[min(46.5rem,calc(100vw-2rem))] -translate-x-1/2 items-start gap-4 rounded-lg border border-border bg-card/95 py-3 pl-4 pr-3 shadow-lg backdrop-blur"
       role="region"
       aria-label="Telemetry notice"
       aria-live="polite"
     >
-      <div className="space-y-2">
-        <div className="space-y-1">
-          <p className="font-medium">Help us figure out what to build next</p>
-          <p className="text-muted-foreground">
-            We&apos;re building Orca in the open, and the features we ship are shaped by how people
-            actually use it. We&apos;d like to start sending anonymous counts of which features you
-            use and where things break — no file contents, prompts, terminal output, or anything
-            that identifies you. You can change this anytime in Settings &rarr; Privacy.{' '}
-            <button
-              type="button"
-              className="underline underline-offset-2 hover:text-foreground"
-              onClick={() => void window.api.shell.openUrl(PRIVACY_URL)}
-            >
-              Privacy policy
-            </button>
-            .
-          </p>
-        </div>
-        <div className="flex justify-end">
-          <Button variant="outline" size="sm" onClick={handleTurnOff} disabled={inFlight}>
-            Turn off
-          </Button>
-        </div>
+      {/* Text column — title + body stack on the left, takes remaining
+          width so the action column never pushes copy into a wrap. */}
+      <div className="flex-1 space-y-0.5 pr-1 text-sm">
+        <p className="font-medium leading-snug">Help us figure out what to build next</p>
+        <p className="text-xs leading-snug text-muted-foreground">
+          We&apos;d like to start sending anonymous counts of which features you use and where
+          things break — no file contents, prompts, terminal output, or anything that identifies
+          you. Change this anytime in Settings &rarr; Privacy &amp; Telemetry.{' '}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={() => void window.api.shell.openUrl(PRIVACY_URL)}
+          >
+            Privacy policy
+          </button>
+          .
+        </p>
       </div>
-      {/* ✕ in the top-right corner. aria-label names the semantic
-          explicitly — "Dismiss" rather than "Close" — because the action
-          persists silent opt-in, not just hides the UI. A second button
-          labeled "Got it" alongside "Turn off" would visually compete
-          and muddy the decision; the universal close control reads as
-          "acknowledge and move on" without competing for attention. */}
+      {/* Action column — vertically centered against the text block.
+          "Got it" is the affirmative primary so it reads as the easy
+          path; "Turn off" is the secondary outline so the destructive
+          (from telemetry's perspective) action requires an explicit
+          choice. ✕ stays in the corner as a familiar escape and to
+          satisfy keyboard/notification-style dismiss expectations. */}
+      <div className="flex shrink-0 items-center gap-2 self-center pr-6">
+        <Button variant="outline" size="sm" onClick={handleTurnOff} disabled={inFlight}>
+          Turn off
+        </Button>
+        <Button size="sm" onClick={handleAcknowledge} disabled={inFlight}>
+          Got it
+        </Button>
+      </div>
+      {/* aria-label says "Dismiss" — the action persists silent opt-in,
+          not just hides the UI. */}
       <button
         type="button"
         aria-label="Dismiss notice"
         onClick={handleAcknowledge}
         disabled={inFlight}
-        className="absolute right-2 top-2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className="absolute right-1.5 top-1.5 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
       >
         <X className="size-3.5" />
       </button>

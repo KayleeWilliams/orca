@@ -134,94 +134,44 @@ describe('PrivacyPane — envVarNameForReason', () => {
 })
 
 describe('PrivacyPane — computeBlockedReason', () => {
-  const resolved = {
-    installId: 'x',
-    existedBeforeTelemetryRelease: false,
-    optedIn: true
-  } satisfies NonNullable<GlobalSettings['telemetry']>
-
-  it('returns null when consent is enabled and the banner is not pending', () => {
-    expect(computeBlockedReason({ effective: 'enabled' }, resolved)).toBeNull()
+  it('returns null when consent is enabled', () => {
+    expect(computeBlockedReason({ effective: 'enabled' })).toBeNull()
   })
 
   it('returns null for a user_opt_out state (the toggle must remain actionable)', () => {
-    // Matches the isEnvBlocked test above: a user who opted out must be
-    // able to flip back on from Settings.
-    expect(
-      computeBlockedReason(
-        { effective: 'disabled', reason: 'user_opt_out' },
-        { ...resolved, optedIn: false }
-      )
-    ).toBeNull()
+    // A user who opted out must be able to flip back on from Settings.
+    expect(computeBlockedReason({ effective: 'disabled', reason: 'user_opt_out' })).toBeNull()
+  })
+
+  it('returns null for pending_banner (banner-pending does NOT gate the toggle)', () => {
+    // Flipping the Settings toggle is a valid way to resolve the notice:
+    // it moves `optedIn` off `null`, which un-mounts the banner on its own.
+    expect(computeBlockedReason({ effective: 'pending_banner' })).toBeNull()
   })
 
   it('names DO_NOT_TRACK as the env reason when set', () => {
-    const result = computeBlockedReason({ effective: 'disabled', reason: 'do_not_track' }, resolved)
+    const result = computeBlockedReason({ effective: 'disabled', reason: 'do_not_track' })
     expect(result).toEqual({ kind: 'env', reason: 'do_not_track' })
   })
 
   it('names ORCA_TELEMETRY_DISABLED as the env reason when set', () => {
-    const result = computeBlockedReason(
-      { effective: 'disabled', reason: 'orca_disabled' },
-      resolved
-    )
+    const result = computeBlockedReason({ effective: 'disabled', reason: 'orca_disabled' })
     expect(result).toEqual({ kind: 'env', reason: 'orca_disabled' })
   })
 
   it('names CI as the env reason when set', () => {
-    const result = computeBlockedReason({ effective: 'disabled', reason: 'ci' }, resolved)
+    const result = computeBlockedReason({ effective: 'disabled', reason: 'ci' })
     expect(result).toEqual({ kind: 'env', reason: 'ci' })
-  })
-
-  it('blocks with first_launch_banner for an existing user awaiting the banner', () => {
-    const result = computeBlockedReason(
-      { effective: 'pending_banner' },
-      { ...resolved, existedBeforeTelemetryRelease: true, optedIn: null }
-    )
-    expect(result).toEqual({ kind: 'first_launch_banner' })
-  })
-
-  it('does not block a new user (new users have no first-launch surface)', () => {
-    // New users (existedBeforeTelemetryRelease=false) are initialized with
-    // optedIn=true at migration and see no first-launch surface — the
-    // toggle is live from first launch.
-    expect(
-      computeBlockedReason(
-        { effective: 'enabled' },
-        { ...resolved, existedBeforeTelemetryRelease: false, optedIn: true }
-      )
-    ).toBeNull()
-  })
-
-  it('env-var precedence wins over banner-pending', () => {
-    // DO_NOT_TRACK + an existing user awaiting the banner: both conditions
-    // hold simultaneously. The env reason must win so the helper text names
-    // the OS variable (the harder constraint) rather than telling the user
-    // to click a banner that will not un-disable the toggle anyway.
-    const result = computeBlockedReason(
-      { effective: 'disabled', reason: 'do_not_track' },
-      { ...resolved, existedBeforeTelemetryRelease: true, optedIn: null }
-    )
-    expect(result).toEqual({ kind: 'env', reason: 'do_not_track' })
-  })
-
-  it('returns null when the telemetry block is absent (pre-migration / test fixture)', () => {
-    // Post-migration invariant is that telemetry is populated, so the only
-    // way to land here is a bug or an out-of-process test fixture. Don't
-    // invent a cohort we cannot prove — let the toggle behave like an
-    // unblocked resolved user until the migration runs.
-    const result = computeBlockedReason({ effective: 'pending_banner' }, undefined)
-    expect(result).toBeNull()
   })
 })
 
 describe('PrivacyPane — markup respects blocked state', () => {
   // The useEffect that fetches consent does not run in renderToStaticMarkup
   // (no DOM, no state flushes), so the rendered toggle always reads the
-  // `consent === null` branch of the effect. We verify the first-launch
-  // reasons here because those are visible from settings alone; env-var
-  // reasons require consent to be resolved, which is covered by the
-  // computeBlockedReason unit tests above.
+  // `consent === null` branch of the effect. Env-var blocked-state markup
+  // is covered by the computeBlockedReason unit tests above; here we just
+  // confirm the toggle is live for the cohorts that should be able to flip
+  // it.
   beforeEach(() => {
     getConsentStateMock.mockReset()
     getConsentStateMock.mockResolvedValue({ effective: 'enabled' })
@@ -230,24 +180,7 @@ describe('PrivacyPane — markup respects blocked state', () => {
     vi.restoreAllMocks()
   })
 
-  it('disables the toggle for an existing user with optedIn=null', () => {
-    const markup = renderToStaticMarkup(
-      React.createElement(PrivacyPane, {
-        settings: buildSettings({
-          existedBeforeTelemetryRelease: true,
-          optedIn: null
-        })
-      })
-    )
-    // `disabled` is the attribute the button element receives from React.
-    expect(markup).toMatch(/role="switch"[^>]*disabled/)
-    // Helper copy names the surface the user must resolve to unblock
-    // the toggle — the first-launch notice rendered via
-    // TelemetryFirstLaunchSurface.
-    expect(markup).toContain('Respond to the welcome banner to change this setting.')
-  })
-
-  it('leaves the toggle enabled for a new user (no first-launch surface gates it)', () => {
+  it('leaves the toggle enabled for a new user', () => {
     const markup = renderToStaticMarkup(
       React.createElement(PrivacyPane, {
         settings: buildSettings({
@@ -258,6 +191,21 @@ describe('PrivacyPane — markup respects blocked state', () => {
     )
     // Negative assertion: the disabled attribute should not appear on the
     // switch. renderToStaticMarkup elides `disabled={false}` entirely.
+    expect(markup).not.toMatch(/role="switch"[^>]*disabled/)
+  })
+
+  it('leaves the toggle enabled for an existing user awaiting the banner (flip dismisses the banner)', () => {
+    // Flipping the toggle moves `optedIn` off `null`, which un-mounts the
+    // notice via TelemetryFirstLaunchSurface's cohort check. The Settings
+    // toggle is one of the valid ways to resolve the notice.
+    const markup = renderToStaticMarkup(
+      React.createElement(PrivacyPane, {
+        settings: buildSettings({
+          existedBeforeTelemetryRelease: true,
+          optedIn: null
+        })
+      })
+    )
     expect(markup).not.toMatch(/role="switch"[^>]*disabled/)
   })
 

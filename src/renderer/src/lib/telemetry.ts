@@ -19,7 +19,7 @@ import type { TelemetryConsentState } from '../../../shared/telemetry-consent-ty
 // telemetry surfaces (FirstLaunchBanner, PrivacyPane). Keeping it here — in
 // the shared telemetry lib — prevents the surfaces from drifting if the doc
 // ever moves.
-export const PRIVACY_URL = 'https://orcabuild.ai/docs/telemetry'
+export const PRIVACY_URL = 'https://www.onorca.dev/docs/telemetry'
 
 // Why: the IPC boundary is untyped at runtime, so a malformed payload from
 // main would otherwise let the Privacy pane render on garbage. Validate the

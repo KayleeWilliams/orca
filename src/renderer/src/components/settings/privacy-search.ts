@@ -6,7 +6,7 @@ import type { SettingsSearchEntry } from './settings-search'
 
 export const PRIVACY_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   {
-    title: 'Privacy',
+    title: 'Privacy & Telemetry',
     description: 'Anonymous product usage data and telemetry controls.',
     keywords: [
       'privacy',

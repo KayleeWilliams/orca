@@ -409,7 +409,7 @@ function Settings(): React.JSX.Element {
         : []),
       {
         id: 'privacy',
-        title: 'Privacy',
+        title: 'Privacy & Telemetry',
         description: 'Anonymous usage data and telemetry controls.',
         icon: Lock,
         searchEntries: PRIVACY_PANE_SEARCH_ENTRIES
@@ -747,7 +747,7 @@ function Settings(): React.JSX.Element {
 
                 <SettingsSection
                   id="privacy"
-                  title="Privacy"
+                  title="Privacy & Telemetry"
                   description="Anonymous usage data and telemetry controls."
                   searchEntries={PRIVACY_PANE_SEARCH_ENTRIES}
                 >
