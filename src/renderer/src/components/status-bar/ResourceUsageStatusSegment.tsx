@@ -8,15 +8,25 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  LoaderCircle,
   MemoryStick,
   Moon,
   RotateCw,
   Terminal,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useAppStore } from '../../store'
@@ -679,17 +689,27 @@ function SessionsTabPanel({
     ? sessions.filter((s) => !boundPtyIds.has(s.id)).length
     : 0
 
-  const handleKill = useCallback(
-    async (id: string) => {
-      try {
-        await window.api.pty.kill(id)
-      } catch {
-        /* already dead */
-      }
+  // Why: match the Settings page Manage Sessions pane — destructive
+  // single-session kill goes through a confirm dialog rather than
+  // firing on click. The dialog stays mounted on top of the popover.
+  const [killConfirm, setKillConfirm] = useState<DaemonSession | null>(null)
+  const [killing, setKilling] = useState(false)
+
+  const runKillConfirmed = useCallback(async () => {
+    if (!killConfirm) {
+      return
+    }
+    setKilling(true)
+    try {
+      await window.api.pty.kill(killConfirm.id)
+    } catch {
+      /* already dead */
+    } finally {
+      setKilling(false)
+      setKillConfirm(null)
       onSessionsChanged()
-    },
-    [onSessionsChanged]
-  )
+    }
+  }, [killConfirm, onSessionsChanged])
 
   const handleKillOrphans = useCallback(async () => {
     if (!workspaceSessionReady) {
@@ -745,9 +765,10 @@ function SessionsTabPanel({
               return (
                 <div
                   key={s.id}
-                  className={`flex items-center gap-2 px-2 py-1.5 rounded ${
-                    tabId ? 'cursor-pointer hover:bg-accent/60' : ''
-                  }`}
+                  className={cn(
+                    'group/sessrow flex items-center gap-2 px-2 py-1.5 rounded',
+                    tabId && 'cursor-pointer hover:bg-accent/60'
+                  )}
                   onClick={tabId ? () => handleNavigate(tabId) : undefined}
                 >
                   <span
@@ -758,19 +779,25 @@ function SessionsTabPanel({
                       {sessionLabel(s, title)}
                     </div>
                   </div>
-                  {!isBound && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void handleKill(s.id)
-                      }}
-                      className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={`Kill session ${s.id}`}
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  )}
+                  {/* Why: mirrors the Settings > Manage Sessions row — every
+                      session gets a kill X. Bound sessions hide the X until
+                      the row is hovered/focused so the list stays calm; the
+                      kill flow opens a confirm Dialog before invoking IPC. */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setKillConfirm(s)
+                    }}
+                    className={cn(
+                      'shrink-0 rounded p-0.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive',
+                      isBound &&
+                        'opacity-0 group-hover/sessrow:opacity-100 group-focus-within/sessrow:opacity-100 focus-visible:opacity-100'
+                    )}
+                    aria-label={`Kill session ${s.id}`}
+                  >
+                    <X className="size-3" />
+                  </button>
                 </div>
               )
             })}
@@ -787,6 +814,55 @@ function SessionsTabPanel({
           </button>
         </div>
       )}
+
+      <Dialog
+        open={killConfirm !== null}
+        onOpenChange={(open) => {
+          if (open) {
+            return
+          }
+          if (killing) {
+            return
+          }
+          setKillConfirm(null)
+        }}
+      >
+        <DialogContent
+          className="max-w-md"
+          showCloseButton={!killing}
+          onPointerDownOutside={(e) => {
+            if (killing) {
+              e.preventDefault()
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            if (killing) {
+              e.preventDefault()
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-sm">Kill this session?</DialogTitle>
+            <DialogDescription className="text-xs">
+              Force-quits <span className="font-medium text-foreground">{killConfirm?.id}</span>.
+              Any unsaved work in that pane is lost. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setKillConfirm(null)} disabled={killing}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void runKillConfirmed()}
+              disabled={killing}
+            >
+              {killing ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              {killing ? 'Killing…' : 'Kill session'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
