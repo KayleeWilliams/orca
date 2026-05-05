@@ -15,7 +15,6 @@ import {
   Trash2
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -986,6 +985,88 @@ export function ResourceUsageStatusSegment({
         className="w-[26rem] p-0"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
+        {/* Why: header is the only chrome — left side carries an inline pill
+            switcher between Resources and Sessions; right side carries the
+            two daemon-control icons. The bulky Radix Tabs strip and the
+            full-width footer were both removed because they created visual
+            noise and competed with the data underneath. */}
+        <div className="flex items-center justify-between gap-2 border-b border-border px-2 py-1.5">
+          <div
+            role="tablist"
+            aria-label="Resource view"
+            className="inline-flex items-center rounded-md bg-muted/40 p-0.5 text-[11px]"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'resources'}
+              onClick={() => setActiveTab('resources')}
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors',
+                activeTab === 'resources'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <MemoryStick className="size-3" />
+              Resources
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'sessions'}
+              onClick={() => setActiveTab('sessions')}
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors',
+                activeTab === 'sessions'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <Terminal className="size-3" />
+              Sessions
+              {orphanCount > 0 && (
+                <span className="ml-0.5 text-yellow-500 tabular-nums">({orphanCount})</span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-0.5">
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => daemonActions.setPending('restart')}
+                  disabled={daemonActions.isBusy}
+                  aria-label="Restart daemon"
+                  className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                >
+                  <RotateCw className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Restart daemon
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => daemonActions.setPending('killAll')}
+                  disabled={daemonActions.isBusy}
+                  aria-label="Kill all sessions"
+                  className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Kill all sessions
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
         {daemonUnreachable && (
           <div className="flex items-start gap-2 border-b border-border bg-yellow-500/10 px-3 py-2 text-[11px] text-foreground">
             <AlertTriangle className="mt-0.5 size-3 shrink-0 text-yellow-500" />
@@ -1008,7 +1089,7 @@ export function ResourceUsageStatusSegment({
           </div>
         )}
 
-        {snapshot && (
+        {snapshot && activeTab === 'resources' && (
           <div className="px-3 py-2 border-b border-border flex items-baseline gap-3 text-xs tabular-nums">
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -1056,28 +1137,8 @@ export function ResourceUsageStatusSegment({
           </div>
         )}
 
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as TabKey)}
-          className="w-full"
-        >
-          <TabsList className="w-full grid grid-cols-2 rounded-none border-b border-border bg-muted/20 p-0 h-auto">
-            <TabsTrigger
-              value="resources"
-              className="rounded-none data-[state=active]:bg-background text-xs py-1.5"
-            >
-              Resources
-            </TabsTrigger>
-            <TabsTrigger
-              value="sessions"
-              className="rounded-none data-[state=active]:bg-background text-xs py-1.5"
-            >
-              Terminal Sessions
-              {orphanCount > 0 && <span className="ml-1 text-yellow-500">({orphanCount})</span>}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="resources" className="m-0">
+        {activeTab === 'resources' ? (
+          <>
             {snapshot && (
               <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-b border-border/50 text-[10px] uppercase tracking-wide">
                 <button
@@ -1159,40 +1220,15 @@ export function ResourceUsageStatusSegment({
                 <div className="px-3 py-4 text-center text-xs text-muted-foreground">Loading…</div>
               )}
             </div>
-          </TabsContent>
-
-          <TabsContent value="sessions" className="m-0">
-            <SessionsTabPanel
-              sessions={sessions}
-              sessionsError={sessionsError}
-              onCloseSegment={closeSegment}
-              onSessionsChanged={() => void refreshSessions()}
-            />
-          </TabsContent>
-        </Tabs>
-
-        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/20 px-3 py-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => daemonActions.setPending('killAll')}
-            disabled={daemonActions.isBusy}
-            className="text-xs"
-          >
-            <Trash2 className="mr-1 size-3" />
-            Kill all sessions
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => daemonActions.setPending('restart')}
-            disabled={daemonActions.isBusy}
-            className="text-xs"
-          >
-            <RotateCw className="mr-1 size-3" />
-            Restart daemon
-          </Button>
-        </div>
+          </>
+        ) : (
+          <SessionsTabPanel
+            sessions={sessions}
+            sessionsError={sessionsError}
+            onCloseSegment={closeSegment}
+            onSessionsChanged={() => void refreshSessions()}
+          />
+        )}
       </PopoverContent>
       <DaemonActionDialog api={daemonActions} />
     </Popover>
