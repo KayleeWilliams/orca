@@ -384,10 +384,17 @@ function WorktreeRow({
   navigateToTab: (tabId: string) => void
 }): React.JSX.Element {
   const hasSessions = worktree.sessions.length > 0
-  const showActions =
-    worktree.worktreeId !== ORPHAN_WORKTREE_ID &&
-    worktree.repoId !== UNATTRIBUTED_REPO_ID &&
-    storeRecord !== null
+  // Why: synthetic buckets (orphan/unattributed) have no sidebar target to
+  // reveal. Real and SSH-resolved worktrees both qualify for navigation —
+  // navigateToWorktree handles the no-store-record case internally by
+  // bailing out of activateAndRevealWorktree if the worktree isn't known.
+  const isSynthetic =
+    worktree.worktreeId === ORPHAN_WORKTREE_ID || worktree.repoId === UNATTRIBUTED_REPO_ID
+  const isNavigable = !isSynthetic
+  // Why: Sleep / Delete affordances act on a sidebar worktree record; without
+  // one (synthesized SSH rows whose worktreeId isn't in worktreeById, or
+  // synthetic buckets) we hide them but keep the row clickable for navigation.
+  const showWorktreeActions = !isSynthetic && storeRecord !== null
   const isMainWorktree = storeRecord?.isMainWorktree ?? false
   const rowLabel = storeRecord?.displayName?.trim() || worktree.worktreeName
 
@@ -418,7 +425,7 @@ function WorktreeRow({
           onClick={onNavigate}
           aria-label={`Open workspace ${rowLabel}`}
           className="flex-1 min-w-0 py-2 pr-2 pl-1 text-left flex items-center gap-1.5"
-          disabled={!showActions}
+          disabled={!isNavigable}
         >
           <span className="text-xs font-medium truncate">{rowLabel}</span>
           {!worktree.hasLocalSamples && (
@@ -432,14 +439,14 @@ function WorktreeRow({
             <span
               className={cn(
                 'block transition-opacity',
-                showActions &&
+                showWorktreeActions &&
                   'group-hover/wtrow:opacity-0 group-hover/wtrow:pointer-events-none group-focus-within/wtrow:opacity-0 group-focus-within/wtrow:pointer-events-none'
               )}
-              aria-hidden={showActions ? undefined : true}
+              aria-hidden={showWorktreeActions ? undefined : true}
             >
               <Sparkline samples={worktree.history} />
             </span>
-            {showActions && (
+            {showWorktreeActions && (
               <div className="absolute inset-0 flex items-center justify-end gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover/wtrow:opacity-100 group-hover/wtrow:pointer-events-auto group-focus-within/wtrow:opacity-100 group-focus-within/wtrow:pointer-events-auto">
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>
@@ -743,6 +750,12 @@ export function ResourceUsageStatusSegment({
   }, [snapshot])
 
   const daemonUnreachable = sessionsError && memorySnapshotError !== null
+  // Why: a partial failure where the sessions IPC fails but the snapshot
+  // IPC still works was silently invisible after the merge — the old
+  // SessionsTabPanel surfaced it as "Terminal sessions unavailable". Show
+  // a slim inline notice so the user understands why the session list is
+  // empty/stale even though the resource numbers look fine.
+  const sessionsOnlyError = sessionsError && memorySnapshotError === null
 
   const toggleRepo = useCallback((repoId: string): void => {
     setCollapsedRepos((prev) => {
@@ -972,6 +985,16 @@ export function ResourceUsageStatusSegment({
               <RotateCw className="mr-1 size-3" />
               Restart
             </Button>
+          </div>
+        )}
+
+        {!daemonUnreachable && sessionsOnlyError && (
+          <div
+            className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
+            role="status"
+          >
+            <AlertTriangle className="size-3 shrink-0 text-yellow-500" />
+            <span>Terminal sessions unavailable. The list may be stale.</span>
           </div>
         )}
 
