@@ -37,6 +37,12 @@ export type Repo = {
    *  identically to `'auto'`; writers leave it undefined on creation so
    *  existing persisted records stay forward-compatible. */
   issueSourcePreference?: IssueSourcePreference
+  /** Paths (relative to the primary checkout) that should be symlinked into
+   *  newly created worktrees of this repo. Consumed only when the global
+   *  `experimentalWorktreeSymlinks` flag is on — the per-repo list is the
+   *  "what to link", the global flag is the "whether to link at all" switch.
+   *  Undefined/empty means no symlinks are created for this repo. */
+  symlinkPaths?: string[]
 }
 
 export type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
@@ -403,6 +409,13 @@ export type WorkspaceSessionState = {
    *  shutdown from renderer state so remote PTYs can be reattached via
    *  the relay's pty.attach RPC on startup. */
   remoteSessionIdsByTabId?: Record<string, string>
+  /** Per-worktree focus-recency timestamps used by the Cmd+J empty-query
+   *  ordering. Separate from worktree.lastActivityAt (background signal)
+   *  and worktreeNavHistory (Back/Forward stack). See
+   *  docs/cmd-j-empty-query-ordering.md. Absent in sessions written by
+   *  older builds — hydration tolerates missing/partial maps and the
+   *  active worktree is seeded on first restore. */
+  lastVisitedAtByWorktreeId?: Record<string, number>
 }
 
 // ─── GitHub ──────────────────────────────────────────────────────────
@@ -753,6 +766,11 @@ export type RepoHookSettings = {
 export type WorktreeSetupLaunch = {
   runnerScriptPath: string
   envVars: Record<string, string>
+}
+
+export type WorktreeStartupLaunch = {
+  command: string
+  env?: Record<string, string>
 }
 
 export type CreateSparseCheckoutRequest = {
@@ -1140,11 +1158,18 @@ export type GlobalSettings = {
    *  takes effect on the next app launch. The in-pane status indicators and
    *  the cursor-agent hook path are unaffected by this toggle. */
   experimentalAgentDashboard: boolean
+  experimentalMobile: boolean
   /** Experimental: floating animated sidekick (claude.webp) in the bottom-right
    *  corner. Opt-in because it's a cosmetic joke feature; users who leave it
    *  off never mount the overlay. Toggling takes effect immediately in the
    *  current session (no relaunch) because it is purely renderer-side. */
   experimentalSidekick: boolean
+  /** Experimental: when creating a worktree, automatically symlink a
+   *  user-configured set of files/folders from the primary checkout (e.g.
+   *  `.env`, `node_modules`) into the new worktree. Opt-in while the
+   *  configuration surface and edge cases (conflicts with existing paths,
+   *  cleanup on worktree delete) are still being worked out. */
+  experimentalWorktreeSymlinks: boolean
   /** Anonymous product-telemetry state. Optional because the one-shot
    *  migration in `Store.load()` is what populates it on first boot of the
    *  telemetry release; before migration runs, the field is absent. After

@@ -19,7 +19,7 @@ import type {
   GitBranchCompareResult,
   GitConflictOperation,
   GitDiffResult,
-  GitStatusEntry,
+  GitStatusResult,
   GitHubAssignableUser,
   GitHubPRFile,
   GitHubPRFileContents,
@@ -58,6 +58,7 @@ import type {
   Worktree,
   WorktreeMeta,
   WorktreeSetupLaunch,
+  WorktreeStartupLaunch,
   WorkspaceSessionState
 } from '../shared/types'
 import type {
@@ -366,6 +367,12 @@ export type PreloadApi = {
       displayName?: string
       kind?: 'git' | 'folder'
     }) => Promise<{ repo: Repo } | { error: string }>
+    // Why: error union matches the IPC handler's return shape; renderer callers branch on `'error' in result`.
+    create: (args: {
+      parentPath: string
+      name: string
+      kind: 'git' | 'folder'
+    }) => Promise<{ repo: Repo } | { error: string }>
     onCloneProgress: (callback: (data: { phase: string; percent: number }) => void) => () => void
     getGitUsername: (args: { repoId: string }) => Promise<string>
     getBaseRefDefault: (args: { repoId: string }) => Promise<BaseRefDefaultResult>
@@ -435,6 +442,13 @@ export type PreloadApi = {
     onData: (callback: (data: { id: string; data: string }) => void) => () => void
     onReplay: (callback: (data: { id: string; data: string }) => void) => () => void
     onExit: (callback: (data: { id: string; code: number }) => void) => () => void
+    onSerializeBufferRequest: (
+      callback: (data: { requestId: string; ptyId: string }) => void
+    ) => () => void
+    sendSerializedBuffer: (
+      requestId: string,
+      snapshot: { data: string; cols: number; rows: number } | null
+    ) => void
     management: PtyManagementApi
   }
   feedback: {
@@ -773,10 +787,7 @@ export type PreloadApi = {
     onFsChanged: (callback: (payload: FsChangedPayload) => void) => () => void
   }
   git: {
-    status: (args: {
-      worktreePath: string
-      connectionId?: string
-    }) => Promise<{ entries: GitStatusEntry[] }>
+    status: (args: { worktreePath: string; connectionId?: string }) => Promise<GitStatusResult>
     conflictOperation: (args: {
       worktreePath: string
       connectionId?: string
@@ -805,6 +816,11 @@ export type PreloadApi = {
       oldPath?: string
       connectionId?: string
     }) => Promise<GitDiffResult>
+    commit: (args: {
+      worktreePath: string
+      message: string
+      connectionId?: string
+    }) => Promise<{ success: boolean; error?: string }>
     stage: (args: {
       worktreePath: string
       filePath: string
@@ -864,11 +880,17 @@ export type PreloadApi = {
     onHardReloadBrowserPage: (callback: () => void) => () => void
     onCloseActiveTab: (callback: () => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
+    onSwitchTabAcrossAllTypes: (callback: (direction: 1 | -1) => void) => () => void
     onSwitchTerminalTab: (callback: (direction: 1 | -1) => void) => () => void
     onToggleStatusBar: (callback: () => void) => () => void
     onExportPdfRequested: (callback: () => void) => () => void
     onActivateWorktree: (
-      callback: (data: { repoId: string; worktreeId: string; setup?: WorktreeSetupLaunch }) => void
+      callback: (data: {
+        repoId: string
+        worktreeId: string
+        setup?: WorktreeSetupLaunch
+        startup?: WorktreeStartupLaunch
+      }) => void
     ) => () => void
     onCreateTerminal: (
       callback: (data: { worktreeId: string; command?: string; title?: string }) => void
@@ -902,6 +924,7 @@ export type PreloadApi = {
     onCloseTerminal: (
       callback: (data: { tabId: string; paneRuntimeId?: number }) => void
     ) => () => void
+    onSleepWorktree: (callback: (data: { worktreeId: string }) => void) => () => void
     onTerminalZoom: (callback: (direction: 'in' | 'out' | 'reset') => void) => () => void
     readClipboardText: () => Promise<string>
     saveClipboardImageAsTempFile: () => Promise<string | null>
@@ -927,6 +950,18 @@ export type PreloadApi = {
   runtime: {
     syncWindowGraph: (graph: RuntimeSyncWindowGraph) => Promise<RuntimeStatus>
     getStatus: () => Promise<RuntimeStatus>
+    getTerminalFitOverrides: () => Promise<
+      { ptyId: string; mode: 'mobile-fit'; cols: number; rows: number }[]
+    >
+    restoreTerminalFit: (ptyId: string) => Promise<{ restored: boolean }>
+    onTerminalFitOverrideChanged: (
+      callback: (event: {
+        ptyId: string
+        mode: 'mobile-fit' | 'desktop-fit'
+        cols: number
+        rows: number
+      }) => void
+    ) => () => void
   }
   rateLimits: {
     get: () => Promise<RateLimitState>
@@ -948,6 +983,7 @@ export type PreloadApi = {
     connect: (args: { targetId: string }) => Promise<SshConnectionState | null>
     disconnect: (args: { targetId: string }) => Promise<void>
     getState: (args: { targetId: string }) => Promise<SshConnectionState | null>
+    needsPassphrasePrompt: (args: { targetId: string }) => Promise<boolean>
     testConnection: (args: {
       targetId: string
     }) => Promise<{ success: boolean; error?: string; state?: SshConnectionState }>
@@ -1015,6 +1051,22 @@ export type PreloadApi = {
         interrupted?: boolean
       }) => void
     ) => () => void
+  }
+  mobile: {
+    listNetworkInterfaces: () => Promise<{
+      interfaces: { name: string; address: string }[]
+    }>
+    getPairingQR: (args?: {
+      address?: string
+    }) => Promise<
+      | { available: false }
+      | { available: true; qrDataUrl: string; endpoint: string; deviceId: string }
+    >
+    listDevices: () => Promise<{
+      devices: { deviceId: string; name: string; pairedAt: number; lastSeenAt: number }[]
+    }>
+    revokeDevice: (args: { deviceId: string }) => Promise<{ revoked: boolean }>
+    isWebSocketReady: () => Promise<{ ready: boolean; endpoint: string | null }>
   }
 }
 

@@ -15,6 +15,7 @@ import { initDaemonPtyProvider, disconnectDaemon } from './daemon/daemon-init'
 import { setAppRuntimeFlags } from './ipc/app'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
+import { registerMobileHandlers } from './ipc/mobile'
 import { initTelemetry, shutdownTelemetry } from './telemetry/client'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService } from './runtime/orca-runtime'
@@ -498,10 +499,18 @@ app.whenReady().then(async () => {
       }
     }
   })
+  // Why: E2E tests launch parallel Electron instances that would all race to
+  // bind the default fixed port, crashing on EADDRINUSE. Port 0 lets the OS
+  // assign a random available port per instance while still exercising the
+  // full WebSocket startup path.
+  const isE2E = Boolean(process.env.ORCA_E2E_USER_DATA_DIR)
   runtimeRpc = new OrcaRuntimeRpcServer({
     runtime,
-    userDataPath: app.getPath('userData')
+    userDataPath: app.getPath('userData'),
+    enableWebSocket: true,
+    ...(isE2E ? { wsPort: 0 } : {})
   })
+  registerMobileHandlers(runtimeRpc)
 
   // Why: the persistent-terminal daemon is always started. If it fails, the
   // LocalPtyProvider (initialized at module load in ipc/pty.ts) remains as the

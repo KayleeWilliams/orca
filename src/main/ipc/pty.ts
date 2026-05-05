@@ -4,6 +4,7 @@ foreground-process inspection, and renderer IPC stay behind a single audited
 boundary. Splitting it by line count would scatter tightly coupled terminal
 process behavior across files without a cleaner ownership seam. */
 import { join, delimiter } from 'path'
+import { randomUUID } from 'crypto'
 import { type BrowserWindow, ipcMain, app } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -36,6 +37,9 @@ const sshProviders = new Map<string, IPtyProvider>()
 // post-spawn operations to the correct provider without the renderer needing
 // to track connectionId per-PTY.
 const ptyOwnership = new Map<string, string | null>()
+// Why: mobile clients must mirror desktop PTY geometry even when the renderer
+// cannot provide an xterm snapshot yet, such as immediately after tab creation.
+const ptySizes = new Map<string, { cols: number; rows: number }>()
 // Why: the agent-hooks server caches per-paneKey state (last prompt, last
 // tool) that otherwise grows unbounded as panes come and go. Track the
 // spawn-time paneKey so clearProviderPtyState can clear that cache on PTY
@@ -284,6 +288,7 @@ export function clearProviderPtyState(id: string): void {
   // new teardown path forgets to remove one provider's overlay/hook state.
   openCodeHookService.clearPty(id)
   piTitlebarExtensionService.clearPty(id)
+  ptySizes.delete(id)
   // Why: drop the memory-collector registration so a dead PTY does not keep
   // trying to resolve its (now-dead) pid on every snapshot. Safe no-op for
   // PTYs that were never registered (SSH-owned).
@@ -436,10 +441,15 @@ export function registerPtyHandlers(
     // Why: LocalPtyProvider routes data to the runtime via configure().onData,
     // but daemon-backed providers don't have configure(). Without this, daemon
     // PTY data never reaches the runtime's tail buffer, so terminal.read returns
-    // empty and agent-detection from raw data never fires.
+    // empty and agent-detection from raw data never fires. Runtime tails also
+    // power mobile read/stream, so they must be notified regardless of window
+    // state.
     const isLocalProvider = localProvider instanceof LocalPtyProvider
 
     localDataUnsub = localProvider.onData((payload) => {
+      if (!isLocalProvider) {
+        runtime?.onPtyData(payload.id, payload.data, Date.now())
+      }
       if (mainWindow.isDestroyed()) {
         // Why: clear the pending flush timer so it doesn't fire after the window
         // is gone. Without this, macOS app re-activation leaks orphaned timers
@@ -450,9 +460,6 @@ export function registerPtyHandlers(
         }
         pendingData.clear()
         return
-      }
-      if (!isLocalProvider) {
-        runtime?.onPtyData(payload.id, payload.data, Date.now())
       }
       const existing = pendingData.get(payload.id)
       pendingData.set(payload.id, existing ? existing + payload.data : payload.data)
@@ -483,6 +490,54 @@ export function registerPtyHandlers(
 
   bindProviderListeners()
   rebindProviderListeners = bindProviderListeners
+
+  function requestSerializedBuffer(
+    ptyId: string
+  ): Promise<{ data: string; cols: number; rows: number } | null> {
+    if (mainWindow.isDestroyed()) {
+      return Promise.resolve(null)
+    }
+
+    const requestId = randomUUID()
+    return new Promise((resolve) => {
+      const cleanup = (): void => {
+        clearTimeout(timeout)
+        ipcMain.removeListener('pty:serializeBuffer:response', onResponse)
+      }
+
+      const timeout = setTimeout(() => {
+        cleanup()
+        resolve(null)
+      }, 750)
+
+      const onResponse = (
+        _event: Electron.IpcMainEvent,
+        args: {
+          requestId?: string
+          snapshot?: { data?: unknown; cols?: unknown; rows?: unknown } | null
+        }
+      ): void => {
+        if (args.requestId !== requestId) {
+          return
+        }
+        cleanup()
+        const snapshot = args.snapshot
+        if (
+          snapshot &&
+          typeof snapshot.data === 'string' &&
+          typeof snapshot.cols === 'number' &&
+          typeof snapshot.rows === 'number'
+        ) {
+          resolve({ data: snapshot.data, cols: snapshot.cols, rows: snapshot.rows })
+        } else {
+          resolve(null)
+        }
+      }
+
+      ipcMain.on('pty:serializeBuffer:response', onResponse)
+      mainWindow.webContents.send('pty:serializeBuffer:request', { requestId, ptyId })
+    })
+  }
 
   // Kill orphaned PTY processes from previous page loads when the renderer reloads.
   // Why: only applies to LocalPtyProvider where PTYs live in the Electron main
@@ -534,6 +589,28 @@ export function registerPtyHandlers(
         return await getProviderForPty(ptyId).getForegroundProcess(ptyId)
       } catch {
         return null
+      }
+    },
+    listProcesses: async () => {
+      const providerSessions = await Promise.all([
+        localProvider.listProcesses(),
+        ...Array.from(sshProviders.values(), (provider) => provider.listProcesses().catch(() => []))
+      ])
+      return providerSessions.flat()
+    },
+    serializeBuffer: (ptyId) => {
+      // Why: mobile xterm must start from the desktop xterm's exact screen
+      // state and dimensions before live TUI chunks can render correctly.
+      return requestSerializedBuffer(ptyId)
+    },
+    getSize: (ptyId) => ptySizes.get(ptyId) ?? null,
+    resize: (ptyId, cols, rows) => {
+      try {
+        ptySizes.set(ptyId, { cols, rows })
+        getProviderForPty(ptyId).resize(ptyId, cols, rows)
+        return true
+      } catch {
+        return false
       }
     }
   })
@@ -691,6 +768,12 @@ export function registerPtyHandlers(
       if (effectiveShellOverride !== undefined) {
         spawnOptions.shellOverride = effectiveShellOverride
       }
+      if (effectiveSessionId !== undefined) {
+        // Why: daemon PTYs can emit prompt/startup bytes before spawn()
+        // resolves. Runtime headless snapshots need the real pane geometry
+        // for those early bytes; otherwise they default to 80x24 and wrap TUIs.
+        ptySizes.set(effectiveSessionId, { cols: args.cols, rows: args.rows })
+      }
       if (process.platform === 'win32' && !args.connectionId) {
         // Why: the renderer only models PowerShell as one shell family. Thread
         // the persisted implementation choice through spawnOptions so both the
@@ -704,16 +787,11 @@ export function registerPtyHandlers(
       try {
         result = await provider.spawn(spawnOptions)
       } catch (err) {
+        if (effectiveSessionId !== undefined) {
+          ptySizes.delete(effectiveSessionId)
+        }
         // Why: when buildPtyHostEnv materialized a Pi overlay for this id
-        // but provider.spawn failed, the overlay would leak. Sweep per-PTY
-        // state for the minted id so it isn't orphaned. Safe to call even
-        // when no overlay was created (clearProviderPtyState is a no-op in
-        // that case).
-        //
-        // Only clean up when we MINTED the id in this request. Caller-supplied
-        // ids may correspond to existing PTYs whose state (OpenCode hooks, Pi
-        // overlay, agent-hook pane caches) we MUST NOT clear on a retry/attach
-        // failure.
+        // but provider.spawn failed, the overlay would leak.
         if (isMintedSessionId && effectiveSessionId !== undefined) {
           clearProviderPtyState(effectiveSessionId)
         }
@@ -722,6 +800,14 @@ export function registerPtyHandlers(
       ptyOwnership.set(result.id, args.connectionId ?? null)
       if (preAllocatedHandle) {
         runtime?.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+      }
+      ptySizes.set(result.id, { cols: args.cols, rows: args.rows })
+      if (
+        typeof args.worktreeId === 'string' &&
+        args.worktreeId.length > 0 &&
+        args.worktreeId.length <= 512
+      ) {
+        runtime?.registerPty(result.id, args.worktreeId)
       }
       if (isClaudeLaunch) {
         markClaudePtySpawned(result.id)
@@ -789,7 +875,17 @@ export function registerPtyHandlers(
   // empty acknowledgement message back to the renderer.
   ipcMain.removeAllListeners('pty:resize')
   ipcMain.on('pty:resize', (_event, args: { id: string; cols: number; rows: number }) => {
+    // Why: after a desktop-fit override change, the desktop renderer's
+    // re-render cascade runs safeFit on ALL panes (not just the affected
+    // one). Background-tab panes get measured at full-width (214) instead
+    // of their correct split width. Suppressing ALL pty:resize during
+    // this window prevents the cascade from corrupting PTY dimensions.
+    if (runtime?.isResizeSuppressed()) {
+      return
+    }
+    ptySizes.set(args.id, { cols: args.cols, rows: args.rows })
     getProviderForPty(args.id).resize(args.id, args.cols, args.rows)
+    runtime?.onExternalPtyResize(args.id, args.cols, args.rows)
   })
 
   // Why: fire-and-forget — clears the DaemonPtyAdapter's sticky cold restore

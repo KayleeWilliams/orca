@@ -19,7 +19,6 @@ const {
   runHookMock,
   hasHooksFileMock,
   loadHooksMock,
-  setupScriptsMatchMock,
   computeWorktreePathMock,
   ensurePathWithinWorkspaceMock,
   gitExecFileAsyncMock
@@ -38,7 +37,6 @@ const {
   createIssueCommandRunnerScriptMock: vi.fn(),
   createSetupRunnerScriptMock: vi.fn(),
   shouldRunSetupForCreateMock: vi.fn(),
-  setupScriptsMatchMock: vi.fn(() => true),
   runHookMock: vi.fn(),
   hasHooksFileMock: vi.fn(),
   loadHooksMock: vi.fn(),
@@ -83,8 +81,7 @@ vi.mock('../hooks', () => ({
   loadHooks: loadHooksMock,
   runHook: runHookMock,
   hasHooksFile: hasHooksFileMock,
-  shouldRunSetupForCreate: shouldRunSetupForCreateMock,
-  setupScriptsMatch: setupScriptsMatchMock
+  shouldRunSetupForCreate: shouldRunSetupForCreateMock
 }))
 
 vi.mock('./worktree-logic', async (importOriginal) => {
@@ -251,7 +248,16 @@ describe('registerWorktreeHandlers', () => {
     ensurePathWithinWorkspaceMock.mockImplementation((targetPath: string) => targetPath)
     listWorktreesMock.mockResolvedValue([])
 
-    registerWorktreeHandlers(mainWindow as never, store as never, {} as never)
+    // Why: createLocalWorktree routes `git fetch` through
+    // `runtime.fetchRemoteWithCache` (§3.3 Lifecycle). A minimal stub
+    // keeps these tests focused on create-flow semantics; the full
+    // cache behavior is covered by fetch-remote-cache.test.ts.
+    const runtimeStub = {
+      fetchRemoteWithCache: async () => {
+        /* noop — fetch mocked at gitExecFileAsync level via gitExecFileAsyncMock */
+      }
+    }
+    registerWorktreeHandlers(mainWindow as never, store as never, runtimeStub as never)
   })
 
   it('auto-suffixes the branch name when the first choice collides with a remote branch', async () => {
@@ -499,6 +505,39 @@ describe('registerWorktreeHandlers', () => {
       'improve-dashboard',
       'origin/main',
       false
+    )
+  })
+
+  it('launches setup even when primary and worktree orca.yaml scripts diverge', async () => {
+    // Why: regression for a silent skip introduced by the #1280 content-equality
+    // gate. Benign divergence (whitespace, comments, or any setup edit that
+    // landed on the base branch but not yet in the primary checkout) must not
+    // disable setup — repo-level trust already gates execution.
+    listWorktreesMock.mockResolvedValue(createdWorktreeList)
+    getEffectiveHooksMock.mockImplementation((_repo, worktreePath?: string) => ({
+      scripts: {
+        setup: worktreePath ? 'pnpm worktree:setup # worktree' : 'pnpm worktree:setup'
+      }
+    }))
+    shouldRunSetupForCreateMock.mockReturnValue(true)
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard',
+      setupDecision: 'run'
+    })
+
+    expect(createSetupRunnerScriptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'repo-1' }),
+      '/workspace/improve-dashboard',
+      'pnpm worktree:setup # worktree'
+    )
+    expect(result).toEqual(
+      expect.objectContaining({
+        setup: expect.objectContaining({
+          runnerScriptPath: '/workspace/repo/.git/orca/setup-runner.sh'
+        })
+      })
     )
   })
 
