@@ -534,6 +534,14 @@ const api = {
       type?: 'issue' | 'pr'
     }): Promise<unknown> => ipcRenderer.invoke('gh:workItem', args),
 
+    workItemByOwnerRepo: (args: {
+      repoPath: string
+      owner: string
+      repo: string
+      number: number
+      type: 'issue' | 'pr'
+    }): Promise<unknown> => ipcRenderer.invoke('gh:workItemByOwnerRepo', args),
+
     workItemDetails: (args: {
       repoPath: string
       number: number
@@ -846,6 +854,11 @@ const api = {
       ipcRenderer.invoke('agentHooks:geminiStatus'),
     cursorStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:cursorStatus')
+  },
+
+  agentTrust: {
+    markTrusted: (args: { preset: 'cursor' | 'copilot'; workspacePath: string }): Promise<void> =>
+      ipcRenderer.invoke('agentTrust:markTrusted', args)
   },
 
   preflight: {
@@ -1563,13 +1576,8 @@ const api = {
       ipcRenderer.on('ui:openQuickOpen', listener)
       return () => ipcRenderer.removeListener('ui:openQuickOpen', listener)
     },
-    onOpenNewWorkspace: (callback: (tab: 'quick' | 'create-from') => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, tab: 'quick' | 'create-from') => {
-        // Why: older main-process builds may send this event without a payload
-        // — default to 'quick' so the preload contract stays forward-compatible
-        // during a partial rollout where only one side has shipped the tab arg.
-        callback(tab ?? 'quick')
-      }
+    onOpenNewWorkspace: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:openNewWorkspace', listener)
       return () => ipcRenderer.removeListener('ui:openNewWorkspace', listener)
     },

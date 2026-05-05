@@ -506,6 +506,13 @@ export type PreloadApi = {
       number: number
       type?: 'issue' | 'pr'
     }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
+    workItemByOwnerRepo: (args: {
+      repoPath: string
+      owner: string
+      repo: string
+      number: number
+      type: 'issue' | 'pr'
+    }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
     workItemDetails: (args: {
       repoPath: string
       number: number
@@ -716,6 +723,9 @@ export type PreloadApi = {
     codexStatus: () => Promise<AgentHookInstallStatus>
     geminiStatus: () => Promise<AgentHookInstallStatus>
     cursorStatus: () => Promise<AgentHookInstallStatus>
+  }
+  agentTrust: {
+    markTrusted: (args: { preset: 'cursor' | 'copilot'; workspacePath: string }) => Promise<void>
   }
   preflight: PreflightApi
   notifications: {
@@ -941,7 +951,7 @@ export type PreloadApi = {
     onToggleRightSidebar: (callback: () => void) => () => void
     onToggleWorktreePalette: (callback: () => void) => () => void
     onOpenQuickOpen: (callback: () => void) => () => void
-    onOpenNewWorkspace: (callback: (tab: 'quick' | 'create-from') => void) => () => void
+    onOpenNewWorkspace: (callback: () => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
     onWorktreeHistoryNavigate: (callback: (direction: 'back' | 'forward') => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
