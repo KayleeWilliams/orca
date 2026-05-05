@@ -89,6 +89,11 @@ export type Worktree = {
   isPinned: boolean
   sortOrder: number
   lastActivityAt: number
+  /** Set once when Orca creates the worktree. Absent for worktrees discovered
+   *  on disk or persisted before this field existed. Used by the sidebar to
+   *  grant newly-created worktrees a short grace window at the top of Recent,
+   *  immune to ambient PTY-bump reordering in other worktrees. */
+  createdAt?: number
   sparseDirectories?: string[]
   sparseBaseRef?: string
   /** ID of the saved preset this worktree was created from, if any. Cleared
@@ -109,6 +114,8 @@ export type WorktreeMeta = {
   isPinned: boolean
   sortOrder: number
   lastActivityAt: number
+  /** See {@link Worktree.createdAt}. Persisted to orca-data.json. */
+  createdAt?: number
   sparseDirectories?: string[]
   sparseBaseRef?: string
   sparsePresetId?: string
