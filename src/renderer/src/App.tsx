@@ -9,6 +9,7 @@ import {
   TOGGLE_TERMINAL_PANE_EXPAND_EVENT
 } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
+import { buildAppFontFamily } from '@/lib/app-font-family'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -517,6 +518,13 @@ function App(): React.JSX.Element {
       return () => mq.removeEventListener('change', handler)
     }
   }, [settings])
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      '--app-font-family',
+      buildAppFontFamily(settings?.appFontFamily)
+    )
+  }, [settings?.appFontFamily])
 
   // Refresh GitHub data (PR/issue status) when window regains focus
   useEffect(() => {
