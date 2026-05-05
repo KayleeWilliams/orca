@@ -1,9 +1,10 @@
 /* eslint-disable max-lines -- Why: consolidating memory + sessions into one
    surface deliberately co-locates the sparkline, worktree tree, session list,
-   and daemon-action footer so the popover body and badge stay consistent.
-   Splitting across files would scatter render-state that only exists to
-   serve this one status-bar segment. See docs/consolidated-resource-usage. */
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react'
+   daemon actions, and kill-confirm dialog so the popover body and badge stay
+   consistent. Splitting across files would scatter render-state that only
+   exists to serve this one status-bar segment. See
+   docs/resource-usage-merge-spec.md for the full design. */
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ChevronDown,
@@ -34,27 +35,26 @@ import { useWorktreeMap } from '../../store/selectors'
 import { runWorktreeDelete } from '../sidebar/delete-worktree-flow'
 import { runSleepWorktree } from '../sidebar/sleep-worktree-flow'
 import { useDaemonActions, DaemonActionDialog } from '../shared/useDaemonActions'
-import type {
-  AppMemory,
-  SessionMemory,
-  TerminalTab,
-  UsageValues,
-  Worktree,
-  WorktreeMemory
-} from '../../../../shared/types'
+import type { AppMemory, UsageValues, Worktree } from '../../../../shared/types'
 import { ORPHAN_WORKTREE_ID } from '../../../../shared/constants'
+import {
+  mergeSnapshotAndSessions,
+  UNATTRIBUTED_REPO_ID,
+  type DaemonSession,
+  type Metric,
+  type UnifiedRepoGroup,
+  type UnifiedSessionRow,
+  type UnifiedWorktreeRow
+} from './mergeSnapshotAndSessions'
 
 const POLL_MS = 2_000
 const SESSIONS_POLL_MS = 10_000
 
 type SortOption = 'memory' | 'cpu' | 'name'
-type TabKey = 'resources' | 'sessions'
 
 const METRIC_COLUMNS_CLS = 'flex items-center shrink-0 tabular-nums'
 const CPU_COLUMN_CLS = 'w-12 text-right'
 const MEM_COLUMN_CLS = 'w-16 text-right'
-
-type DaemonSession = { id: string; cwd: string; title: string }
 
 // ─── Formatters ─────────────────────────────────────────────────────
 
@@ -76,136 +76,12 @@ function formatPercent(value: number): string {
   return `${value.toFixed(0)}%`
 }
 
-function shortCwd(cwd: string): string {
-  if (!cwd) {
-    return 'unknown'
-  }
-  const separator = cwd.includes('\\') ? '\\' : '/'
-  const parts = cwd.split(/[\\/]+/).filter(Boolean)
-  return parts.length > 2 ? parts.slice(-2).join(separator) : cwd
+function formatMetricCpu(value: Metric): string {
+  return value === null ? '—' : formatCpu(value)
 }
 
-function sessionLabel(session: DaemonSession, tabTitle?: string): string {
-  if (session.cwd) {
-    return shortCwd(session.cwd)
-  }
-  const sep = session.id.lastIndexOf('@@')
-  if (sep !== -1) {
-    const worktreeId = session.id.slice(0, sep)
-    return shortCwd(worktreeId)
-  }
-  if (tabTitle) {
-    return tabTitle
-  }
-  if (session.title) {
-    return session.title
-  }
-  return 'unknown'
-}
-
-function parsePaneKey(paneKey: string | null): { tabId: string; paneRuntimeId: number } | null {
-  if (!paneKey) {
-    return null
-  }
-  const sepIdx = paneKey.indexOf(':')
-  if (sepIdx <= 0) {
-    return null
-  }
-  const paneRuntimeId = Number(paneKey.slice(sepIdx + 1))
-  if (!Number.isFinite(paneRuntimeId)) {
-    return null
-  }
-  return { tabId: paneKey.slice(0, sepIdx), paneRuntimeId }
-}
-
-function sessionRowLabel(
-  session: SessionMemory,
-  worktreeId: string,
-  tabsByWorktree: Record<string, TerminalTab[]>,
-  runtimePaneTitlesByTabId: Record<string, Record<number, string>>
-): string {
-  const parsed = parsePaneKey(session.paneKey)
-  if (parsed) {
-    const tabs = tabsByWorktree[worktreeId] ?? []
-    const tabIndex = tabs.findIndex((t) => t.id === parsed.tabId)
-    const tab = tabIndex >= 0 ? tabs[tabIndex] : undefined
-    if (tab) {
-      const custom = tab.customTitle?.trim()
-      if (custom) {
-        return custom
-      }
-      const runtime = runtimePaneTitlesByTabId[parsed.tabId]?.[parsed.paneRuntimeId]?.trim()
-      if (runtime) {
-        return runtime
-      }
-      return tab.defaultTitle?.trim() || tab.title?.trim() || `Terminal ${tabIndex + 1}`
-    }
-  }
-  if (session.pid > 0) {
-    return `pid ${session.pid}`
-  }
-  const fallback = session.sessionId?.slice(0, 8)
-  return fallback ? `session ${fallback}` : '(unknown session)'
-}
-
-// ─── Grouping helpers ───────────────────────────────────────────────
-
-type RepoGroup = {
-  repoId: string
-  repoName: string
-  cpu: number
-  memory: number
-  worktrees: WorktreeMemory[]
-}
-
-function bucketByRepo(worktrees: WorktreeMemory[]): RepoGroup[] {
-  const map = new Map<string, RepoGroup>()
-  for (const wt of worktrees) {
-    const key = wt.repoId || 'unknown'
-    let group = map.get(key)
-    if (!group) {
-      group = {
-        repoId: key,
-        repoName: wt.repoName || 'Unknown Repo',
-        cpu: 0,
-        memory: 0,
-        worktrees: []
-      }
-      map.set(key, group)
-    }
-    group.cpu += wt.cpu
-    group.memory += wt.memory
-    group.worktrees.push(wt)
-  }
-  return [...map.values()]
-}
-
-function sortWorktreesBy(
-  list: WorktreeMemory[],
-  sort: SortOption,
-  labelFor: (wt: WorktreeMemory) => string
-): WorktreeMemory[] {
-  const copy = [...list]
-  if (sort === 'memory') {
-    copy.sort((a, b) => b.memory - a.memory)
-  } else if (sort === 'cpu') {
-    copy.sort((a, b) => b.cpu - a.cpu)
-  } else {
-    copy.sort((a, b) => labelFor(a).localeCompare(labelFor(b)))
-  }
-  return copy
-}
-
-function sortRepoGroupsBy(groups: RepoGroup[], sort: SortOption): RepoGroup[] {
-  const copy = [...groups]
-  if (sort === 'memory') {
-    copy.sort((a, b) => b.memory - a.memory)
-  } else if (sort === 'cpu') {
-    copy.sort((a, b) => b.cpu - a.cpu)
-  } else {
-    copy.sort((a, b) => a.repoName.localeCompare(b.repoName))
-  }
-  return copy
+function formatMetricMemory(value: Metric): string {
+  return value === null ? '—' : formatMemory(value)
 }
 
 // ─── Sparkline ──────────────────────────────────────────────────────
@@ -293,15 +169,22 @@ function MetricPair({
   memory,
   size = 'base'
 }: {
-  cpu: number
-  memory: number
+  cpu: Metric
+  memory: Metric
   size?: 'base' | 'small'
 }): React.JSX.Element {
   const textCls = size === 'small' ? 'text-[11px]' : 'text-xs'
+  const muted = cpu === null && memory === null
   return (
-    <div className={cn(METRIC_COLUMNS_CLS, textCls, 'text-muted-foreground')}>
-      <span className={CPU_COLUMN_CLS}>{formatCpu(cpu)}</span>
-      <span className={MEM_COLUMN_CLS}>{formatMemory(memory)}</span>
+    <div
+      className={cn(
+        METRIC_COLUMNS_CLS,
+        textCls,
+        muted ? 'text-muted-foreground/50' : 'text-muted-foreground'
+      )}
+    >
+      <span className={CPU_COLUMN_CLS}>{formatMetricCpu(cpu)}</span>
+      <span className={MEM_COLUMN_CLS}>{formatMetricMemory(memory)}</span>
     </div>
   )
 }
@@ -363,7 +246,121 @@ function AppSection({
   )
 }
 
-// ─── Worktree tree ──────────────────────────────────────────────────
+// ─── Sorting ────────────────────────────────────────────────────────
+
+function compareMetricDesc(a: Metric, b: Metric): number {
+  // Why: null metrics (remote rows) sort last regardless of direction so
+  // they don't pollute the "biggest CPU/memory consumers" view.
+  if (a === null && b === null) {
+    return 0
+  }
+  if (a === null) {
+    return 1
+  }
+  if (b === null) {
+    return -1
+  }
+  return b - a
+}
+
+function sortWorktrees(list: UnifiedWorktreeRow[], sort: SortOption): UnifiedWorktreeRow[] {
+  const copy = [...list]
+  if (sort === 'memory') {
+    copy.sort((a, b) => compareMetricDesc(a.memory, b.memory))
+  } else if (sort === 'cpu') {
+    copy.sort((a, b) => compareMetricDesc(a.cpu, b.cpu))
+  } else {
+    copy.sort((a, b) => a.worktreeName.localeCompare(b.worktreeName))
+  }
+  return copy
+}
+
+function sortRepoGroups(groups: UnifiedRepoGroup[], sort: SortOption): UnifiedRepoGroup[] {
+  const copy = [...groups]
+  if (sort === 'memory') {
+    copy.sort((a, b) => compareMetricDesc(a.memory, b.memory))
+  } else if (sort === 'cpu') {
+    copy.sort((a, b) => compareMetricDesc(a.cpu, b.cpu))
+  } else {
+    copy.sort((a, b) => a.repoName.localeCompare(b.repoName))
+  }
+  return copy
+}
+
+// ─── Session row ────────────────────────────────────────────────────
+
+function SessionRow({
+  session,
+  worktreeId,
+  onNavigate,
+  onKill
+}: {
+  session: UnifiedSessionRow
+  worktreeId: string
+  onNavigate: (tabId: string) => void
+  onKill: (session: UnifiedSessionRow) => void
+}): React.JSX.Element {
+  const clickable = session.tabId !== null && session.bound
+  const handleClick = (): void => {
+    if (clickable && session.tabId) {
+      onNavigate(session.tabId)
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        'group/sessrow flex items-center gap-2 pl-10 pr-3 py-1.5',
+        clickable && 'cursor-pointer hover:bg-accent/40'
+      )}
+      onClick={clickable ? handleClick : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : -1}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleClick()
+              }
+            }
+          : undefined
+      }
+      data-worktree-id={worktreeId}
+    >
+      <span
+        className={cn(
+          'size-1.5 shrink-0 rounded-full',
+          session.bound ? 'bg-emerald-500' : 'bg-muted-foreground/40'
+        )}
+      />
+      <span className="text-[11px] text-muted-foreground truncate min-w-0 flex-1">
+        {session.label}
+      </span>
+      <MetricPair cpu={session.cpu} memory={session.memory} size="small" />
+      {/* Why: bound sessions hide the X until the row is hovered/focused
+          (calm list); orphan sessions show it always so the "this is
+          reclaimable" affordance survives. Mirrors Settings > Manage Sessions. */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onKill(session)
+        }}
+        className={cn(
+          'shrink-0 ml-1 rounded p-0.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive',
+          session.bound &&
+            'opacity-0 group-hover/sessrow:opacity-100 group-focus-within/sessrow:opacity-100 focus-visible:opacity-100'
+        )}
+        aria-label={`Kill session ${session.sessionId}`}
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  )
+}
+
+// ─── Worktree row ───────────────────────────────────────────────────
 
 function WorktreeRow({
   worktree,
@@ -373,21 +370,24 @@ function WorktreeRow({
   onNavigate,
   onSleep,
   onDelete,
-  tabsByWorktree,
-  runtimePaneTitlesByTabId
+  onKillSession,
+  navigateToTab
 }: {
-  worktree: WorktreeMemory
+  worktree: UnifiedWorktreeRow
   storeRecord: Worktree | null
   isCollapsed: boolean
   onToggle: () => void
   onNavigate: () => void
   onSleep: () => void
   onDelete: () => void
-  tabsByWorktree: Record<string, TerminalTab[]>
-  runtimePaneTitlesByTabId: Record<string, Record<number, string>>
+  onKillSession: (session: UnifiedSessionRow) => void
+  navigateToTab: (tabId: string) => void
 }): React.JSX.Element {
   const hasSessions = worktree.sessions.length > 0
-  const showActions = worktree.worktreeId !== ORPHAN_WORKTREE_ID && storeRecord !== null
+  const showActions =
+    worktree.worktreeId !== ORPHAN_WORKTREE_ID &&
+    worktree.repoId !== UNATTRIBUTED_REPO_ID &&
+    storeRecord !== null
   const isMainWorktree = storeRecord?.isMainWorktree ?? false
   const rowLabel = storeRecord?.displayName?.trim() || worktree.worktreeName
 
@@ -417,9 +417,15 @@ function WorktreeRow({
           type="button"
           onClick={onNavigate}
           aria-label={`Open workspace ${rowLabel}`}
-          className="flex-1 min-w-0 py-2 pr-2 pl-1 text-left"
+          className="flex-1 min-w-0 py-2 pr-2 pl-1 text-left flex items-center gap-1.5"
+          disabled={!showActions}
         >
-          <span className="text-xs font-medium truncate block">{rowLabel}</span>
+          <span className="text-xs font-medium truncate">{rowLabel}</span>
+          {!worktree.hasLocalSamples && (
+            <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/70">
+              · remote
+            </span>
+          )}
         </button>
         <div className="flex items-center gap-2 shrink-0 pr-3">
           <div className="relative">
@@ -488,68 +494,56 @@ function WorktreeRow({
 
       {!isCollapsed &&
         worktree.sessions.map((session) => (
-          <div
-            key={`${session.sessionId}:${session.pid}`}
-            className="px-3 py-1.5 pl-10 flex items-center justify-between"
-          >
-            <span className="text-[11px] text-muted-foreground truncate min-w-0 mr-2">
-              {sessionRowLabel(
-                session,
-                worktree.worktreeId,
-                tabsByWorktree,
-                runtimePaneTitlesByTabId
-              )}
-            </span>
-            <MetricPair cpu={session.cpu} memory={session.memory} size="small" />
-          </div>
+          <SessionRow
+            key={session.sessionId}
+            session={session}
+            worktreeId={worktree.worktreeId}
+            onNavigate={navigateToTab}
+            onKill={onKillSession}
+          />
         ))}
     </div>
   )
 }
 
-function WorktreeSection({
-  worktrees,
+// ─── Repo + worktree tree ───────────────────────────────────────────
+
+function ResourceTree({
+  repos,
   sortOption,
   collapsedRepos,
   toggleRepo,
   collapsedWorktrees,
   toggleWorktree,
   navigateToWorktree,
+  navigateToTab,
   onSleep,
-  onDelete
+  onDelete,
+  onKillSession
 }: {
-  worktrees: WorktreeMemory[]
+  repos: UnifiedRepoGroup[]
   sortOption: SortOption
   collapsedRepos: Set<string>
   toggleRepo: (repoId: string) => void
   collapsedWorktrees: Set<string>
   toggleWorktree: (worktreeId: string) => void
   navigateToWorktree: (worktreeId: string) => void
+  navigateToTab: (tabId: string) => void
   onSleep: (worktreeId: string) => void
   onDelete: (worktreeId: string) => void
+  onKillSession: (session: UnifiedSessionRow) => void
 }): React.JSX.Element {
-  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
-  const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
   const worktreeById = useWorktreeMap()
 
-  const labelFor = useCallback(
-    (wt: WorktreeMemory): string =>
-      worktreeById.get(wt.worktreeId)?.displayName?.trim() || wt.worktreeName,
-    [worktreeById]
-  )
+  const sortedRepos = useMemo(() => {
+    const grouped = sortRepoGroups(repos, sortOption)
+    return grouped.map((repo) => ({
+      ...repo,
+      worktrees: sortWorktrees(repo.worktrees, sortOption)
+    }))
+  }, [repos, sortOption])
 
-  const repoGroups = useMemo(
-    () =>
-      sortRepoGroupsBy(bucketByRepo(worktrees), sortOption).map((group) => ({
-        ...group,
-        worktrees: sortWorktreesBy(group.worktrees, sortOption, labelFor)
-      })),
-    [worktrees, sortOption, labelFor]
-  )
-
-  const singleRepo = repoGroups.length === 1
-
-  const renderWorktree = (wt: WorktreeMemory): React.JSX.Element => {
+  const renderWorktree = (wt: UnifiedWorktreeRow): React.JSX.Element => {
     const storeRecord = worktreeById.get(wt.worktreeId) ?? null
     return (
       <WorktreeRow
@@ -561,19 +555,19 @@ function WorktreeSection({
         onNavigate={() => navigateToWorktree(wt.worktreeId)}
         onSleep={() => onSleep(wt.worktreeId)}
         onDelete={() => onDelete(wt.worktreeId)}
-        tabsByWorktree={tabsByWorktree}
-        runtimePaneTitlesByTabId={runtimePaneTitlesByTabId}
+        onKillSession={onKillSession}
+        navigateToTab={navigateToTab}
       />
     )
   }
 
-  if (singleRepo) {
-    return <>{repoGroups[0].worktrees.map(renderWorktree)}</>
+  if (sortedRepos.length === 1) {
+    return <>{sortedRepos[0].worktrees.map(renderWorktree)}</>
   }
 
   return (
     <>
-      {repoGroups.map((group) => {
+      {sortedRepos.map((group) => {
         const repoCollapsed = collapsedRepos.has(group.repoId)
         return (
           <div key={group.repoId} className="border-b border-border/50 last:border-b-0">
@@ -590,9 +584,16 @@ function WorktreeSection({
                   <ChevronDown className="h-3 w-3 text-muted-foreground" />
                 )}
               </button>
-              <div className="flex-1 min-w-0 py-2 pr-3 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wide truncate text-muted-foreground">
-                  {group.repoName}
+              <div className="flex-1 min-w-0 py-2 pr-3 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide truncate text-muted-foreground">
+                    {group.repoName}
+                  </span>
+                  {group.hasRemoteChildren && (
+                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/70">
+                      · remote
+                    </span>
+                  )}
                 </span>
                 <MetricPair cpu={group.cpu} memory={group.memory} />
               </div>
@@ -605,265 +606,6 @@ function WorktreeSection({
         )
       })}
     </>
-  )
-}
-
-// ─── Sessions tab ───────────────────────────────────────────────────
-
-function SessionsTabPanel({
-  sessions,
-  sessionsError,
-  onCloseSegment,
-  onSessionsChanged
-}: {
-  sessions: DaemonSession[]
-  sessionsError: boolean
-  onCloseSegment: () => void
-  // Why: kill actions in this panel mutate daemon state but the parent owns
-  // the polling timer + sessions list. Without an immediate refresh, killed
-  // rows linger up to the 10s poll interval. Mirror the old SessionsSegment
-  // behavior of refreshing right after the IPC settles.
-  onSessionsChanged: () => void
-}): React.JSX.Element {
-  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
-  const ptyIdsByTabId = useAppStore((s) => s.ptyIdsByTabId)
-  const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
-  const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
-  const setActiveTab = useAppStore((s) => s.setActiveTab)
-  const setActiveView = useAppStore((s) => s.setActiveView)
-
-  const boundPtyIds = useMemo(
-    () => new Set(Object.values(ptyIdsByTabId).flat().filter(Boolean)),
-    [ptyIdsByTabId]
-  )
-
-  const ptyIdToTabId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const [tabId, ptyIds] of Object.entries(ptyIdsByTabId)) {
-      for (const ptyId of ptyIds) {
-        map.set(ptyId, tabId)
-      }
-    }
-    return map
-  }, [ptyIdsByTabId])
-
-  const tabIdToWorktreeId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
-      for (const tab of tabs) {
-        map.set(tab.id, worktreeId)
-      }
-    }
-    return map
-  }, [tabsByWorktree])
-
-  const ptyIdToTabTitle = useMemo(() => {
-    const tabById = new Map<string, (typeof tabsByWorktree)[string][number]>()
-    for (const tabs of Object.values(tabsByWorktree)) {
-      for (const tab of tabs) {
-        tabById.set(tab.id, tab)
-      }
-    }
-    const map = new Map<string, string>()
-    for (const [tabId, ptyIds] of Object.entries(ptyIdsByTabId)) {
-      const tab = tabById.get(tabId)
-      if (!tab) {
-        continue
-      }
-      const runtimeTitles = runtimePaneTitlesByTabId[tabId]
-      const liveTitle = runtimeTitles
-        ? Object.values(runtimeTitles).find((t) => t?.trim())
-        : undefined
-      const title =
-        tab.customTitle?.trim() || liveTitle?.trim() || tab.title || tab.defaultTitle?.trim()
-      if (title) {
-        for (const ptyId of ptyIds) {
-          map.set(ptyId, title)
-        }
-      }
-    }
-    return map
-  }, [ptyIdsByTabId, tabsByWorktree, runtimePaneTitlesByTabId])
-
-  const orphanCount = workspaceSessionReady
-    ? sessions.filter((s) => !boundPtyIds.has(s.id)).length
-    : 0
-
-  // Why: match the Settings page Manage Sessions pane — destructive
-  // single-session kill goes through a confirm dialog rather than
-  // firing on click. The dialog stays mounted on top of the popover.
-  const [killConfirm, setKillConfirm] = useState<DaemonSession | null>(null)
-  const [killing, setKilling] = useState(false)
-
-  const runKillConfirmed = useCallback(async () => {
-    if (!killConfirm) {
-      return
-    }
-    setKilling(true)
-    try {
-      await window.api.pty.kill(killConfirm.id)
-    } catch {
-      /* already dead */
-    } finally {
-      setKilling(false)
-      setKillConfirm(null)
-      onSessionsChanged()
-    }
-  }, [killConfirm, onSessionsChanged])
-
-  const handleKillOrphans = useCallback(async () => {
-    if (!workspaceSessionReady) {
-      return
-    }
-    const orphans = sessions.filter((s) => !boundPtyIds.has(s.id))
-    await Promise.allSettled(orphans.map((s) => window.api.pty.kill(s.id)))
-    onSessionsChanged()
-  }, [sessions, boundPtyIds, workspaceSessionReady, onSessionsChanged])
-
-  const handleNavigate = useCallback(
-    (tabId: string) => {
-      const worktreeId = tabIdToWorktreeId.get(tabId)
-      if (worktreeId) {
-        activateAndRevealWorktree(worktreeId)
-      }
-      setActiveView('terminal')
-      setActiveTab(tabId)
-      onCloseSegment()
-    },
-    [tabIdToWorktreeId, setActiveView, setActiveTab, onCloseSegment]
-  )
-
-  if (sessionsError && sessions.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center px-3 py-4 text-center text-[11px] text-muted-foreground">
-        Terminal sessions unavailable.
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground shrink-0">
-        Terminal Sessions ({sessions.length})
-      </div>
-      {sessions.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground">
-          No active sessions
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-sleek">
-          {[...sessions]
-            .sort((a, b) => {
-              const aBound = workspaceSessionReady && boundPtyIds.has(a.id) ? 0 : 1
-              const bBound = workspaceSessionReady && boundPtyIds.has(b.id) ? 0 : 1
-              return aBound - bBound
-            })
-            .map((s) => {
-              const tabId = ptyIdToTabId.get(s.id) ?? null
-              const isBound = workspaceSessionReady && boundPtyIds.has(s.id)
-              const title = ptyIdToTabTitle.get(s.id)
-              return (
-                <div
-                  key={s.id}
-                  className={cn(
-                    'group/sessrow flex items-center gap-2 px-2 py-1.5 rounded',
-                    tabId && 'cursor-pointer hover:bg-accent/60'
-                  )}
-                  onClick={tabId ? () => handleNavigate(tabId) : undefined}
-                >
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${isBound ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] font-medium font-mono">
-                      {sessionLabel(s, title)}
-                    </div>
-                  </div>
-                  {/* Why: mirrors the Settings > Manage Sessions row — every
-                      session gets a kill X. Bound sessions hide the X until
-                      the row is hovered/focused so the list stays calm; the
-                      kill flow opens a confirm Dialog before invoking IPC. */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setKillConfirm(s)
-                    }}
-                    className={cn(
-                      'shrink-0 rounded p-0.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive',
-                      isBound &&
-                        'opacity-0 group-hover/sessrow:opacity-100 group-focus-within/sessrow:opacity-100 focus-visible:opacity-100'
-                    )}
-                    aria-label={`Kill session ${s.id}`}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </div>
-              )
-            })}
-        </div>
-      )}
-      {orphanCount > 0 && (
-        <div className="border-t border-border/50 px-2 py-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => void handleKillOrphans()}
-            className="inline-flex w-full items-center justify-center rounded-md border border-border/70 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent/60"
-          >
-            Kill {orphanCount} Orphan{orphanCount > 1 ? 's' : ''}
-          </button>
-        </div>
-      )}
-
-      <Dialog
-        open={killConfirm !== null}
-        onOpenChange={(open) => {
-          if (open) {
-            return
-          }
-          if (killing) {
-            return
-          }
-          setKillConfirm(null)
-        }}
-      >
-        <DialogContent
-          className="max-w-md"
-          showCloseButton={!killing}
-          onPointerDownOutside={(e) => {
-            if (killing) {
-              e.preventDefault()
-            }
-          }}
-          onEscapeKeyDown={(e) => {
-            if (killing) {
-              e.preventDefault()
-            }
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle className="text-sm">Kill this session?</DialogTitle>
-            <DialogDescription className="text-xs">
-              Force-quits <span className="font-medium text-foreground">{killConfirm?.id}</span>.
-              Any unsaved work in that pane is lost. This can&apos;t be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setKillConfirm(null)} disabled={killing}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void runKillConfirmed()}
-              disabled={killing}
-            >
-              {killing ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              {killing ? 'Killing…' : 'Kill session'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
   )
 }
 
@@ -880,28 +622,26 @@ export function ResourceUsageStatusSegment({
   const fetchSnapshot = useAppStore((s) => s.fetchMemorySnapshot)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
   const ptyIdsByTabId = useAppStore((s) => s.ptyIdsByTabId)
+  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
+  const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
+  const setActiveTab = useAppStore((s) => s.setActiveTab)
+  const setActiveView = useAppStore((s) => s.setActiveView)
+  const repos = useAppStore((s) => s.repos)
 
   const [open, setOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<TabKey>('resources')
   const [sortOption, setSortOption] = useState<SortOption>('memory')
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
   const [collapsedWorktrees, setCollapsedWorktrees] = useState<Set<string>>(new Set())
   const [appCollapsed, setAppCollapsed] = useState(true)
   const [sessions, setSessions] = useState<DaemonSession[]>([])
   const [sessionsError, setSessionsError] = useState(false)
+  const [killConfirm, setKillConfirm] = useState<UnifiedSessionRow | null>(null)
+  const [killing, setKilling] = useState(false)
 
-  const daemonActions = useDaemonActions({
-    onRestartSettled: () => {
-      // Why: after a restart, clear the stale error state so the error banner
-      // disappears until the next poll confirms the new state.
-      setSessionsError(false)
-      void fetchSnapshot()
-      void refreshSessions()
-    },
-    onKillAllSettled: () => {
-      void refreshSessions()
-    }
-  })
+  // Why: after a kill confirms and the session unmounts, focus would otherwise
+  // fall to <body>. We park a ref on the popover body so we can restore focus
+  // somewhere stable for keyboard users.
+  const popoverBodyRef = useRef<HTMLDivElement | null>(null)
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -912,6 +652,17 @@ export function ResourceUsageStatusSegment({
       setSessionsError(true)
     }
   }, [])
+
+  const daemonActions = useDaemonActions({
+    onRestartSettled: () => {
+      setSessionsError(false)
+      void fetchSnapshot()
+      void refreshSessions()
+    },
+    onKillAllSettled: () => {
+      void refreshSessions()
+    }
+  })
 
   // Poll memory + sessions when popover is open. Sessions also poll in the
   // background at a slower rate so the badge count stays reasonably fresh
@@ -939,6 +690,37 @@ export function ResourceUsageStatusSegment({
     void refreshSessions()
     return () => clearInterval(interval)
   }, [refreshSessions])
+
+  const repoDisplayNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const repo of repos) {
+      const display = repo.displayName?.trim()
+      if (display) {
+        map.set(repo.id, display)
+      }
+    }
+    return map
+  }, [repos])
+
+  const unifiedRepos = useMemo(
+    () =>
+      mergeSnapshotAndSessions(snapshot, sessions, {
+        tabsByWorktree,
+        ptyIdsByTabId,
+        runtimePaneTitlesByTabId,
+        workspaceSessionReady,
+        repoDisplayNameById
+      }),
+    [
+      snapshot,
+      sessions,
+      tabsByWorktree,
+      ptyIdsByTabId,
+      runtimePaneTitlesByTabId,
+      workspaceSessionReady,
+      repoDisplayNameById
+    ]
+  )
 
   const boundPtyIds = useMemo(
     () => new Set(Object.values(ptyIdsByTabId).flat().filter(Boolean)),
@@ -987,7 +769,7 @@ export function ResourceUsageStatusSegment({
   }, [])
 
   const navigateToWorktree = useCallback((worktreeId: string): void => {
-    if (worktreeId === ORPHAN_WORKTREE_ID) {
+    if (worktreeId === ORPHAN_WORKTREE_ID || worktreeId.startsWith(`${UNATTRIBUTED_REPO_ID}::`)) {
       setOpen(false)
       return
     }
@@ -998,6 +780,23 @@ export function ResourceUsageStatusSegment({
     setOpen(false)
   }, [])
 
+  const navigateToTab = useCallback(
+    (tabId: string) => {
+      // Resolve the tab → worktree from the store so we can also reveal the
+      // worktree in the sidebar before flipping the active tab.
+      for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
+        if (tabs.some((t) => t.id === tabId)) {
+          activateAndRevealWorktree(worktreeId)
+          break
+        }
+      }
+      setActiveView('terminal')
+      setActiveTab(tabId)
+      setOpen(false)
+    },
+    [tabsByWorktree, setActiveTab, setActiveView]
+  )
+
   const deleteWorktree = useCallback((worktreeId: string): void => {
     setOpen(false)
     runWorktreeDelete(worktreeId)
@@ -1007,9 +806,52 @@ export function ResourceUsageStatusSegment({
     void runSleepWorktree(id)
   }, [])
 
-  const closeSegment = useCallback(() => {
-    setOpen(false)
+  const handleKillSession = useCallback((session: UnifiedSessionRow): void => {
+    setKillConfirm(session)
   }, [])
+
+  const handleKillOrphans = useCallback(async () => {
+    if (!workspaceSessionReady) {
+      return
+    }
+    const orphans = sessions.filter((s) => !boundPtyIds.has(s.id))
+    if (orphans.length === 0) {
+      return
+    }
+    // Why: optimistic removal so the rows disappear immediately rather than
+    // lingering up to SESSIONS_POLL_MS while the daemon-side list reconciles.
+    const orphanIds = new Set(orphans.map((s) => s.id))
+    setSessions((prev) => prev.filter((s) => !orphanIds.has(s.id)))
+    await Promise.allSettled(orphans.map((s) => window.api.pty.kill(s.id)))
+    void refreshSessions()
+  }, [sessions, boundPtyIds, workspaceSessionReady, refreshSessions])
+
+  const runKillConfirmed = useCallback(async () => {
+    if (!killConfirm) {
+      return
+    }
+    const target = killConfirm
+    setKilling(true)
+    // Why: optimistic removal — the kill X was on the row that's about to be
+    // unmounted, so updating local state immediately avoids a flash where the
+    // dialog closes but the killed row stays for up to 10s.
+    setSessions((prev) => prev.filter((s) => s.id !== target.sessionId))
+    try {
+      await window.api.pty.kill(target.sessionId)
+    } catch {
+      /* already dead — fall through */
+    } finally {
+      setKilling(false)
+      setKillConfirm(null)
+      // Why: after the killed row unmounts, focus would otherwise drop to
+      // <body>. Park focus on the popover body so keyboard users land back
+      // in the list rather than outside the popover.
+      requestAnimationFrame(() => {
+        popoverBodyRef.current?.focus()
+      })
+      void refreshSessions()
+    }
+  }, [killConfirm, refreshSessions])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1061,50 +903,18 @@ export function ResourceUsageStatusSegment({
         className="w-[26rem] p-0"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        {/* Why: header is the only chrome — left side carries an inline pill
-            switcher between Resources and Sessions; right side carries the
-            two daemon-control icons. The bulky Radix Tabs strip and the
-            full-width footer were both removed because they created visual
-            noise and competed with the data underneath. */}
-        <div className="flex items-center justify-between gap-2 border-b border-border px-2 py-1.5">
-          <div
-            role="tablist"
-            aria-label="Resource view"
-            className="inline-flex items-center rounded-md bg-muted/40 p-0.5 text-[11px]"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'resources'}
-              onClick={() => setActiveTab('resources')}
-              className={cn(
-                'inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors',
-                activeTab === 'resources'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <MemoryStick className="size-3" />
-              Resources
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'sessions'}
-              onClick={() => setActiveTab('sessions')}
-              className={cn(
-                'inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors',
-                activeTab === 'sessions'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Terminal className="size-3" />
-              Sessions
-              {orphanCount > 0 && (
-                <span className="ml-0.5 text-yellow-500 tabular-nums">({orphanCount})</span>
-              )}
-            </button>
+        {/* Why: header strip — title on the left, daemon-control icons on
+            the right. The tab switcher was removed because a single unified
+            list now covers what the two tabs used to show. */}
+        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+            <MemoryStick className="size-3 text-muted-foreground" />
+            <span>Resource Usage</span>
+            {orphanCount > 0 && (
+              <span className="ml-1 text-yellow-500 tabular-nums" aria-live="polite">
+                {orphanCount} orphan{orphanCount === 1 ? '' : 's'}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-0.5">
@@ -1165,7 +975,7 @@ export function ResourceUsageStatusSegment({
           </div>
         )}
 
-        {snapshot && activeTab === 'resources' && (
+        {snapshot && (
           <div className="px-3 py-2 border-b border-border flex items-baseline gap-3 text-xs tabular-nums">
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -1213,107 +1023,157 @@ export function ResourceUsageStatusSegment({
           </div>
         )}
 
-        {/* Why: pin the body to a constant height so toggling between
-            Resources and Sessions doesn't reflow the popover. The inner
-            panels each take h-full and own their own scrolling, so short
-            content (e.g. zero sessions) leaves whitespace instead of
-            collapsing the surface. */}
-        <div className="flex h-[420px] flex-col">
-          {activeTab === 'resources' ? (
-            <>
-              {snapshot && (
-                <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-b border-border/50 text-[10px] uppercase tracking-wide shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setSortOption('name')}
-                    className={cn(
-                      'hover:text-foreground transition-colors',
-                      sortOption === 'name'
-                        ? 'font-semibold text-foreground'
-                        : 'text-muted-foreground/80'
-                    )}
-                    aria-pressed={sortOption === 'name'}
-                  >
-                    Name
-                  </button>
-                  <div className={cn(METRIC_COLUMNS_CLS, 'text-[10px]')}>
-                    <button
-                      type="button"
-                      onClick={() => setSortOption('cpu')}
-                      className={cn(
-                        CPU_COLUMN_CLS,
-                        'hover:text-foreground transition-colors',
-                        sortOption === 'cpu'
-                          ? 'font-semibold text-foreground'
-                          : 'text-muted-foreground/80'
-                      )}
-                      aria-pressed={sortOption === 'cpu'}
-                    >
-                      CPU
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSortOption('memory')}
-                      className={cn(
-                        MEM_COLUMN_CLS,
-                        'hover:text-foreground transition-colors',
-                        sortOption === 'memory'
-                          ? 'font-semibold text-foreground'
-                          : 'text-muted-foreground/80'
-                      )}
-                      aria-pressed={sortOption === 'memory'}
-                    >
-                      Memory
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex-1 overflow-y-auto scrollbar-sleek">
-                {snapshot && snapshot.worktrees.length > 0 && (
-                  <WorktreeSection
-                    worktrees={snapshot.worktrees}
-                    sortOption={sortOption}
-                    collapsedRepos={collapsedRepos}
-                    toggleRepo={toggleRepo}
-                    collapsedWorktrees={collapsedWorktrees}
-                    toggleWorktree={toggleWorktree}
-                    navigateToWorktree={navigateToWorktree}
-                    onSleep={handleSleep}
-                    onDelete={deleteWorktree}
-                  />
+        {/* Why: pin body to a constant 420px so the popover surface doesn't
+            jump as worktrees expand/collapse or as sessions come and go. The
+            inner tree owns its own scroll. The footer renders below this
+            shell when orphan-bulk-kill is available. */}
+        <div ref={popoverBodyRef} tabIndex={-1} className="flex h-[420px] flex-col outline-none">
+          {(unifiedRepos.length > 0 || snapshot) && (
+            <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-b border-border/50 text-[10px] uppercase tracking-wide shrink-0">
+              <button
+                type="button"
+                onClick={() => setSortOption('name')}
+                className={cn(
+                  'hover:text-foreground transition-colors',
+                  sortOption === 'name'
+                    ? 'font-semibold text-foreground'
+                    : 'text-muted-foreground/80'
                 )}
-
-                {snapshot && snapshot.worktrees.length === 0 && (
-                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    Nothing running right now
-                  </div>
-                )}
-
-                {snapshot && (
-                  <AppSection
-                    app={snapshot.app}
-                    isCollapsed={appCollapsed}
-                    onToggle={() => setAppCollapsed((v) => !v)}
-                  />
-                )}
-
-                {!snapshot && !daemonUnreachable && (
-                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    Loading…
-                  </div>
-                )}
+                aria-pressed={sortOption === 'name'}
+              >
+                Name
+              </button>
+              <div className={cn(METRIC_COLUMNS_CLS, 'text-[10px]')}>
+                <button
+                  type="button"
+                  onClick={() => setSortOption('cpu')}
+                  className={cn(
+                    CPU_COLUMN_CLS,
+                    'hover:text-foreground transition-colors',
+                    sortOption === 'cpu'
+                      ? 'font-semibold text-foreground'
+                      : 'text-muted-foreground/80'
+                  )}
+                  aria-pressed={sortOption === 'cpu'}
+                >
+                  CPU
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortOption('memory')}
+                  className={cn(
+                    MEM_COLUMN_CLS,
+                    'hover:text-foreground transition-colors',
+                    sortOption === 'memory'
+                      ? 'font-semibold text-foreground'
+                      : 'text-muted-foreground/80'
+                  )}
+                  aria-pressed={sortOption === 'memory'}
+                >
+                  Memory
+                </button>
               </div>
-            </>
-          ) : (
-            <SessionsTabPanel
-              sessions={sessions}
-              sessionsError={sessionsError}
-              onCloseSegment={closeSegment}
-              onSessionsChanged={() => void refreshSessions()}
-            />
+            </div>
           )}
+
+          <div className="flex-1 overflow-y-auto scrollbar-sleek">
+            {unifiedRepos.length > 0 && (
+              <ResourceTree
+                repos={unifiedRepos}
+                sortOption={sortOption}
+                collapsedRepos={collapsedRepos}
+                toggleRepo={toggleRepo}
+                collapsedWorktrees={collapsedWorktrees}
+                toggleWorktree={toggleWorktree}
+                navigateToWorktree={navigateToWorktree}
+                navigateToTab={navigateToTab}
+                onSleep={handleSleep}
+                onDelete={deleteWorktree}
+                onKillSession={handleKillSession}
+              />
+            )}
+
+            {unifiedRepos.length === 0 && snapshot && (
+              <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                Nothing running right now
+              </div>
+            )}
+
+            {snapshot && (
+              <AppSection
+                app={snapshot.app}
+                isCollapsed={appCollapsed}
+                onToggle={() => setAppCollapsed((v) => !v)}
+              />
+            )}
+
+            {!snapshot && !daemonUnreachable && (
+              <div className="px-3 py-4 text-center text-xs text-muted-foreground">Loading…</div>
+            )}
+          </div>
         </div>
+
+        {orphanCount > 0 && (
+          <div className="border-t border-border/50 px-3 py-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleKillOrphans()}
+              className="inline-flex w-full items-center justify-center rounded-md border border-border/70 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent/60"
+            >
+              Kill {orphanCount} Orphan{orphanCount > 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+
+        <Dialog
+          open={killConfirm !== null}
+          onOpenChange={(next) => {
+            if (next) {
+              return
+            }
+            if (killing) {
+              return
+            }
+            setKillConfirm(null)
+          }}
+        >
+          <DialogContent
+            className="max-w-md"
+            showCloseButton={!killing}
+            onPointerDownOutside={(e) => {
+              if (killing) {
+                e.preventDefault()
+              }
+            }}
+            onEscapeKeyDown={(e) => {
+              if (killing) {
+                e.preventDefault()
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-sm">Kill this session?</DialogTitle>
+              <DialogDescription className="text-xs">
+                Force-quits{' '}
+                <span className="font-medium text-foreground">{killConfirm?.sessionId}</span>. Any
+                unsaved work in that pane is lost. This can&apos;t be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setKillConfirm(null)} disabled={killing}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void runKillConfirmed()}
+                disabled={killing}
+              >
+                {killing ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                {killing ? 'Killing…' : 'Kill session'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </PopoverContent>
       <DaemonActionDialog api={daemonActions} />
     </Popover>
