@@ -76,12 +76,19 @@ export const TabList = z.object({
 // Why: --index xor --page must be present. The refine guards that invariant
 // so the dispatcher surfaces a single legible error instead of either shape
 // leaking into the runtime.
+//
+// `focus` is opt-in: when true, the runtime sends `browser:pane-focus` to
+// the renderer after the switch lands. The renderer surfaces the browser
+// pane only if the user is already on the targeted worktree; otherwise it
+// pre-stages per-worktree state silently. This avoids cross-worktree screen
+// theft when multiple agents drive browsers in parallel worktrees.
 export const TabSwitch = BrowserTarget.extend({
   index: z
     .unknown()
     .transform((v) => (typeof v === 'number' ? v : undefined))
     .pipe(z.number().optional())
-    .optional()
+    .optional(),
+  focus: z.boolean().optional()
 }).refine(
   (val) => {
     if (val.page !== undefined) {
