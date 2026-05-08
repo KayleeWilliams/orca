@@ -51,6 +51,25 @@ export const EXPERIMENTAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ]
   },
   {
+    title: 'Branch name suggestions',
+    description:
+      'Suggests a better name for Orca-created local branches after a supported agent finishes with commits.',
+    keywords: [
+      'experimental',
+      'branch',
+      'branches',
+      'rename',
+      'renaming',
+      'suggestion',
+      'agent',
+      'hook',
+      'claude',
+      'codex',
+      'gemini',
+      'opencode'
+    ]
+  },
+  {
     title: 'Symlinks on worktrees',
     description:
       'Automatically symlink configured files or folders into newly created worktrees so shared state (envs, caches, installs) stays connected.',
@@ -84,5 +103,6 @@ export const EXPERIMENTAL_SEARCH_ENTRY = {
   mobile: findEntry('Mobile Pairing'),
   sidekick: findEntry('Sidekick'),
   orchestration: findEntry('Agent Orchestration'),
+  branchNames: findEntry('Branch name suggestions'),
   symlinks: findEntry('Symlinks on worktrees')
 } as const

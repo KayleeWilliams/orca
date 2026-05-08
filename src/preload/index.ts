@@ -357,6 +357,14 @@ const api = {
     remove: (args: { worktreeId: string; force?: boolean; skipArchive?: boolean }): Promise<void> =>
       ipcRenderer.invoke('worktrees:remove', args),
 
+    applyBranchNameSuggestion: (args: {
+      worktreeId: string
+    }): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('worktrees:applyBranchNameSuggestion', args),
+
+    dismissBranchNameSuggestion: (args: { worktreeId: string }): Promise<void> =>
+      ipcRenderer.invoke('worktrees:dismissBranchNameSuggestion', args),
+
     updateMeta: (args: {
       worktreeId: string
       updates: Record<string, unknown>

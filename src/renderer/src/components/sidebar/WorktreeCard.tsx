@@ -4,7 +4,18 @@ import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Bell, GitMerge, LoaderCircle, CircleCheck, CircleX, Server, ServerOff } from 'lucide-react'
+import {
+  Bell,
+  X,
+  GitBranch,
+  GitMerge,
+  LoaderCircle,
+  CircleCheck,
+  CircleX,
+  Server,
+  ServerOff
+} from 'lucide-react'
+import { toast } from 'sonner'
 import StatusIndicator from './StatusIndicator'
 import CacheTimer from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
@@ -51,6 +62,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
 }: WorktreeCardProps) {
   const openModal = useAppStore((s) => s.openModal)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
+  const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
   const fetchIssue = useAppStore((s) => s.fetchIssue)
   const cardProps = useAppStore((s) => s.worktreeCardProperties)
@@ -95,6 +107,54 @@ const WorktreeCard = React.memo(function WorktreeCard({
   })
   const isSshDisconnected = sshStatus != null && sshStatus !== 'connected'
   const [showDisconnectedDialog, setShowDisconnectedDialog] = useState(false)
+  const [isApplyingBranchSuggestion, setIsApplyingBranchSuggestion] = useState(false)
+  const branchSuggestion =
+    worktree.branchNameSuggestion?.status === 'suggested' &&
+    worktree.branchNameSuggestion.suggestedBranch
+      ? worktree.branchNameSuggestion
+      : null
+
+  const handleApplyBranchSuggestion = useCallback(
+    async (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      if (!branchSuggestion || isApplyingBranchSuggestion) {
+        return
+      }
+      setIsApplyingBranchSuggestion(true)
+      try {
+        const result = await window.api.worktrees.applyBranchNameSuggestion({
+          worktreeId: worktree.id
+        })
+        if (!result.ok) {
+          toast.error(result.error)
+          return
+        }
+        toast.success('Branch renamed.')
+        await fetchWorktrees(worktree.repoId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to rename branch.')
+      } finally {
+        setIsApplyingBranchSuggestion(false)
+      }
+    },
+    [branchSuggestion, fetchWorktrees, isApplyingBranchSuggestion, worktree.id, worktree.repoId]
+  )
+
+  const handleDismissBranchSuggestion = useCallback(
+    async (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      if (!branchSuggestion) {
+        return
+      }
+      try {
+        await window.api.worktrees.dismissBranchNameSuggestion({ worktreeId: worktree.id })
+        await fetchWorktrees(worktree.repoId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to dismiss suggestion.')
+      }
+    },
+    [branchSuggestion, fetchWorktrees, worktree.id, worktree.repoId]
+  )
 
   // Why: on restart the previously-active worktree is auto-restored without a
   // click, so the dialog never opens. Auto-show it for the active card when SSH
@@ -133,6 +193,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const branch = branchDisplayName(worktree.branch)
+  const suggestedBranch = branchSuggestion?.suggestedBranch ?? ''
+  const suggestedBranchLeaf = suggestedBranch.split('/').at(-1) ?? suggestedBranch
   const isFolder = repo ? isFolderRepo(repo) : false
   const prCacheKey = repo && branch ? `${repo.path}::${branch}` : ''
   const issueCacheKey = repo && worktree.linkedIssue ? `${repo.path}::${worktree.linkedIssue}` : ''
@@ -550,6 +612,46 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
           <CacheTimer worktreeId={worktree.id} />
         </div>
+
+        {branchSuggestion ? (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight">
+            <GitBranch className="size-3 shrink-0 text-muted-foreground/70" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  Suggested:{' '}
+                  <span className="font-medium text-foreground/90">{suggestedBranchLeaf}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                {branchSuggestion.suggestedBranch}
+              </TooltipContent>
+            </Tooltip>
+            <button
+              type="button"
+              className="shrink-0 rounded px-1 py-0.5 font-medium text-foreground hover:bg-accent disabled:opacity-60"
+              disabled={isApplyingBranchSuggestion}
+              onClick={handleApplyBranchSuggestion}
+            >
+              {isApplyingBranchSuggestion ? 'Applying' : 'Apply'}
+            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/65 hover:bg-accent hover:text-foreground"
+                  onClick={handleDismissBranchSuggestion}
+                  aria-label="Dismiss branch name suggestion"
+                >
+                  <X className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                Dismiss suggestion
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        ) : null}
 
         {/* Meta section: Issue / PR Links / Comment
              Layout coupling: spacing here is used to derive size estimates in

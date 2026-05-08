@@ -288,6 +288,16 @@ describe('registerWorktreeHandlers', () => {
       'origin/main',
       false
     )
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/improve-dashboard-2',
+      expect.objectContaining({
+        branchNameSuggestion: expect.objectContaining({
+          status: 'idle',
+          originalBranch: 'improve-dashboard-2',
+          baseRef: 'origin/main'
+        })
+      })
+    )
     expect(result).toEqual({
       worktree: expect.objectContaining({
         path: '/workspace/improve-dashboard-2',

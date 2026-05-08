@@ -49,6 +49,7 @@ import { cursorHookService } from './cursor/hook-service'
 import { getPtyIdForPaneKey, registerPaneKeyTeardownListener, getLocalPtyProvider } from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
+import { maybeSuggestBranchNameAfterAgentDone } from './branch-name-suggestions'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -67,6 +68,35 @@ let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
 let starNag: StarNagService | null = null
+
+const QUIET_BRANCH_NAME_SUGGESTION_REASONS = new Set([
+  'disabled',
+  'in-flight',
+  'unsupported-agent',
+  'unsupported-repo',
+  'not-eligible',
+  'no-commits'
+])
+
+function logBranchNameSuggestionMiss(args: {
+  reason: string
+  worktreeId?: string
+  agentType?: string
+}): void {
+  if (QUIET_BRANCH_NAME_SUGGESTION_REASONS.has(args.reason)) {
+    return
+  }
+  const detail = {
+    reason: args.reason,
+    worktreeId: args.worktreeId,
+    agentType: args.agentType
+  }
+  if (args.reason === 'branch-changed' || args.reason === 'already-pushed') {
+    console.info('[branch-name-suggestions] skipped', detail)
+    return
+  }
+  console.warn('[branch-name-suggestions] failed', detail)
+}
 
 installUncaughtPipeErrorGuard()
 // Why: propagate the Orca app version into `process.env` so PTY-env
@@ -292,6 +322,30 @@ function openMainWindow(): BrowserWindow {
     // keyword path; "action required" keyword → permission; bare label → idle.
     if (payload.agentType === 'cursor') {
       driveCursorPaneFromHook(paneKey, payload.state)
+    }
+    if (payload.state === 'done' && store) {
+      void maybeSuggestBranchNameAfterAgentDone({
+        store,
+        worktreeId,
+        agentType: payload.agentType,
+        onWorktreesChanged: (repoId) => {
+          if (!mainWindow?.isDestroyed()) {
+            mainWindow?.webContents.send('worktrees:changed', { repoId })
+          }
+        }
+      })
+        .then((result) => {
+          if (!result.ok) {
+            logBranchNameSuggestionMiss({
+              reason: result.reason,
+              worktreeId,
+              agentType: payload.agentType
+            })
+          }
+        })
+        .catch((error) => {
+          console.warn('[branch-name-suggestions] failed', error)
+        })
     }
   })
   return window

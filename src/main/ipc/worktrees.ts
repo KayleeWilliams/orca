@@ -46,6 +46,7 @@ import { getLocalPtyProvider } from './pty'
 import { removeWorktreeSymlinks } from './worktree-symlinks'
 import { track } from '../telemetry/client'
 import { workspaceSourceSchema, type WorkspaceSource } from '../../shared/telemetry-events'
+import { applyBranchNameSuggestion, dismissBranchNameSuggestion } from '../branch-name-suggestions'
 
 // Why: worktrees discovered on disk (not created via Orca's UI) have no
 // persisted WorktreeMeta, so mergeWorktree falls back to `lastActivityAt: 0`.
@@ -106,6 +107,8 @@ export function registerWorktreeHandlers(
   ipcMain.removeHandler('worktrees:resolvePrBase')
   ipcMain.removeHandler('worktrees:remove')
   ipcMain.removeHandler('worktrees:updateMeta')
+  ipcMain.removeHandler('worktrees:applyBranchNameSuggestion')
+  ipcMain.removeHandler('worktrees:dismissBranchNameSuggestion')
   ipcMain.removeHandler('worktrees:persistSortOrder')
   ipcMain.removeHandler('hooks:check')
   ipcMain.removeHandler('hooks:createIssueCommandRunner')
@@ -441,6 +444,25 @@ export function registerWorktreeHandlers(
       deleteWorktreeHistoryDir(args.worktreeId)
       invalidateAuthorizedRootsCache()
 
+      notifyWorktreesChanged(mainWindow, repoId)
+    }
+  )
+
+  ipcMain.handle(
+    'worktrees:applyBranchNameSuggestion',
+    async (_event, args: { worktreeId: string }) => {
+      const { repoId } = parseWorktreeId(args.worktreeId)
+      const result = await applyBranchNameSuggestion({ store, worktreeId: args.worktreeId })
+      notifyWorktreesChanged(mainWindow, repoId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'worktrees:dismissBranchNameSuggestion',
+    (_event, args: { worktreeId: string }) => {
+      const { repoId } = parseWorktreeId(args.worktreeId)
+      dismissBranchNameSuggestion({ store, worktreeId: args.worktreeId })
       notifyWorktreesChanged(mainWindow, repoId)
     }
   )

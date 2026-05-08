@@ -454,6 +454,13 @@ export async function createLocalWorktree(
     ...(shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
       ? { displayName: effectiveRequestedName }
       : {}),
+    branchNameSuggestion: {
+      status: 'idle',
+      originalBranch: branchName,
+      baseRef: baseBranch,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    },
     ...(sparseDirectories.length > 0
       ? {
           sparseDirectories,

@@ -21,6 +21,29 @@ function arraysShallowEqual(a: string[] | undefined, b: string[] | undefined): b
   return a.every((v, i) => v === b[i])
 }
 
+function branchSuggestionsEqual(
+  a: Worktree['branchNameSuggestion'],
+  b: Worktree['branchNameSuggestion']
+): boolean {
+  if (a === b) {
+    return true
+  }
+  if (!a || !b) {
+    return false
+  }
+  return (
+    a.status === b.status &&
+    a.originalBranch === b.originalBranch &&
+    a.baseRef === b.baseRef &&
+    a.suggestedBranch === b.suggestedBranch &&
+    a.agentType === b.agentType &&
+    a.createdAt === b.createdAt &&
+    a.updatedAt === b.updatedAt &&
+    a.appliedAt === b.appliedAt &&
+    a.failureReason === b.failureReason
+  )
+}
+
 function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
   if (!current || current.length !== next.length) {
     return false
@@ -37,6 +60,7 @@ function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): b
       worktree.isBare === candidate.isBare &&
       worktree.isMainWorktree === candidate.isMainWorktree &&
       worktree.isSparse === candidate.isSparse &&
+      branchSuggestionsEqual(worktree.branchNameSuggestion, candidate.branchNameSuggestion) &&
       worktree.displayName === candidate.displayName &&
       worktree.comment === candidate.comment &&
       worktree.linkedIssue === candidate.linkedIssue &&

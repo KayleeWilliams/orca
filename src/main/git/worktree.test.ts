@@ -212,7 +212,10 @@ describe('addWorktree', () => {
     await addWorktree('/repo', '/repo-feature', 'feature/test', 'origin/main')
 
     expect(gitExecFileAsyncMock.mock.calls).toEqual([
-      [['worktree', 'add', '-b', 'feature/test', '/repo-feature', 'origin/main'], { cwd: '/repo' }]
+      [
+        ['worktree', 'add', '--no-track', '-b', 'feature/test', '/repo-feature', 'origin/main'],
+        { cwd: '/repo' }
+      ]
     ])
   })
 
@@ -233,7 +236,10 @@ describe('addWorktree', () => {
       [['worktree', 'list', '--porcelain'], { cwd: '/repo' }],
       [['status', '--porcelain', '--untracked-files=no'], { cwd: '/repo' }],
       [['reset', '--hard', 'origin/main'], { cwd: '/repo' }],
-      [['worktree', 'add', '-b', 'feature/test', '/repo-feature', 'origin/main'], { cwd: '/repo' }]
+      [
+        ['worktree', 'add', '--no-track', '-b', 'feature/test', '/repo-feature', 'origin/main'],
+        { cwd: '/repo' }
+      ]
     ])
   })
 
@@ -290,6 +296,7 @@ describe('addWorktree', () => {
     expect(gitExecFileAsyncMock.mock.calls[3]?.[0]).toEqual([
       'worktree',
       'add',
+      '--no-track',
       '-b',
       'feature/test',
       '/repo-feature',
@@ -309,7 +316,7 @@ describe('addWorktree', () => {
         expect.objectContaining({ cwd: '/repo' })
       ],
       [
-        ['worktree', 'add', '-b', 'feature/test', '/repo-feature', 'origin/main'],
+        ['worktree', 'add', '--no-track', '-b', 'feature/test', '/repo-feature', 'origin/main'],
         expect.objectContaining({ cwd: '/repo' })
       ]
     ])

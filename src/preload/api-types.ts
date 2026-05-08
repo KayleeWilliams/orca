@@ -430,6 +430,10 @@ export type PreloadApi = {
       isCrossRepository?: boolean
     }) => Promise<{ baseBranch: string } | { error: string }>
     remove: (args: { worktreeId: string; force?: boolean; skipArchive?: boolean }) => Promise<void>
+    applyBranchNameSuggestion: (args: {
+      worktreeId: string
+    }) => Promise<{ ok: true } | { ok: false; error: string }>
+    dismissBranchNameSuggestion: (args: { worktreeId: string }) => Promise<void>
     updateMeta: (args: { worktreeId: string; updates: Partial<WorktreeMeta> }) => Promise<Worktree>
     persistSortOrder: (args: { orderedIds: string[] }) => Promise<void>
     onChanged: (callback: (data: { repoId: string }) => void) => () => void

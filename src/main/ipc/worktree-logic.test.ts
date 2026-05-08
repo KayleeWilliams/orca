@@ -1,5 +1,6 @@
 import { join, resolve } from 'path'
 import { describe, expect, it } from 'vitest'
+import type { WorktreeMeta } from '../../shared/types'
 import {
   sanitizeWorktreeName,
   ensurePathWithinWorkspace,
@@ -170,7 +171,7 @@ describe('mergeWorktree', () => {
   }
 
   it('merges with full metadata', () => {
-    const meta = {
+    const meta: WorktreeMeta = {
       displayName: 'My Feature',
       comment: 'WIP',
       linkedIssue: 42,
@@ -180,7 +181,16 @@ describe('mergeWorktree', () => {
       isUnread: true,
       isPinned: true,
       sortOrder: 5,
-      lastActivityAt: 1000
+      lastActivityAt: 1000,
+      branchNameSuggestion: {
+        status: 'suggested',
+        originalBranch: 'feature-x',
+        baseRef: 'origin/main',
+        suggestedBranch: 'rename-profile-kaylee-tan',
+        agentType: 'codex',
+        createdAt: 1,
+        updatedAt: 2
+      }
     }
     const result = mergeWorktree('repo1', baseGit, meta)
     expect(result).toEqual({
@@ -200,7 +210,16 @@ describe('mergeWorktree', () => {
       isUnread: true,
       isPinned: true,
       sortOrder: 5,
-      lastActivityAt: 1000
+      lastActivityAt: 1000,
+      branchNameSuggestion: {
+        status: 'suggested',
+        originalBranch: 'feature-x',
+        baseRef: 'origin/main',
+        suggestedBranch: 'rename-profile-kaylee-tan',
+        agentType: 'codex',
+        createdAt: 1,
+        updatedAt: 2
+      }
     })
   })
 

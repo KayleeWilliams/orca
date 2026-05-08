@@ -197,6 +197,9 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // the box (issue #903) while US users keep Option-as-Alt readline chords.
     terminalMacOptionAsAlt: 'auto',
     terminalMacOptionAsAltMigrated: false,
+    // Why: opt-in preview — branch suggestions ask agent CLIs to name local
+    // worktree branches, so upgraders should not spend tokens unexpectedly.
+    experimentalBranchNameSuggestions: false,
     experimentalMobile: false,
     // Why: indefinite hold by default — the desktop "Restore" banner is the
     // explicit return-to-desktop-size action, no wall-clock guess.

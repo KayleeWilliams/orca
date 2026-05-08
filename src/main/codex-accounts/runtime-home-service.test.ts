@@ -95,6 +95,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     agentCmdOverrides: {},
     terminalMacOptionAsAlt: 'false',
     terminalMacOptionAsAltMigrated: true,
+    experimentalBranchNameSuggestions: false,
     experimentalMobile: false,
     mobileAutoRestoreFitMs: null,
     experimentalSidekick: false,

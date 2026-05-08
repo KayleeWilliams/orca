@@ -203,7 +203,11 @@ export async function addWorktree(
   if (noCheckout) {
     args.push('--no-checkout')
   }
-  args.push('-b', branch, worktreePath)
+  // Why: user Git config can auto-track the start point (for example
+  // origin/main). Orca-created feature branches should start unpublished so
+  // push/rename guards can distinguish them from branches that really have a
+  // remote counterpart.
+  args.push('--no-track', '-b', branch, worktreePath)
   if (baseBranch) {
     args.push(baseBranch)
   }

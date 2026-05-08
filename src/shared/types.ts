@@ -112,6 +112,7 @@ export type Worktree = {
    *  when the worktree is no longer sparse on refresh. */
   sparsePresetId?: string
   diffComments?: DiffComment[]
+  branchNameSuggestion?: BranchNameSuggestionState
 } & GitWorktreeInfo
 
 // ─── Worktree metadata (persisted user-authored fields only) ─────────
@@ -132,6 +133,27 @@ export type WorktreeMeta = {
   sparseBaseRef?: string
   sparsePresetId?: string
   diffComments?: DiffComment[]
+  branchNameSuggestion?: BranchNameSuggestionState
+}
+
+export type BranchNameSuggestionStatus =
+  | 'idle'
+  | 'suggested'
+  | 'dismissed'
+  | 'applied'
+  | 'skipped'
+  | 'failed'
+
+export type BranchNameSuggestionState = {
+  status: BranchNameSuggestionStatus
+  originalBranch: string
+  baseRef: string
+  suggestedBranch?: string
+  agentType?: string
+  createdAt: number
+  updatedAt: number
+  appliedAt?: number
+  failureReason?: string
 }
 
 // ─── Diff line comments ──────────────────────────────────────────────
@@ -1221,6 +1243,10 @@ export type GlobalSettings = {
    *  off never mount the overlay. Toggling takes effect immediately in the
    *  current session (no relaunch) because it is purely renderer-side. */
   experimentalSidekick: boolean
+  /** Experimental: after an Orca-created local branch has commits and its
+   *  agent reports done, ask that same agent for a better branch name and
+   *  let the user apply it. Opt-in because it spends agent tokens for naming. */
+  experimentalBranchNameSuggestions: boolean
   /** Experimental: when creating a worktree, automatically symlink a
    *  user-configured set of files/folders from the primary checkout (e.g.
    *  `.env`, `node_modules`) into the new worktree. Opt-in while the
