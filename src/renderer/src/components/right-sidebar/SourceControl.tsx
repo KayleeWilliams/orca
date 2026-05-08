@@ -22,6 +22,7 @@ import {
   GitMerge,
   GitPullRequestArrow,
   MessageSquare,
+  Pencil,
   Trash,
   TriangleAlert,
   CircleCheck,
@@ -210,6 +211,7 @@ function SourceControlInner(): React.JSX.Element {
   const openAllDiffs = useAppStore((s) => s.openAllDiffs)
   const openBranchAllDiffs = useAppStore((s) => s.openBranchAllDiffs)
   const deleteDiffComment = useAppStore((s) => s.deleteDiffComment)
+  const setEditingDiffCommentId = useAppStore((s) => s.setEditingDiffCommentId)
   // Why: pass activeWorktreeId directly (even when null/undefined) so the
   // slice's getDiffComments returns its stable EMPTY_COMMENTS sentinel. An
   // inline `[]` fallback would allocate a new array each store update, break
@@ -1294,6 +1296,7 @@ function SourceControlInner(): React.JSX.Element {
               <DiffCommentsInlineList
                 comments={diffCommentsForActive}
                 onDelete={(id) => void deleteDiffComment(activeWorktreeId, id)}
+                onEdit={(id) => setEditingDiffCommentId(id)}
               />
             )}
           </div>
@@ -1982,10 +1985,15 @@ function SectionHeader({
 
 function DiffCommentsInlineList({
   comments,
-  onDelete
+  onDelete,
+  onEdit
 }: {
   comments: DiffComment[]
   onDelete: (commentId: string) => void
+  // Why: clicking edit doesn't open an editor inline in the sidebar — the user
+  // chose "edit in the diff card" so the parent routes the click through the
+  // UI slice, which the diff card consumes to enter its own editor.
+  onEdit: (commentId: string) => void
 }): React.JSX.Element {
   // Why: group by filePath so the inline list mirrors the structure in the
   // Notes tab — a compact section per file with line-number prefixes.
@@ -2060,6 +2068,18 @@ function DiffCommentsInlineList({
                   aria-label={`Copy note on line ${c.lineNumber}`}
                 >
                   {copiedId === c.id ? <Check className="size-3" /> : <Copy className="size-3" />}
+                </button>
+                <button
+                  type="button"
+                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    onEdit(c.id)
+                  }}
+                  title="Edit note in diff"
+                  aria-label={`Edit note on line ${c.lineNumber}`}
+                >
+                  <Pencil className="size-3" />
                 </button>
                 <button
                   type="button"

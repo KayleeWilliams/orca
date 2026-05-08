@@ -1160,6 +1160,12 @@
    percentages would not give equal contrast. Override lives in `.dark`. */
 .orca-diff-comment-card {
   position: relative;
+  /* Why: Monaco's view-lines overlay (data-mprt=8) is positioned absolutely on
+     top of view-zone DOM. Without an explicit z-index here, clicks on
+     interior controls (Cancel/Save in edit mode, the textarea, etc.) hit the
+     overlay first and never reach our buttons. Lifting the whole card creates
+     a stacking context that keeps every nested control clickable. */
+  z-index: 1;
   border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
   border-left: 3px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 6px;
@@ -1187,6 +1193,36 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+/* Why: keep edit + delete close together but visually distinct from the meta
+   label. Both share the same subtle button styling; only delete recolours on
+   hover (destructive intent). */
+.orca-diff-comment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.orca-diff-comment-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+}
+
+.orca-diff-comment-edit:hover {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 20%, transparent);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
 /* Why: the trash button is always visible (not hover-only) because the saved
@@ -1300,6 +1336,7 @@
 
 .orca-diff-comment-popover-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
 }
