@@ -394,7 +394,11 @@ describe('registerWorktreeHandlers', () => {
 
   it('clears the GitLab MR base handler before re-registering IPC handlers', () => {
     expect(removeHandlerMock).toHaveBeenCalledWith('worktrees:resolveMrBase')
+    expect(removeHandlerMock).toHaveBeenCalledWith('worktrees:applyBranchNameSuggestion')
+    expect(removeHandlerMock).toHaveBeenCalledWith('worktrees:dismissBranchNameSuggestion')
     expect(handlers['worktrees:resolveMrBase']).toBeDefined()
+    expect(handlers['worktrees:applyBranchNameSuggestion']).toBeDefined()
+    expect(handlers['worktrees:dismissBranchNameSuggestion']).toBeDefined()
   })
 
   function mockKnownFeatureWorktree(
@@ -456,6 +460,79 @@ describe('registerWorktreeHandlers', () => {
     expect(result).toEqual({ comment: 'keep me', isPinned: true })
   })
 
+  it('applies branch name suggestions through IPC and notifies worktrees changed', async () => {
+    store.getWorktreeMeta.mockReturnValue(
+      makeWorktreeMeta({
+        branchNameSuggestion: {
+          status: 'suggested',
+          originalBranch: 'feature/original',
+          baseRef: 'origin/main',
+          suggestedBranch: 'feature/cleaner-name',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      })
+    )
+    gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'branch' && args[1] === '--show-current') {
+        return { stdout: 'feature/original\n', stderr: '' }
+      }
+      if (args[0] === 'rev-parse') {
+        throw new Error('no upstream')
+      }
+      return { stdout: '', stderr: '' }
+    })
+
+    const result = await handlers['worktrees:applyBranchNameSuggestion'](null, {
+      worktreeId: 'repo-1::/workspace/feature-original'
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['branch', '-m', 'feature/original', 'feature/cleaner-name'],
+      { cwd: '/workspace/feature-original' }
+    )
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/feature-original',
+      expect.objectContaining({
+        branchNameSuggestion: expect.objectContaining({ status: 'applied' })
+      })
+    )
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
+      repoId: 'repo-1'
+    })
+  })
+
+  it('dismisses branch name suggestions through IPC and notifies worktrees changed', () => {
+    store.getWorktreeMeta.mockReturnValue(
+      makeWorktreeMeta({
+        branchNameSuggestion: {
+          status: 'suggested',
+          originalBranch: 'feature/original',
+          baseRef: 'origin/main',
+          suggestedBranch: 'feature/cleaner-name',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      })
+    )
+
+    handlers['worktrees:dismissBranchNameSuggestion'](null, {
+      worktreeId: 'repo-1::/workspace/feature-original'
+    })
+
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/feature-original',
+      expect.objectContaining({
+        branchNameSuggestion: expect.objectContaining({ status: 'dismissed' })
+      })
+    )
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
+      repoId: 'repo-1'
+    })
+  })
+
   it('auto-suffixes the branch name when the first choice collides with a remote branch', async () => {
     // Why: new-workspace flow should silently try improve-dashboard-2, -3, ...
     // rather than failing and forcing the user back to the name picker.
@@ -483,6 +560,16 @@ describe('registerWorktreeHandlers', () => {
       'improve-dashboard-2',
       'origin/main',
       false
+    )
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/improve-dashboard-2',
+      expect.objectContaining({
+        branchNameSuggestion: expect.objectContaining({
+          status: 'idle',
+          originalBranch: 'improve-dashboard-2',
+          baseRef: 'origin/main'
+        })
+      })
     )
     expect(result).toEqual({
       worktree: expect.objectContaining({
@@ -623,6 +710,7 @@ describe('registerWorktreeHandlers', () => {
       'repo-1::/workspace/fix-bug-0',
       expect.objectContaining({ preserveBranchOnDelete: true })
     )
+    expect(store.setWorktreeMeta.mock.calls.at(-1)?.[1]).not.toHaveProperty('branchNameSuggestion')
     expect(result).toEqual({
       worktree: expect.objectContaining({
         path: '/workspace/fix-bug-0',
@@ -877,6 +965,7 @@ describe('registerWorktreeHandlers', () => {
         })
       })
     )
+    expect(store.setWorktreeMeta.mock.calls.at(-1)?.[1]).not.toHaveProperty('branchNameSuggestion')
   })
 
   it('keeps the Orca-created marker when a new worktree reuses an Orca-created fork remote', async () => {

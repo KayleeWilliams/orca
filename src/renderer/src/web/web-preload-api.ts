@@ -910,6 +910,14 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
       invalidateRuntimeWorktreeCaches()
       await callRuntimeResult('worktree.rm', { worktree: worktreeId, force })
     },
+    applyBranchNameSuggestion: async () => ({
+      ok: false,
+      error: 'Branch name suggestions can only be applied from the desktop app.'
+    }),
+    dismissBranchNameSuggestion: async () => {
+      // Why: branch rename suggestions are local-desktop-only for now; paired
+      // web clients expose the API shape but do not mutate remote git state.
+    },
     updateMeta: async ({ worktreeId, updates }) =>
       (
         await callRuntimeResult<{ worktree: Worktree }>('worktree.set', {

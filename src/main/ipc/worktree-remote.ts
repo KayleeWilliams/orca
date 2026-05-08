@@ -1344,6 +1344,7 @@ export async function createLocalWorktree(
 
   const worktreeId = `${repo.id}::${created.path}`
   const now = Date.now()
+  const canSuggestBranchName = !checkoutExistingBranch && !configuredPushTarget
   const metaUpdates: Partial<WorktreeMeta> = {
     // Why: path-derived worktree IDs can be reused after external deletion.
     // Fresh creations must rotate instance identity so stale lineage cannot
@@ -1370,6 +1371,17 @@ export async function createLocalWorktree(
       : shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
         ? { displayName: effectiveRequestedName }
         : {}),
+    ...(canSuggestBranchName
+      ? {
+          branchNameSuggestion: {
+            status: 'idle',
+            originalBranch: branchName,
+            baseRef: baseBranch,
+            createdAt: now,
+            updatedAt: now
+          }
+        }
+      : {}),
     ...(sparseDirectories.length > 0
       ? {
           sparseDirectories,

@@ -76,6 +76,7 @@ import {
 } from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
+import { maybeSuggestBranchNameAfterAgentDone } from './branch-name-suggestions'
 import { setUnreadDockBadgeCount } from './dock/unread-badge'
 import { AutomationService } from './automations/service'
 import { AgentAwakeService } from './agent-awake-service'
@@ -125,6 +126,15 @@ let keybindings: KeybindingService | null = null
 let expectedRendererReload: { webContentsId: number; until: number } | null = null
 const isServeMode = process.argv.includes('--serve')
 
+const QUIET_BRANCH_NAME_SUGGESTION_REASONS = new Set([
+  'disabled',
+  'in-flight',
+  'unsupported-agent',
+  'unsupported-repo',
+  'not-eligible',
+  'no-commits'
+])
+
 // Why: the store/runtime singletons live here in index.ts; injecting them keeps
 // the rename orchestrator free of module-level state and unit-testable.
 function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
@@ -167,6 +177,59 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
       onRenamed: (repoId) => currentRuntime.notifyBranchRenamed(repoId)
     }
   )
+}
+
+function logBranchNameSuggestionMiss(args: {
+  reason: string
+  worktreeId?: string
+  agentType?: string
+}): void {
+  if (QUIET_BRANCH_NAME_SUGGESTION_REASONS.has(args.reason)) {
+    return
+  }
+  const detail = {
+    reason: args.reason,
+    worktreeId: args.worktreeId,
+    agentType: args.agentType
+  }
+  if (args.reason === 'branch-changed' || args.reason === 'already-pushed') {
+    console.info('[branch-name-suggestions] skipped', detail)
+    return
+  }
+  console.warn('[branch-name-suggestions] failed', detail)
+}
+
+function maybeSuggestBranchNameAfterAgentDoneFromHook(event: {
+  worktreeId: string | undefined
+  payload: { state: string; agentType?: string }
+  isReplay: boolean | undefined
+}): void {
+  const currentStore = store
+  if (!currentStore || event.isReplay || event.payload.state !== 'done') {
+    return
+  }
+  void maybeSuggestBranchNameAfterAgentDone({
+    store: currentStore,
+    worktreeId: event.worktreeId,
+    agentType: event.payload.agentType,
+    onWorktreesChanged: (repoId) => {
+      if (!mainWindow?.isDestroyed()) {
+        mainWindow?.webContents.send('worktrees:changed', { repoId })
+      }
+    }
+  })
+    .then((result) => {
+      if (!result.ok) {
+        logBranchNameSuggestionMiss({
+          reason: result.reason,
+          worktreeId: event.worktreeId,
+          agentType: event.payload.agentType
+        })
+      }
+    })
+    .catch((error) => {
+      console.warn('[branch-name-suggestions] failed', error)
+    })
 }
 
 const devInstanceIdentity = getDevInstanceIdentity(is.dev)
@@ -538,6 +601,7 @@ function openMainWindow(): BrowserWindow {
         return
       }
       maybeAutoRenameBranchOnFirstWorkFromHook({ paneKey, tabId, worktreeId, payload, isReplay })
+      maybeSuggestBranchNameAfterAgentDoneFromHook({ worktreeId, payload, isReplay })
       const orchestration = runtime?.getAgentStatusOrchestrationContextForPaneKey(paneKey)
       mainWindow?.webContents.send('agentStatus:set', {
         ...payload,

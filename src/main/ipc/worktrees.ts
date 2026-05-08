@@ -78,6 +78,7 @@ import { track } from '../telemetry/client'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import { workspaceSourceSchema, type WorkspaceSource } from '../../shared/telemetry-events'
 import { classifyWorkspaceCreateError } from './workspace-create-error-classifier'
+import { applyBranchNameSuggestion, dismissBranchNameSuggestion } from '../branch-name-suggestions'
 import {
   assertWorktreeDoesNotContainRegisteredWorktree,
   canCleanupUnregisteredOrcaWorktreeDirectory,
@@ -548,6 +549,8 @@ export function registerWorktreeHandlers(
   ipcMain.removeHandler('worktrees:resolveMrBase')
   ipcMain.removeHandler('worktrees:remove')
   ipcMain.removeHandler('worktrees:updateMeta')
+  ipcMain.removeHandler('worktrees:applyBranchNameSuggestion')
+  ipcMain.removeHandler('worktrees:dismissBranchNameSuggestion')
   ipcMain.removeHandler('worktrees:listLineage')
   ipcMain.removeHandler('worktrees:updateLineage')
   ipcMain.removeHandler('worktrees:persistSortOrder')
@@ -1195,6 +1198,25 @@ export function registerWorktreeHandlers(
           worktreeRemovalsInFlight.delete(args.worktreeId)
         }
       }
+    }
+  )
+
+  ipcMain.handle(
+    'worktrees:applyBranchNameSuggestion',
+    async (_event, args: { worktreeId: string }) => {
+      const { repoId } = parseWorktreeId(args.worktreeId)
+      const result = await applyBranchNameSuggestion({ store, worktreeId: args.worktreeId })
+      notifyWorktreesChanged(mainWindow, repoId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'worktrees:dismissBranchNameSuggestion',
+    (_event, args: { worktreeId: string }) => {
+      const { repoId } = parseWorktreeId(args.worktreeId)
+      dismissBranchNameSuggestion({ store, worktreeId: args.worktreeId })
+      notifyWorktreesChanged(mainWindow, repoId)
     }
   )
 

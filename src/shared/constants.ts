@@ -276,6 +276,9 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     experimentalActivityDefaultedOffForAllUsers: true,
     experimentalTerminalAttention: false,
     experimentalCompactWorktreeCards: false,
+    // Why: opt-in preview — branch suggestions ask agent CLIs to name local
+    // worktree branches, so upgraders should not spend tokens unexpectedly.
+    experimentalBranchNameSuggestions: false,
     experimentalWorktreeSymlinks: false,
     // Why: local desktop remains the default server until the user explicitly
     // selects a saved runtime environment.

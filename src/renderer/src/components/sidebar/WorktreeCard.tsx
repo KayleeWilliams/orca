@@ -9,14 +9,17 @@ import {
   AlertTriangle,
   Bell,
   ChevronDown,
+  GitBranch,
   GitMerge,
   LoaderCircle,
   Server,
   ServerOff,
   Star,
   Trash2,
-  Workflow
+  Workflow,
+  X
 } from 'lucide-react'
+import { toast } from 'sonner'
 import CacheTimer, { usePromptCacheCountdownStartedAt } from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
 import { SshDisconnectedDialog } from './SshDisconnectedDialog'
@@ -110,6 +113,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const openModal = useAppStore((s) => s.openModal)
   const openTaskPage = useAppStore((s) => s.openTaskPage)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
+  const fetchWorktrees = useAppStore((s) => s.fetchWorktrees)
   const fetchHostedReviewForBranch = useAppStore((s) => s.fetchHostedReviewForBranch)
   const settings = useAppStore((s) => s.settings)
   const fetchIssue = useAppStore((s) => s.fetchIssue)
@@ -166,6 +170,56 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const isSshDisconnected = sshStatus != null && sshStatus !== 'connected'
   const [showDisconnectedDialog, setShowDisconnectedDialog] = useState(false)
   const [titleRenaming, setTitleRenaming] = useState(false)
+  const [isApplyingBranchSuggestion, setIsApplyingBranchSuggestion] = useState(false)
+  const branchSuggestion =
+    worktree.branchNameSuggestion?.status === 'suggested' &&
+    worktree.branchNameSuggestion.suggestedBranch
+      ? worktree.branchNameSuggestion
+      : null
+
+  const handleApplyBranchSuggestion = useCallback(
+    async (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!branchSuggestion || isApplyingBranchSuggestion) {
+        return
+      }
+      setIsApplyingBranchSuggestion(true)
+      try {
+        const result = await window.api.worktrees.applyBranchNameSuggestion({
+          worktreeId: worktree.id
+        })
+        if (!result.ok) {
+          toast.error(result.error)
+          return
+        }
+        toast.success('Branch renamed.')
+        await fetchWorktrees(worktree.repoId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to rename branch.')
+      } finally {
+        setIsApplyingBranchSuggestion(false)
+      }
+    },
+    [branchSuggestion, fetchWorktrees, isApplyingBranchSuggestion, worktree.id, worktree.repoId]
+  )
+
+  const handleDismissBranchSuggestion = useCallback(
+    async (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!branchSuggestion) {
+        return
+      }
+      try {
+        await window.api.worktrees.dismissBranchNameSuggestion({ worktreeId: worktree.id })
+        await fetchWorktrees(worktree.repoId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to dismiss suggestion.')
+      }
+    },
+    [branchSuggestion, fetchWorktrees, worktree.id, worktree.repoId]
+  )
 
   // Why: on restart the previously-active worktree is auto-restored without a
   // click, so the dialog never opens. Auto-show it for the active card when SSH
@@ -182,6 +236,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const branch = branchDisplayName(worktree.branch)
+  const suggestedBranch = branchSuggestion?.suggestedBranch ?? ''
+  const suggestedBranchLeaf = suggestedBranch.split('/').at(-1) ?? suggestedBranch
   const isFolder = repo ? isFolderRepo(repo) : false
   // Why: compact cards are experimental because mixed card heights can be
   // surprising; the default keeps the explicit branch row visible.
@@ -864,6 +920,54 @@ const WorktreeCard = React.memo(function WorktreeCard({
             </span>
           </div>
         )}
+
+        {branchSuggestion ? (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
+            <GitBranch className="size-3 shrink-0" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="min-w-0 flex-1 truncate">
+                  Suggested:{' '}
+                  <span className="font-medium text-foreground/90">{suggestedBranchLeaf}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                {branchSuggestion.suggestedBranch}
+              </TooltipContent>
+            </Tooltip>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-workspace-board-preserve-open=""
+              onPointerDown={stopQuickActionPointerPropagation}
+              onClick={handleApplyBranchSuggestion}
+              disabled={isApplyingBranchSuggestion}
+              className="h-[18px] shrink-0 px-1 text-[10px] font-medium text-foreground hover:bg-sidebar-accent"
+            >
+              {isApplyingBranchSuggestion ? 'Applying' : 'Apply'}
+            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  data-workspace-board-preserve-open=""
+                  onPointerDown={stopQuickActionPointerPropagation}
+                  onClick={handleDismissBranchSuggestion}
+                  className="size-[18px] shrink-0 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  aria-label="Dismiss branch name suggestion"
+                >
+                  <X className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                Dismiss suggestion
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        ) : null}
 
         {/* Why: inline agent list. Gated on the 'inline-agents' card
              property so users can hide it. Layout coupling: this block

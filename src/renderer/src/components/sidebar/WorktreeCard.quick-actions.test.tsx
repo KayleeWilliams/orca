@@ -5,6 +5,7 @@ import type { GlobalSettings, Repo, Worktree, WorktreeCardProperty } from '../..
 import type WorktreeCardComponent from './WorktreeCard'
 
 const fetchHostedReviewForBranch = vi.fn()
+const fetchWorktrees = vi.fn()
 const fetchIssue = vi.fn()
 const openModal = vi.fn()
 const updateWorktreeMeta = vi.fn()
@@ -21,6 +22,7 @@ vi.mock('@/store', () => ({
     selector({
       deleteStateByWorktreeId: {},
       fetchHostedReviewForBranch,
+      fetchWorktrees,
       fetchIssue,
       gitConflictOperationByWorktree: {},
       hostedReviewCache: {},
@@ -125,6 +127,31 @@ describe('WorktreeCard quick actions', () => {
     )
 
     expect(markup).toContain('aria-label="Mark as read"')
+    expect(markup).toContain('data-workspace-board-preserve-open=""')
+  })
+
+  it('shows branch suggestion apply and dismiss affordances', () => {
+    const markup = renderToStaticMarkup(
+      <WorktreeCard
+        worktree={makeWorktree({
+          branchNameSuggestion: {
+            status: 'suggested',
+            originalBranch: 'feature/original',
+            baseRef: 'origin/main',
+            suggestedBranch: 'feature/cleaner-name',
+            createdAt: 1,
+            updatedAt: 2
+          }
+        })}
+        repo={makeRepo()}
+        isActive={false}
+      />
+    )
+
+    expect(markup).toContain('Suggested:')
+    expect(markup).toContain('cleaner-name')
+    expect(markup).toContain('>Apply<')
+    expect(markup).toContain('aria-label="Dismiss branch name suggestion"')
     expect(markup).toContain('data-workspace-board-preserve-open=""')
   })
 

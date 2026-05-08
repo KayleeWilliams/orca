@@ -5,6 +5,7 @@ import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { EXPERIMENTAL_PANE_SEARCH_ENTRIES, EXPERIMENTAL_SEARCH_ENTRY } from './experimental-search'
 import { HiddenExperimentalGroup } from './HiddenExperimentalGroup'
+import { BranchNameSuggestionsSetting } from './BranchNameSuggestionsSetting'
 
 export { EXPERIMENTAL_PANE_SEARCH_ENTRIES }
 
@@ -32,6 +33,9 @@ export function ExperimentalPane({
   ])
   const showWorktreeSymlinks = matchesSettingsSearch(searchQuery, [
     EXPERIMENTAL_SEARCH_ENTRY.symlinks
+  ])
+  const showBranchNameSuggestions = matchesSettingsSearch(searchQuery, [
+    EXPERIMENTAL_SEARCH_ENTRY.branchNames
   ])
 
   return (
@@ -229,6 +233,10 @@ export function ExperimentalPane({
             </button>
           </div>
         </SearchableSetting>
+      ) : null}
+
+      {showBranchNameSuggestions ? (
+        <BranchNameSuggestionsSetting settings={settings} updateSettings={updateSettings} />
       ) : null}
 
       {hiddenExperimentalUnlocked ? <HiddenExperimentalGroup /> : null}

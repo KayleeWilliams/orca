@@ -35,6 +35,10 @@ describe('getDefaultSettings', () => {
   it('keeps compact worktree cards experimental and disabled by default', () => {
     expect(getDefaultSettings('/tmp').experimentalCompactWorktreeCards).toBe(false)
   })
+
+  it('keeps branch name suggestions experimental and disabled by default', () => {
+    expect(getDefaultSettings('/tmp').experimentalBranchNameSuggestions).toBe(false)
+  })
 })
 
 describe('getDefaultPrimarySelectionMiddleClickPaste', () => {

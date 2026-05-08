@@ -265,6 +265,7 @@ export type Worktree = {
   pushTarget?: GitPushTarget
   workspaceStatus?: WorkspaceStatus
   diffComments?: DiffComment[]
+  branchNameSuggestion?: BranchNameSuggestionState
 } & GitWorktreeInfo
 
 export type GitPushTarget = {
@@ -316,6 +317,27 @@ export type WorktreeMeta = {
   /** User-assigned workspace board status for manual sidebar organization. */
   workspaceStatus?: WorkspaceStatus
   diffComments?: DiffComment[]
+  branchNameSuggestion?: BranchNameSuggestionState
+}
+
+export type BranchNameSuggestionStatus =
+  | 'idle'
+  | 'suggested'
+  | 'dismissed'
+  | 'applied'
+  | 'skipped'
+  | 'failed'
+
+export type BranchNameSuggestionState = {
+  status: BranchNameSuggestionStatus
+  originalBranch: string
+  baseRef: string
+  suggestedBranch?: string
+  agentType?: string
+  createdAt: number
+  updatedAt: number
+  appliedAt?: number
+  failureReason?: string
 }
 
 export type WorktreeOwnership = 'orca-managed' | 'external' | 'unknown-legacy'
@@ -1913,6 +1935,10 @@ export type GlobalSettings = {
   /** Experimental: compact worktree cards by hiding a redundant metadata row
    *  when the title and branch already say the same thing. */
   experimentalCompactWorktreeCards: boolean
+  /** Experimental: after an Orca-created local branch has commits and its
+   *  agent reports done, ask that same agent for a better branch name and
+   *  let the user apply it. Opt-in because it spends agent tokens for naming. */
+  experimentalBranchNameSuggestions: boolean
   /** Experimental: when creating a worktree, automatically symlink a
    *  user-configured set of files/folders from the primary checkout (e.g.
    *  `.env`, `node_modules`) into the new worktree. Opt-in while the

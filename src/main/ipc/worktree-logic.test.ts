@@ -3,6 +3,7 @@ single setup-free pure-logic module, and splitting them would make the related
 edge cases harder to audit together. */
 import { join, resolve } from 'path'
 import { describe, expect, it } from 'vitest'
+import type { WorktreeMeta } from '../../shared/types'
 import {
   sanitizeWorktreeName,
   sanitizeWorktreeDisplayName,
@@ -210,7 +211,7 @@ describe('mergeWorktree', () => {
   }
 
   it('merges with full metadata', () => {
-    const meta = {
+    const meta: WorktreeMeta = {
       displayName: 'My Feature',
       comment: 'WIP',
       linkedIssue: 42,
@@ -224,7 +225,16 @@ describe('mergeWorktree', () => {
       sortOrder: 5,
       lastActivityAt: 1000,
       workspaceStatus: 'in-review',
-      diffComments: []
+      diffComments: [],
+      branchNameSuggestion: {
+        status: 'suggested',
+        originalBranch: 'feature-x',
+        baseRef: 'origin/main',
+        suggestedBranch: 'rename-profile-kaylee-tan',
+        agentType: 'codex',
+        createdAt: 1,
+        updatedAt: 2
+      }
     }
     const result = mergeWorktree('repo1', baseGit, meta)
     expect(result).toEqual({
@@ -248,7 +258,16 @@ describe('mergeWorktree', () => {
       sortOrder: 5,
       lastActivityAt: 1000,
       workspaceStatus: 'in-review',
-      diffComments: []
+      diffComments: [],
+      branchNameSuggestion: {
+        status: 'suggested',
+        originalBranch: 'feature-x',
+        baseRef: 'origin/main',
+        suggestedBranch: 'rename-profile-kaylee-tan',
+        agentType: 'codex',
+        createdAt: 1,
+        updatedAt: 2
+      }
     })
   })
 

@@ -116,6 +116,29 @@ function areLineageRecordsEqual(
   )
 }
 
+function branchSuggestionsEqual(
+  a: Worktree['branchNameSuggestion'],
+  b: Worktree['branchNameSuggestion']
+): boolean {
+  if (a === b) {
+    return true
+  }
+  if (!a || !b) {
+    return false
+  }
+  return (
+    a.status === b.status &&
+    a.originalBranch === b.originalBranch &&
+    a.baseRef === b.baseRef &&
+    a.suggestedBranch === b.suggestedBranch &&
+    a.agentType === b.agentType &&
+    a.createdAt === b.createdAt &&
+    a.updatedAt === b.updatedAt &&
+    a.appliedAt === b.appliedAt &&
+    a.failureReason === b.failureReason
+  )
+}
+
 function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
   if (!current || current.length !== next.length) {
     return false
@@ -146,6 +169,7 @@ function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): b
       worktree.manualOrder === candidate.manualOrder &&
       worktree.lastActivityAt === candidate.lastActivityAt &&
       worktree.workspaceStatus === candidate.workspaceStatus &&
+      branchSuggestionsEqual(worktree.branchNameSuggestion, candidate.branchNameSuggestion) &&
       worktree.createdWithAgent === candidate.createdWithAgent &&
       worktree.baseRef === candidate.baseRef &&
       worktree.pushTarget?.remoteName === candidate.pushTarget?.remoteName &&

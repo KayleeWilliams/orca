@@ -21,4 +21,15 @@ describe('ExperimentalPane', () => {
     expect(markup).toContain('different branch')
     expect(EXPERIMENTAL_SEARCH_ENTRY.compactWorktreeCards.keywords).toContain('metadata')
   })
+
+  it('renders branch name suggestions as an off-by-default experimental switch', () => {
+    const markup = renderToStaticMarkup(
+      <ExperimentalPane settings={getDefaultSettings('/tmp')} updateSettings={vi.fn()} />
+    )
+
+    expect(markup).toContain('Branch name suggestions')
+    expect(markup).toContain('newly created local Orca branch')
+    expect(markup).toContain('Supported agents')
+    expect(EXPERIMENTAL_SEARCH_ENTRY.branchNames.keywords).toContain('opencode')
+  })
 })
