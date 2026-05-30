@@ -98,6 +98,26 @@ export const EXPERIMENTAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
       'env',
       'node_modules'
     ]
+  },
+  {
+    title: 'Smart New Tab menu',
+    description:
+      'Type in the New Tab menu to open a terminal, launch an agent, visit a URL, or open/create a file.',
+    keywords: [
+      'experimental',
+      'smart',
+      'new tab',
+      'new tab menu',
+      'launcher',
+      'unified',
+      'plus',
+      'terminal',
+      'agents',
+      'claude',
+      'codex',
+      'url',
+      'file'
+    ]
   }
 ]
 
@@ -118,5 +138,6 @@ export const EXPERIMENTAL_SEARCH_ENTRY = {
   terminalAttention: findEntry('Terminal attention'),
   compactWorktreeCards: findEntry('Compact worktree cards'),
   branchNames: findEntry('Branch name suggestions'),
-  symlinks: findEntry('Symlinks on worktrees')
+  symlinks: findEntry('Symlinks on worktrees'),
+  unifiedNewTabLauncher: findEntry('Smart New Tab menu')
 } as const
