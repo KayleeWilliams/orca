@@ -2257,7 +2257,8 @@ describe('createGitHubSlice.refreshGitHubForWorktreeIfStale', () => {
         repoPath,
         branch,
         cacheKey: `repo-1::${branch}`,
-        cachedPRState: 'open'
+        cachedPRState: 'open',
+        cachedMergeable: 'UNKNOWN'
       }),
       reason: 'active',
       priority: 80

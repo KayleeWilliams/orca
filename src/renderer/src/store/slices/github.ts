@@ -569,6 +569,7 @@ function buildPRRefreshCandidate(
     state.settings,
     repo.connectionId
   )
+  const cachedPR = state.prCache[cacheKey]?.data ?? null
   const hostedReviewFallbackPRNumber = githubHostedReviewFallbackPRNumber(
     state,
     repoPath ?? repo.path,
@@ -576,7 +577,7 @@ function buildPRRefreshCandidate(
     branch,
     repo.connectionId
   )
-  const cachedFallbackPRNumber = state.prCache[cacheKey]?.data?.number ?? null
+  const cachedFallbackPRNumber = cachedPR?.number ?? null
   const fallbackPRNumber =
     worktree.linkedPR == null ? (cachedFallbackPRNumber ?? hostedReviewFallbackPRNumber) : null
   const fallbackPRSource: GitHubPRFallbackSource | null =
@@ -609,9 +610,11 @@ function buildPRRefreshCandidate(
         : 'disconnected'
       : 'unknown',
     cachedFetchedAt: state.prCache[cacheKey]?.fetchedAt ?? null,
-    cachedHasPR: state.prCache[cacheKey]?.data ? true : state.prCache[cacheKey] ? false : null,
-    cachedPRState: state.prCache[cacheKey]?.data?.state ?? null,
-    cachedChecksStatus: state.prCache[cacheKey]?.data?.checksStatus ?? null
+    cachedHasPR: cachedPR ? true : state.prCache[cacheKey] ? false : null,
+    cachedPRState: cachedPR?.state ?? null,
+    cachedChecksStatus: cachedPR?.checksStatus ?? null,
+    cachedMergeable: cachedPR?.mergeable ?? null,
+    cachedMergeStateStatus: cachedPR?.mergeStateStatus ?? null
   }
 }
 
@@ -2003,7 +2006,12 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
                 fallbackPRNumber,
                 fallbackPRSource,
                 connectionId: repo?.connectionId ?? null,
-                cachedFetchedAt: cached?.fetchedAt ?? null
+                cachedFetchedAt: cached?.fetchedAt ?? null,
+                cachedHasPR: cached?.data ? true : cached ? false : null,
+                cachedPRState: cached?.data?.state ?? null,
+                cachedChecksStatus: cached?.data?.checksStatus ?? null,
+                cachedMergeable: cached?.data?.mergeable ?? null,
+                cachedMergeStateStatus: cached?.data?.mergeStateStatus ?? null
               }
               return window.api.gh.refreshPRNow
                 ? await window.api.gh.refreshPRNow({ candidate })

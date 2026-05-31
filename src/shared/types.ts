@@ -773,6 +773,8 @@ export type GitHubPRRefreshCandidate = GitHubPRRefreshAlias & {
   cachedHasPR?: boolean | null
   cachedPRState?: PRState | null
   cachedChecksStatus?: CheckStatus | null
+  cachedMergeable?: PRMergeableState | null
+  cachedMergeStateStatus?: string | null
 }
 
 export type GitHubPRRefreshSkippedReason =
