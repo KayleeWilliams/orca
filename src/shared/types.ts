@@ -287,6 +287,8 @@ export type GitHubPrStartPoint = {
   headSha?: string
   /** Exact local branch name to create/reuse when the PR head is a safe same-repo branch. */
   branchNameOverride?: string
+  /** Fork PRs: false when "Allow edits from maintainers" is off — a push to the fork may be rejected. */
+  maintainerCanModify?: boolean
 }
 
 // ─── Worktree metadata (persisted user-authored fields only) ─────────

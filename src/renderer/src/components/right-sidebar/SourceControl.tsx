@@ -18,6 +18,7 @@ import {
   Copy,
   Folder,
   FolderOpen,
+  GitFork,
   GitMerge,
   GitPullRequestArrow,
   List,
@@ -86,6 +87,7 @@ import {
   type DiscardConfirmationCopy
 } from './source-control-discard-confirmation'
 import { refreshGitStatusForWorktree } from './git-status-refresh'
+import { describeForkPushTarget } from './fork-push-target-label'
 import { toast } from 'sonner'
 import {
   ContextMenu,
@@ -4415,6 +4417,18 @@ function SourceControlInner(): React.JSX.Element {
               clears. Active merge/rebase/cherry-pick operations are the
               exception: commits would be misleading before the user continues
               or aborts the operation. */}
+          {activeWorktree?.pushTarget && activeWorktree.pushTarget.remoteName !== 'origin' ? (
+            <div
+              className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground"
+              title={`Pushes to the fork at ${activeWorktree.pushTarget.remoteName} (not origin)`}
+            >
+              <GitFork className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                Pushes to fork {describeForkPushTarget(activeWorktree.pushTarget)}
+              </span>
+            </div>
+          ) : null}
+
           {shouldRenderCommitArea(scope, unresolvedConflicts.length, conflictOperation) &&
             (primaryAction.kind === 'create_pr' ? (
               <PullRequestComposer
