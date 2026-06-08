@@ -152,6 +152,7 @@ import {
   shouldReplaceTaskPageItemsAfterRefresh,
   type TaskPageRepoSourceState
 } from '@/components/task-page-cache-selectors'
+import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import { findTaskPageJiraIssue } from '@/components/task-page-jira-cache-selectors'
 import {
   createTaskPageGitHubStatusStateDraft,
@@ -6390,6 +6391,16 @@ export default function TaskPage(): React.JSX.Element {
     }
   }, [connectJira, jiraApiTokenDraft, jiraEmailDraft, jiraSiteUrlDraft])
 
+  const taskPageListChromeHidden = shouldHideTaskPageListChrome({
+    taskSource,
+    hasGitHubDetail: Boolean(dialogWorkItem),
+    hasGitLabDetail: Boolean(gitlabDialogItem),
+    hasJiraDetail: Boolean(selectedJiraIssue),
+    hasLinearIssueDetail: Boolean(selectedLinearIssue),
+    hasLinearProjectContext: Boolean(selectedLinearProject),
+    hasLinearViewContext: Boolean(selectedLinearCustomView)
+  })
+
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -6401,13 +6412,7 @@ export default function TaskPage(): React.JSX.Element {
             too low, breaking the visual band across the top chrome. */}
         <div className="mx-auto flex min-h-0 min-w-0 w-full flex-1 flex-col px-5 pt-1.5 pb-5 md:px-8 md:pt-1.5 md:pb-7">
           <div
-            className={cn(
-              'flex-none flex flex-col gap-3',
-              // Why: GitHub detail views (PR + Issue) fill the entire right
-              // pane — the list filter row above them is not relevant and
-              // would visually duplicate the detail page's own breadcrumb.
-              taskSource === 'github' && dialogWorkItem && 'hidden'
-            )}
+            className={cn('flex-none flex flex-col gap-3', taskPageListChromeHidden && 'hidden')}
           >
             <section className="flex flex-col gap-3">
               <div className="flex flex-col gap-3">
