@@ -21,8 +21,6 @@ import {
   GitFork,
   GitMerge,
   GitPullRequestArrow,
-  List,
-  ListTree,
   MessageSquare,
   Trash,
   Trash2,
@@ -46,6 +44,7 @@ import { isFolderRepo } from '../../../../shared/repo-kind'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
+import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,6 +68,8 @@ import {
   getDiscardAllPaths,
   getStageAllPaths,
   getUnstageAllPaths,
+  isStageableStatusEntry,
+  isSubmoduleWorktreeOnlyChange,
   runDiscardAllForArea,
   type DiscardAllArea
 } from './discard-all-sequence'
@@ -82,10 +83,9 @@ import {
   type SourceControlTreeNode
 } from './source-control-tree'
 import {
-  getDiscardAreaConfirmationCopy,
-  getDiscardEntryConfirmationCopy,
-  type DiscardConfirmationCopy
-} from './source-control-discard-confirmation'
+  SourceControlDiscardDialog,
+  type PendingDiscardConfirmation
+} from './source-control-discard-dialog'
 import { refreshGitStatusForWorktree } from './git-status-refresh'
 import { describeForkPushTarget } from './fork-push-target-label'
 import { toast } from 'sonner'
@@ -163,7 +163,6 @@ import type {
   GitConflictKind,
   GitConflictOperation,
   GitStatusEntry,
-  GlobalSettings,
   SourceControlViewMode,
   TuiAgent
 } from '../../../../shared/types'
@@ -187,6 +186,7 @@ import {
 import type { SourceControlAiOperation } from '../../../../shared/source-control-ai-types'
 import { getCommitMessageModelDiscoveryHostKeyForScope } from '../../../../shared/commit-message-host-key'
 import { getRuntimeGitScope } from '@/runtime/runtime-git-client'
+import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import { getRepositorySourceControlAiSectionId } from '@/components/settings/repository-settings-targets'
 import {
   getCommitFailureDialogWorktreeKey,
@@ -197,6 +197,8 @@ import {
 import { hasExpandedCommitFailureDetails, summarizeCommitFailure } from './commit-failure-summary'
 import {
   isSourceControlSplitOpenModifier,
+  shouldOpenSourceControlRowAsPreview,
+  toPermanentSourceControlRowOpenEvent,
   type SourceControlRowOpenEvent
 } from './source-control-split-open'
 
@@ -261,6 +263,8 @@ const SOURCE_CONTROL_TREE_DIRECTORY_PADDING_PX = 8
 const SOURCE_CONTROL_TREE_FILE_PADDING_PX = 20
 const EMPTY_GIT_HISTORY_STATE: GitHistoryPanelState = { status: 'idle' }
 const DEFAULT_COLLAPSED_SECTIONS = ['history'] as const
+const SUBMODULE_WORKTREE_ONLY_LABEL = 'Submodule changes - stage inside submodule'
+const SUBMODULE_WORKTREE_ONLY_STAGE_TOOLTIP = 'Stage these changes inside the submodule'
 
 function createDefaultCollapsedSections(): Set<string> {
   return new Set(DEFAULT_COLLAPSED_SECTIONS)
@@ -373,61 +377,6 @@ type PullRequestGenerationRecords = Record<string, PullRequestGenerationRecord>
 export function normalizeSourceControlViewMode(value: unknown): SourceControlViewMode {
   return value === 'tree' || value === 'list' ? value : 'list'
 }
-
-export function getNextSourceControlViewMode(mode: SourceControlViewMode): SourceControlViewMode {
-  return mode === 'tree' ? 'list' : 'tree'
-}
-
-export type SourceControlViewModePreferenceWriteState = {
-  writeChain: Promise<void>
-  writeSeq: number
-}
-
-export function requestSourceControlViewModePreferenceWrite({
-  hydrated,
-  currentMode,
-  writeState,
-  setOptimisticMode,
-  updateSettings
-}: {
-  hydrated: boolean
-  currentMode: SourceControlViewMode
-  writeState: SourceControlViewModePreferenceWriteState
-  setOptimisticMode: (mode: SourceControlViewMode | null) => void
-  updateSettings: (
-    updates: Pick<GlobalSettings, 'sourceControlViewMode'>
-  ) => Promise<GlobalSettings | void>
-}): SourceControlViewMode | null {
-  if (!hydrated) {
-    return null
-  }
-  const next = getNextSourceControlViewMode(currentMode)
-  const writeSeq = writeState.writeSeq + 1
-  writeState.writeSeq = writeSeq
-  setOptimisticMode(next)
-
-  // Why: settings writes cross IPC. Queue them so rapid toolbar clicks keep
-  // the user's final intent as the persisted value even if earlier writes
-  // would otherwise resolve after later clicks.
-  const write = writeState.writeChain
-    .catch(() => undefined)
-    .then(() => updateSettings({ sourceControlViewMode: next }))
-    .then(() => undefined)
-  writeState.writeChain = write
-  void write
-    .finally(() => {
-      if (writeState.writeSeq === writeSeq) {
-        setOptimisticMode(null)
-      }
-    })
-    .catch(() => undefined)
-
-  return next
-}
-
-type PendingDiscardConfirmation =
-  | { kind: 'entry'; entry: GitStatusEntry }
-  | { kind: 'area'; area: DiscardAllArea; paths: readonly string[] }
 
 type GitStatusSourceControlTreeNode = SourceControlTreeNode<
   GitStatusEntry,
@@ -1129,7 +1078,6 @@ function SourceControlInner(): React.JSX.Element {
   const isRemoteOperationActive = useAppStore((s) => s.isRemoteOperationActive)
   const inFlightRemoteOpKind = useAppStore((s) => s.inFlightRemoteOpKind)
   const settings = useAppStore((s) => s.settings)
-  const updateSettings = useAppStore((s) => s.updateSettings)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const hostedReviewCache = useAppStore((s) => s.hostedReviewCache)
@@ -1286,26 +1234,10 @@ function SourceControlInner(): React.JSX.Element {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     createDefaultCollapsedSections
   )
-  const [optimisticSourceControlViewMode, setOptimisticSourceControlViewMode] =
-    useState<SourceControlViewMode | null>(null)
-  const sourceControlViewModeWriteStateRef = useRef<SourceControlViewModePreferenceWriteState>({
-    writeChain: Promise.resolve(),
-    writeSeq: 0
-  })
   const persistedSourceControlViewMode = normalizeSourceControlViewMode(
     settings?.sourceControlViewMode
   )
-  const sourceControlViewMode = optimisticSourceControlViewMode ?? persistedSourceControlViewMode
-  const isSourceControlViewModeHydrated = settings !== null
-  const handleToggleSourceControlViewMode = useCallback(() => {
-    requestSourceControlViewModePreferenceWrite({
-      hydrated: isSourceControlViewModeHydrated,
-      currentMode: sourceControlViewMode,
-      writeState: sourceControlViewModeWriteStateRef.current,
-      setOptimisticMode: setOptimisticSourceControlViewMode,
-      updateSettings
-    })
-  }, [isSourceControlViewModeHydrated, sourceControlViewMode, updateSettings])
+  const sourceControlViewMode = persistedSourceControlViewMode
   const [collapsedTreeDirs, setCollapsedTreeDirs] = useState<Set<string>>(new Set())
   const [baseRefDialogOpen, setBaseRefDialogOpen] = useState(false)
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscardConfirmation | null>(null)
@@ -1388,7 +1320,9 @@ function SourceControlInner(): React.JSX.Element {
 
   const isFolder = activeRepo ? isFolderRepo(activeRepo) : false
   const worktreePath = activeWorktree?.path ?? null
-  const branchName = activeWorktree?.branch.replace(/^refs\/heads\//, '') ?? 'HEAD'
+  const gitIdentityDisplay = activeWorktree ? getWorktreeGitIdentityDisplay(activeWorktree) : null
+  const detachedHeadDisplay = gitIdentityDisplay?.kind === 'detached' ? gitIdentityDisplay : null
+  const branchName = gitIdentityDisplay?.kind === 'branch' ? gitIdentityDisplay.branchName : ''
   const sourceControlAiDiscoveryHostKey = useMemo(
     () =>
       getCommitMessageModelDiscoveryHostKeyForScope(
@@ -1778,16 +1712,6 @@ function SourceControlInner(): React.JSX.Element {
   }, [collapsedSections, flatEntries, sourceControlViewMode, visibleTreeRowsByArea])
 
   const [isExecutingBulk, setIsExecutingBulk] = useState(false)
-  const pendingDiscardCopy = useMemo<DiscardConfirmationCopy | null>(() => {
-    if (!pendingDiscard) {
-      return null
-    }
-    if (pendingDiscard.kind === 'entry') {
-      return getDiscardEntryConfirmationCopy(pendingDiscard.entry)
-    }
-    return getDiscardAreaConfirmationCopy(pendingDiscard.area, pendingDiscard.paths.length)
-  }, [pendingDiscard])
-
   const unresolvedConflicts = useMemo(
     () => entries.filter((entry) => entry.conflictStatus === 'unresolved' && entry.conflictKind),
     [entries]
@@ -1852,7 +1776,9 @@ function SourceControlInner(): React.JSX.Element {
         return
       }
 
-      focusTerminalTabSurface(result.tabId)
+      if (result.tabId) {
+        focusTerminalTabSurface(result.tabId)
+      }
       toast.success('Started an AI agent for the conflicts.')
     } finally {
       setIsLaunchingConflictAgent(false)
@@ -1925,7 +1851,9 @@ function SourceControlInner(): React.JSX.Element {
           return false
         }
 
-        focusTerminalTabSurface(result.tabId)
+        if (result.tabId) {
+          focusTerminalTabSurface(result.tabId)
+        }
         toast.success('Started an AI agent for the commit failure.')
         return true
       } finally {
@@ -2144,7 +2072,7 @@ function SourceControlInner(): React.JSX.Element {
         setGenerateErrors((prev) => ({
           ...prev,
           [activeWorktreeId]:
-            'Custom command is empty. Add one in Settings -> Git -> Source Control AI.'
+            'Custom command is empty. Add one in Settings -> Git -> Git AI Author.'
         }))
         return
       }
@@ -2929,19 +2857,28 @@ function SourceControlInner(): React.JSX.Element {
     worktreePath
   ])
 
+  const stageableUnstagedPaths = useMemo(
+    () => [
+      ...getStageAllPaths(grouped.unstaged, 'unstaged'),
+      ...getStageAllPaths(grouped.untracked, 'untracked')
+    ],
+    [grouped.unstaged, grouped.untracked]
+  )
   const hasUnstagedChanges = grouped.unstaged.length > 0 || grouped.untracked.length > 0
+  const hasStageableChanges = stageableUnstagedPaths.length > 0
   const hasPartiallyStagedChanges = useMemo(() => {
-    if (grouped.staged.length === 0 || grouped.unstaged.length === 0) {
+    if (grouped.staged.length === 0 || stageableUnstagedPaths.length === 0) {
       return false
     }
-    const unstagedPaths = new Set(grouped.unstaged.map((entry) => entry.path))
+    const unstagedPaths = new Set(stageableUnstagedPaths)
     return grouped.staged.some((entry) => unstagedPaths.has(entry.path))
-  }, [grouped.staged, grouped.unstaged])
+  }, [grouped.staged, stageableUnstagedPaths])
 
   const primaryAction: PrimaryAction = useMemo(() => {
     const action = resolvePrimaryAction({
       stagedCount: grouped.staged.length,
       hasUnstagedChanges,
+      hasStageableChanges,
       hasPartiallyStagedChanges,
       hasMessage: commitMessage.trim().length > 0,
       hasUnresolvedConflicts: unresolvedConflicts.length > 0,
@@ -2966,6 +2903,7 @@ function SourceControlInner(): React.JSX.Element {
     commitMessage,
     grouped.staged.length,
     hasUnstagedChanges,
+    hasStageableChanges,
     hasPartiallyStagedChanges,
     isCommitting,
     isAbortingOperation,
@@ -2987,6 +2925,7 @@ function SourceControlInner(): React.JSX.Element {
       resolveDropdownItems({
         stagedCount: grouped.staged.length,
         hasUnstagedChanges,
+        hasStageableChanges,
         hasPartiallyStagedChanges,
         hasMessage: commitMessage.trim().length > 0,
         hasUnresolvedConflicts: unresolvedConflicts.length > 0,
@@ -3007,6 +2946,7 @@ function SourceControlInner(): React.JSX.Element {
       commitMessage,
       grouped.staged.length,
       hasUnstagedChanges,
+      hasStageableChanges,
       hasPartiallyStagedChanges,
       isCommitting,
       conflictOperation,
@@ -3102,12 +3042,14 @@ function SourceControlInner(): React.JSX.Element {
         return
       }
       const targetGroupId = resolveSplitTargetGroupId(event)
+      const openAsPreview = shouldOpenSourceControlRowAsPreview(event, targetGroupId)
       if (entry.conflictKind && entry.conflictStatus) {
         if (entry.conflictStatus === 'unresolved') {
           trackConflictPath(activeWorktreeId, entry.path, entry.conflictKind)
         }
         openConflictFile(activeWorktreeId, worktreePath, entry, detectLanguage(entry.path), {
-          targetGroupId
+          targetGroupId,
+          preview: openAsPreview
         })
         return
       }
@@ -3130,13 +3072,14 @@ function SourceControlInner(): React.JSX.Element {
             language,
             mode: 'edit'
           },
-          { targetGroupId }
+          { targetGroupId, preview: openAsPreview }
         )
         setEditorViewMode(filePath, 'changes')
         return
       }
       openDiff(activeWorktreeId, filePath, entry.path, language, entry.area === 'staged', {
-        targetGroupId
+        targetGroupId,
+        preview: openAsPreview
       })
     },
     [
@@ -3185,11 +3128,7 @@ function SourceControlInner(): React.JSX.Element {
   const bulkStagePaths = useMemo(
     () =>
       selectedEntries
-        .filter(
-          (entry) =>
-            (entry.area === 'unstaged' || entry.area === 'untracked') &&
-            entry.entry.conflictStatus !== 'unresolved'
-        )
+        .filter((entry) => isStageableStatusEntry(entry.entry))
         .map((entry) => entry.entry.path),
     [selectedEntries]
   )
@@ -3725,13 +3664,14 @@ function SourceControlInner(): React.JSX.Element {
       ) {
         return
       }
+      const targetGroupId = resolveSplitTargetGroupId(event)
       openBranchDiff(
         activeWorktreeId,
         worktreePath,
         entry,
         branchSummary,
         detectLanguage(entry.path),
-        { targetGroupId: resolveSplitTargetGroupId(event) }
+        { targetGroupId, preview: shouldOpenSourceControlRowAsPreview(event, targetGroupId) }
       )
     },
     [activeWorktreeId, branchSummary, openBranchDiff, resolveSplitTargetGroupId, worktreePath]
@@ -3935,13 +3875,16 @@ function SourceControlInner(): React.JSX.Element {
       if (!worktreePath || !activeWorktreeId) {
         return
       }
+      const runtimeEnvironmentId =
+        useAppStore.getState().settings?.activeRuntimeEnvironmentId?.trim() || null
       // Why: git discard replaces the working tree version of this file. Any
       // pending editor autosave must be quiesced first so it cannot recreate
       // the discarded edits after git restores the file.
       await requestEditorSaveQuiesce({
         worktreeId: activeWorktreeId,
         worktreePath,
-        relativePath: filePath
+        relativePath: filePath,
+        runtimeEnvironmentId
       })
       const connectionId = getConnectionId(activeWorktreeId ?? null) ?? undefined
       await discardRuntimeGitPath(
@@ -3956,7 +3899,8 @@ function SourceControlInner(): React.JSX.Element {
       notifyEditorExternalFileChange({
         worktreeId: activeWorktreeId,
         worktreePath,
-        relativePath: filePath
+        relativePath: filePath,
+        runtimeEnvironmentId
       })
     },
     [activeWorktreeId, worktreePath]
@@ -3967,6 +3911,8 @@ function SourceControlInner(): React.JSX.Element {
       if (!worktreePath || !activeWorktreeId) {
         return
       }
+      const runtimeEnvironmentId =
+        useAppStore.getState().settings?.activeRuntimeEnvironmentId?.trim() || null
       // Why: bulk discard replaces many working-tree files at once. Quiesce
       // any matching editor autosaves before git mutates the files so a delayed
       // save cannot recreate edits after the restore.
@@ -3975,7 +3921,8 @@ function SourceControlInner(): React.JSX.Element {
           requestEditorSaveQuiesce({
             worktreeId: activeWorktreeId,
             worktreePath,
-            relativePath
+            relativePath,
+            runtimeEnvironmentId
           })
         )
       )
@@ -3993,7 +3940,8 @@ function SourceControlInner(): React.JSX.Element {
         notifyEditorExternalFileChange({
           worktreeId: activeWorktreeId,
           worktreePath,
-          relativePath
+          relativePath,
+          runtimeEnvironmentId
         })
       }
     },
@@ -4104,9 +4052,31 @@ function SourceControlInner(): React.JSX.Element {
       if (paths.length === 0) {
         return
       }
+      if (area === 'untracked') {
+        // Why: untracked deletes are intentionally one-click in Source Control;
+        // git.discard still enforces path safety in the active provider.
+        void handleRevertAllInArea(area, paths)
+        return
+      }
       setPendingDiscard({ kind: 'area', area, paths })
     },
-    [activeWorktreeId, grouped, isExecutingBulk, worktreePath]
+    [activeWorktreeId, grouped, handleRevertAllInArea, isExecutingBulk, worktreePath]
+  )
+
+  const requestDiscardPaths = useCallback(
+    (area: DiscardAllArea, paths: readonly string[]): void => {
+      if (paths.length === 0) {
+        return
+      }
+      if (area === 'untracked') {
+        // Why: untracked deletes are intentionally one-click in Source Control;
+        // git.discard still enforces path safety in the active provider.
+        void handleRevertAllInArea(area, paths)
+        return
+      }
+      setPendingDiscard({ kind: 'area', area, paths })
+    },
+    [handleRevertAllInArea]
   )
 
   const requestDiscardEntry = useCallback(
@@ -4114,9 +4084,15 @@ function SourceControlInner(): React.JSX.Element {
       if (!worktreePath || !activeWorktreeId || isExecutingBulk) {
         return
       }
+      if (entry.area === 'untracked') {
+        // Why: untracked deletes are intentionally one-click in Source Control;
+        // git.discard still enforces path safety in the active provider.
+        void handleDiscard(entry.path)
+        return
+      }
       setPendingDiscard({ kind: 'entry', entry })
     },
-    [activeWorktreeId, isExecutingBulk, worktreePath]
+    [activeWorktreeId, handleDiscard, isExecutingBulk, worktreePath]
   )
 
   const confirmPendingDiscard = useCallback((): void => {
@@ -4155,7 +4131,6 @@ function SourceControlInner(): React.JSX.Element {
   const showGenericEmptyState =
     !hasUncommittedEntries && branchSummary?.status === 'ready' && branchEntries.length === 0
   const currentWorktreeId = activeWorktree.id
-  const PendingDiscardIcon = pendingDiscardCopy?.confirmLabel.startsWith('Delete') ? Trash : Undo2
 
   return (
     <>
@@ -4187,14 +4162,17 @@ function SourceControlInner(): React.JSX.Element {
           )}
         </div>
 
-        {scope === 'all' && (
+        {detachedHeadDisplay && (
+          <div className="border-b border-border px-3 py-2">
+            <DetachedHeadBadge display={detachedHeadDisplay} side="bottom" />
+          </div>
+        )}
+
+        {scope === 'all' && shouldShowCompareSummary(branchSummary) && (
           <div className="border-b border-border px-3 py-2">
             <CompareSummary
               summary={branchSummary}
-              viewMode={sourceControlViewMode}
               onChangeBaseRef={() => setBaseRefDialogOpen(true)}
-              onToggleViewMode={handleToggleSourceControlViewMode}
-              viewModeToggleDisabled={!isSourceControlViewModeHydrated}
               onRetry={() => void refreshBranchCompare()}
             />
           </div>
@@ -4666,13 +4644,7 @@ function SourceControlInner(): React.JSX.Element {
                                   isExecutingBulk={isExecutingBulk}
                                   isCollapsed={collapsedTreeDirs.has(node.key)}
                                   onToggle={() => toggleTreeDir(node.key)}
-                                  onRequestDiscardPaths={(discardArea, paths) =>
-                                    setPendingDiscard({
-                                      kind: 'area',
-                                      area: discardArea,
-                                      paths
-                                    })
-                                  }
+                                  onRequestDiscardPaths={requestDiscardPaths}
                                   onStagePaths={handleStageAllPaths}
                                   onUnstagePaths={handleUnstagePaths}
                                 />
@@ -4868,45 +4840,11 @@ function SourceControlInner(): React.JSX.Element {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={pendingDiscard !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingDiscard(null)
-          }
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-sm">
-              {pendingDiscardCopy?.title ?? 'Discard changes?'}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              {pendingDiscardCopy?.description ?? 'This cannot be undone.'}
-            </DialogDescription>
-          </DialogHeader>
-          {pendingDiscard?.kind === 'area' ? (
-            <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
-              {pendingDiscard.paths.length} {pendingDiscard.paths.length === 1 ? 'file' : 'files'}
-            </div>
-          ) : pendingDiscard?.kind === 'entry' ? (
-            <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-xs">
-              <div className="break-all font-medium text-foreground">
-                {pendingDiscard.entry.path}
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPendingDiscard(null)}>
-              Cancel
-            </Button>
-            <Button type="button" variant="destructive" onClick={confirmPendingDiscard}>
-              <PendingDiscardIcon className="size-4" />
-              {pendingDiscardCopy?.confirmLabel ?? 'Discard'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SourceControlDiscardDialog
+        pendingDiscard={pendingDiscard}
+        onCancel={() => setPendingDiscard(null)}
+        onConfirm={confirmPendingDiscard}
+      />
 
       <Dialog open={baseRefDialogOpen} onOpenChange={setBaseRefDialogOpen}>
         <DialogContent className="max-w-xl">
@@ -4981,8 +4919,8 @@ function SourceControlAiInstructionGuidanceButton({
       ? 'Add commit message instructions'
       : 'Add pull request instructions'
   const target = guidance.repoBacked
-    ? 'Repo Settings > Source Control AI'
-    : 'Settings > Git > Source Control AI'
+    ? 'Repo Settings > Git AI Author'
+    : 'Settings > Git > Git AI Author'
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -5706,7 +5644,7 @@ export function CommitArea({
   } else if (isCommitting) {
     generateDisabledReason = 'Commit in progress…'
   } else if (!aiAgentConfigured) {
-    generateDisabledReason = 'Pick an agent in Settings -> Git -> Source Control AI.'
+    generateDisabledReason = 'Pick an agent in Settings -> Git -> Git AI Author.'
   } else if (stagedCount === 0) {
     generateDisabledReason = 'Stage at least one file to generate a message.'
   } else if (hasMessage) {
@@ -6010,21 +5948,25 @@ export function CommitArea({
   )
 }
 
+export function shouldShowCompareSummary(summary: GitBranchCompareSummary | null): boolean {
+  if (!summary || summary.status === 'loading') {
+    return true
+  }
+  if (summary.status !== 'ready') {
+    return true
+  }
+  return typeof summary.commitsAhead === 'number' && summary.commitsAhead > 0
+}
+
 export function CompareSummary({
   summary,
-  viewMode,
   onChangeBaseRef,
-  onToggleViewMode,
-  viewModeToggleDisabled,
   onRetry
 }: {
   summary: GitBranchCompareSummary | null
-  viewMode: SourceControlViewMode
   onChangeBaseRef: () => void
-  onToggleViewMode: () => void
-  viewModeToggleDisabled?: boolean
   onRetry: () => void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   if (!summary || summary.status === 'loading') {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -6046,36 +5988,33 @@ export function CompareSummary({
             label="Change base ref"
             onClick={onChangeBaseRef}
           />
-          <CompareSummaryToolbarButton
-            icon={viewMode === 'tree' ? List : ListTree}
-            label={viewMode === 'tree' ? 'Show changes as list' : 'Show changes as tree'}
-            onClick={onToggleViewMode}
-            disabled={viewModeToggleDisabled}
-          />
           <CompareSummaryToolbarButton icon={RefreshCw} label="Retry" onClick={onRetry} />
         </div>
       </div>
     )
   }
 
+  const commitsAhead = summary.commitsAhead
+  const showCommitsAhead = typeof commitsAhead === 'number' && commitsAhead > 0
+  const commitsAheadTitle = showCommitsAhead
+    ? `${commitsAhead} ${commitsAhead === 1 ? 'commit' : 'commits'} ahead of ${summary.baseRef}`
+    : undefined
+
+  if (!showCommitsAhead) {
+    return null
+  }
+
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      {summary.commitsAhead !== undefined && (
-        <span title={`Comparing against ${summary.baseRef}`}>
-          {summary.commitsAhead} commits ahead of {summary.baseRef}
-        </span>
-      )}
+      <span className="flex min-w-0 items-center gap-1" title={commitsAheadTitle}>
+        <ArrowUp className="size-3" />
+        <span>{commitsAhead} ahead</span>
+      </span>
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <CompareSummaryToolbarButton
           icon={Settings2}
           label="Change base ref"
           onClick={onChangeBaseRef}
-        />
-        <CompareSummaryToolbarButton
-          icon={viewMode === 'tree' ? List : ListTree}
-          label={viewMode === 'tree' ? 'Show changes as list' : 'Show changes as tree'}
-          onClick={onToggleViewMode}
-          disabled={viewModeToggleDisabled}
         />
         <CompareSummaryToolbarButton
           icon={RefreshCw}
@@ -6090,13 +6029,11 @@ export function CompareSummary({
 export function CompareSummaryToolbarButton({
   icon: Icon,
   label,
-  onClick,
-  disabled = false
+  onClick
 }: {
   icon: LucideIcon
   label: string
   onClick: () => void
-  disabled?: boolean
 }): React.JSX.Element {
   return (
     <Tooltip>
@@ -6105,17 +6042,9 @@ export function CompareSummaryToolbarButton({
           type="button"
           variant="ghost"
           size="icon-xs"
-          className={cn(
-            'text-muted-foreground hover:text-foreground',
-            disabled && 'cursor-not-allowed opacity-50'
-          )}
+          className="text-muted-foreground hover:text-foreground"
           aria-label={label}
-          aria-disabled={disabled}
-          onClick={() => {
-            if (!disabled) {
-              onClick()
-            }
-          }}
+          onClick={onClick}
         >
           <Icon className="size-3.5" />
         </Button>
@@ -6357,10 +6286,10 @@ function DiffCommentsInlineList({
 
 function conflictAbortButtonVariant(
   conflictOperation: GitConflictOperation
-): 'ghost' | 'destructive' {
+): 'outline' | 'destructive' {
   // Why: aborting a rebase is the escape hatch for this state, so it should
-  // match the quiet conflict-review action instead of reading as a red danger path.
-  return conflictOperation === 'rebase' ? 'ghost' : 'destructive'
+  // match the quiet outline conflict-review action instead of reading as red.
+  return conflictOperation === 'rebase' ? 'outline' : 'destructive'
 }
 
 export function ConflictSummaryCard({
@@ -6421,7 +6350,7 @@ export function ConflictSummaryCard({
         </Button>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="mt-1.5 h-7 w-full text-xs"
           onClick={onReview}
@@ -6474,7 +6403,7 @@ export function OperationBanner({
 
   return (
     <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2">
         <Icon className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <span className="text-xs font-medium text-foreground">{label}</span>
       </div>
@@ -6691,6 +6620,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
   const dirPath = parentDir === '.' ? '' : parentDir
   const isUnresolvedConflict = entry.conflictStatus === 'unresolved'
   const isResolvedLocally = entry.conflictStatus === 'resolved_locally'
+  const isSubmoduleWorktreeOnly = isSubmoduleWorktreeOnlyChange(entry)
   const conflictLabel = entry.conflictKind ? CONFLICT_KIND_LABELS[entry.conflictKind] : null
   // Why: the hint text ("Open and edit…", "Decide whether to…") was removed
   // from the sidebar because it's not actionable here — the user can only
@@ -6708,8 +6638,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
     !isUnresolvedConflict &&
     !isResolvedLocally &&
     (entry.area === 'unstaged' || entry.area === 'untracked')
-  const canStage =
-    !isUnresolvedConflict && (entry.area === 'unstaged' || entry.area === 'untracked')
+  const canStage = isStageableStatusEntry(entry)
   const canUnstage = entry.area === 'staged'
 
   return (
@@ -6751,6 +6680,9 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
             onOpen(entry, e)
           }
         }}
+        onDoubleClick={(e) => {
+          onOpen(entry, toPermanentSourceControlRowOpenEvent(e))
+        }}
       >
         <FileIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
         <div className="min-w-0 flex-1 text-xs">
@@ -6760,8 +6692,10 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
               <span className="ml-1.5 text-[11px] text-muted-foreground">{dirPath}</span>
             )}
           </span>
-          {conflictLabel && (
-            <div className="truncate text-[11px] text-muted-foreground">{conflictLabel}</div>
+          {(conflictLabel || isSubmoduleWorktreeOnly) && (
+            <div className="truncate text-[11px] text-muted-foreground">
+              {conflictLabel ?? SUBMODULE_WORKTREE_ONLY_LABEL}
+            </div>
           )}
         </div>
         {commentCount > 0 && (
@@ -6806,14 +6740,15 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
               }}
             />
           )}
-          {canStage && (
+          {(canStage || isSubmoduleWorktreeOnly) && (
             <ActionButton
               icon={Plus}
-              title="Stage"
+              title={isSubmoduleWorktreeOnly ? SUBMODULE_WORKTREE_ONLY_STAGE_TOOLTIP : 'Stage'}
               onClick={(event) => {
                 event.stopPropagation()
                 void onStage(entry.path)
               }}
+              disabled={isSubmoduleWorktreeOnly}
             />
           )}
           {canUnstage && (
@@ -6883,7 +6818,7 @@ function BranchEntryRow({
   worktreePath: string
   depth?: number
   onRevealInExplorer: (worktreeId: string, absolutePath: string) => void
-  onOpen: (event: React.MouseEvent<HTMLDivElement>) => void
+  onOpen: (event: SourceControlRowOpenEvent) => void
   commentCount: number
   showPathHint?: boolean
 }): React.JSX.Element {
@@ -6909,7 +6844,8 @@ function BranchEntryRow({
           e.dataTransfer.setData(WORKSPACE_FILE_PATH_MIME, absolutePath)
           e.dataTransfer.effectAllowed = 'copy'
         }}
-        onClick={onOpen}
+        onClick={(e) => onOpen(e)}
+        onDoubleClick={(e) => onOpen(toPermanentSourceControlRowOpenEvent(e))}
       >
         <FileIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
         <span className="min-w-0 flex-1 truncate text-xs">

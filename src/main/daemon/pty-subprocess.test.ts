@@ -1,6 +1,6 @@
 /* oxlint-disable max-lines -- Why: exercises full PTY subprocess surface (spawn setup, signal routing, data events, platform-specific shell configs, and Windows PowerShell implementations) with co-located test scenarios to prevent fixture drift. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type * as LocalPtyUtils from '../providers/local-pty-utils'
@@ -36,7 +36,6 @@ vi.mock('../providers/local-pty-utils', async (importOriginal) => {
 import { createPtySubprocess } from './pty-subprocess'
 
 const ORCA_SHELL_WRAPPER_ENV = [
-  'CODEX_HOME',
   'ORCA_ATTRIBUTION_SHIM_DIR',
   'ORCA_OPENCODE_CONFIG_DIR',
   'ORCA_PI_CODING_AGENT_DIR',
@@ -132,6 +131,41 @@ describe('createPtySubprocess', () => {
         cwd: '/home/user',
         name: 'xterm-256color'
       })
+    )
+  })
+
+  it('repairs a deleted macOS daemon cwd before spawning node-pty', () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    const originalCwd = process.cwd()
+    const deletedDaemonCwd = mkdtempSync(join(tmpdir(), 'orca-deleted-daemon-cwd-'))
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+
+    try {
+      process.chdir(deletedDaemonCwd)
+      rmSync(deletedDaemonCwd, { recursive: true, force: true })
+
+      createPtySubprocess({
+        sessionId: 'test',
+        cols: 80,
+        rows: 24,
+        cwd: originalCwd,
+        env: { SHELL: '/bin/bash' }
+      })
+
+      expect(process.cwd()).toBe(realpathSync(userDataPath))
+    } finally {
+      process.chdir(originalCwd)
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/bin/bash',
+      expect.any(Array),
+      expect.objectContaining({ cwd: originalCwd })
     )
   })
 
@@ -1189,8 +1223,12 @@ describe('createPtySubprocess', () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    const savedCodexHome = process.env.CODEX_HOME
+    const savedOrcaCodexHome = process.env.ORCA_CODEX_HOME
 
     Object.defineProperty(process, 'platform', { value: 'win32' })
+    delete process.env.CODEX_HOME
+    delete process.env.ORCA_CODEX_HOME
 
     try {
       createPtySubprocess({
@@ -1206,6 +1244,16 @@ describe('createPtySubprocess', () => {
     } finally {
       if (platform) {
         Object.defineProperty(process, 'platform', platform)
+      }
+      if (savedCodexHome === undefined) {
+        delete process.env.CODEX_HOME
+      } else {
+        process.env.CODEX_HOME = savedCodexHome
+      }
+      if (savedOrcaCodexHome === undefined) {
+        delete process.env.ORCA_CODEX_HOME
+      } else {
+        process.env.ORCA_CODEX_HOME = savedOrcaCodexHome
       }
     }
 

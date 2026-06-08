@@ -22,6 +22,7 @@ import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { WORKSPACE_FILE_PATH_MIME } from '@/lib/workspace-file-drag'
 import { getScreenSubmitModifierLabel } from '@/lib/screen-submit-shortcut'
+import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
 import { filterEnabledTuiAgents } from '../../../shared/tui-agent-selection'
 import type {
   GitHubWorkItem,
@@ -42,6 +43,7 @@ import type { SshConnectionStatus } from '../../../shared/ssh-types'
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
 
 type NewWorkspaceComposerCardProps = {
+  contextualTourSource?: string
   containerClassName?: string
   composerRef?: React.RefObject<HTMLDivElement | null>
   onComposerNodeChange?: (node: HTMLDivElement | null) => void
@@ -209,6 +211,7 @@ function useComposerFileDragOver(): {
 }
 
 export default function NewWorkspaceComposerCard({
+  contextualTourSource,
   containerClassName,
   composerRef,
   onComposerNodeChange,
@@ -257,6 +260,7 @@ export default function NewWorkspaceComposerCard({
 }: NewWorkspaceComposerCardProps): React.JSX.Element {
   const { isFileDragOver, dragHandlers } = useComposerFileDragOver()
   const openModal = useAppStore((s) => s.openModal)
+  const activeModal = useAppStore((s) => s.activeModal)
   const defaultTuiAgent = useAppStore((s) => s.settings?.defaultTuiAgent ?? null)
   const disabledTuiAgents = useAppStore((s) => s.settings?.disabledTuiAgents ?? [])
   const updateSettings = useAppStore((s) => s.updateSettings)
@@ -356,6 +360,14 @@ export default function NewWorkspaceComposerCard({
   const handleAddRepo = React.useCallback((): void => {
     openModal('add-repo')
   }, [openModal])
+  useContextualTour(
+    'workspace-creation',
+    eligibleRepos.length > 0 && Boolean(repoId),
+    contextualTourSource ??
+      (activeModal === 'new-workspace-composer'
+        ? 'workspace_creation_modal'
+        : 'workspace_creation_visible')
+  )
 
   return (
     <div
@@ -375,7 +387,7 @@ export default function NewWorkspaceComposerCard({
       )}
     >
       <div className="min-w-0 space-y-4 pt-3">
-        <div className="space-y-1">
+        <div className="space-y-1" data-contextual-tour-target="workspace-creation-project">
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-medium text-muted-foreground">Project</label>
             <Tooltip>
@@ -442,7 +454,7 @@ export default function NewWorkspaceComposerCard({
           ) : null}
         </div>
 
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 space-y-1" data-contextual-tour-target="workspace-creation-name">
           <div className="flex items-center justify-between gap-2">
             <label className="min-w-0 truncate text-xs font-medium text-muted-foreground">
               {selectedRepoIsGit ? "Name or 'Create From'" : 'Workspace name'}{' '}
@@ -495,7 +507,7 @@ export default function NewWorkspaceComposerCard({
           ) : null}
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-1" data-contextual-tour-target="workspace-creation-agent">
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-medium text-muted-foreground">Agent</label>
             <Tooltip>
@@ -568,7 +580,7 @@ export default function NewWorkspaceComposerCard({
               )}
             >
               {smartNameSelection ? (
-                // Why: when a source (PR/issue/Linear/branch) is picked the
+                // Why: when a source (PR/issue/Linear/Jira/branch) is picked the
                 // smart field shows a pill instead of an editable name, so
                 // surface the auto-derived workspace name here under Advanced
                 // where it can be reviewed/overridden. When the user typed an

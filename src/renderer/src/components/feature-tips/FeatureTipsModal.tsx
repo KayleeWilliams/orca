@@ -260,8 +260,9 @@ export default function FeatureTipsModal(): JSX.Element | null {
   if (currentTip.action === 'setup-cli') {
     return (
       <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+        {/* Why: the CLI tip sits over terminal surfaces, so it needs a local token-mixed surface. */}
         <DialogContent
-          className="!flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl md:!h-[min(31rem,calc(100vh-2rem))] md:!flex-row"
+          className="!flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden bg-[color-mix(in_srgb,var(--foreground)_8%,var(--background))] p-0 dark:bg-[color-mix(in_srgb,var(--foreground)_16%,var(--background))] sm:max-w-4xl md:!h-[min(31rem,calc(100vh-2rem))] md:!flex-row"
           showCloseButton={!skillTerminalOpen}
         >
           <div

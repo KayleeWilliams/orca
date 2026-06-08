@@ -157,14 +157,6 @@
   background: var(--accent);
 }
 
-.markdown-toc-level {
-  flex-shrink: 0;
-  color: var(--muted-foreground);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
 .markdown-toc-title {
   min-width: 0;
   overflow: hidden;

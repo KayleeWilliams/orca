@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { getDefaultVoiceSettings } from '../../../../shared/constants'
-import type { SpeechModelManifest, SpeechModelState } from '../../../../shared/speech-types'
+import type {
+  SpeechModelManifest,
+  SpeechModelState,
+  VoiceSettings
+} from '../../../../shared/speech-types'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { Separator } from '../ui/separator'
@@ -11,10 +15,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '../ui/dropdown-menu'
-import { Download, Trash2, Loader2, ChevronDown, Check } from 'lucide-react'
+import { Cloud, Download, Trash2, Loader2, ChevronDown, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { useShortcutLabel } from '@/hooks/useShortcutLabel'
+import { OpenAiTranscriptionKeyDialog } from './OpenAiTranscriptionKeyDialog'
+import { OpenAiTranscriptionSettingsRow } from './OpenAiTranscriptionSettingsRow'
+import { handleVoiceDictationToggle } from './voice-dictation-toggle'
+import { matchesSettingsSearch } from './settings-search'
+import { OPENAI_TRANSCRIPTION_SEARCH_ENTRY } from './voice-pane-search'
+
+export { handleVoiceDictationToggle }
 
 type VoicePaneProps = {
   settings: GlobalSettings
@@ -29,9 +40,15 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
   const voiceSettings = settings.voice ?? getDefaultVoiceSettings()
   const modelStates = useAppStore((s) => s.modelStates)
   const refreshModelStates = useAppStore((s) => s.refreshModelStates)
+  const markFeatureTipsSeen = useAppStore((s) => s.markFeatureTipsSeen)
+  const settingsSearchQuery = useAppStore((s) => s.settingsSearchQuery ?? '')
   const shortcutLabel = useShortcutLabel('voice.dictation')
   const [catalog, setCatalog] = useState<SpeechModelManifest[]>([])
   const [permissionPending, setPermissionPending] = useState(false)
+  const [openAiDialogOpen, setOpenAiDialogOpen] = useState(false)
+  const [openAiApiKeyDraft, setOpenAiApiKeyDraft] = useState('')
+  const [openAiKeyPending, setOpenAiKeyPending] = useState(false)
+  const [pendingCloudModelId, setPendingCloudModelId] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
   const handlePaneRef = useCallback((node: HTMLDivElement | null): void => {
@@ -39,6 +56,18 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     // the pane ref gives that completion a stale-write guard without an Effect.
     mountedRef.current = node !== null
   }, [])
+
+  const updateVoiceSettings = useCallback(
+    (updates: Partial<VoiceSettings>): void => {
+      updateSettings({
+        voice: {
+          ...voiceSettings,
+          ...updates
+        }
+      })
+    },
+    [updateSettings, voiceSettings]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -51,10 +80,19 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
         }
       })
       .catch(() => {})
+    void window.api.speech
+      .getOpenAiApiKeyStatus()
+      .then((status) => {
+        if (!cancelled && status.configured !== voiceSettings.openAiApiKeyConfigured) {
+          updateVoiceSettings({ openAiApiKeyConfigured: status.configured })
+          refreshModelStates()
+        }
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [refreshModelStates])
+  }, [refreshModelStates, updateVoiceSettings, voiceSettings.openAiApiKeyConfigured])
 
   useEffect(() => {
     const cleanup = window.api.speech.onDownloadProgress(() => {
@@ -63,46 +101,25 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     return cleanup
   }, [refreshModelStates])
 
-  const updateVoiceSettings = (updates: Partial<GlobalSettings['voice']>): void => {
-    updateSettings({
-      voice: {
-        ...voiceSettings,
-        ...updates
-      }
-    })
-  }
-
   const toggleVoiceDictation = async (): Promise<void> => {
-    if (voiceSettings.enabled) {
-      updateVoiceSettings({ enabled: false })
-      return
-    }
-
-    setPermissionPending(true)
-    try {
-      // Why: enabling dictation is the point where users expect the macOS
-      // microphone prompt, not after their first attempted recording fails.
-      const result = await window.api.developerPermissions.request({ id: 'microphone' })
-      if (result.status === 'granted' || result.status === 'unsupported') {
-        updateVoiceSettings({ enabled: true })
-      }
-
-      if (result.status === 'granted') {
-        toast.success('Microphone permission granted')
-      } else if (result.openedSystemSettings) {
+    await handleVoiceDictationToggle({
+      voiceEnabled: voiceSettings.enabled,
+      markFeatureTipsSeen,
+      updateVoiceSettings,
+      requestMicrophonePermission: () =>
+        window.api.developerPermissions.request({ id: 'microphone' }),
+      setPermissionPending,
+      isMounted: () => mountedRef.current,
+      notifyPermissionGranted: () => toast.success('Microphone permission granted'),
+      notifyPermissionOpenedSystemSettings: () =>
         toast.message(
           'Opened macOS Privacy & Security. Enable dictation again after granting access.'
-        )
-      } else if (result.status !== 'unsupported') {
-        toast.message('Microphone permission is required before enabling voice dictation.')
-      }
-    } catch {
-      toast.error('Could not request microphone permission. Voice dictation was not enabled.')
-    } finally {
-      if (mountedRef.current) {
-        setPermissionPending(false)
-      }
-    }
+        ),
+      notifyPermissionRequired: () =>
+        toast.message('Microphone permission is required before enabling voice dictation.'),
+      notifyPermissionRequestFailed: () =>
+        toast.error('Could not request microphone permission. Voice dictation was not enabled.')
+    })
   }
 
   const getModelState = (id: string): SpeechModelState | undefined =>
@@ -113,6 +130,61 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     ? getModelState(voiceSettings.sttModel)
     : undefined
   const selectedIsReady = selectedModelState?.status === 'ready'
+  const showOpenAiSettingsRow =
+    voiceSettings.openAiApiKeyConfigured ||
+    selectedModel?.provider === 'openai' ||
+    (settingsSearchQuery.trim() !== '' &&
+      matchesSettingsSearch(settingsSearchQuery, OPENAI_TRANSCRIPTION_SEARCH_ENTRY))
+
+  const openOpenAiDialog = (modelId: string | null = null): void => {
+    setPendingCloudModelId(modelId)
+    setOpenAiApiKeyDraft('')
+    setOpenAiDialogOpen(true)
+  }
+
+  const saveOpenAiApiKey = async (): Promise<void> => {
+    setOpenAiKeyPending(true)
+    try {
+      await window.api.speech.saveOpenAiApiKey(openAiApiKeyDraft)
+      updateVoiceSettings({
+        openAiApiKeyConfigured: true,
+        sttModel: pendingCloudModelId ?? voiceSettings.sttModel
+      })
+      await refreshModelStates()
+      setOpenAiDialogOpen(false)
+      setOpenAiApiKeyDraft('')
+      setPendingCloudModelId(null)
+      toast.success('OpenAI API key saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save OpenAI API key')
+    } finally {
+      if (mountedRef.current) {
+        setOpenAiKeyPending(false)
+      }
+    }
+  }
+
+  const clearOpenAiApiKey = async (): Promise<void> => {
+    setOpenAiKeyPending(true)
+    try {
+      await window.api.speech.clearOpenAiApiKey()
+      updateVoiceSettings({
+        openAiApiKeyConfigured: false,
+        sttModel: selectedModel?.provider === 'openai' ? '' : voiceSettings.sttModel
+      })
+      await refreshModelStates()
+      setOpenAiDialogOpen(false)
+      setOpenAiApiKeyDraft('')
+      setPendingCloudModelId(null)
+      toast.success('OpenAI API key cleared')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to clear OpenAI API key')
+    } finally {
+      if (mountedRef.current) {
+        setOpenAiKeyPending(false)
+      }
+    }
+  }
 
   return (
     <div ref={handlePaneRef} className="space-y-1">
@@ -178,7 +250,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
           <p className="text-xs text-muted-foreground">
             {selectedModel && selectedIsReady
               ? `${selectedModel.label} — ${selectedModel.description}`
-              : 'Select and download a model to enable dictation.'}
+              : 'Select a speech model. Local models run offline; cloud models require an API key.'}
           </p>
         </div>
         <DropdownMenu>
@@ -200,7 +272,8 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
               const isDownloading =
                 mState?.status === 'downloading' || mState?.status === 'extracting'
               const isActive = voiceSettings.sttModel === manifest.id
-              const sizeMb = Math.round(manifest.sizeBytes / 1_000_000)
+              const isCloud = manifest.provider === 'openai'
+              const sizeMb = manifest.sizeBytes ? Math.round(manifest.sizeBytes / 1_000_000) : null
 
               return (
                 <DropdownMenuItem
@@ -209,6 +282,8 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
                   onSelect={() => {
                     if (isReady) {
                       updateVoiceSettings({ sttModel: manifest.id })
+                    } else if (isCloud) {
+                      openOpenAiDialog(manifest.id)
                     } else if (!isDownloading) {
                       void window.api.speech
                         .downloadModel(manifest.id)
@@ -216,7 +291,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
                     }
                   }}
                   className={`group flex items-center gap-2.5 py-2.5 ${
-                    !isReady && !isDownloading ? 'opacity-50' : ''
+                    !isCloud && !isReady && !isDownloading ? 'opacity-50' : ''
                   }`}
                 >
                   <span className="flex size-4 shrink-0 items-center justify-center">
@@ -224,16 +299,20 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
                       <Check className="size-3.5" />
                     ) : isDownloading ? (
                       <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                    ) : isCloud ? (
+                      <Cloud className="size-3.5 text-muted-foreground" />
                     ) : null}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-medium">{manifest.label}</span>
-                      <span className="text-[10px] px-1 py-px rounded-full leading-none bg-muted text-muted-foreground">
-                        {manifest.streaming ? 'streaming' : 'offline'}
-                      </span>
+                      {!isCloud && (
+                        <span className="text-[10px] px-1 py-px rounded-full leading-none bg-muted text-muted-foreground">
+                          {manifest.streaming ? 'streaming' : 'offline'}
+                        </span>
+                      )}
                       {manifest.recommended && (
-                        <span className="text-[10px] px-1 py-px rounded-full leading-none bg-emerald-500/10 text-emerald-500">
+                        <span className="text-[10px] px-1 py-px rounded-full leading-none bg-status-success-background text-status-success">
                           recommended
                         </span>
                       )}
@@ -242,14 +321,16 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
                           ? mState.status === 'extracting'
                             ? 'Extracting...'
                             : `${Math.round(mState.progress * 100)}%`
-                          : `${sizeMb} MB`}
+                          : isCloud
+                            ? null
+                            : `${sizeMb} MB`}
                       </span>
                     </div>
                     <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                       {manifest.description}
                     </p>
                   </div>
-                  {isReady && !isActive ? (
+                  {!isCloud && isReady && !isActive ? (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
@@ -262,7 +343,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
                     >
                       <Trash2 className="size-3" />
                     </button>
-                  ) : !isReady && !isDownloading ? (
+                  ) : !isCloud && !isReady && !isDownloading ? (
                     <span className="shrink-0 p-1 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
                       <Download className="size-3" />
                     </span>
@@ -273,6 +354,29 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {showOpenAiSettingsRow && (
+        <>
+          <Separator />
+          <OpenAiTranscriptionSettingsRow
+            configured={voiceSettings.openAiApiKeyConfigured}
+            disabled={openAiKeyPending}
+            onConfigure={() => openOpenAiDialog(null)}
+            onClear={() => void clearOpenAiApiKey()}
+          />
+        </>
+      )}
+
+      <OpenAiTranscriptionKeyDialog
+        open={openAiDialogOpen}
+        configured={voiceSettings.openAiApiKeyConfigured}
+        apiKeyDraft={openAiApiKeyDraft}
+        pending={openAiKeyPending}
+        onOpenChange={setOpenAiDialogOpen}
+        onApiKeyDraftChange={setOpenAiApiKeyDraft}
+        onSave={() => void saveOpenAiApiKey()}
+        onClear={() => void clearOpenAiApiKey()}
+      />
     </div>
   )
 }

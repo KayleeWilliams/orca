@@ -1,6 +1,6 @@
 // Why: fork-PR worktrees can add a contributor's fork as a git remote. When such
-// a worktree is deleted we prune that remote — but only when it's truly unused.
-// This module holds that decision logic behind an injectable `execGit` seam so
+// a worktree is deleted we prune that remote, but only when it's truly unused.
+// This module holds that decision logic behind an injectable `execGit` boundary so
 // the multi-fork cleanup matrix is unit-testable without a real repo.
 
 import type { Store } from '../persistence'

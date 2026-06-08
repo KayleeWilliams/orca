@@ -113,6 +113,14 @@ describe('TabsSlice', () => {
     store = createTestStore()
   })
 
+  it('setRenamingTabId sets and clears the tab rename signal', () => {
+    expect(store.getState().renamingTabId).toBeNull()
+    store.getState().setRenamingTabId('terminal-tab-1')
+    expect(store.getState().renamingTabId).toBe('terminal-tab-1')
+    store.getState().setRenamingTabId(null)
+    expect(store.getState().renamingTabId).toBeNull()
+  })
+
   // ─── createUnifiedTab ───────────────────────────────────────────────
 
   describe('createUnifiedTab', () => {
@@ -179,6 +187,29 @@ describe('TabsSlice', () => {
       const group = store.getState().groupsByWorktree[WT][0]
       expect(group.tabOrder).toEqual(['file-b.ts'])
       expect(group.tabOrder).not.toContain(preview1.id)
+    })
+
+    it('replaces editor preview tabs with diff preview tabs', () => {
+      store.getState().createUnifiedTab(WT, 'editor', {
+        id: 'file-a.ts',
+        label: 'file-a.ts',
+        isPreview: true
+      })
+      store.getState().createUnifiedTab(WT, 'diff', {
+        id: 'diff-file-b.ts',
+        entityId: 'diff-file-b.ts',
+        label: 'file-b.ts',
+        isPreview: true
+      })
+
+      expect(store.getState().unifiedTabsByWorktree[WT]).toEqual([
+        expect.objectContaining({
+          id: 'diff-file-b.ts',
+          contentType: 'diff',
+          isPreview: true
+        })
+      ])
+      expect(store.getState().groupsByWorktree[WT][0].tabOrder).toEqual(['diff-file-b.ts'])
     })
 
     it('reuses the existing group for the worktree', () => {
@@ -382,6 +413,21 @@ describe('TabsSlice', () => {
       // Source group's active tab must remain untouched.
       const sourceGroup = store.getState().groupsByWorktree[WT].find((g) => g.id === sourceGroupId)
       expect(sourceGroup?.activeTabId).toBe(t1.id)
+    })
+
+    it('records generic pane interaction when creating an empty split group', () => {
+      const setMock = vi.mocked(window.api.ui.set)
+      store.getState().hydratePersistedUI(getDefaultUIState())
+      setMock.mockClear()
+      store.getState().createUnifiedTab(WT, 'terminal')
+      const sourceGroupId = store.getState().groupsByWorktree[WT][0].id
+
+      store.getState().createEmptySplitGroup(WT, sourceGroupId, 'right')
+
+      expect(store.getState().featureInteractions['terminal-pane-split']).toBeUndefined()
+      expect(store.getState().featureInteractions['terminal-panes']).toMatchObject({
+        interactionCount: 1
+      })
     })
   })
 

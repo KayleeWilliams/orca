@@ -69,19 +69,13 @@ describe('LocalPtyProvider', () => {
   }
   let exitCb: ((info: { exitCode: number }) => void) | undefined
   let origShell: string | undefined
-  let origCodexHome: string | undefined
-  let origOrcaCodexHome: string | undefined
   let origPlatform: PropertyDescriptor | undefined
 
   beforeEach(() => {
     origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
     origShell = process.env.SHELL
-    origCodexHome = process.env.CODEX_HOME
-    origOrcaCodexHome = process.env.ORCA_CODEX_HOME
     process.env.SHELL = '/bin/zsh'
-    delete process.env.CODEX_HOME
-    delete process.env.ORCA_CODEX_HOME
 
     existsSyncMock.mockReturnValue(true)
     statSyncMock.mockReturnValue({ isDirectory: () => true, mode: 0o755 })
@@ -117,16 +111,6 @@ describe('LocalPtyProvider', () => {
     } else {
       process.env.SHELL = origShell
     }
-    if (origCodexHome === undefined) {
-      delete process.env.CODEX_HOME
-    } else {
-      process.env.CODEX_HOME = origCodexHome
-    }
-    if (origOrcaCodexHome === undefined) {
-      delete process.env.ORCA_CODEX_HOME
-    } else {
-      process.env.ORCA_CODEX_HOME = origOrcaCodexHome
-    }
   })
 
   describe('spawn', () => {
@@ -134,6 +118,28 @@ describe('LocalPtyProvider', () => {
       const result = await provider.spawn({ cols: 80, rows: 24 })
       expect(result.id).toBeTruthy()
       expect(typeof result.id).toBe('string')
+    })
+
+    it('reattaches to an existing caller-supplied session id without spawning', async () => {
+      const first = await provider.spawn({ cols: 80, rows: 24, sessionId: 'serve-session-1' })
+      spawnMock.mockClear()
+
+      const second = await provider.spawn({ cols: 120, rows: 40, sessionId: first.id })
+
+      expect(second).toEqual({ id: 'serve-session-1', pid: 12345, isReattach: true })
+      expect(mockProc.resize).toHaveBeenCalledWith(120, 40)
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
+    it('does not reattach numeric caller session ids that can collide after restart', async () => {
+      const first = await provider.spawn({ cols: 80, rows: 24 })
+      spawnMock.mockClear()
+
+      const second = await provider.spawn({ cols: 120, rows: 40, sessionId: first.id })
+
+      expect(second.id).not.toBe(first.id)
+      expect(second.isReattach).toBeUndefined()
+      expect(spawnMock).toHaveBeenCalledOnce()
     })
 
     it('calls node-pty spawn with correct args', async () => {
@@ -318,6 +324,10 @@ describe('LocalPtyProvider', () => {
 
     it('marks Orca terminal handle for WSL import when buildSpawnEnv opts in', async () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const savedCodexHome = process.env.CODEX_HOME
+      const savedOrcaCodexHome = process.env.ORCA_CODEX_HOME
+      delete process.env.CODEX_HOME
+      delete process.env.ORCA_CODEX_HOME
       provider.configure({
         buildSpawnEnv: (_id, env, ctx) => {
           env.ORCA_TERMINAL_HANDLE = 'term_wsl'
@@ -328,11 +338,24 @@ describe('LocalPtyProvider', () => {
         }
       })
 
-      await provider.spawn({
-        cols: 80,
-        rows: 24,
-        cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
-      })
+      try {
+        await provider.spawn({
+          cols: 80,
+          rows: 24,
+          cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
+        })
+      } finally {
+        if (savedCodexHome === undefined) {
+          delete process.env.CODEX_HOME
+        } else {
+          process.env.CODEX_HOME = savedCodexHome
+        }
+        if (savedOrcaCodexHome === undefined) {
+          delete process.env.ORCA_CODEX_HOME
+        } else {
+          process.env.ORCA_CODEX_HOME = savedOrcaCodexHome
+        }
+      }
 
       const spawnCall = spawnMock.mock.calls.at(-1)!
       expect(spawnCall[0]).toBe('wsl.exe')

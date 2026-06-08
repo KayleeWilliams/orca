@@ -37,6 +37,7 @@ import type {
 } from '../../../../shared/rate-limit-types'
 import { ProviderIcon, ProviderPanel, barColor } from './tooltip'
 import { ClaudeIcon, GeminiIcon, OpenAIIcon, OpenCodeGoIcon } from './icons'
+import { AgentIcon } from '@/lib/agent-catalog'
 import { formatWindowLabel } from '@/lib/window-label-formatter'
 import { markLiveCodexSessionsForRestart } from '@/lib/codex-session-restart'
 import { SshStatusSegment } from './SshStatusSegment'
@@ -55,6 +56,7 @@ import {
   getWindowsTerminalCapabilityOwnerKey,
   useWindowsTerminalCapabilities
 } from '@/lib/windows-terminal-capabilities'
+import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 
 type StatusBarProps = {
   floatingTerminalOpen: boolean
@@ -602,10 +604,16 @@ function ClaudeSwitcherMenu({
   const inactiveClaudeAccounts = useAppStore((s) => s.rateLimits.inactiveClaudeAccounts)
   const claudeTarget = useAppStore((s) => s.rateLimits.claudeTarget)
   const settings = useAppStore((s) => s.settings)
+  const hasActiveRuntimeEnvironment = Boolean(settings?.activeRuntimeEnvironmentId?.trim())
+  const runtimeTarget = useMemo(
+    () => getActiveRuntimeTarget(settings),
+    [settings?.activeRuntimeEnvironmentId]
+  )
   const windowsTerminalCapabilities = useWindowsTerminalCapabilities(
-    navigator.userAgent.includes('Windows'),
+    navigator.userAgent.includes('Windows') || hasActiveRuntimeEnvironment,
     false,
-    getWindowsTerminalCapabilityOwnerKey(settings?.activeRuntimeEnvironmentId)
+    getWindowsTerminalCapabilityOwnerKey(settings?.activeRuntimeEnvironmentId),
+    runtimeTarget
   )
   const claudeAccountSyncKey = useAppStore((s) => {
     const settings = s.settings
@@ -1092,10 +1100,16 @@ function CodexSwitcherMenu({
   const inactiveCodexAccounts = useAppStore((s) => s.rateLimits.inactiveCodexAccounts)
   const codexTarget = useAppStore((s) => s.rateLimits.codexTarget)
   const settings = useAppStore((s) => s.settings)
+  const hasActiveRuntimeEnvironment = Boolean(settings?.activeRuntimeEnvironmentId?.trim())
+  const runtimeTarget = useMemo(
+    () => getActiveRuntimeTarget(settings),
+    [settings?.activeRuntimeEnvironmentId]
+  )
   const windowsTerminalCapabilities = useWindowsTerminalCapabilities(
-    navigator.userAgent.includes('Windows'),
+    navigator.userAgent.includes('Windows') || hasActiveRuntimeEnvironment,
     false,
-    getWindowsTerminalCapabilityOwnerKey(settings?.activeRuntimeEnvironmentId)
+    getWindowsTerminalCapabilityOwnerKey(settings?.activeRuntimeEnvironmentId),
+    runtimeTarget
   )
   const codexAccountSyncKey = useAppStore((s) => {
     const settings = s.settings
@@ -1381,7 +1395,7 @@ function CodexSwitcherMenu({
   )
 }
 
-function ProviderDetailsMenu({
+export function ProviderDetailsMenu({
   provider,
   compact,
   iconOnly,
@@ -1401,16 +1415,18 @@ function ProviderDetailsMenu({
   children?: React.ReactNode
 }): React.JSX.Element {
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
+  const skipCloseAutoFocusRef = useRef(false)
 
   const handleOpenChange = (nextOpen: boolean): void => {
     if (nextOpen) {
+      skipCloseAutoFocusRef.current = false
       recordFeatureInteraction('usage-tracking')
     }
     onOpenChange?.(nextOpen)
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange} modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -1429,7 +1445,9 @@ function ProviderDetailsMenu({
                     ? 'G'
                     : provider.provider === 'opencode-go'
                       ? 'O'
-                      : 'X'}
+                      : provider.provider === 'kimi'
+                        ? 'K'
+                        : 'X'}
               </span>
             </span>
           ) : (
@@ -1437,7 +1455,24 @@ function ProviderDetailsMenu({
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[260px]">
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="w-[260px]"
+        onPointerDownOutside={() => {
+          skipCloseAutoFocusRef.current = true
+        }}
+        onCloseAutoFocus={(event) => {
+          if (!skipCloseAutoFocusRef.current) {
+            return
+          }
+          skipCloseAutoFocusRef.current = false
+          // Why: click-away should focus the clicked surface, especially xterm;
+          // Radix's default trigger restore steals that first click.
+          event.preventDefault()
+        }}
+      >
         {topContent}
         <div className="p-2">
           <ProviderPanel p={provider} />
@@ -1552,7 +1587,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     return null
   }
 
-  const { claude, codex, gemini, opencodeGo } = rateLimits
+  const { claude, codex, gemini, opencodeGo, kimi } = rateLimits
 
   // Why: a provider only earns a bar once it's configured (isProviderConfigured
   // drops the `unavailable` state — Gemini OAuth off, OpenCode Go cookie unset,
@@ -1572,6 +1607,10 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     isProviderConfigured(gemini) &&
     statusBarItems.includes('gemini') &&
     isStatusBarItemAvailable('gemini', detectedAgentIds)
+  const showKimi =
+    isProviderConfigured(kimi) &&
+    statusBarItems.includes('kimi') &&
+    isStatusBarItemAvailable('kimi', detectedAgentIds)
   // Why: OpenCode Go is a web/cookie-auth provider, not a CLI on PATH, so
   // detection-gating doesn't apply.
   const showOpencodeGo = isProviderConfigured(opencodeGo) && statusBarItems.includes('opencode-go')
@@ -1580,12 +1619,14 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
   const showPorts = statusBarItems.includes('ports')
   const showFloatingTerminalToggle =
     floatingTerminalEnabled && floatingTerminalTriggerLocation === 'status-bar'
-  const anyVisible = showClaude || showCodex || showGemini || showOpencodeGo || showResourceUsage
+  const anyVisible =
+    showClaude || showCodex || showGemini || showOpencodeGo || showKimi || showResourceUsage
   const anyFetching =
     claude?.status === 'fetching' ||
     codex?.status === 'fetching' ||
     gemini?.status === 'fetching' ||
-    opencodeGo?.status === 'fetching'
+    opencodeGo?.status === 'fetching' ||
+    kimi?.status === 'fetching'
 
   const compact = containerWidth < 900
   const iconOnly = containerWidth < 500
@@ -1631,6 +1672,14 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
             compact={compact}
             iconOnly={iconOnly}
             ariaLabel="Open OpenCode Go usage details"
+          />
+        )}
+        {showKimi && (
+          <ProviderDetailsMenu
+            provider={kimi}
+            compact={compact}
+            iconOnly={iconOnly}
+            ariaLabel="Open Kimi usage details"
           />
         )}
         {anyVisible && (
@@ -1742,6 +1791,18 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
             <OpenCodeGoIcon size={14} />
             OpenCode Go Usage
           </DropdownMenuCheckboxItem>
+          {isStatusBarItemAvailable('kimi', detectedAgentIds) && (
+            <DropdownMenuCheckboxItem
+              checked={statusBarItems.includes('kimi')}
+              onCheckedChange={() => {
+                recordFeatureInteraction('usage-tracking')
+                toggleStatusBarItem('kimi')
+              }}
+            >
+              <AgentIcon agent="kimi" size={14} />
+              Kimi Usage
+            </DropdownMenuCheckboxItem>
+          )}
           <DropdownMenuCheckboxItem
             checked={statusBarItems.includes('ssh')}
             onCheckedChange={() => {

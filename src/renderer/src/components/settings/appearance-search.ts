@@ -38,6 +38,13 @@ export const STATUS_BAR_TOGGLES: readonly {
     toggleDescription: 'Show OpenCode Go token and cost usage for the active workspace.'
   },
   {
+    id: 'kimi',
+    title: 'Kimi Usage',
+    description: 'Show Kimi subscription usage in the status bar.',
+    keywords: ['status bar', 'kimi', 'usage', 'subscription', 'moonshot'],
+    toggleDescription: 'Show Kimi subscription usage for the active workspace.'
+  },
+  {
     id: 'ssh',
     title: 'SSH Status',
     description: 'Show the active SSH connection status in the status bar.',
@@ -114,9 +121,22 @@ export const SIDEBAR_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['tasks', 'sidebar', 'button', 'hide', 'show', 'github', 'linear']
   },
   {
+    title: 'Show Automations Button',
+    description: 'Show the Automations button at the top of the left sidebar.',
+    keywords: ['automations', 'automation', 'schedule', 'sidebar', 'button', 'hide', 'show']
+  },
+  {
     title: 'Show Orca Mobile Button',
     description: 'Show the Orca Mobile button at the top of the left sidebar.',
     keywords: ['mobile', 'phone', 'sidebar', 'button', 'hide', 'show', 'toolbox']
+  }
+]
+
+export const APP_ICON_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'App Icon',
+    description: 'Choose the app icon shown in the Dock and window switcher.',
+    keywords: ['app icon', 'orca', 'dock', 'window', 'switcher', 'blue', 'watercolor']
   }
 ]
 
@@ -128,5 +148,6 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ...LAYOUT_ENTRIES,
   ...TITLEBAR_ENTRIES,
   ...STATUS_BAR_ENTRIES,
-  ...SIDEBAR_ENTRIES
+  ...SIDEBAR_ENTRIES,
+  ...APP_ICON_ENTRIES
 ]

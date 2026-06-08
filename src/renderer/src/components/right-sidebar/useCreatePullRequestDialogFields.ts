@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: field state, base search, AI generation,
    and cancellation share request guards that need to stay in one hook. */
+/* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: PR defaults, base-ref search, and generated fields are synchronized with runtime git IPC and cancellation tokens. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getConnectionId } from '@/lib/connection-context'
 import { useAppStore, type AppState } from '@/store'
@@ -309,14 +310,14 @@ export function useCreatePullRequestDialogFields({
   if (submitting) {
     generateDisabledReason = 'Create PR in progress...'
   } else if (!sourceControlAi.enabled) {
-    generateDisabledReason = 'Enable Source Control AI in Settings -> Git.'
+    generateDisabledReason = 'Enable Git AI Author in Settings -> Git.'
   } else if (!effectiveCommitMessageAgentId) {
-    generateDisabledReason = 'Pick an agent in Settings -> Git -> Source Control AI.'
+    generateDisabledReason = 'Pick an agent in Settings -> Git -> Git AI Author.'
   } else if (isCustomAgentId(effectiveCommitMessageAgentId)) {
     const command = sourceControlAi.customAgentCommand?.trim() ?? ''
     if (!command) {
       generateDisabledReason =
-        'Custom command is empty. Add one in Settings -> Git -> Source Control AI.'
+        'Custom command is empty. Add one in Settings -> Git -> Git AI Author.'
     }
   } else if (!base.trim()) {
     generateDisabledReason = 'Choose a base branch before generating.'

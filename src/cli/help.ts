@@ -11,6 +11,9 @@ Startup:
   serve                     Start a headless Orca runtime server
   status                    Show app/runtime/graph readiness
 
+Diagnostics:
+  diagnostics memory        Collect a memory snapshot for Orca and managed terminals
+
 Environments:
   environment add           Save a remote Orca runtime from a pairing code
   environment list          List saved remote Orca runtimes
@@ -79,7 +82,8 @@ Orchestration:
   orchestration reset       Reset orchestration state
 
 Computer Use:
-  computer permissions      Open the macOS permission setup for computer-use
+  computer capabilities     Show computer-use provider capabilities
+  computer permissions      Show or open computer-use permission setup
   computer list-apps        List running apps available to computer-use
   computer list-windows     List visible windows for a target app
   computer get-app-state    Capture a compact accessibility snapshot of an app
@@ -88,7 +92,7 @@ Computer Use:
   computer scroll           Scroll an app element
   computer drag             Drag between app elements or window coordinates
   computer type-text        Type literal text at the current app focus
-  computer press-key        Press a key using xdotool-style syntax
+  computer press-key        Press a single key such as Return or Escape
   computer hotkey           Press a shortcut combination such as CmdOrCtrl+A
   computer paste-text       Paste text through the native clipboard path
   computer set-value        Set the value of a settable app element
@@ -161,12 +165,13 @@ Common Commands:
   orca open [--json]
   orca serve [--port <port>] [--pairing-address <host>] [--mobile-pairing] [--no-pairing] [--json]
   orca status [--json]
+  orca diagnostics memory [--json]
   orca environment add --name <name> --pairing-code <code> [--json]
   orca environment list [--json]
   orca environment show --environment <selector> [--json]
   orca environment rm --environment <selector> [--json]
   orca worktree list [--repo <selector>] [--limit <n>] [--json]
-  orca worktree create --repo <selector> --name <name> [--base-branch <ref>] [--issue <number>] [--comment <text>] [--parent-worktree <selector>] [--no-parent] [--run-hooks] [--activate] [--json]
+  orca worktree create --name <name> [--repo <selector>] [--agent <id>] [--prompt <text>] [--setup run|skip|inherit] [--base-branch <ref>] [--issue <number>] [--comment <text>] [--parent-worktree <selector>] [--no-parent] [--run-hooks] [--activate] [--json]
   orca worktree show --worktree <selector> [--json]
   orca worktree current [--json]
   orca worktree set --worktree <selector> [--display-name <name>] [--issue <number|null>] [--comment <text>] [--workspace-status <id>] [--parent-worktree <selector>|--no-parent] [--json]
@@ -254,7 +259,9 @@ Browser Options:
 Examples:
   $ orca open
   $ orca status --json
+  $ orca diagnostics memory --json
   $ orca repo list
+  $ orca worktree create --name agent-task --agent codex --prompt "hi"
   $ orca worktree create --repo name:orca --name cli-test-1 --issue 273
   $ orca worktree show --worktree branch:Jinwoo-H/cli
   $ orca worktree current
@@ -305,7 +312,7 @@ export function formatCommandHelp(spec: CommandSpec): string {
   if (displayedFlags.length > 0) {
     lines.push('', 'Options:')
     for (const flag of displayedFlags) {
-      lines.push(`  ${formatFlagHelp(flag)}`)
+      lines.push(`  ${formatCommandFlagHelp(flag, spec.path)}`)
     }
   }
 
@@ -336,8 +343,20 @@ export function formatGroupHelp(specs: CommandSpec[], group: string): string {
   return lines.join('\n')
 }
 
+function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
+  const command = commandPath.join(' ')
+  if (flag === 'key' && command === 'computer hotkey') {
+    return '--key <key-combo>      Modifier chord with one key, e.g. CmdOrCtrl+A'
+  }
+  if (flag === 'key' && command === 'computer press-key') {
+    return '--key <key>            Single key, e.g. Return, Escape, Tab, Left, or PageUp'
+  }
+  return formatFlagHelp(flag)
+}
+
 export function formatFlagHelp(flag: string): string {
   const helpByFlag: Record<string, string> = {
+    agent: '--agent <id>          Launch a known TUI agent in the first terminal',
     'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
     command: '--command <text>       Command to run in the terminal on startup',
     comment: '--comment <text>       Comment stored in Orca metadata',
@@ -359,9 +378,10 @@ export function formatFlagHelp(flag: string): string {
     'from-y': '--from-y <y>           Source window-local y coordinate',
     help: '--help                 Show this help message',
     interrupt: '--interrupt            Send as an interrupt-style input when supported',
+    id: '--id <id>             Identifier for a target item or permission',
     issue: '--issue <number|null>  Linked GitHub issue number',
     json: '--json                 Emit machine-readable JSON',
-    key: '--key <key>            Key or combo to press, e.g. Escape or CmdOrCtrl+L',
+    key: '--key <key>            Key argument for this command',
     limit: '--limit <n>            Maximum number of rows to return',
     mode: '--mode <mode>          Mode such as edit, diff, or both',
     'mouse-button': '--mouse-button <btn>   Mouse button: left, right, or middle',
@@ -372,15 +392,22 @@ export function formatFlagHelp(flag: string): string {
     'parent-worktree':
       '--parent-worktree <selector> Parent selector; create infers the caller/current worktree by default',
     path: '--path <path>          Path argument for the command',
+    prompt: '--prompt <text>        Prompt text for agent-backed commands',
     query: '--query <text>        Search text for matching refs',
     ref: '--ref <ref>            Base ref to persist for the repo',
     repo: '--repo <selector>      Repo selector such as id:<id>, name:<name>, or path:<path>',
     'restore-window':
       '--restore-window     Bring the target app/window forward before the operation',
     session: '--session <id>        Snapshot namespace for a related computer-use workflow',
+    setup: '--setup run|skip|inherit Setup policy for repo-defined setup hooks',
     terminal: '--terminal <handle>  Runtime-issued terminal handle',
     text: '--text <text>          Text payload to send or type',
     'text-stdin': '--text-stdin          Read text payload from stdin',
+    'task-id': '--task-id <id>        Task id to include in orchestration payload JSON',
+    'dispatch-id': '--dispatch-id <id>    Dispatch id to include in orchestration payload JSON',
+    'files-modified': '--files-modified <csv> Comma-separated files for orchestration payload JSON',
+    'report-path': '--report-path <path>  Report path to include in orchestration payload JSON',
+    phase: '--phase <text>        Worker phase to include in orchestration payload JSON',
     'timeout-ms': '--timeout-ms <ms>     Maximum wait time before timing out',
     'to-element-index': '--to-element-index <n> Destination element index from get-app-state',
     'to-x': '--to-x <x>             Destination window-local x coordinate',
@@ -390,7 +417,6 @@ export function formatFlagHelp(flag: string): string {
     workspace: '--workspace <selector> Existing worktree selector for automation runs',
     'workspace-status':
       '--workspace-status <id> Board status id (defaults: todo, in-progress, in-review, completed)',
-    prompt: '--prompt <text>        Automation prompt to pass to the agent',
     staged: '--staged               Open staged source-control changes',
     provider: '--provider <agent>     Agent id such as codex, claude, or gemini',
     trigger: '--trigger <schedule>   Automation schedule preset, cron, or RRULE',

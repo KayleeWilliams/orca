@@ -320,6 +320,33 @@ describe('removeWorktree cascade', () => {
     })
   })
 
+  it('offers force delete when Git already removed an unregistered worktree', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/workspace/deleted-wt'
+    const error =
+      "Error invoking remote method 'worktrees:remove': Error: Worktree is no longer registered with Git and its directory is already gone."
+
+    mockApi.worktrees.remove.mockRejectedValueOnce(new Error(error))
+
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1' })]
+      },
+      tabsByWorktree: {},
+      ptyIdsByTabId: {},
+      terminalLayoutsByTabId: {}
+    })
+
+    const result = await store.getState().removeWorktree(worktreeId)
+
+    expect(result).toEqual({ ok: false, error })
+    expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
+      isDeleting: false,
+      error,
+      canForceDelete: true
+    })
+  })
+
   it('sets canForceDelete=false when force=true removal fails', async () => {
     const store = createTestStore()
     const worktreeId = 'repo1::/path/wt1'
@@ -759,6 +786,62 @@ describe('setActiveWorktree', () => {
     store.getState().setActiveWorktree(wt)
 
     expect(store.getState().rightSidebarTab).toBe('checks')
+  })
+
+  it('does not notify subscribers when reselecting the already-active reconciled worktree', () => {
+    const store = createTestStore()
+    const wt = 'repo1::/path/wt1'
+    const tabId = 'terminal-1'
+    const groupId = 'group-1'
+
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: wt, repoId: 'repo1', path: '/path/wt1' })]
+      },
+      activeWorktreeId: wt,
+      activeTabId: tabId,
+      activeTabType: 'terminal',
+      activeTabTypeByWorktree: { [wt]: 'terminal' },
+      tabsByWorktree: {
+        [wt]: [makeTab({ id: tabId, worktreeId: wt, ptyId: 'pty-1' })]
+      },
+      ptyIdsByTabId: { [tabId]: ['pty-1'] },
+      unifiedTabsByWorktree: {
+        [wt]: [
+          makeUnifiedTab({
+            id: tabId,
+            entityId: tabId,
+            worktreeId: wt,
+            groupId,
+            contentType: 'terminal'
+          })
+        ]
+      },
+      groupsByWorktree: {
+        [wt]: [
+          makeTabGroup({
+            id: groupId,
+            worktreeId: wt,
+            activeTabId: tabId,
+            tabOrder: [tabId]
+          })
+        ]
+      },
+      activeGroupIdByWorktree: { [wt]: groupId },
+      everActivatedWorktreeIds: new Set([wt]),
+      refreshGitHubForWorktree: vi.fn(),
+      refreshGitHubForWorktreeIfStale: vi.fn()
+    })
+
+    const before = store.getState()
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+
+    store.getState().setActiveWorktree(wt)
+
+    unsubscribe()
+    expect(listener).not.toHaveBeenCalled()
+    expect(store.getState()).toBe(before)
   })
 
   it('does not clobber the current right sidebar tab when clearing the active worktree', () => {

@@ -11,7 +11,16 @@ let pendingSidebarWorktreeActivation: {
   cancel: () => void
 } | null = null
 
+export function cancelPendingSidebarWorktreeActivation(): void {
+  pendingSidebarWorktreeActivation?.cancel()
+  pendingSidebarWorktreeActivation = null
+}
+
 function shouldDeferSidebarWorktreeActivation(worktreeId: string): boolean {
+  // Why: web clients should activate immediately to avoid host/session churn and wake lag.
+  if ((globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ === true) {
+    return false
+  }
   const state = useAppStore.getState()
   const tabs = state.tabsByWorktree[worktreeId] ?? []
   if (tabs.length === 0) {
@@ -27,8 +36,7 @@ function shouldDeferSidebarWorktreeActivation(worktreeId: string): boolean {
 }
 
 export function activateWorktreeFromSidebar(worktreeId: string): void {
-  pendingSidebarWorktreeActivation?.cancel()
-  pendingSidebarWorktreeActivation = null
+  cancelPendingSidebarWorktreeActivation()
 
   const activate = (): void => {
     if (pendingSidebarWorktreeActivation?.worktreeId === worktreeId) {

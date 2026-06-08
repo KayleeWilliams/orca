@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { IDisposable, Terminal } from '@xterm/xterm'
 import type { ParsedAgentStatusPayload } from '../../../../shared/agent-status-types'
 import { PaneManager } from '@/lib/pane-manager/pane-manager'
+import { consumePendingWebRuntimeSplitMirrorTelemetry } from '@/runtime/web-runtime-session'
 import { resolveTerminalCursorInactiveStyle } from '@/lib/pane-manager/pane-terminal-options'
 import { buildWindowsPtyCompatibilityOptions } from '@/lib/pane-manager/windows-pty-compatibility'
 import { useAppStore } from '@/store'
@@ -12,6 +13,7 @@ import {
   getTerminalUrlOpenHint,
   installFilePathLinkClickFallback
 } from './terminal-link-handlers'
+import { createTerminalHandleLinkProvider } from './terminal-handle-links'
 import type { LinkHandlerDeps } from './terminal-link-handlers'
 import { handleOscLink } from './terminal-osc-link-routing'
 import { installHttpLinkClickFallback } from './terminal-url-link-hit-testing'
@@ -21,6 +23,7 @@ import type {
   TerminalTab,
   TerminalLayoutSnapshot
 } from '../../../../shared/types'
+import type { TerminalPaneSplitSource } from '../../../../shared/feature-education-telemetry'
 import type { EventProps } from '../../../../shared/telemetry-events'
 import { resolveTerminalFontWeights } from '../../../../shared/terminal-fonts'
 import {
@@ -58,6 +61,7 @@ import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-str
 import { getConnectionId } from '@/lib/connection-context'
 import { isPaneReplaying, type ReplayingPanesRef } from './replay-guard'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
+import { setActiveTerminalOutputTarget } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { e2eConfig } from '@/lib/e2e-config'
 import {
@@ -72,10 +76,41 @@ import {
   type CloseTerminalPaneDetail
 } from '@/constants/terminal'
 import { acquireWebviewsDragPassthrough } from '../browser-pane/webview-registry'
+import { recordCreatedTerminalPaneSplit } from './terminal-pane-split-completion'
+
+export function recordRuntimeCreatedTerminalPaneSplit(
+  createdPane: unknown,
+  args: {
+    source: TerminalPaneSplitSource
+    direction: 'vertical' | 'horizontal'
+    telemetrySuppressed?: boolean
+  }
+): boolean {
+  return recordCreatedTerminalPaneSplit(createdPane, args)
+}
 
 function extractUncHost(value: string | undefined): string | null {
   const match = /^(?:\\\\|\/\/)([^\\/]+)/.exec(value ?? '')
   return match?.[1] || null
+}
+
+export function reportActiveRendererPtyForPane(
+  paneTransports: Map<number, PtyTransport>,
+  manager: PaneManager | null,
+  activePaneId: number | null,
+  activeAllowed: boolean
+): void {
+  const activeTargetPaneId = activeAllowed ? activePaneId : null
+  for (const pane of manager?.getPanes() ?? []) {
+    setActiveTerminalOutputTarget(pane.terminal, activeTargetPaneId === pane.id)
+  }
+  for (const [paneId, transport] of paneTransports) {
+    const ptyId = transport.getPtyId()
+    if (!ptyId || ptyId.startsWith('remote:')) {
+      continue
+    }
+    window.api.pty.setActiveRendererPty?.(ptyId, activeTargetPaneId === paneId)
+  }
 }
 
 type UseTerminalPaneLifecycleDeps = {
@@ -147,6 +182,7 @@ type UseTerminalPaneLifecycleDeps = {
     terminalTitle?: string
     paneKey?: string
     agentStatusSnapshot?: ParsedAgentStatusPayload
+    suppressOsNotification?: boolean
   }) => void
   setCacheTimerStartedAt: (key: string, ts: number | null) => void
   syncPanePtyLayoutBinding: (paneId: number, ptyId: string | null) => void
@@ -189,6 +225,37 @@ function terminalSelectionExceedsPrimaryLimit(terminal: Terminal): boolean {
       ? Math.abs(range.end.x - range.start.x)
       : rowSpan * terminal.cols + Math.abs(range.end.x - range.start.x)
   return cellEstimate > PRIMARY_SELECTION_MAX_LENGTH
+}
+
+function hydrateTerminalScrollbackRefs(layout: TerminalLayoutSnapshot): {
+  layout: TerminalLayoutSnapshot
+  hydrated: boolean
+} {
+  const refs = layout.scrollbackRefsByLeafId
+  if (!refs || Object.keys(refs).length === 0) {
+    return { layout, hydrated: false }
+  }
+
+  const buffers = { ...layout.buffersByLeafId }
+  let hydrated = false
+  for (const [leafId, ref] of Object.entries(refs)) {
+    if (buffers[leafId] !== undefined) {
+      continue
+    }
+    try {
+      const buffer = window.api.session.readTerminalScrollback({ ref })
+      if (buffer) {
+        buffers[leafId] = buffer
+        hydrated = true
+      }
+    } catch {
+      // Best-effort restore; failed snapshot reads should not block terminal mount.
+    }
+  }
+
+  return hydrated
+    ? { layout: { ...layout, buffersByLeafId: buffers }, hydrated }
+    : { layout, hydrated }
 }
 
 type SplitStartupPayload = { command: string; env?: Record<string, string> }
@@ -307,6 +374,7 @@ export function useTerminalPaneLifecycle({
   const systemPrefersDarkRef = useRef(systemPrefersDark)
   systemPrefersDarkRef.current = systemPrefersDark
   const linkProviderDisposablesRef = useRef(new Map<number, IDisposable>())
+  const terminalHandleLinkDisposablesRef = useRef(new Map<number, IDisposable>())
   const fileLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
   const httpLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
   // Why: read settingsRef at fire time so toggling "copy on select" takes
@@ -376,6 +444,7 @@ export function useTerminalPaneLifecycle({
     const paneTransports = paneTransportsRef.current
     const panePtyBindings = panePtyBindingsRef.current
     const linkDisposables = linkProviderDisposablesRef.current
+    const terminalHandleLinkDisposables = terminalHandleLinkDisposablesRef.current
     const fileLinkClickFallbackDisposables = fileLinkClickFallbackDisposablesRef.current
     const httpLinkClickFallbackDisposables = httpLinkClickFallbackDisposablesRef.current
     const selectionDisposables = selectionDisposablesRef.current
@@ -443,6 +512,11 @@ export function useTerminalPaneLifecycle({
     if (normalizedInitialLayout.changed) {
       initialLayoutRef.current = normalizedInitialLayout.snapshot
       useAppStore.getState().setTabLayout(tabId, normalizedInitialLayout.snapshot)
+    }
+    const initialLayoutHadBuffers = Boolean(initialLayoutRef.current.buffersByLeafId)
+    const hydratedInitialScrollback = hydrateTerminalScrollbackRefs(initialLayoutRef.current)
+    if (hydratedInitialScrollback.hydrated) {
+      initialLayoutRef.current = hydratedInitialScrollback.layout
     }
     let shouldPersistLayout = false
     const ptyDeps = {
@@ -612,6 +686,17 @@ export function useTerminalPaneLifecycle({
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
         linkProviderDisposablesRef.current.set(pane.id, linkProviderDisposable)
+        const terminalHandleLinkDisposable = pane.terminal.registerLinkProvider(
+          createTerminalHandleLinkProvider({
+            getTerminal: () =>
+              managerRef.current?.getPanes().find((candidate) => candidate.id === pane.id)
+                ?.terminal ?? null,
+            getRuntimeEnvironmentId: () =>
+              linkDeps.getRuntimeEnvironmentIdForPane?.(pane.id) ?? null,
+            linkTooltip: pane.linkTooltip
+          })
+        )
+        terminalHandleLinkDisposablesRef.current.set(pane.id, terminalHandleLinkDisposable)
         const fileLinkClickFallbackDisposable = installFilePathLinkClickFallback(
           pane.id,
           pane.terminal,
@@ -744,10 +829,18 @@ export function useTerminalPaneLifecycle({
         queueResizeAll(true)
       },
       onPaneClosed: (paneId, closedPane) => {
+        if (closedPane?.terminal) {
+          setActiveTerminalOutputTarget(closedPane.terminal, false)
+        }
         const linkProviderDisposable = linkProviderDisposablesRef.current.get(paneId)
         if (linkProviderDisposable) {
           linkProviderDisposable.dispose()
           linkProviderDisposablesRef.current.delete(paneId)
+        }
+        const terminalHandleLinkDisposable = terminalHandleLinkDisposablesRef.current.get(paneId)
+        if (terminalHandleLinkDisposable) {
+          terminalHandleLinkDisposable.dispose()
+          terminalHandleLinkDisposablesRef.current.delete(paneId)
         }
         const fileLinkClickFallbackDisposable =
           fileLinkClickFallbackDisposablesRef.current.get(paneId)
@@ -798,6 +891,7 @@ export function useTerminalPaneLifecycle({
           mouseHideDisposablesRef.current.delete(paneId)
         }
         const transport = paneTransportsRef.current.get(paneId)
+        const closingPtyId = transport?.getPtyId() ?? null
         const panePtyBinding = panePtyBindings.get(paneId)
         if (panePtyBinding) {
           panePtyBinding.dispose()
@@ -820,6 +914,9 @@ export function useTerminalPaneLifecycle({
             transport,
             useAppStore.getState().suppressPtyExit
           )
+          if (closingPtyId && !closingPtyId.startsWith('remote:')) {
+            window.api.pty.setActiveRendererPty?.(closingPtyId, false)
+          }
           if (ptyId) {
             // Why: user/CLI pane closes intentionally tear down this PTY after
             // PaneManager has already promoted the sibling. Suppress that exit
@@ -860,11 +957,19 @@ export function useTerminalPaneLifecycle({
         // stay stuck on the closed pane's last title.
         const newActivePane = managerRef.current?.getActivePane()
         if (newActivePane) {
+          reportActiveRendererPtyForPane(
+            paneTransportsRef.current,
+            managerRef.current,
+            newActivePane.id,
+            isActiveRef.current && isVisibleRef.current
+          )
           const paneTitles = useAppStore.getState().runtimePaneTitlesByTabId[tabId] ?? {}
           const activeTitle = paneTitles[newActivePane.id]
           if (activeTitle) {
             updateTabTitle(tabId, activeTitle)
           }
+        } else {
+          reportActiveRendererPtyForPane(paneTransportsRef.current, managerRef.current, null, false)
         }
         scheduleRuntimeGraphSync()
       },
@@ -873,6 +978,12 @@ export function useTerminalPaneLifecycle({
         if (shouldPersistLayout) {
           persistLayoutSnapshot()
         }
+        reportActiveRendererPtyForPane(
+          paneTransportsRef.current,
+          managerRef.current,
+          pane.id,
+          isActiveRef.current && isVisibleRef.current
+        )
         // Why: when the user switches focus between split panes, update the
         // tab title to the newly active pane's last-known title so the tab
         // label reflects the focused agent — not a stale title from the
@@ -910,8 +1021,10 @@ export function useTerminalPaneLifecycle({
         const currentTab = storeState.tabsByWorktree[worktreeId]?.find(
           (candidate) => candidate.id === tabId
         )
+        const platformInfo = window.api.platform?.get?.()
         const windowsPtyCompatibilityOptions = buildWindowsPtyCompatibilityOptions({
           userAgent: navigator.userAgent,
+          osRelease: platformInfo?.osRelease,
           connectionId: getConnectionId(worktreeId),
           cwd: startupCwd,
           shellOverride: currentTab?.shellOverride
@@ -975,12 +1088,18 @@ export function useTerminalPaneLifecycle({
     }
     const restoredPaneByLeafId = replayTerminalLayout(manager, initialLayoutRef.current, isActive)
 
-    restoreScrollbackBuffers(
-      manager,
-      initialLayoutRef.current.buffersByLeafId,
-      restoredPaneByLeafId,
-      replayingPanesRef
-    )
+    const restoredBuffers = initialLayoutRef.current.buffersByLeafId
+    restoreScrollbackBuffers(manager, restoredBuffers, restoredPaneByLeafId, replayingPanesRef)
+    if (restoredBuffers && initialLayoutRef.current.scrollbackRefsByLeafId) {
+      const layoutWithoutRestoredBuffers = { ...initialLayoutRef.current }
+      delete layoutWithoutRestoredBuffers.buffersByLeafId
+      initialLayoutRef.current = layoutWithoutRestoredBuffers
+      if (initialLayoutHadBuffers) {
+        // Why: raw replay bytes belong only to this mount. Drop legacy hydrated
+        // copies from Zustand so normal session writes stay ref-only.
+        useAppStore.getState().setTabLayout(tabId, layoutWithoutRestoredBuffers)
+      }
+    }
 
     // Seed pane titles from the persisted snapshot using the same
     // old-leafId → new-paneId mapping used for buffer restore.
@@ -1041,6 +1160,8 @@ export function useTerminalPaneLifecycle({
     // than relying on getPanes()[0] which returns insertion order, not visual order.
     const initialPane = manager.getActivePane() ?? manager.getPanes()[0]
 
+    // Why: setup/issue automation panes are internal workspace bootstrap flows,
+    // not the user-visible split-terminal milestone recorded below.
     if (setupSplit) {
       if (initialPane) {
         const setupPane = splitPaneWithOneShotStartup(
@@ -1119,11 +1240,23 @@ export function useTerminalPaneLifecycle({
         ...(detail.ptyId ? { ptyId: detail.ptyId } : {})
       }
       if (detail.command) {
-        splitPaneWithOneShotStartup(ptyDeps, { command: detail.command }, () =>
+        const createdPane = splitPaneWithOneShotStartup(ptyDeps, { command: detail.command }, () =>
           mgr.splitPane(sourcePaneId, detail.direction, splitOptions)
         )
+        recordRuntimeCreatedTerminalPaneSplit(createdPane, {
+          source: detail.telemetrySource ?? 'command',
+          direction: detail.direction
+        })
       } else {
-        mgr.splitPane(sourcePaneId, detail.direction, splitOptions)
+        const createdPane = mgr.splitPane(sourcePaneId, detail.direction, splitOptions)
+        const telemetrySuppressed = createdPane
+          ? consumePendingWebRuntimeSplitMirrorTelemetry(detail.sourcePtyId, detail.direction)
+          : false
+        recordRuntimeCreatedTerminalPaneSplit(createdPane, {
+          source: detail.telemetrySource ?? 'command',
+          direction: detail.direction,
+          telemetrySuppressed
+        })
       }
     }
     window.addEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
@@ -1168,6 +1301,10 @@ export function useTerminalPaneLifecycle({
         disposable.dispose()
       }
       linkDisposables.clear()
+      for (const disposable of terminalHandleLinkDisposables.values()) {
+        disposable.dispose()
+      }
+      terminalHandleLinkDisposables.clear()
       for (const disposable of fileLinkClickFallbackDisposables.values()) {
         disposable.dispose()
       }

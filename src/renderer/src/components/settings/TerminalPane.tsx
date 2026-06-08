@@ -36,6 +36,8 @@ import { ManageSessionsSection } from './ManageSessionsSection'
 import { OSC52_CLIPBOARD_SETTING_ID } from '../terminal-pane/osc52-clipboard-setting-anchor'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
 
+const EMPTY_WSL_DISTROS: string[] = []
+
 type TerminalPaneProps = {
   settings: GlobalSettings
   updateSettings: (updates: Partial<GlobalSettings>) => void
@@ -51,6 +53,8 @@ type TerminalPaneProps = {
   pwshAvailable?: boolean
   /** Whether Git for Windows bash.exe is installed on this machine. */
   gitBashAvailable?: boolean
+  /** Whether the active terminal host is Windows, even if the client is not. */
+  isWindowsTerminalHost?: boolean
 }
 
 export function TerminalPane({
@@ -59,13 +63,15 @@ export function TerminalPane({
   scrollbackMode,
   setScrollbackMode,
   wslAvailable,
-  wslDistros = [],
+  wslDistros = EMPTY_WSL_DISTROS,
   wslCapabilitiesLoading = false,
   pwshAvailable,
-  gitBashAvailable = false
+  gitBashAvailable = false,
+  isWindowsTerminalHost
 }: TerminalPaneProps): React.JSX.Element {
   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
   const isWindows = isWindowsUserAgent()
+  const showWindowsHostSettings = isWindowsTerminalHost ?? isWindows
   const isMac = isMacUserAgent()
   const detectedLayout = useDetectedOptionAsAlt()
   const detectedLayoutLabel =
@@ -88,11 +94,13 @@ export function TerminalPane({
       ? [selectedWslDistroName, ...wslDistros]
       : wslDistros
   const powerShellImplementation = settings.terminalWindowsPowerShellImplementation ?? 'auto'
-  const showWindowsPowerShellImplementation = isWindows && windowsShell === 'powershell.exe'
+  const showWindowsPowerShellImplementation =
+    showWindowsHostSettings && windowsShell === 'powershell.exe'
   const showGitBashOption = gitBashAvailable || windowsShell === WINDOWS_GIT_BASH_SHELL
 
   const visibleSections = [
-    isWindows && matchesSettingsSearch(searchQuery, TERMINAL_WINDOWS_SHELL_SEARCH_ENTRY) ? (
+    showWindowsHostSettings &&
+    matchesSettingsSearch(searchQuery, TERMINAL_WINDOWS_SHELL_SEARCH_ENTRY) ? (
       <section key="windows-shell" className="space-y-3">
         <SettingsSubsectionHeader
           title="Windows Shell"

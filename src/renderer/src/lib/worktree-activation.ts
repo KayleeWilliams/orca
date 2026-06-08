@@ -15,10 +15,18 @@ import { tuiAgentToAgentKind } from './telemetry'
 import { agentKindToTuiAgent } from '../../../shared/agent-kind'
 import { useAppStore } from '@/store'
 import type { PendingSidebarWorktreeReveal } from '@/store/slices/ui'
+import { tabHasLivePty } from '@/lib/tab-has-live-pty'
 import {
   activateWebRuntimeSessionWorktree,
-  isWebRuntimeSessionActive
+  createWebRuntimeSessionTerminal,
+  isWebRuntimeSessionActive,
+  isWebTerminalSurfaceTabId
 } from '@/runtime/web-runtime-session'
+import { getLastKnownHostTerminalTabCount } from '@/runtime/web-session-tabs-sync'
+import {
+  beginWebRuntimeWakeTerminalRespawn,
+  endWebRuntimeWakeTerminalRespawn
+} from '@/runtime/web-runtime-wake-terminal-respawn'
 import {
   setWorktreeNavActivator,
   setWorktreeNavViewActivator
@@ -147,6 +155,7 @@ export function activateAndRevealWorktree(
     defaultTabs?: WorktreeDefaultTabsLaunch
     issueCommand?: IssueCommandLaunch
     sidebarRevealBehavior?: PendingSidebarWorktreeReveal['behavior']
+    notifyHostRuntime?: boolean
   }
 ): ActivateAndRevealResult | false {
   const state = useAppStore.getState()
@@ -154,6 +163,16 @@ export function activateAndRevealWorktree(
   if (!wt) {
     return false
   }
+  const hasActivationWork = Boolean(
+    opts?.startup || opts?.setup || opts?.defaultTabs || opts?.issueCommand
+  )
+  // Why: a plain reselect of the already-visible workspace should still reveal
+  // the sidebar row, but it must not restamp focus recency and wake persistence.
+  const isPlainAlreadyActiveTerminal =
+    !hasActivationWork &&
+    state.activeRepoId === wt.repoId &&
+    state.activeWorktreeId === worktreeId &&
+    state.activeView === 'terminal'
 
   // 1. Set activeRepoId if crossing repos
   if (wt.repoId !== state.activeRepoId) {
@@ -168,7 +187,10 @@ export function activateAndRevealWorktree(
   // 3. Core activation: sets activeWorktreeId, restores per-worktree state,
   // clears unread, bumps dead PTY generations, triggers GitHub refresh
   state.setActiveWorktree(worktreeId)
-  if (isWebRuntimeSessionActive(useAppStore.getState().settings?.activeRuntimeEnvironmentId)) {
+  if (
+    opts?.notifyHostRuntime !== false &&
+    isWebRuntimeSessionActive(useAppStore.getState().settings?.activeRuntimeEnvironmentId)
+  ) {
     // Why: paired web clients own only local selection state. The desktop host
     // must also activate the worktree so hidden renderer-owned terminal panes
     // mount and publish session surfaces back to the web client.
@@ -181,14 +203,16 @@ export function activateAndRevealWorktree(
   // flips, so the recency stamp must land with the same guarantee. Separate
   // from recordWorktreeVisit (nav-history) and from worktree.lastActivityAt
   // (background signal) on purpose — see docs/cmd-j-empty-query-ordering.md.
-  state.markWorktreeVisited(worktreeId)
+  if (!isPlainAlreadyActiveTerminal) {
+    state.markWorktreeVisited(worktreeId)
+  }
 
   // Why: activateAndRevealWorktree always ends in 'terminal' view (step 2),
   // and Settings/Tasks transitions do not pass through this function, so no
   // view-guard is needed here. The guard skips re-recording when the caller
   // is goBackWorktree/goForwardWorktree, which mutate the history index
   // directly instead of treating the target as a new visit.
-  if (!state.isNavigatingHistory) {
+  if (!isPlainAlreadyActiveTerminal && !state.isNavigatingHistory) {
     state.recordWorktreeVisit(worktreeId)
   }
 
@@ -217,7 +241,58 @@ export function activateAndRevealWorktree(
     state.revealWorktreeInSidebar(worktreeId)
   }
 
+  ensureWebRuntimeWorktreeTerminalAfterWake(worktreeId)
+
   return { primaryTabId }
+}
+
+export function ensureWebRuntimeWorktreeTerminalAfterWake(worktreeId: string): void {
+  const state = useAppStore.getState()
+  const runtimeEnvironmentId = state.settings?.activeRuntimeEnvironmentId?.trim()
+  if (!runtimeEnvironmentId || !isWebRuntimeSessionActive(runtimeEnvironmentId)) {
+    return
+  }
+
+  const tabs = state.tabsByWorktree[worktreeId] ?? []
+  if (tabs.length === 0) {
+    return
+  }
+
+  const hasLivePty = tabs.some((tab) => tabHasLivePty(state.ptyIdsByTabId, tab.id))
+  if (hasLivePty) {
+    return
+  }
+
+  const hasMirroredHostTabs = tabs.some((tab) => isWebTerminalSurfaceTabId(tab.id))
+  if (hasMirroredHostTabs) {
+    // Why: the host session still owns these tabs — wait for the mirror to
+    // repopulate PTY handles instead of creating a duplicate terminal.
+    return
+  }
+
+  if (getLastKnownHostTerminalTabCount(runtimeEnvironmentId, worktreeId) > 0) {
+    return
+  }
+
+  const { renderableTabCount } = state.reconcileWorktreeTabModel(worktreeId)
+  if (renderableTabCount === 0) {
+    return
+  }
+
+  if (!beginWebRuntimeWakeTerminalRespawn(worktreeId)) {
+    return
+  }
+
+  // Why: sleep keeps local tab rows but terminal.stop clears host PTYs, so
+  // activation alone can leave a woke workspace with tab chrome but no surface.
+  void createWebRuntimeSessionTerminal({
+    worktreeId,
+    environmentId: runtimeEnvironmentId,
+    activate: true,
+    selectWorktree: false
+  }).finally(() => {
+    endWebRuntimeWakeTerminalRespawn(worktreeId)
+  })
 }
 
 export function ensureWorktreeHasInitialTerminal(

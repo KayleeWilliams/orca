@@ -34,6 +34,7 @@ import {
 import { isIntentionalAppRestartInProgress } from '@/lib/updater-beforeunload'
 import EditorAutosaveController from './editor/EditorAutosaveController'
 import type { Tab, TabContentType, TabGroupLayoutNode } from '../../../shared/types'
+import { hasFeatureInteraction } from '../../../shared/feature-interactions'
 import BrowserPane from './browser-pane/BrowserPane'
 import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
 import { useBrowserAutomationVisibilityForAny } from './browser-pane/browser-automation-visibility'
@@ -88,7 +89,9 @@ import {
 } from '../../../shared/keybindings'
 import { matchesRecentTabSwitcherChord } from '../../../shared/window-shortcut-policy'
 import { showTerminalShortcutCaptureNotification } from '@/lib/terminal-shortcut-capture-notification'
+import { useContextualTour } from './contextual-tours/use-contextual-tour'
 import { openTabBarEntry, type TabCreateEntryArgs } from './tab-bar/tab-create-entry-action'
+import { closeTerminalTab } from './terminal/terminal-tab-actions'
 
 const EditorPanel = lazy(() => import('./editor/EditorPanel'))
 
@@ -209,6 +212,7 @@ function Terminal(): React.JSX.Element | null {
   const setActiveTabType = useAppStore((s) => s.setActiveTabType)
   const setActiveFile = useAppStore((s) => s.setActiveFile)
   const closeFile = useAppStore((s) => s.closeFile)
+  const makePreviewFilePermanent = useAppStore((s) => s.makePreviewFilePermanent)
   const pinFile = useAppStore((s) => s.pinFile)
   const browserTabsByWorktree = useAppStore((s) => s.browserTabsByWorktree)
   const createBrowserTab = useAppStore((s) => s.createBrowserTab)
@@ -250,11 +254,7 @@ function Terminal(): React.JSX.Element | null {
 
   // Why: the TabBar is rendered into the titlebar via a portal so tabs share
   // the same row as the "Orca" title. The target element is created by App.tsx.
-  // Uses useEffect because the DOM element doesn't exist during the render phase.
-  const [titlebarTabsTarget, setTitlebarTabsTarget] = useState<HTMLElement | null>(null)
-  useEffect(() => {
-    setTitlebarTabsTarget(document.getElementById('titlebar-tabs'))
-  }, [])
+  const titlebarTabsTarget = document.getElementById('titlebar-tabs')
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -284,6 +284,23 @@ function Terminal(): React.JSX.Element | null {
   const activeWorktreeBrowserTabIdsKey = renderedActiveWorktreeId
     ? (browserTabsByWorktree[renderedActiveWorktreeId] ?? []).map((tab) => tab.id).join(',')
     : ''
+  const activeContextualTourId = useAppStore((s) => s.activeContextualTourId)
+  const hasSplitTerminalPane = useAppStore((s) =>
+    hasFeatureInteraction(s.featureInteractions, 'terminal-pane-split')
+  )
+
+  useContextualTour(
+    'workspace-agent-sessions',
+    Boolean(
+      activeWorktreeId &&
+      activeView === 'terminal' &&
+      workspaceSessionReady &&
+      activeTabType === 'terminal' &&
+      Boolean(activeTabId) &&
+      (!hasSplitTerminalPane || activeContextualTourId === 'workspace-agent-sessions')
+    ),
+    'workspace_agent_sessions_visible'
+  )
 
   // Save confirmation dialog state
   const [saveDialogFileId, setSaveDialogFileId] = useState<string | null>(null)
@@ -882,74 +899,9 @@ function Terminal(): React.JSX.Element | null {
     await openNewMarkdownInActiveWorkspace(targetGroupId)
   }, [activeWorktreeId, openNewMarkdownInActiveWorkspace])
 
-  const handleCloseTab = useCallback(
-    (tabId: string) => {
-      const state = useAppStore.getState()
-      const owningWorktreeEntry = Object.entries(state.tabsByWorktree).find(([, worktreeTabs]) =>
-        worktreeTabs.some((tab) => tab.id === tabId)
-      )
-      const owningWorktreeId = owningWorktreeEntry?.[0] ?? null
-
-      if (!owningWorktreeId) {
-        return
-      }
-      if (isPinnedVisibleTab(state, owningWorktreeId, tabId)) {
-        return
-      }
-
-      if (isWebRuntimeSessionActive(activeRuntimeEnvironmentId)) {
-        void closeWebRuntimeSessionTab({
-          worktreeId: owningWorktreeId,
-          tabId,
-          environmentId: activeRuntimeEnvironmentId
-        })
-        return
-      }
-
-      const currentTabs = state.tabsByWorktree[owningWorktreeId] ?? []
-      if (currentTabs.length <= 1) {
-        closeTab(tabId)
-        if (state.activeWorktreeId === owningWorktreeId) {
-          // Why: only deactivate the worktree when no tabs of any kind remain.
-          // Editor files are a separate tab type; closing the last terminal tab
-          // should switch to the editor view instead of tearing down the workspace.
-          const worktreeFile = state.openFiles.find((f) => f.worktreeId === owningWorktreeId)
-          if (worktreeFile) {
-            setActiveFile(worktreeFile.id)
-            setActiveTabType('editor')
-          } else {
-            const browserTab = (state.browserTabsByWorktree[owningWorktreeId] ?? [])[0]
-            if (browserTab) {
-              setActiveBrowserTab(browserTab.id)
-              setActiveTabType('browser')
-            } else {
-              setActiveWorktree(null)
-            }
-          }
-        }
-        return
-      }
-
-      // If closing the active tab in the active worktree, switch to a neighbor.
-      if (state.activeWorktreeId === owningWorktreeId && tabId === state.activeTabId) {
-        const idx = currentTabs.findIndex((t) => t.id === tabId)
-        const nextTab = currentTabs[idx + 1] ?? currentTabs[idx - 1]
-        if (nextTab) {
-          setActiveTab(nextTab.id)
-        }
-      }
-      closeTab(tabId)
-    },
-    [
-      activeRuntimeEnvironmentId,
-      closeTab,
-      setActiveBrowserTab,
-      setActiveTab,
-      setActiveFile,
-      setActiveTabType,
-      setActiveWorktree
-    ]
-  )
+  const handleCloseTab = useCallback((tabId: string) => {
+    closeTerminalTab(tabId)
+  }, [])
 
   const handleCloseBrowserTab = useCallback(
     (tabId: string) => {
@@ -1620,6 +1572,7 @@ function Terminal(): React.JSX.Element | null {
             onCloseBrowserTab={handleCloseBrowserTab}
             onDuplicateBrowserTab={handleDuplicateBrowserTab}
             onCloseAllFiles={handleCloseAllFiles}
+            onMakePreviewFilePermanent={makePreviewFilePermanent}
             onPinFile={pinFile}
             tabBarOrder={tabBarOrder}
           />,
@@ -1765,9 +1718,9 @@ function Terminal(): React.JSX.Element | null {
               })}
           </div>
 
-          {/* Browser panes container — all browser panes for the active worktree
-              stay mounted so webview DOM state (scroll position, form inputs, etc.)
-              survives tab switches. BrowserPagePane uses isActive + CSS to show/hide. */}
+          {/* Browser panes container — only the active pane mounts so inactive
+              webviews park into the bounded registry instead of keeping hidden
+              Electron guest renderers alive indefinitely. */}
           <div
             className={`relative flex-1 min-h-0 overflow-hidden ${
               activeTabType !== 'browser' ? 'hidden' : ''
@@ -1798,7 +1751,9 @@ function Terminal(): React.JSX.Element | null {
                         key={browserTab.id}
                         className={`absolute inset-0${isBrowserActive ? '' : ' pointer-events-none hidden'}`}
                       >
-                        <BrowserPane browserTab={browserTab} isActive={isBrowserActive} />
+                        {isBrowserActive ? (
+                          <BrowserPane browserTab={browserTab} isActive={isBrowserActive} />
+                        ) : null}
                       </div>
                     )
                   })}

@@ -12,16 +12,19 @@ import {
   Copy,
   Check,
   MessageSquare,
+  Plus,
   ChevronDown,
   ChevronRight,
   Sparkles,
   RefreshCw,
-  Wrench,
   AlertTriangle,
-  Maximize2
+  MoreHorizontal,
+  Pencil,
+  Trash
 } from 'lucide-react'
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Accordion,
   AccordionContent,
@@ -36,6 +39,13 @@ import {
   DialogTitle,
   DialogTrigger
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import CommentMarkdown from '@/components/sidebar/CommentMarkdown'
 import {
@@ -160,7 +170,9 @@ export function MergeConflictNotice({
 }
 
 export function PRTriageStrip({
+  review,
   pr,
+  reviewKind = 'PR',
   checks,
   isResolvingConflictsWithAI,
   onResolveConflictsWithAI,
@@ -171,7 +183,9 @@ export function PRTriageStrip({
   fixChecksDisabled,
   fixChecksDisabledReason
 }: {
-  pr: PRInfo
+  review?: ConflictReview
+  pr?: ConflictReview
+  reviewKind?: 'PR' | 'MR'
   checks: PRCheckDetail[]
   isResolvingConflictsWithAI: boolean
   onResolveConflictsWithAI: () => void
@@ -182,15 +196,16 @@ export function PRTriageStrip({
   fixChecksDisabled?: boolean
   fixChecksDisabledReason?: string
 }): React.JSX.Element {
+  const resolvedReview = review ?? pr
   const failingCount = checks.filter((check) => isFailedCheck(check)).length
   const pendingCount = checks.filter(
     (check) => check.conclusion === 'pending' || check.conclusion === null
   ).length
 
-  if (pr.mergeable === 'CONFLICTING') {
+  if (resolvedReview?.mergeable === 'CONFLICTING') {
     return (
       <ConflictTriageStrip
-        reviewKind="PR"
+        reviewKind={reviewKind}
         isResolvingConflictsWithAI={isResolvingConflictsWithAI}
         onResolveConflictsWithAI={onResolveConflictsWithAI}
         resolveConflictsDisabled={resolveConflictsDisabled}
@@ -214,7 +229,7 @@ export function PRTriageStrip({
           </div>
           <Button
             type="button"
-            variant="default"
+            variant="outline"
             size="xs"
             disabled={isFixingChecksWithAI || fixChecksDisabled}
             title={fixChecksDisabled ? fixChecksDisabledReason : undefined}
@@ -223,7 +238,7 @@ export function PRTriageStrip({
             {isFixingChecksWithAI ? (
               <RefreshCw className="size-3 animate-spin" />
             ) : (
-              <Wrench className="size-3" />
+              <Sparkles className="size-3" />
             )}
             Fix
           </Button>
@@ -484,7 +499,7 @@ function CheckRunDetails({
               <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Annotations
               </div>
-              <div className="flex max-h-40 flex-col gap-2 overflow-y-auto scrollbar-sleek">
+              <div className="flex flex-col gap-2">
                 {details!.annotations.map((annotation, index) => (
                   <div key={`${annotation.path ?? 'annotation'}-${index}`} className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
@@ -507,7 +522,7 @@ function CheckRunDetails({
                       {annotation.message}
                     </div>
                     {annotation.rawDetails && (
-                      <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px] text-muted-foreground scrollbar-sleek">
+                      <pre className="mt-1 whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px] text-muted-foreground">
                         {annotation.rawDetails}
                       </pre>
                     )}
@@ -527,7 +542,7 @@ function CheckRunDetails({
               <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {failedJobs.length > 0 ? 'Failed jobs' : 'Jobs'}
               </div>
-              <div className="flex max-h-48 flex-col gap-2 overflow-y-auto scrollbar-sleek">
+              <div className="flex flex-col gap-2">
                 {jobs.map((job, index) => (
                   <div key={`${job.name}-${index}`} className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
@@ -579,19 +594,18 @@ function CheckRunDetails({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex justify-end pt-1">
             {!state?.loading && (
               <Dialog>
                 <DialogTrigger asChild>
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="outline"
                     size="xs"
                     className="h-7 gap-1 px-2 text-[11px]"
                     onClick={(event) => event.stopPropagation()}
                   >
                     View full details
-                    <Maximize2 className="size-3" />
                   </Button>
                 </DialogTrigger>
                 <CheckRunDetailsDialog
@@ -602,21 +616,6 @@ function CheckRunDetails({
                   openUrl={openUrl}
                 />
               </Dialog>
-            )}
-            {openUrl && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                className="h-7 gap-1 px-2 text-[11px]"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  window.api.shell.openUrl(openUrl)
-                }}
-              >
-                Open details
-                <ExternalLink className="size-3" />
-              </Button>
             )}
           </div>
         </div>
@@ -827,8 +826,11 @@ export function ChecksList({
   )
   const detailsContextRef = useRef(checkDetailsContextKey)
   const autoExpandedContextRef = useRef<string | null>(null)
+  // Why: expanded check details already sit inside the sidebar scroller; keeping
+  // the list scroller too creates nested scrollbars around CI annotations.
+  const shouldConstrainCheckList = checksExpanded && expandedCheckKeys.size === 0
   const { detailsHeight, handleResizeStart } = useCheckDetailsResize(
-    checksExpanded && checks.length > 0
+    shouldConstrainCheckList && checks.length > 0
   )
   detailsContextRef.current = checkDetailsContextKey
   const sorted = React.useMemo(
@@ -1022,8 +1024,8 @@ export function ChecksList({
       ) : !checksExpanded ? null : (
         <>
           <div
-            className="overflow-y-auto py-1 scrollbar-sleek"
-            style={{ maxHeight: detailsHeight }}
+            className={cn('py-1', shouldConstrainCheckList && 'overflow-y-auto scrollbar-sleek')}
+            style={shouldConstrainCheckList ? { maxHeight: detailsHeight } : undefined}
           >
             {rows.map((row) => {
               const check = row.check
@@ -1031,11 +1033,12 @@ export function ChecksList({
               const Icon = CHECK_ICON[conclusion] ?? CircleDashed
               const color = CHECK_COLOR[conclusion] ?? 'text-muted-foreground'
               const expanded = expandedCheckKeys.has(row.key)
+              const openUrl = check.url
               return (
                 <div key={row.key} className="min-w-0">
                   <div
                     className={cn(
-                      'flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 transition-colors hover:bg-accent/40',
+                      'group/check-row flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 transition-colors hover:bg-accent/40',
                       expanded && 'bg-accent/25'
                     )}
                     onClick={() => toggleCheckExpanded(row)}
@@ -1056,8 +1059,32 @@ export function ChecksList({
                     <span className="flex-1 truncate text-[12px] text-foreground">
                       {check.name}
                     </span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">
-                      {getCheckStatusLabel(check)}
+                    <span className="flex shrink-0 items-center gap-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        {getCheckStatusLabel(check)}
+                      </span>
+                      {openUrl && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="size-6 text-muted-foreground hover:text-foreground focus-visible:text-foreground"
+                              aria-label="Open check details"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                window.api.shell.openUrl(openUrl)
+                              }}
+                            >
+                              <ExternalLink className="size-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" sideOffset={4}>
+                            Open check details
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </span>
                   </div>
                   {expanded && <CheckRunDetails check={check} state={detailsByCheckKey[row.key]} />}
@@ -1065,15 +1092,17 @@ export function ChecksList({
               )
             })}
           </div>
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            title="Drag to resize checks"
-            className="group flex h-2 cursor-row-resize items-center border-b border-border"
-            onMouseDown={handleResizeStart}
-          >
-            <div className="h-px w-full bg-transparent transition-colors group-hover:bg-ring/40" />
-          </div>
+          {shouldConstrainCheckList && (
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              title="Drag to resize checks"
+              className="group flex h-2 cursor-row-resize items-center border-b border-border"
+              onMouseDown={handleResizeStart}
+            >
+              <div className="h-px w-full bg-transparent transition-colors group-hover:bg-ring/40" />
+            </div>
+          )}
           {checks.length >= 100 && (
             <div className="border-b border-border px-3 py-1.5 text-[10px] text-muted-foreground">
               Showing first 100 checks
@@ -1210,6 +1239,76 @@ function formatLineRange(comment: PRComment): string | null {
   return `L${comment.line}`
 }
 
+/** True for top-level PR conversation comments the viewer can edit or delete. */
+export function isMutablePRConversationComment(comment: PRComment): boolean {
+  if (comment.threadId || comment.path) {
+    return false
+  }
+  if (comment.url && comment.url.includes('pullrequestreview')) {
+    return false
+  }
+  return Number.isSafeInteger(comment.id) && comment.id > 0
+}
+
+function CommentMoreMenu({
+  comment,
+  onStartEdit,
+  onDelete
+}: {
+  comment: PRComment
+  onStartEdit?: () => void
+  onDelete?: () => void | Promise<void>
+}): React.JSX.Element | null {
+  const hasGoToComment = Boolean(comment.url)
+  const hasEdit = Boolean(onStartEdit)
+  const hasDelete = Boolean(onDelete)
+  if (!hasGoToComment && !hasEdit && !hasDelete) {
+    return null
+  }
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="shrink-0 rounded p-1 text-muted-foreground/40 transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="More comment actions"
+          title="More"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontal className="size-3" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={4}>
+        {hasGoToComment && (
+          <DropdownMenuItem onSelect={() => window.api.shell.openUrl(comment.url)}>
+            <ExternalLink />
+            Go to comment
+          </DropdownMenuItem>
+        )}
+        {hasGoToComment && (hasEdit || hasDelete) ? <DropdownMenuSeparator /> : null}
+        {hasEdit ? (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              onStartEdit?.()
+            }}
+          >
+            <Pencil />
+            Edit
+          </DropdownMenuItem>
+        ) : null}
+        {hasDelete ? (
+          <DropdownMenuItem variant="destructive" onSelect={() => void onDelete?.()}>
+            <Trash />
+            Delete
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 /** Build copy text that includes file location context for review comments. */
 function buildCopyText(comment: PRComment): string {
   if (!comment.path) {
@@ -1229,7 +1328,9 @@ function CommentRow({
   replyDisabled,
   replyDisabledReason,
   onResolve,
-  onReply
+  onReply,
+  onEditComment,
+  onDeleteComment
 }: {
   comment: PRComment
   isReply: boolean
@@ -1239,20 +1340,70 @@ function CommentRow({
   replyDisabledReason?: string
   onResolve?: (threadId: string, resolve: boolean) => boolean | Promise<boolean>
   onReply?: (comment: PRComment) => void
+  onEditComment?: (comment: PRComment, body: string) => Promise<boolean>
+  onDeleteComment?: (comment: PRComment) => void | Promise<void>
 }): React.JSX.Element {
   const automated = isBotPRComment(comment)
+  const canMutateComment = isMutablePRConversationComment(comment)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(comment.body)
+  const [submittingEdit, setSubmittingEdit] = useState(false)
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(comment.body)
+    }
+  }, [comment.body, editing])
+
+  const handleStartEdit = useCallback((): void => {
+    setDraft(comment.body)
+    setEditing(true)
+  }, [comment.body])
+
+  const handleCancelEdit = useCallback(
+    (event: React.MouseEvent): void => {
+      event.stopPropagation()
+      setEditing(false)
+      setDraft(comment.body)
+    },
+    [comment.body]
+  )
+
+  const handleSaveEdit = useCallback(
+    async (event: React.MouseEvent): Promise<void> => {
+      event.stopPropagation()
+      const trimmedDraft = draft.trim()
+      if (!onEditComment || !trimmedDraft || trimmedDraft === comment.body) {
+        setEditing(false)
+        return
+      }
+      setSubmittingEdit(true)
+      try {
+        const ok = await onEditComment(comment, trimmedDraft)
+        if (ok) {
+          setEditing(false)
+        }
+      } finally {
+        setSubmittingEdit(false)
+      }
+    },
+    [comment, draft, onEditComment]
+  )
+
+  const handleDelete = useCallback((): void => {
+    void onDeleteComment?.(comment)
+  }, [comment, onDeleteComment])
+
+  const trimmedDraft = draft.trim()
+  const canSaveEdit = !submittingEdit && trimmedDraft.length > 0 && trimmedDraft !== comment.body
+
   return (
     <div
       className={cn(
-        'flex items-start gap-2 py-1.5 hover:bg-accent/40 transition-colors cursor-pointer group/comment',
+        'flex items-start gap-2 py-1.5 hover:bg-accent/40 transition-colors group/comment',
         isReply ? 'pl-7 pr-3' : 'px-3',
         comment.isResolved && PR_COMMENT_RESOLVED_CONTAINER_CLASS
       )}
-      onClick={() => {
-        if (comment.url) {
-          window.api.shell.openUrl(comment.url)
-        }
-      }}
     >
       <div className="flex-1 min-w-0">
         {/* Author line: avatar + name + file badge aligned on center */}
@@ -1288,38 +1439,76 @@ function CommentRow({
             </span>
           )}
           <div className="flex-1" />
-          <div className="flex items-center gap-0.5 opacity-0 group-hover/comment:opacity-100 transition-opacity">
-            {showResolve && comment.threadId != null && onResolve && (
-              <ResolveButton
-                threadId={comment.threadId}
-                isResolved={comment.isResolved ?? false}
-                onResolve={onResolve}
+          {!editing && (
+            <div className="flex items-center gap-0.5 opacity-0 group-hover/comment:opacity-100 transition-opacity">
+              {showResolve && comment.threadId != null && onResolve && (
+                <ResolveButton
+                  threadId={comment.threadId}
+                  isResolved={comment.isResolved ?? false}
+                  onResolve={onResolve}
+                />
+              )}
+              {showReply && onReply && (
+                <button
+                  className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  title={replyDisabled ? replyDisabledReason : 'Reply'}
+                  disabled={replyDisabled}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onReply(comment)
+                  }}
+                >
+                  Reply
+                </button>
+              )}
+              <CopyButton text={buildCopyText(comment)} />
+              <CommentMoreMenu
+                comment={comment}
+                onStartEdit={canMutateComment && onEditComment ? handleStartEdit : undefined}
+                onDelete={canMutateComment && onDeleteComment ? handleDelete : undefined}
               />
-            )}
-            {showReply && onReply && (
-              <button
-                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                title={replyDisabled ? replyDisabledReason : 'Reply'}
-                disabled={replyDisabled}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onReply(comment)
-                }}
-              >
-                Reply
-              </button>
-            )}
-            <CopyButton text={buildCopyText(comment)} />
-          </div>
-        </div>
-        <CommentMarkdown
-          content={comment.body}
-          className={cn(
-            'mt-1 text-[11px] leading-snug text-muted-foreground',
-            'break-words [&_p]:my-1 [&_pre]:max-h-none [&_pre]:max-w-full [&_pre]:whitespace-pre-wrap [&_table]:w-full [&_table]:max-w-full',
-            isReply ? 'pl-5' : 'pl-[22px]'
+            </div>
           )}
-        />
+        </div>
+        {editing ? (
+          <div className={cn('mt-1 flex flex-col gap-1.5', isReply ? 'pl-5' : 'pl-[22px]')}>
+            <textarea
+              autoFocus
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              className="min-h-[60px] w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-[11px] leading-snug text-foreground"
+            />
+            <div className="flex justify-end gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                disabled={submittingEdit}
+                onClick={handleCancelEdit}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                disabled={!canSaveEdit}
+                onClick={(event) => void handleSaveEdit(event)}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <CommentMarkdown
+            content={comment.body}
+            className={cn(
+              'mt-1 text-[11px] leading-snug text-muted-foreground',
+              'break-words [&_p]:my-1 [&_pre]:max-h-none [&_pre]:max-w-full [&_pre]:whitespace-pre-wrap [&_table]:w-full [&_table]:max-w-full',
+              isReply ? 'pl-5' : 'pl-[22px]'
+            )}
+          />
+        )}
       </div>
     </div>
   )
@@ -1333,7 +1522,9 @@ function PRCommentGroupView({
   onResolve,
   onStartReply,
   onCancelReply,
-  onReply
+  onReply,
+  onEditComment,
+  onDeleteComment
 }: {
   group: PRCommentGroup
   replyingGroupId: string | null
@@ -1343,6 +1534,8 @@ function PRCommentGroupView({
   onStartReply?: (groupId: string) => void
   onCancelReply?: () => void
   onReply?: (comment: PRComment, body: string) => Promise<RightPanelCommentSubmitResult>
+  onEditComment?: (comment: PRComment, body: string) => Promise<boolean>
+  onDeleteComment?: (comment: PRComment) => void | Promise<void>
 }): React.JSX.Element {
   const groupId = getPRCommentGroupId(group)
   const root = getPRCommentGroupRoot(group)
@@ -1374,6 +1567,8 @@ function PRCommentGroupView({
           replyDisabledReason={replyDisabledReason}
           onResolve={onResolve}
           onReply={startReply ? () => startReply() : undefined}
+          onEditComment={onEditComment}
+          onDeleteComment={onDeleteComment}
         />
         {replyComposer}
       </div>
@@ -1390,6 +1585,8 @@ function PRCommentGroupView({
         replyDisabledReason={replyDisabledReason}
         onResolve={onResolve}
         onReply={startReply ? () => startReply() : undefined}
+        onEditComment={onEditComment}
+        onDeleteComment={onDeleteComment}
       />
       {group.replies.length > 0 && (
         <div className="ml-3 border-l-2 border-border/50">
@@ -1401,6 +1598,8 @@ function PRCommentGroupView({
               showResolve={false}
               showReply={false}
               onResolve={onResolve}
+              onEditComment={onEditComment}
+              onDeleteComment={onDeleteComment}
             />
           ))}
         </div>
@@ -1418,7 +1617,9 @@ function ResolvedCommentGroupAccordion({
   onResolve,
   onStartReply,
   onCancelReply,
-  onReply
+  onReply,
+  onEditComment,
+  onDeleteComment
 }: {
   group: PRCommentGroup
   replyingGroupId: string | null
@@ -1428,6 +1629,8 @@ function ResolvedCommentGroupAccordion({
   onStartReply?: (groupId: string) => void
   onCancelReply?: () => void
   onReply?: (comment: PRComment, body: string) => Promise<RightPanelCommentSubmitResult>
+  onEditComment?: (comment: PRComment, body: string) => Promise<boolean>
+  onDeleteComment?: (comment: PRComment) => void | Promise<void>
 }): React.JSX.Element {
   const root = getPRCommentGroupRoot(group)
   const count = getPRCommentGroupCount(group)
@@ -1450,6 +1653,8 @@ function ResolvedCommentGroupAccordion({
             onStartReply={onStartReply}
             onCancelReply={onCancelReply}
             onReply={onReply}
+            onEditComment={onEditComment}
+            onDeleteComment={onDeleteComment}
           />
         </AccordionContent>
       </AccordionItem>
@@ -1506,7 +1711,9 @@ export function PRCommentsList({
   commentsDisabledReason,
   onAddComment,
   onReply,
-  onResolve
+  onResolve,
+  onEditComment,
+  onDeleteComment
 }: {
   comments: PRComment[]
   commentsLoading: boolean
@@ -1515,6 +1722,8 @@ export function PRCommentsList({
   onAddComment?: (body: string) => Promise<RightPanelCommentSubmitResult>
   onReply?: (comment: PRComment, body: string) => Promise<RightPanelCommentSubmitResult>
   onResolve?: (threadId: string, resolve: boolean) => boolean | Promise<boolean>
+  onEditComment?: (comment: PRComment, body: string) => Promise<boolean>
+  onDeleteComment?: (comment: PRComment) => void | Promise<void>
 }): React.JSX.Element {
   const [commentFilter, setCommentFilter] = useState<PRCommentAudienceFilter>('all')
   const [replyingGroupId, setReplyingGroupId] = useState<string | null>(null)
@@ -1564,34 +1773,20 @@ export function PRCommentsList({
     setIsAddingComment(false)
   }, [])
 
-  const renderAddCommentSurface = (empty: boolean): React.JSX.Element => (
+  const renderAddCommentComposer = (empty: boolean): React.JSX.Element => (
     <div
       ref={addCommentSurfaceRef}
       className={cn(empty ? 'px-3 py-2' : 'border-t border-border px-3 py-2')}
     >
-      {isAddingComment ? (
-        <RightPanelCommentComposer
-          placeholder={empty ? 'Start conversation...' : 'Add a PR comment'}
-          submitLabel="Comment"
-          autoFocus
-          disabled={commentsDisabled}
-          disabledReason={commentsDisabledReason}
-          onCancel={cancelAddComment}
-          onSubmit={onAddComment ?? (async () => ({ ok: false, error: 'Commenting unavailable.' }))}
-        />
-      ) : (
-        // Why: the empty comments state should be a single composer affordance;
-        // duplicating "no comments" copy or the header icon makes the panel noisy.
-        <button
-          type="button"
-          disabled={commentsDisabled}
-          title={commentsDisabled ? commentsDisabledReason : undefined}
-          className="flex h-10 w-full min-w-0 items-center rounded-md border border-input bg-background px-3 text-left text-[12px] text-muted-foreground shadow-xs transition-colors hover:border-ring/50 hover:bg-accent/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={startAddComment}
-        >
-          <span className="truncate">{empty ? 'Start conversation...' : 'Add a comment...'}</span>
-        </button>
-      )}
+      <RightPanelCommentComposer
+        placeholder={empty ? 'Start conversation...' : 'Add a PR comment'}
+        submitLabel="Send"
+        autoFocus
+        disabled={commentsDisabled}
+        disabledReason={commentsDisabledReason}
+        onCancel={cancelAddComment}
+        onSubmit={onAddComment ?? (async () => ({ ok: false, error: 'Commenting unavailable.' }))}
+      />
     </div>
   )
 
@@ -1599,11 +1794,36 @@ export function PRCommentsList({
     <div className="border-t border-border">
       {/* Header */}
       <div className="border-b border-border px-3 py-2">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <MessageSquare className="size-3.5 text-muted-foreground" />
           <span className="text-[11px] font-medium text-foreground">Comments</span>
           {comments.length > 0 && (
             <span className="text-[10px] text-muted-foreground">{comments.length}</span>
+          )}
+          {onAddComment && !isAddingComment && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={comments.length === 0 ? 'Start conversation' : 'Add comment'}
+                  disabled={commentsDisabled}
+                  title={commentsDisabled ? commentsDisabledReason : undefined}
+                  className="-mr-1 ml-auto text-muted-foreground hover:text-foreground"
+                  onClick={startAddComment}
+                >
+                  <Plus className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={4}>
+                {commentsDisabled && commentsDisabledReason
+                  ? commentsDisabledReason
+                  : comments.length === 0
+                    ? 'Start conversation'
+                    : 'Add comment'}
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
         {comments.length > 0 && (
@@ -1640,12 +1860,14 @@ export function PRCommentsList({
         <div className="flex items-center justify-center py-6">
           <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
         </div>
-      ) : comments.length === 0 && onAddComment ? (
-        renderAddCommentSurface(true)
+      ) : comments.length === 0 && isAddingComment && onAddComment ? (
+        renderAddCommentComposer(true)
       ) : comments.length === 0 ? (
-        <div className="flex items-center justify-center py-5 text-[11px] text-muted-foreground">
-          No comments
-        </div>
+        !onAddComment && (
+          <div className="flex items-center justify-center py-5 text-[11px] text-muted-foreground">
+            No comments
+          </div>
+        )
       ) : visibleComments.length === 0 ? (
         <div className="flex items-center justify-center py-5 text-[11px] text-muted-foreground">
           {getPRCommentAudienceEmptyLabel(commentFilter)}
@@ -1665,6 +1887,8 @@ export function PRCommentsList({
                   onStartReply={setReplyingGroupId}
                   onCancelReply={() => setReplyingGroupId(null)}
                   onReply={onReply}
+                  onEditComment={onEditComment}
+                  onDeleteComment={onDeleteComment}
                 />
               )
             }
@@ -1679,12 +1903,14 @@ export function PRCommentsList({
                 onStartReply={setReplyingGroupId}
                 onCancelReply={() => setReplyingGroupId(null)}
                 onReply={onReply}
+                onEditComment={onEditComment}
+                onDeleteComment={onDeleteComment}
               />
             )
           })}
         </div>
       )}
-      {onAddComment && comments.length > 0 && renderAddCommentSurface(false)}
+      {onAddComment && comments.length > 0 && isAddingComment && renderAddCommentComposer(false)}
     </div>
   )
 }

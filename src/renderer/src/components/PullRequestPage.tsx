@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- Why: duplicated from GitHubItemDialog so the dedicated PR full-page surface can evolve its Primer-styled header without destabilizing the issue dialog; planned to refactor shared parts out later. */
+/* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: PR pages hydrate provider data, diff sections, snippets, and cache refetches from async provider/virtualizer lifecycles. */
 import React, {
   Suspense,
   lazy,
@@ -2157,7 +2158,7 @@ function PRFilesCombinedDiffViewer({
   )
 
   return (
-    <div className="flex min-h-[520px] flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <div className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2">
           {fileTreeCollapsed && (
@@ -3755,7 +3756,9 @@ function ChecksTab({
         toast.error('Could not build the agent launch command.')
         return
       }
-      focusTerminalTabSurface(result.tabId)
+      if (result.tabId) {
+        focusTerminalTabSurface(result.tabId)
+      }
       toast.success('Started an AI agent for the broken checks.')
     } finally {
       setFixingChecks(false)
@@ -4048,7 +4051,7 @@ function ChecksTab({
                 <div className="border-b border-border/40 px-2.5 py-1.5 text-[11px] font-medium text-foreground">
                   Annotations
                 </div>
-                <div className="flex max-h-48 flex-col overflow-y-auto scrollbar-sleek">
+                <div className="flex flex-col">
                   {details!.annotations.map((annotation, index) => (
                     <div
                       key={`${annotation.path ?? 'annotation'}-${index}`}
@@ -4077,7 +4080,7 @@ function ChecksTab({
                         {annotation.message}
                       </div>
                       {annotation.rawDetails && (
-                        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px] text-muted-foreground scrollbar-sleek">
+                        <pre className="mt-1 whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px] text-muted-foreground">
                           {annotation.rawDetails}
                         </pre>
                       )}
@@ -4092,7 +4095,7 @@ function ChecksTab({
                 <div className="border-b border-border/40 px-2.5 py-1.5 text-[11px] font-medium text-foreground">
                   Jobs
                 </div>
-                <div className="flex max-h-64 flex-col overflow-y-auto scrollbar-sleek">
+                <div className="flex flex-col">
                   {details!.jobs.map((job, index) => (
                     <div
                       key={`${job.name}-${index}`}
@@ -5885,7 +5888,7 @@ export default function PullRequestPage({
                 />
               </TabsContent>
 
-              <TabsContent value="files" className="mt-0">
+              <TabsContent value="files" className="mt-0 h-full min-h-0 overflow-hidden">
                 {loading && files.length === 0 ? (
                   <div className="flex items-center justify-center py-10">
                     <LoaderCircle className="size-5 animate-spin text-muted-foreground" />

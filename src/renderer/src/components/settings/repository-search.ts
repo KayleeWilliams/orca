@@ -20,6 +20,8 @@ export function getRepositoryPaneSearchEntries(repo: Repo): SettingsSearchEntry[
         'color',
         'hex',
         'badge',
+        'avatar',
+        'github',
         'emoji',
         'favicon'
       ]
@@ -68,8 +70,8 @@ export function getRepositoryPaneSearchEntries(repo: Repo): SettingsSearchEntry[
       ? []
       : [
           {
-            title: 'Source Control AI',
-            description: 'Project-specific source-control generation overrides.',
+            title: 'Git AI Author',
+            description: 'Project-specific git generation overrides.',
             keywords: [
               repo.displayName,
               'source control',

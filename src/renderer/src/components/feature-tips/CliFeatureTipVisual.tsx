@@ -55,7 +55,6 @@ export function CliFeatureTipVisual(): JSX.Element {
       className="relative flex min-h-[27rem] flex-col overflow-hidden bg-muted/60 px-6 py-7"
       aria-hidden="true"
     >
-      <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background/55 to-transparent" />
       <div className="relative rounded-lg border border-border/70 bg-card/95 shadow-xs">
         <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
           <span className="size-2 rounded-full bg-muted-foreground/35" />

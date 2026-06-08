@@ -23,11 +23,9 @@ function MarkdownTocRow({
       <button
         type="button"
         className="markdown-toc-row"
-        style={{ paddingLeft: 12 + depth * 14 }}
-        title={item.title}
+        style={{ paddingLeft: 16 + depth * 16 }}
         onClick={() => onNavigate(item.id)}
       >
-        <span className="markdown-toc-level">H{item.level}</span>
         <span className="markdown-toc-title">{item.title}</span>
       </button>
       {item.children.map((child) => (

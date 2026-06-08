@@ -13,6 +13,7 @@ import TabBar from '../tab-bar/TabBar'
 import { TabBarQuickCommandsButton } from '../tab-bar/TabBarQuickCommandsButton'
 import { useTabGroupWorkspaceModel } from './useTabGroupWorkspaceModel'
 import TabGroupDropOverlay from './TabGroupDropOverlay'
+import { closeTerminalTab } from '../terminal/terminal-tab-actions'
 import { resolveGroupTabFromVisibleId } from './tab-group-visible-id'
 import {
   getTabPaneBodyDroppableId,
@@ -88,12 +89,15 @@ export default function TabGroupPanel({
       expandedPaneByTabId={model.expandedPaneByTabId}
       onActivate={commands.activateTerminal}
       onClose={(terminalId) => {
-        const item = model.groupTabs.find(
-          (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
-        )
-        if (item) {
+        const item = resolveGroupTabFromVisibleId(model.groupTabs, terminalId)
+        if (item?.contentType === 'terminal') {
           commands.closeItem(item.id)
+          return
         }
+        // Why: agent quick-launch can briefly desync unified/runtime tab ids
+        // before the host snapshot lands; still route close through the shared
+        // terminal close helper instead of no-op'ing.
+        closeTerminalTab(terminalId)
       }}
       onCloseOthers={(visibleId) => {
         // Why: TabBar emits this with the entityId for terminals/browsers and
@@ -146,6 +150,16 @@ export default function TabGroupPanel({
       }}
       onDuplicateBrowserTab={commands.duplicateBrowserTab}
       onCloseAllFiles={commands.closeAllEditorTabsInGroup}
+      onMakePreviewFilePermanent={(_fileId, tabId) => {
+        if (!tabId) {
+          return
+        }
+        const item = model.groupTabs.find((candidate) => candidate.id === tabId)
+        if (!item) {
+          return
+        }
+        commands.makePreviewFilePermanent(item.entityId, item.id)
+      }}
       onPinFile={(_fileId, tabId) => {
         if (!tabId) {
           return
@@ -336,8 +350,17 @@ export default function TabGroupPanel({
       <div
         ref={setBodyDropRef}
         className="relative flex-1 min-h-0 overflow-hidden"
+        data-tab-group-body-id={groupId}
         style={bodyAnchorStyle}
       >
+        {/* Why: this empty anchor lets the agent-sessions tour read as a
+            terminal-area tip instead of attaching to toolbar chrome. */}
+        {isFocused ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-1/4 h-px"
+            data-contextual-tour-target="workspace-agent-terminal-tip"
+          />
+        ) : null}
         {activeDropZone ? <TabGroupDropOverlay zone={activeDropZone} /> : null}
         {activeTab &&
           activeTab.contentType !== 'terminal' &&

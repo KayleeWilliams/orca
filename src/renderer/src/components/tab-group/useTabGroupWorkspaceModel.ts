@@ -23,7 +23,15 @@ import {
   createWebRuntimeSessionTerminal,
   isWebRuntimeSessionActive
 } from '../../runtime/web-runtime-session'
+import { closeTerminalTab } from '../terminal/terminal-tab-actions'
 import { openTabBarEntry, type TabCreateEntryArgs } from '../tab-bar/tab-create-entry-action'
+
+export function recordTerminalTabGroupSplit(createdTerminal: TerminalTab | null | undefined): void {
+  if (!createdTerminal) {
+    return
+  }
+  useAppStore.getState().recordFeatureInteraction('terminal-pane-split')
+}
 
 export type GroupEditorItem = OpenFile & { tabId: string }
 export type GroupBrowserItem = BrowserTabState & { tabId: string }
@@ -79,6 +87,7 @@ export function useTabGroupWorkspaceModel({
     (state) => state.openNewTerminalTabInActiveWorkspace
   )
   const closeFile = useAppStore((state) => state.closeFile)
+  const makePreviewFilePermanent = useAppStore((state) => state.makePreviewFilePermanent)
   const pinFile = useAppStore((state) => state.pinFile)
   const closeBrowserTab = useAppStore((state) => state.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((state) => state.setActiveBrowserTab)
@@ -226,22 +235,24 @@ export function useTabGroupWorkspaceModel({
       const runtimeEnvironmentId = useAppStore
         .getState()
         .settings?.activeRuntimeEnvironmentId?.trim()
-      if (
-        (item.contentType === 'terminal' || item.contentType === 'browser') &&
-        isWebRuntimeSessionActive(runtimeEnvironmentId)
-      ) {
+      if (item.contentType === 'terminal') {
+        closeTerminalTab(item.entityId)
+        if (!opts?.skipEmptyCheck) {
+          leaveWorktreeIfEmpty()
+        }
+        return
+      }
+      if (item.contentType === 'browser' && isWebRuntimeSessionActive(runtimeEnvironmentId)) {
         // Why: paired web clients mirror host-owned tabs. Closing locally races
         // the host session snapshot and leaves stale terminal/browser handles.
         void closeWebRuntimeSessionTab({
           worktreeId,
-          tabId: item.contentType === 'browser' ? item.id : item.entityId,
+          tabId: item.id,
           environmentId: runtimeEnvironmentId
         })
         return
       }
-      if (item.contentType === 'terminal') {
-        closeTab(item.entityId)
-      } else if (item.contentType === 'browser') {
+      if (item.contentType === 'browser') {
         destroyWorkspaceWebviews(useAppStore.getState().browserPagesByWorkspace, item.entityId)
         closeBrowserTab(item.entityId)
       } else {
@@ -420,6 +431,7 @@ export function useTabGroupWorkspaceModel({
           return
         }
         const terminal = createTab(worktreeId, newGroupId)
+        recordTerminalTabGroupSplit(terminal)
         setActiveTab(terminal.id)
         setActiveTabType('terminal')
         return
@@ -608,6 +620,7 @@ export function useTabGroupWorkspaceModel({
           focusTerminalTabSurface(terminal.id)
         })()
       },
+      makePreviewFilePermanent,
       pinFile,
       setTabColor,
       setTabCustomTitle,

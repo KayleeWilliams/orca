@@ -9,6 +9,7 @@ import {
   FileText,
   FolderKanban,
   Layers3,
+  LoaderCircle,
   RefreshCw,
   UserRound
 } from 'lucide-react'
@@ -79,6 +80,9 @@ type LinearCollectionNoticeProps = {
   hasMore?: boolean
   count: number
   label: string
+  onLoadMore?: () => void
+  loading?: boolean
+  loadMoreLabel?: string
 }
 
 function textFromUnknown(value: unknown): string | null {
@@ -165,16 +169,19 @@ export function LinearCollectionNotice({
   errors,
   hasMore,
   count,
-  label
+  label,
+  onLoadMore,
+  loading = false,
+  loadMoreLabel = 'Load more'
 }: LinearCollectionNoticeProps): React.JSX.Element | null {
   if (!hasMore && (!errors || errors.length === 0)) {
     return null
   }
 
   return (
-    <div className="flex flex-none flex-col gap-2 border-t border-border/50 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-none flex-col gap-2 border-t border-border/50 bg-muted/50 text-xs text-muted-foreground">
       {errors && errors.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
+        <div className={cn('flex flex-wrap gap-2 px-3', hasMore ? 'pt-2' : 'py-2')}>
           {errors.map((error) => (
             <Badge key={`${error.workspaceId}-${error.type}`} variant="outline">
               {error.workspaceName ?? error.workspaceId}: {error.message}
@@ -183,8 +190,34 @@ export function LinearCollectionNotice({
         </div>
       ) : null}
       {hasMore ? (
-        <div>
-          Showing first {count} {label}. Search or open Linear for the full set.
+        <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3">
+          {onLoadMore ? null : (
+            <span>
+              Showing first {count} {label}. Search or open Linear for the full set.
+            </span>
+          )}
+          {onLoadMore ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={onLoadMore}
+              disabled={loading}
+              className="inline-flex h-auto w-24 shrink-0 items-center justify-center gap-0.5 rounded-md border-0 bg-transparent px-2 py-1 text-sm text-muted-foreground shadow-none transition hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              {loading ? (
+                <>
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  Loading
+                </>
+              ) : (
+                <>
+                  {loadMoreLabel}
+                  <ArrowRight className="size-4" />
+                </>
+              )}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>

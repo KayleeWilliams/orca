@@ -42,6 +42,7 @@ import {
   type AgentStatusIpcPayload,
   type AgentType,
   type AgentStatusState,
+  type ParsedAgentStatusPayload,
   normalizeAgentStatusPayload
 } from '../../shared/agent-status-types'
 import {
@@ -77,6 +78,7 @@ export type AgentHookStatusChangeEntry = {
 }
 
 type StatusChangeListener = (statuses: AgentHookStatusChangeEntry[]) => void
+type PaneStatusClearListener = (paneKey: string) => void
 type PaneKeyAliasPersistenceListener = (entries: LegacyPaneKeyAliasEntry[]) => void
 type PaneKeyAliasEntry = {
   stablePaneKey: string
@@ -238,6 +240,21 @@ function toAgentStatusIpcPayload(entry: EnrichedAgentHookEventPayload): AgentSta
   }
 }
 
+function equivalentParsedAgentStatusPayload(
+  a: ParsedAgentStatusPayload,
+  b: ParsedAgentStatusPayload
+): boolean {
+  return (
+    a.state === b.state &&
+    a.prompt === b.prompt &&
+    a.agentType === b.agentType &&
+    a.toolName === b.toolName &&
+    a.toolInput === b.toolInput &&
+    a.lastAssistantMessage === b.lastAssistantMessage &&
+    a.interrupted === b.interrupted
+  )
+}
+
 function trackEmptyPaneKeyHook(body: unknown): void {
   if (typeof body !== 'object' || body === null) {
     return
@@ -384,6 +401,7 @@ export class AgentHookServer {
   // caller's knowledge of whether this is a packaged build.
   private env = 'production'
   private onAgentStatus: ((payload: EnrichedAgentHookEventPayload) => void) | null = null
+  private onPaneStatusCleared: PaneStatusClearListener | null = null
   private statusChangeListeners = new Set<StatusChangeListener>()
   // Why: directory that holds the on-disk endpoint file. Set via start()'s
   // `userDataPath` option so the class has no direct Electron dependency
@@ -442,6 +460,10 @@ export class AgentHookServer {
     return () => {
       this.statusChangeListeners.delete(listener)
     }
+  }
+
+  setPaneStatusClearListener(listener: PaneStatusClearListener | null): void {
+    this.onPaneStatusCleared = listener
   }
 
   /** Snapshot of the current cached statuses, in the IPC-shaped form the
@@ -832,6 +854,7 @@ export class AgentHookServer {
   ): void {
     let aliasChanged = false
     let statusChanged = false
+    const clearedStatusPaneKeys = new Set<string>()
     for (const [legacyPaneKey, entry] of this.legacyPaneKeyAliases) {
       if (entry.ptyId === ptyId) {
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
@@ -841,6 +864,7 @@ export class AgentHookServer {
           options?.shouldClearStablePaneKey?.(entry.stablePaneKey) ?? true
         if (shouldClearStablePaneKey && this.state.lastStatusByPaneKey.has(entry.stablePaneKey)) {
           statusChanged = true
+          clearedStatusPaneKeys.add(entry.stablePaneKey)
         }
         if (shouldClearStablePaneKey) {
           // Why: after hydrate, legacy rows are stored under the stable key. If
@@ -859,6 +883,9 @@ export class AgentHookServer {
     if (statusChanged) {
       this.scheduleStatusPersist()
       this.notifyStatusChangeListeners()
+      for (const paneKey of clearedStatusPaneKeys) {
+        this.onPaneStatusCleared?.(paneKey)
+      }
     }
   }
 
@@ -880,6 +907,57 @@ export class AgentHookServer {
     // ORCA_PANE_KEY. The reattach path proves the UUID leaf once, then this
     // bridge lets hook caches and renderer state use only the stable key.
     return { ...record, paneKey: stablePaneKey }
+  }
+
+  ingestTerminalStatus(event: {
+    paneKey: string
+    tabId?: string
+    worktreeId?: string
+    connectionId?: string | null
+    payload: ParsedAgentStatusPayload
+  }): void {
+    const paneKey = this.resolvePaneKeyAlias(event.paneKey.trim())
+    const parsedPaneKey = parsePaneKey(paneKey)
+    if (paneKey.length === 0) {
+      track('agent_hook_unattributed', { reason: 'empty_pane_key' })
+      return
+    }
+    if (paneKey.length > MAX_PANE_KEY_LEN || !parsedPaneKey) {
+      return
+    }
+    const tabId =
+      event.tabId !== undefined && event.tabId.trim().length > 0 ? event.tabId.trim() : undefined
+    if (tabId !== undefined && tabId !== parsedPaneKey.tabId) {
+      return
+    }
+    const worktreeId =
+      event.worktreeId !== undefined && event.worktreeId.trim().length > 0
+        ? event.worktreeId.trim()
+        : undefined
+    const connectionId =
+      typeof event.connectionId === 'string' && event.connectionId.trim().length > 0
+        ? event.connectionId.trim()
+        : null
+    const previous = this.state.lastStatusByPaneKey.get(paneKey) as
+      | EnrichedAgentHookEventPayload
+      | undefined
+    if (
+      previous?.connectionId === connectionId &&
+      previous.tabId === tabId &&
+      previous.worktreeId === worktreeId &&
+      equivalentParsedAgentStatusPayload(previous.payload, event.payload)
+    ) {
+      return
+    }
+    // Why: OSC terminal status is a runtime/model observation, not a hook
+    // prompt boundary. Keep prompt-sent telemetry tied to native hooks.
+    this.applyNormalizedStatus({
+      paneKey,
+      tabId,
+      worktreeId,
+      connectionId,
+      payload: event.payload
+    })
   }
 
   /** Ingest a payload that arrived over the relay JSON-RPC channel rather
@@ -1131,6 +1209,7 @@ export class AgentHookServer {
     this.token = ''
     this.env = 'production'
     this.onAgentStatus = null
+    this.onPaneStatusCleared = null
     for (const timer of this.assistantMessageRetryTimers.values()) {
       clearTimeout(timer)
     }
@@ -1199,6 +1278,7 @@ export class AgentHookServer {
       this.runtimeObservedStatusPaneKeys.delete(resolvedPaneKey)
       this.scheduleStatusPersist()
       this.notifyStatusChangeListeners()
+      this.onPaneStatusCleared?.(resolvedPaneKey)
     }
   }
 

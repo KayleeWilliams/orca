@@ -190,16 +190,19 @@ vi.mock('../ports/advertised-url-watcher', () => ({
   }
 }))
 
-const { killAllProcessesForWorktreeMock, getLocalPtyProviderMock } = vi.hoisted(() => ({
-  killAllProcessesForWorktreeMock: vi.fn(),
-  getLocalPtyProviderMock: vi.fn()
-}))
+const { killAllProcessesForWorktreeMock, clearProviderPtyStateMock, getLocalPtyProviderMock } =
+  vi.hoisted(() => ({
+    killAllProcessesForWorktreeMock: vi.fn(),
+    clearProviderPtyStateMock: vi.fn(),
+    getLocalPtyProviderMock: vi.fn()
+  }))
 
 vi.mock('../runtime/worktree-teardown', () => ({
   killAllProcessesForWorktree: killAllProcessesForWorktreeMock
 }))
 
 vi.mock('./pty', () => ({
+  clearProviderPtyState: clearProviderPtyStateMock,
   getLocalPtyProvider: getLocalPtyProviderMock
 }))
 
@@ -239,6 +242,8 @@ describe('registerWorktreeHandlers', () => {
     reconcileWorktreeBaseStatus: ReturnType<typeof vi.fn>
     clearOptimisticReconcileToken: ReturnType<typeof vi.fn>
     resolveManagedMrBase: ReturnType<typeof vi.fn>
+    createTerminal: ReturnType<typeof vi.fn>
+    splitTerminal: ReturnType<typeof vi.fn>
   }
 
   beforeEach(() => {
@@ -290,6 +295,7 @@ describe('registerWorktreeHandlers', () => {
       store.getAllWorktreeLineage,
       store.removeWorktreeLineage,
       killAllProcessesForWorktreeMock,
+      clearProviderPtyStateMock,
       getLocalPtyProviderMock,
       deleteWorktreeHistoryDirMock,
       advertisedUrlWatcherForgetWorktreeMock
@@ -410,7 +416,18 @@ describe('registerWorktreeHandlers', () => {
       recordOptimisticReconcileToken: vi.fn().mockReturnValue('token-1'),
       reconcileWorktreeBaseStatus: vi.fn(),
       clearOptimisticReconcileToken: vi.fn(),
-      resolveManagedMrBase: vi.fn().mockResolvedValue({ baseBranch: 'origin/mr-branch' })
+      resolveManagedMrBase: vi.fn().mockResolvedValue({ baseBranch: 'origin/mr-branch' }),
+      createTerminal: vi.fn().mockResolvedValue({
+        handle: 'term-startup',
+        worktreeId: 'repo-1::/workspace/improve-dashboard',
+        title: null,
+        surface: 'visible'
+      }),
+      splitTerminal: vi.fn().mockResolvedValue({
+        handle: 'term-setup',
+        tabId: 'tab-startup',
+        paneRuntimeId: -1
+      })
     }
     registerWorktreeHandlers(mainWindow as never, store as never, runtimeStub as never)
   })
@@ -510,7 +527,7 @@ describe('registerWorktreeHandlers', () => {
       comment: 'keep me',
       isPinned: true
     })
-    expect(result).toEqual({ comment: 'keep me', isPinned: true })
+    expect(result).toMatchObject({ comment: 'keep me', isPinned: true })
   })
 
   it('auto-suffixes the branch name when the first choice collides with a remote branch', async () => {
@@ -541,7 +558,7 @@ describe('registerWorktreeHandlers', () => {
       'origin/main',
       false
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         path: '/workspace/improve-dashboard-2',
         branch: 'improve-dashboard-2'
@@ -621,7 +638,7 @@ describe('registerWorktreeHandlers', () => {
       'origin/main',
       false
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         path: '/workspace/feature-something',
         branch: 'feature/something'
@@ -675,6 +692,80 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('spawns a startup terminal and setup terminal after local worktree registration', async () => {
+    addWorktreeMock.mockResolvedValue({})
+    listWorktreesMock.mockResolvedValueOnce([
+      {
+        path: '/workspace/improve-dashboard',
+        head: 'def',
+        branch: 'improve-dashboard',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    loadHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    getEffectiveHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    getEffectiveHooksFromConfigMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    shouldRunSetupForCreateMock.mockReturnValue(true)
+
+    const result = (await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard',
+      createdWithAgent: 'claude',
+      startup: {
+        command: 'claude --prefill test',
+        env: { ORCA_AGENT_MODE: 'direct' },
+        telemetry: {
+          agent_kind: 'claude',
+          launch_source: 'new_workspace_composer',
+          request_kind: 'new'
+        }
+      }
+    })) as {
+      setup?: unknown
+      startupTerminal?: { spawned: boolean; surface?: string }
+      timing?: { phases: { phase: string }[] }
+    }
+
+    expect(runtimeStub.createTerminal).toHaveBeenNthCalledWith(
+      1,
+      'id:repo-1::/workspace/improve-dashboard',
+      {
+        command: 'claude --prefill test',
+        env: { ORCA_AGENT_MODE: 'direct' },
+        telemetry: {
+          agent_kind: 'claude',
+          launch_source: 'new_workspace_composer',
+          request_kind: 'new'
+        },
+        activate: true
+      }
+    )
+    expect(runtimeStub.createTerminal).toHaveBeenNthCalledWith(
+      2,
+      'id:repo-1::/workspace/improve-dashboard',
+      {
+        title: 'Setup',
+        command: 'bash /workspace/repo/.git/orca/setup-runner.sh',
+        env: {
+          ORCA_ROOT_PATH: '/workspace/repo',
+          ORCA_WORKTREE_PATH: '/workspace/improve-dashboard'
+        },
+        activate: false
+      }
+    )
+    expect(result.setup).toBeUndefined()
+    expect(result.startupTerminal).toEqual({ spawned: true, surface: 'visible' })
+    expect(result.timing?.phases.map((phase) => phase.phase)).toEqual(
+      expect.arrayContaining([
+        'git_worktree_add',
+        'list_created_worktree',
+        'prepare_setup',
+        'spawn_startup_terminal'
+      ])
+    )
+  })
+
   it('checks out a selected existing local branch exactly', async () => {
     listWorktreesMock
       .mockResolvedValueOnce([
@@ -724,7 +815,7 @@ describe('registerWorktreeHandlers', () => {
       'repo-1::/workspace/fix-bug-0',
       expect.objectContaining({ preserveBranchOnDelete: true })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         path: '/workspace/fix-bug-0',
         branch: 'refs/heads/fix/bug-0'
@@ -775,7 +866,7 @@ describe('registerWorktreeHandlers', () => {
       false,
       { checkoutExistingBranch: true }
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         path: '/workspace/fix-bug-0-2',
         branch: 'refs/heads/fix/bug-0'
@@ -1051,7 +1142,7 @@ describe('registerWorktreeHandlers', () => {
         displayName: 'Fix: dashboards for PRs'
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         displayName: 'Fix: dashboards for PRs'
       })
@@ -1088,7 +1179,7 @@ describe('registerWorktreeHandlers', () => {
         manualOrder: 123_456
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         linkedIssue: 123,
         linkedPR: 456,
@@ -1122,7 +1213,7 @@ describe('registerWorktreeHandlers', () => {
         createdWithAgent: 'codex'
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         createdWithAgent: 'codex'
       })
@@ -1267,7 +1358,7 @@ describe('registerWorktreeHandlers', () => {
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['fetch', 'origin', 'refs/pull/1738/head'], {
       cwd: '/workspace/repo'
     })
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       baseBranch: 'abc123',
       headSha: 'abc123',
       branchNameOverride: 'prateek/fix-sidebar-agents-toggle',
@@ -1306,7 +1397,7 @@ describe('registerWorktreeHandlers', () => {
       ['rev-parse', '--verify', 'origin/feature/add-feature'],
       { cwd: '/workspace/repo' }
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       baseBranch: 'def456',
       headSha: 'def456',
       branchNameOverride: 'feature/add-feature',
@@ -1403,7 +1494,7 @@ describe('registerWorktreeHandlers', () => {
       ['fetch', 'origin', 'refs/pull/1849/head'],
       expect.anything()
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       error:
         'Failed to fetch origin/feat/onboarding-model-choice-782: fatal: unable to access repo: Could not resolve host: github.com'
     })
@@ -1428,7 +1519,7 @@ describe('registerWorktreeHandlers', () => {
       sourceBranch: 'feature/mr',
       isCrossRepository: true
     })
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       baseBranch: 'fork-mr-sha',
       pushTarget: { remoteName: 'origin', branchName: 'feature/mr' }
     })
@@ -1493,7 +1584,7 @@ describe('registerWorktreeHandlers', () => {
         manualOrder: 123_456
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         linkedIssue: 123,
         linkedPR: 456,
@@ -1763,7 +1854,7 @@ describe('registerWorktreeHandlers', () => {
         sparsePresetId: 'preset-1'
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         isSparse: true,
         sparseDirectories: ['apps/mobile', 'packages/shared'],
@@ -2590,7 +2681,7 @@ describe('registerWorktreeHandlers', () => {
       '/workspace/improve-dashboard',
       'codex exec "long command"'
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       runnerScriptPath: '/workspace/repo/.git/orca/issue-command-runner.sh',
       envVars: {
         ORCA_ROOT_PATH: '/workspace/repo',
@@ -3206,7 +3297,7 @@ describe('registerWorktreeHandlers', () => {
       'origin/main',
       false
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         path: '/workspace/improve-dashboard-3',
         branch: 'improve-dashboard-3'
@@ -3267,7 +3358,7 @@ describe('registerWorktreeHandlers', () => {
       '/workspace/improve-dashboard',
       'pnpm worktree:setup'
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         repoId: 'repo-1',
         path: '/workspace/improve-dashboard',
@@ -3377,7 +3468,7 @@ describe('registerWorktreeHandlers', () => {
         sparsePresetId: 'preset-1'
       })
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         repoId: 'repo-1',
         path: '/workspace/improve-dashboard',
@@ -3513,7 +3604,7 @@ describe('registerWorktreeHandlers', () => {
       setupDecision: 'run'
     })
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       worktree: expect.objectContaining({
         repoId: 'repo-1',
         path: '/workspace/improve-dashboard',
@@ -3586,7 +3677,8 @@ describe('registerWorktreeHandlers', () => {
 
     expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(worktreeId, {
       runtime: runtimeStub,
-      localProvider: ptyProvider
+      localProvider: ptyProvider,
+      onPtyStopped: clearProviderPtyStateMock
     })
     expect(killAllProcessesForWorktreeMock.mock.invocationCallOrder[0]).toBeLessThan(
       store.removeWorktreeMeta.mock.invocationCallOrder[0]
@@ -4112,7 +4204,7 @@ describe('registerWorktreeHandlers', () => {
       expectedHead: 'def456'
     })
 
-    expect(result).toEqual({ deleted: true })
+    expect(result).toMatchObject({ deleted: true })
     expect(forceDeleteLocalBranchMock).toHaveBeenCalledWith(
       '/workspace/repo',
       'feature/test',
@@ -4240,7 +4332,7 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
-  it('rejects unregistered delete paths before teardown, hooks, or git removal', async () => {
+  it('reports already-missing unregistered delete paths before teardown, hooks, or git removal', async () => {
     mockKnownFeatureWorktree('/workspace/real-feature')
     getEffectiveHooksMock.mockReturnValue({
       scripts: {
@@ -4252,7 +4344,9 @@ describe('registerWorktreeHandlers', () => {
       handlers['worktrees:remove'](null, {
         worktreeId: 'repo-1::/workspace/not-a-worktree'
       })
-    ).rejects.toThrow('Refusing to delete unregistered worktree path')
+    ).rejects.toThrow(
+      'Worktree is no longer registered with Git and its directory is already gone.'
+    )
 
     expect(killAllProcessesForWorktreeMock).not.toHaveBeenCalled()
     expect(runHookMock).not.toHaveBeenCalled()
@@ -4278,6 +4372,27 @@ describe('registerWorktreeHandlers', () => {
     expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(
       'repo-1::/workspace/already-deleted-wt'
     )
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
+      repoId: 'repo-1'
+    })
+  })
+
+  it('cleans up an already-missing unregistered worktree after force recovery', async () => {
+    const worktreeId = 'repo-1::/workspace/already-deleted-wt'
+    mockKnownFeatureWorktree('/workspace/real-feature')
+
+    await expect(handlers['worktrees:remove'](null, { worktreeId })).rejects.toThrow(
+      'Worktree is no longer registered with Git and its directory is already gone.'
+    )
+
+    await handlers['worktrees:remove'](null, { worktreeId, force: true })
+
+    expect(killAllProcessesForWorktreeMock).not.toHaveBeenCalled()
+    expect(runHookMock).not.toHaveBeenCalled()
+    expect(removeWorktreeMock).not.toHaveBeenCalled()
+    expect(runtimeStub.clearOptimisticReconcileToken).toHaveBeenCalledWith(worktreeId)
+    expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
+    expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(worktreeId)
     expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'
     })
@@ -4643,7 +4758,8 @@ describe('registerWorktreeHandlers', () => {
     expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(
       'repo-1::/workspace/feature-wt',
       expect.objectContaining({
-        localProvider: expect.anything()
+        localProvider: expect.anything(),
+        onPtyStopped: clearProviderPtyStateMock
       })
     )
     expect(removeWorktreeMock).toHaveBeenCalled()

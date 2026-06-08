@@ -12,6 +12,7 @@ import { resolveHookCommandSourcePolicy } from '../../../shared/hook-command-sou
 import { isExpectedAgentProcess } from '../../../shared/agent-process-recognition'
 import { slugifyForWorkspaceName } from '../../../shared/workspace-name'
 export { getLinkedWorkItemSuggestedName } from '../../../shared/workspace-name'
+export { getWorkspaceIntentName } from '../../../shared/workspace-name'
 
 /**
  * Why: the TaskPage's preset buttons and the openTaskPage prefetcher both need
@@ -39,37 +40,24 @@ export function getTaskPresetQuery(presetId: TaskViewPresetId | null): string {
   }
 }
 
-export const IS_MAC = navigator.userAgent.includes('Mac')
 export const CLIENT_PLATFORM: NodeJS.Platform = navigator.userAgent.includes('Windows')
   ? 'win32'
-  : IS_MAC
+  : navigator.userAgent.includes('Mac')
     ? 'darwin'
     : 'linux'
 
 export type { LinkedWorkItemContext } from '@/lib/linked-work-item-context'
+export { getLinkedWorkItemProvider, isGitLabIssueUrl } from './linked-work-item-provider'
 
 export type LinkedWorkItemSummary = {
-  /** 'mr' is the GitLab analogue of 'pr'. The shape is otherwise
-   *  identical so the linked-work-item badge in the composer renders
-   *  uniformly across providers. */
   type: 'issue' | 'pr' | 'mr'
+  provider?: 'github' | 'gitlab' | 'linear' | 'jira'
   number: number
   title: string
   url: string
-  /** Linear identifier (for example ENG-123) when this linked item came from
-   *  Linear rather than GitHub. */
   linearIdentifier?: string
+  jiraIdentifier?: string
   linkedContext?: LinkedWorkItemContext
-}
-
-export function isGitLabIssueUrl(url: string): boolean {
-  // Why: self-hosted GitLab issue URLs may not contain "gitlab"; the
-  // provider-stable signal is the `/-/issues/` path segment.
-  try {
-    return new URL(url).pathname.includes('/-/issues/')
-  } catch {
-    return /\/-\/issues\//i.test(url)
-  }
 }
 
 // Why: when a repo has no `orca.yaml` issueCommand and no per-user override,
