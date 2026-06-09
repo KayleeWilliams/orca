@@ -10,6 +10,7 @@ import { DashboardAgentRowMessage } from './DashboardAgentRowMessage'
 import { DashboardAgentRowToolStep } from './DashboardAgentRowToolStep'
 import type { AgentStatusState } from '../../../../shared/agent-status-types'
 import type { DashboardAgentRow as DashboardAgentRowData } from './useDashboardData'
+import { translate } from '@/i18n/i18n'
 
 // Why: the dashboard tracks its own rollup states (incl. 'idle'); narrow to the
 // shared dot states for rendering, falling back to 'idle' for any unknown
@@ -418,7 +419,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             place. State belongs in the leading gutter; repeating it here as
             text makes interrupted rows look like the old badge treatment. */}
         <span className="relative ml-auto flex h-3.5 w-12 shrink-0 items-center justify-end">
-          {(sendTargetStatus === 'eligible' || sendTargetStatus === 'sending') && (
+          {(sendTargetStatus === "eligible" || sendTargetStatus === "sending") && (
             <button
               type="button"
               onClick={handleInlineSendTargetClick}
@@ -429,11 +430,11 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                 'worktree-agent-send-target-button absolute right-0 top-1/2 z-10 inline-flex h-5 -translate-y-1/2 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium leading-none transition-[background-color,border-color,color,opacity]',
                 sendTargetStatus === 'sending' && 'cursor-progress opacity-75'
               )}
-              aria-label="Send to this agent"
-              title="Send to this agent"
+              aria-label={translate("auto.components.dashboard.DashboardAgentRow.0272969e28", "Send to this agent")}
+              title={translate("auto.components.dashboard.DashboardAgentRow.0272969e28", "Send to this agent")}
             >
               <Send className="size-3" />
-              <span>Send</span>
+              <span>{translate("auto.components.dashboard.DashboardAgentRow.912e136cd9", "Send")}</span>
             </button>
           )}
           {/* Why: timestamp and dismiss-X share a single slot so passive
@@ -472,8 +473,8 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                   'opacity-0 transition-opacity duration-150',
                   'group-hover/agent-row:opacity-100 focus-visible:opacity-100'
                 )}
-                aria-label="Dismiss agent"
-                title="Dismiss"
+                aria-label={translate("auto.components.dashboard.DashboardAgentRow.b06e13fcf7", "Dismiss agent")}
+                title={translate("auto.components.dashboard.DashboardAgentRow.5ae84475cc", "Dismiss")}
               >
                 <X className="size-3.5" />
               </button>
@@ -495,8 +496,8 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
                 'opacity-0 transition-opacity duration-150',
                 'group-hover/agent-row:opacity-100 focus-visible:opacity-100'
               )}
-              aria-label="Dismiss agent"
-              title="Dismiss"
+              aria-label={translate("auto.components.dashboard.DashboardAgentRow.b06e13fcf7", "Dismiss agent")}
+              title={translate("auto.components.dashboard.DashboardAgentRow.5ae84475cc", "Dismiss")}
             >
               <X className="size-3.5" />
             </button>
@@ -516,7 +517,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
               onMouseDown={stopMouseDown}
               onKeyDown={stopKeyDown}
               className="inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground"
-              aria-label={expanded ? 'Collapse details' : 'Expand details'}
+              aria-label={expanded ? translate("auto.components.dashboard.DashboardAgentRow.a41fb5376e", "Collapse details") : translate("auto.components.dashboard.DashboardAgentRow.a743da52ff", "Expand details")}
               aria-expanded={expanded}
             >
               <ChevronDown

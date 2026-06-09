@@ -162,6 +162,7 @@ import {
 } from '@/lib/pane-manager/browser-mobile-driver-state'
 import { shouldPollChromiumErrorPage } from './chromium-error-page-polling'
 import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
+import { translate } from '@/i18n/i18n'
 
 type BrowserTabPageState = Partial<
   Pick<
@@ -184,8 +185,8 @@ type BrowserOverlayAnchor = {
 }
 
 const BROWSER_ANNOTATION_INTENT_OPTIONS = [
-  { value: 'change', label: 'Change', icon: PencilLine },
-  { value: 'question', label: 'Question', icon: MessageCircleQuestionMark }
+  { value: 'change', label: translate("auto.components.browser.pane.BrowserPane.143204e423", "Change"), icon: PencilLine },
+  { value: 'question', label: translate("auto.components.browser.pane.BrowserPane.b5ba6085de", "Question"), icon: MessageCircleQuestionMark }
 ] as const
 
 // Why: priority remains in the persisted annotation shape for backwards
@@ -360,7 +361,7 @@ function PendingBrowserAnnotationCard({
         collisionPadding={12}
         portalContainer={portalContainer}
         className="z-40 w-[22rem] max-w-[calc(var(--radix-popover-content-available-width)-1rem)] p-3 shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
-        aria-label="Add browser annotation"
+        aria-label={translate("auto.components.browser.pane.BrowserPane.b472c5fe03", "Add browser annotation")}
         onEscapeKeyDown={(event) => {
           event.preventDefault()
           onCancel()
@@ -377,13 +378,12 @@ function PendingBrowserAnnotationCard({
           </div>
         </div>
         <Label htmlFor="browser-annotation-comment" className="sr-only">
-          Annotation comment
-        </Label>
+          {translate("auto.components.browser.pane.BrowserPane.d2a7092e6e", "Annotation comment")}</Label>
         <textarea
           id="browser-annotation-comment"
           value={comment}
           onChange={(event) => setComment(event.target.value)}
-          placeholder="Describe what the agent should change here..."
+          placeholder={translate("auto.components.browser.pane.BrowserPane.532bac48c5", "Describe what the agent should change here...")}
           maxLength={GRAB_BUDGET.annotationCommentMaxLength}
           className="h-24 w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           autoFocus
@@ -404,7 +404,7 @@ function PendingBrowserAnnotationCard({
           }}
         />
         <div className="mt-2 min-w-0">
-          <Label className="mb-1 block text-xs text-muted-foreground">Intent</Label>
+          <Label className="mb-1 block text-xs text-muted-foreground">{translate("auto.components.browser.pane.BrowserPane.8f87e6c2e5", "Intent")}</Label>
           <ToggleGroup
             type="single"
             size="sm"
@@ -416,7 +416,7 @@ function PendingBrowserAnnotationCard({
               }
             }}
             className="h-8 w-full [&_[data-slot=toggle-group-item]]:h-8 [&_[data-slot=toggle-group-item]]:flex-1 [&_[data-slot=toggle-group-item]]:px-2"
-            aria-label="Annotation intent"
+            aria-label={translate("auto.components.browser.pane.BrowserPane.0cb3bd6221", "Annotation intent")}
           >
             {BROWSER_ANNOTATION_INTENT_OPTIONS.map((option) => {
               const Icon = option.icon
@@ -436,8 +436,7 @@ function PendingBrowserAnnotationCard({
         </div>
         <div className="mt-3 flex justify-end gap-2">
           <Button size="sm" variant="ghost" className="h-8" onClick={onCancel}>
-            Cancel
-          </Button>
+            {translate("auto.components.browser.pane.BrowserPane.fa6ea61de3", "Cancel")}</Button>
           <Button
             size="sm"
             className="h-8 gap-1.5"
@@ -445,8 +444,7 @@ function PendingBrowserAnnotationCard({
             onClick={() => onAdd(trimmed, intent)}
           >
             <MessageSquarePlus className="size-3.5" />
-            Add
-            <span className="ml-1 inline-flex items-center gap-0.5 rounded border border-white/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-current/80">
+            {translate("auto.components.browser.pane.BrowserPane.90d021f2ad", "Add")}<span className="ml-1 inline-flex items-center gap-0.5 rounded border border-white/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-current/80">
               <span>{submitModifierLabel}</span>
               <CornerDownLeft className="size-3" />
             </span>
@@ -2268,8 +2266,7 @@ function RemoteBrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Open Link In Orca Browser
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.b5b87d6cbb", "Open Link In Orca Browser")}</button>
                     <button
                       role="menuitem"
                       className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -2281,8 +2278,7 @@ function RemoteBrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Open Link In Default Browser
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.8ce4f6b12e", "Open Link In Default Browser")}</button>
                     <button
                       role="menuitem"
                       className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -2291,8 +2287,7 @@ function RemoteBrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Copy Link Address
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.efb0e8f7f3", "Copy Link Address")}</button>
                     <div className="my-1 h-px bg-border/70" />
                   </>
                 ) : null}
@@ -2304,8 +2299,7 @@ function RemoteBrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Back
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.40edfa75cb", "Back")}</button>
                 <button
                   role="menuitem"
                   className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -2314,8 +2308,7 @@ function RemoteBrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Forward
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.250a9b3e42", "Forward")}</button>
                 <button
                   role="menuitem"
                   className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -2324,8 +2317,7 @@ function RemoteBrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Reload
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.0e080d820e", "Reload")}</button>
                 <div className="my-1 h-px bg-border/70" />
                 <button
                   role="menuitem"
@@ -2338,8 +2330,7 @@ function RemoteBrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Open Page In Default Browser
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.f7ab83f7ed", "Open Page In Default Browser")}</button>
                 <button
                   role="menuitem"
                   className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -2348,8 +2339,7 @@ function RemoteBrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Copy Page URL
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.1b179ab561", "Copy Page URL")}</button>
               </div>
             </>,
             document.body
@@ -2401,7 +2391,7 @@ function RemoteBrowserPagePane({
               variant="ghost"
               className="h-7 w-7 opacity-50"
               aria-disabled="true"
-              aria-label="Browser annotations unavailable in remote runtime"
+              aria-label={translate("auto.components.browser.pane.BrowserPane.deb5293610", "Browser annotations unavailable in remote runtime")}
               onClick={(event) => {
                 event.preventDefault()
               }}
@@ -2410,8 +2400,7 @@ function RemoteBrowserPagePane({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
-            Browser annotations are only available in local browser tabs.
-          </TooltipContent>
+            {translate("auto.components.browser.pane.BrowserPane.8b7e6d1f5a", "Browser annotations are only available in local browser tabs.")}</TooltipContent>
         </Tooltip>
       </div>
       <div
@@ -2441,11 +2430,10 @@ function RemoteBrowserPagePane({
                 <Globe className="size-5 text-muted-foreground" />
               )}
               <div className="text-sm font-medium text-foreground">
-                {busy ? 'Opening remote browser' : 'Remote browser'}
+                {busy ? translate("auto.components.browser.pane.BrowserPane.b313a7275b", "Opening remote browser") : translate("auto.components.browser.pane.BrowserPane.572046436a", "Remote browser")}
               </div>
               <div className="text-xs leading-5 text-muted-foreground">
-                This pane is rendered from the active runtime server.
-              </div>
+                {translate("auto.components.browser.pane.BrowserPane.bbe8f15e83", "This pane is rendered from the active runtime server.")}</div>
             </div>
           </div>
         )}
@@ -3421,7 +3409,7 @@ function BrowserPagePane({
         trackNextLoadingEventRef.current = false
         const synthesizedFailure = {
           code: -1,
-          description: 'This site could not be reached.',
+          description: translate("auto.components.browser.pane.BrowserPane.e48569ac6d", "This site could not be reached."),
           validatedUrl: redactKagiSessionToken(
             browserTabUrlRef.current || addressBarValueRef.current || 'about:blank'
           )
@@ -3731,7 +3719,7 @@ function BrowserPagePane({
           loading: false,
           loadError: {
             code: -1,
-            description: 'This site could not be reached.',
+            description: translate("auto.components.browser.pane.BrowserPane.e48569ac6d", "This site could not be reached."),
             validatedUrl: redactKagiSessionToken(attemptedUrl)
           }
         })
@@ -4044,7 +4032,7 @@ function BrowserPagePane({
           worktreeId,
           source: 'browser-annotations',
           prompt: browserAnnotationsPrompt,
-          label: 'Browser annotations',
+          label: translate("auto.components.browser.pane.BrowserPane.27d863542c", "Browser annotations"),
           launchSource: 'notes_send'
         })
       } else {
@@ -4069,7 +4057,7 @@ function BrowserPagePane({
           worktreeId,
           source: 'browser-annotations',
           prompt: browserAnnotationsPrompt,
-          label: 'Browser annotations',
+          label: translate("auto.components.browser.pane.BrowserPane.27d863542c", "Browser annotations"),
           launchSource: 'notes_send'
         })
       } else {
@@ -4220,7 +4208,7 @@ function BrowserPagePane({
       onUpdatePageStateRef.current(browserTab.id, {
         loadError: {
           code: 0,
-          description: 'Enter a valid http(s) or localhost URL.',
+          description: translate("auto.components.browser.pane.BrowserPane.87eb75f7d2", "Enter a valid http(s) or localhost URL."),
           // Why: the user may have pasted a Kagi URL with a token; redact
           // before persisting it into BrowserPage.loadError.
           validatedUrl: redactKagiSessionToken(addressBarValue.trim()) || 'about:blank'
@@ -4362,8 +4350,7 @@ function BrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Open Link In Orca Browser
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.b5b87d6cbb", "Open Link In Orca Browser")}</button>
                     <button
                       role="menuitem"
                       className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -4375,8 +4362,7 @@ function BrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Open Link In Default Browser
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.8ce4f6b12e", "Open Link In Default Browser")}</button>
                     <button
                       role="menuitem"
                       className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -4385,8 +4371,7 @@ function BrowserPagePane({
                         setContextMenu(null)
                       }}
                     >
-                      Copy Link Address
-                    </button>
+                      {translate("auto.components.browser.pane.BrowserPane.efb0e8f7f3", "Copy Link Address")}</button>
                     <div className="my-1 h-px bg-border/70" />
                   </>
                 ) : null}
@@ -4399,8 +4384,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Back
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.40edfa75cb", "Back")}</button>
                 <button
                   role="menuitem"
                   disabled={!browserTab.canGoForward}
@@ -4410,8 +4394,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Forward
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.250a9b3e42", "Forward")}</button>
                 <button
                   role="menuitem"
                   className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -4420,8 +4403,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Reload
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.0e080d820e", "Reload")}</button>
                 <div className="my-1 h-px bg-border/70" />
                 <button
                   role="menuitem"
@@ -4434,8 +4416,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Open Page In Default Browser
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.f7ab83f7ed", "Open Page In Default Browser")}</button>
                 <button
                   role="menuitem"
                   className="relative flex w-full cursor-default items-center gap-2 rounded-[7px] px-2 py-0.5 text-[12px] leading-5 font-medium outline-none select-none hover:bg-black/8 dark:hover:bg-white/14"
@@ -4444,8 +4425,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Copy Page URL
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.1b179ab561", "Copy Page URL")}</button>
                 <div className="my-1 h-px bg-border/70" />
                 <button
                   role="menuitem"
@@ -4455,8 +4435,7 @@ function BrowserPagePane({
                     setContextMenu(null)
                   }}
                 >
-                  Inspect Page
-                </button>
+                  {translate("auto.components.browser.pane.BrowserPane.a8f37f70c3", "Inspect Page")}</button>
               </div>
             </>,
             document.body
@@ -4534,7 +4513,7 @@ function BrowserPagePane({
                 )}
                 onClick={() => startGrabIntent('copy')}
                 disabled={isBlankTab}
-                aria-label="Grab page element"
+                aria-label={translate("auto.components.browser.pane.BrowserPane.fdfc7fe0ef", "Grab page element")}
                 data-contextual-tour-target="browser-grab-control"
               >
                 <Crosshair className="size-4" />
@@ -4542,7 +4521,7 @@ function BrowserPagePane({
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
-            {`Grab page element (${grabElementShortcut})`}
+            {translate("auto.components.browser.pane.BrowserPane.acbe79fd01", "Grab page element ({{value0}})", { value0: grabElementShortcut })}
           </TooltipContent>
         </Tooltip>
 
@@ -4564,7 +4543,7 @@ function BrowserPagePane({
                 )}
                 onClick={() => startGrabIntent('annotate')}
                 disabled={isBlankTab}
-                aria-label="Annotate page element"
+                aria-label={translate("auto.components.browser.pane.BrowserPane.fc9be38f6f", "Annotate page element")}
                 data-contextual-tour-target="browser-annotation-control"
               >
                 <MessageSquarePlus className="size-4" />
@@ -4577,8 +4556,7 @@ function BrowserPagePane({
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
-            Annotate page element
-          </TooltipContent>
+            {translate("auto.components.browser.pane.BrowserPane.fc9be38f6f", "Annotate page element")}</TooltipContent>
         </Tooltip>
 
         <Button
@@ -4586,7 +4564,7 @@ function BrowserPagePane({
           variant="ghost"
           className="h-7 w-7"
           onClick={() => void window.api.browser.openDevTools({ browserPageId: browserTab.id })}
-          title="Open browser devtools"
+          title={translate("auto.components.browser.pane.BrowserPane.ec75d0c412", "Open browser devtools")}
         >
           <SquareCode className="size-4" />
         </Button>
@@ -4601,7 +4579,7 @@ function BrowserPagePane({
             }
             void window.api.shell.openUrl(externalUrl)
           }}
-          title="Open in default browser"
+          title={translate("auto.components.browser.pane.BrowserPane.0f41bf80c7", "Open in default browser")}
           disabled={!externalUrl}
         >
           <ExternalLink className="size-4" />
@@ -4621,12 +4599,12 @@ function BrowserPagePane({
           <div className="min-w-0 flex-1">
             <div className="truncate font-medium text-foreground">{downloadState.filename}</div>
             <div className="truncate text-muted-foreground">
-              {downloadState.status === 'requested'
-                ? `Download from ${downloadState.origin}`
-                : `Downloading from ${downloadState.origin}${downloadProgressLabel ? ` • ${downloadProgressLabel}` : ''}`}
+              {downloadState.status === "requested"
+                ? translate("auto.components.browser.pane.BrowserPane.31375046b7", "Download from {{value0}}", { value0: downloadState.origin })
+                : translate("auto.components.browser.pane.BrowserPane.4300f38145", "Downloading from {{value0}}{{value1}}", { value0: downloadState.origin, value1: downloadProgressLabel ? ` • ${downloadProgressLabel}` : '' })}
             </div>
           </div>
-          {downloadState.status === 'requested' ? (
+          {downloadState.status === "requested" ? (
             <>
               <Button
                 size="sm"
@@ -4638,8 +4616,7 @@ function BrowserPagePane({
                   })
                 }}
               >
-                Save
-              </Button>
+                {translate("auto.components.browser.pane.BrowserPane.8b6fab9ffa", "Save")}</Button>
               <Button
                 size="sm"
                 variant="ghost"
@@ -4650,12 +4627,11 @@ function BrowserPagePane({
                   })
                 }}
               >
-                Cancel
-              </Button>
+                {translate("auto.components.browser.pane.BrowserPane.fa6ea61de3", "Cancel")}</Button>
             </>
           ) : (
             <span className="shrink-0 text-muted-foreground">
-              {downloadProgressLabel ?? 'Downloading'}
+              {downloadProgressLabel ?? translate("auto.components.browser.pane.BrowserPane.759f32af29", "Downloading")}
             </span>
           )}
         </div>
@@ -4667,7 +4643,7 @@ function BrowserPagePane({
             type="button"
             onClick={() => setResourceNotice(null)}
             className="shrink-0 text-muted-foreground/60 hover:text-foreground"
-            aria-label="Dismiss"
+            aria-label={translate("auto.components.browser.pane.BrowserPane.2fdca7df09", "Dismiss")}
           >
             ✕
           </button>
@@ -4688,18 +4664,18 @@ function BrowserPagePane({
           />
           <span className="min-w-0 flex-1 truncate">
             {grab.state === 'error'
-              ? `Grab failed: ${grab.error ?? 'Unknown error'}`
-              : grabIntent === 'annotate'
+              ? translate("auto.components.browser.pane.BrowserPane.4328a0a062", "Grab failed: {{value0}}", { value0: grab.error ?? 'Unknown error' })
+              : grabIntent === "annotate"
                 ? pendingAnnotationPayload
-                  ? 'Add feedback for the selected element.'
+                  ? translate("auto.components.browser.pane.BrowserPane.b733a91bd9", "Add feedback for the selected element.")
                   : browserAnnotations.length > 0
-                    ? `${browserAnnotations.length} annotation${browserAnnotations.length === 1 ? '' : 's'} ready. Select another element or copy all feedback.`
-                    : 'Click an element to add feedback for the agent.'
-                : grab.state === 'confirming'
-                  ? 'Copied — press S to screenshot, or select another element'
-                  : 'Click or hover an element, then press C to copy or S to screenshot.'}
+                    ? translate("auto.components.browser.pane.BrowserPane.a3508d7e6e", "{{value0}} annotation{{value1}} ready. Select another element or copy all feedback.", { value0: browserAnnotations.length, value1: browserAnnotations.length === 1 ? '' : 's' })
+                    : translate("auto.components.browser.pane.BrowserPane.777b5bc4ec", "Click an element to add feedback for the agent.")
+                : grab.state === "confirming"
+                  ? translate("auto.components.browser.pane.BrowserPane.e852e20cea", "Copied — press S to screenshot, or select another element")
+                  : translate("auto.components.browser.pane.BrowserPane.168350ae6a", "Click or hover an element, then press C to copy or S to screenshot.")}
           </span>
-          {grabIntent === 'annotate' && browserAnnotations.length > 0 ? (
+          {grabIntent === "annotate" && browserAnnotations.length > 0 ? (
             <>
               <DropdownMenu
                 modal={false}
@@ -4711,13 +4687,11 @@ function BrowserPagePane({
                     <DropdownMenuTrigger asChild>
                       <Button size="xs" variant="outline" className="h-6 gap-1.5">
                         <Send className="size-3" />
-                        Send
-                      </Button>
+                        {translate("auto.components.browser.pane.BrowserPane.ac39b9366b", "Send")}</Button>
                     </DropdownMenuTrigger>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" sideOffset={6}>
-                    Send feedback to a new agent
-                  </TooltipContent>
+                    {translate("auto.components.browser.pane.BrowserPane.95af781091", "Send feedback to a new agent")}</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent
                   align="end"
@@ -4746,7 +4720,7 @@ function BrowserPagePane({
                 ) : (
                   <Copy className="size-3" />
                 )}
-                {browserAnnotationsCopied ? 'Copied' : 'Copy All'}
+                {browserAnnotationsCopied ? translate("auto.components.browser.pane.BrowserPane.6f4ab3592b", "Copied") : translate("auto.components.browser.pane.BrowserPane.499b31b84e", "Copy All")}
               </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -4755,14 +4729,13 @@ function BrowserPagePane({
                     variant="ghost"
                     className="h-6 w-6 text-muted-foreground hover:text-foreground"
                     onClick={handleClearBrowserAnnotations}
-                    aria-label="Clear browser annotations"
+                    aria-label={translate("auto.components.browser.pane.BrowserPane.734e4343ec", "Clear browser annotations")}
                   >
                     <Trash2 className="size-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  Clear annotations
-                </TooltipContent>
+                  {translate("auto.components.browser.pane.BrowserPane.11c5084aa2", "Clear annotations")}</TooltipContent>
               </Tooltip>
             </>
           ) : null}
@@ -4773,8 +4746,7 @@ function BrowserPagePane({
               grab.cancel()
             }}
           >
-            Cancel
-          </button>
+            {translate("auto.components.browser.pane.BrowserPane.fa6ea61de3", "Cancel")}</button>
         </div>
       ) : null}
       <div
@@ -4806,7 +4778,7 @@ function BrowserPagePane({
                 <Globe className="size-5 text-muted-foreground" />
               </div>
               <h2 className="text-base font-semibold text-foreground/85">
-                {loadErrorMeta.host ? `Can't reach ${loadErrorMeta.host}` : "Can't load this page"}
+                {loadErrorMeta.host ? translate("auto.components.browser.pane.BrowserPane.db325a7eeb", "Can't reach {{value0}}", { value0: loadErrorMeta.host }) : translate("auto.components.browser.pane.BrowserPane.b2856516e2", "Can't load this page")}
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 {formatLoadFailureDescription(browserTab.loadError, loadErrorMeta)}
@@ -4819,7 +4791,7 @@ function BrowserPagePane({
                   size="sm"
                   variant="outline"
                   className="h-9 gap-2 px-3"
-                  title="Retry"
+                  title={translate("auto.components.browser.pane.BrowserPane.781d6459ad", "Retry")}
                   onClick={() => {
                     const webview = webviewRef.current
                     if (!webview) {
@@ -4832,13 +4804,13 @@ function BrowserPagePane({
                   }}
                 >
                   <RefreshCw className="size-4" />
-                  <span>Refresh</span>
+                  <span>{translate("auto.components.browser.pane.BrowserPane.c6be71329e", "Refresh")}</span>
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-9 gap-2 px-3"
-                  title="Copy failed page URL"
+                  title={translate("auto.components.browser.pane.BrowserPane.3c085f638d", "Copy failed page URL")}
                   onClick={() => {
                     // Why: failed guests often leave users stranded on a blank
                     // error surface. Put the current URL on the clipboard from
@@ -4849,14 +4821,14 @@ function BrowserPagePane({
                   }}
                 >
                   <Copy className="size-4" />
-                  <span>Copy Address</span>
+                  <span>{translate("auto.components.browser.pane.BrowserPane.93be92f8d1", "Copy Address")}</span>
                 </Button>
                 {externalUrl ? (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-9 gap-2 px-3"
-                    title="Open failed page in default browser"
+                    title={translate("auto.components.browser.pane.BrowserPane.da68d35f7b", "Open failed page in default browser")}
                     onClick={() => {
                       // Why: page failures inside Orca can still be recoverable
                       // in the system browser, especially for OAuth, captive
@@ -4868,7 +4840,7 @@ function BrowserPagePane({
                     }}
                   >
                     <ExternalLink className="size-4" />
-                    <span>Open Externally</span>
+                    <span>{translate("auto.components.browser.pane.BrowserPane.1c78adc73d", "Open Externally")}</span>
                   </Button>
                 ) : null}
               </div>
@@ -4882,10 +4854,9 @@ function BrowserPagePane({
                 <Globe className="size-5 text-muted-foreground" />
               </div>
               <div className="text-center">
-                <p className="text-base font-semibold text-foreground/85">New Tab</p>
+                <p className="text-base font-semibold text-foreground/85">{translate("auto.components.browser.pane.BrowserPane.366bf5d62c", "New Tab")}</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Type a URL above to start browsing.
-                </p>
+                  {translate("auto.components.browser.pane.BrowserPane.f796c774a4", "Type a URL above to start browsing.")}</p>
               </div>
             </div>
           </div>
@@ -4909,7 +4880,7 @@ function BrowserPagePane({
             <div className="flex items-center gap-2 border-b border-border px-3 py-2">
               <MessageSquarePlus className="size-4 text-muted-foreground" />
               <div className="min-w-0 flex-1 text-sm font-medium">
-                {browserAnnotations.length} annotation{browserAnnotations.length === 1 ? '' : 's'}
+                {browserAnnotations.length} {translate("auto.components.browser.pane.BrowserPane.a3508d7e6e", "annotation")}{browserAnnotations.length === 1 ? '' : 's'}
               </div>
               <DropdownMenu
                 modal={false}
@@ -4921,13 +4892,11 @@ function BrowserPagePane({
                     <DropdownMenuTrigger asChild>
                       <Button size="xs" variant="outline" className="gap-1.5">
                         <Send className="size-3" />
-                        Send
-                      </Button>
+                        {translate("auto.components.browser.pane.BrowserPane.ac39b9366b", "Send")}</Button>
                     </DropdownMenuTrigger>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" sideOffset={6}>
-                    Send feedback to a new agent
-                  </TooltipContent>
+                    {translate("auto.components.browser.pane.BrowserPane.95af781091", "Send feedback to a new agent")}</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent
                   align="end"
@@ -4956,7 +4925,7 @@ function BrowserPagePane({
                 ) : (
                   <Copy className="size-3" />
                 )}
-                {browserAnnotationsCopied ? 'Copied' : 'Copy'}
+                {browserAnnotationsCopied ? translate("auto.components.browser.pane.BrowserPane.6f4ab3592b", "Copied") : translate("auto.components.browser.pane.BrowserPane.d51ef37351", "Copy")}
               </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -4965,14 +4934,13 @@ function BrowserPagePane({
                     variant="ghost"
                     className="text-muted-foreground hover:text-foreground"
                     onClick={handleClearBrowserAnnotations}
-                    aria-label="Clear browser annotations"
+                    aria-label={translate("auto.components.browser.pane.BrowserPane.734e4343ec", "Clear browser annotations")}
                   >
                     <Trash2 className="size-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  Clear annotations
-                </TooltipContent>
+                  {translate("auto.components.browser.pane.BrowserPane.11c5084aa2", "Clear annotations")}</TooltipContent>
               </Tooltip>
             </div>
             <div className="scrollbar-sleek min-h-0 flex-1 overflow-auto p-1.5">
@@ -5002,7 +4970,7 @@ function BrowserPagePane({
                     variant="ghost"
                     className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
                     onClick={() => handleDeleteBrowserAnnotation(annotation.id)}
-                    aria-label={`Delete annotation ${index + 1}`}
+                    aria-label={translate("auto.components.browser.pane.BrowserPane.f2d0c22d67", "Delete annotation {{value0}}", { value0: index + 1 })}
                   >
                     <Trash2 className="size-3" />
                   </Button>
@@ -5052,14 +5020,12 @@ function BrowserPagePane({
           <DropdownMenuContent align="start" sideOffset={4}>
             <DropdownMenuItem onSelect={handleGrabCopy}>
               <Copy className="size-3.5" />
-              Copy Contents
-              <DropdownMenuShortcut>C</DropdownMenuShortcut>
+              {translate("auto.components.browser.pane.BrowserPane.c2ef0359b9", "Copy Contents")}<DropdownMenuShortcut>C</DropdownMenuShortcut>
             </DropdownMenuItem>
             {grab.payload?.screenshot?.dataUrl?.startsWith('data:image/png;base64,') ? (
               <DropdownMenuItem onSelect={handleGrabCopyScreenshot}>
                 <Image className="size-3.5" />
-                Copy Screenshot
-                <DropdownMenuShortcut>S</DropdownMenuShortcut>
+                {translate("auto.components.browser.pane.BrowserPane.1ded0d3168", "Copy Screenshot")}<DropdownMenuShortcut>S</DropdownMenuShortcut>
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
@@ -5069,8 +5035,7 @@ function BrowserPagePane({
                 grab.cancel()
               }}
             >
-              Cancel
-            </DropdownMenuItem>
+              {translate("auto.components.browser.pane.BrowserPane.fa6ea61de3", "Cancel")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -5105,7 +5070,7 @@ function BrowserPagePane({
                 grabToast.type === 'success' ? 'bg-white text-gray-900' : 'bg-white text-red-600'
               }`}
             >
-              {grabToast.type === 'success' ? (
+              {grabToast.type === "success" ? (
                 <CircleCheck className="size-4 fill-blue-600 text-white" />
               ) : (
                 <OctagonX className="size-4 text-red-500" />
@@ -5133,14 +5098,13 @@ function BrowserPagePane({
                         if (dataUrl?.startsWith('data:image/png;base64,')) {
                           void window.api.ui.writeClipboardImage(dataUrl)
                           setGrabToast((prev) =>
-                            prev ? { ...prev, message: 'Screenshotted' } : null
+                            prev ? { ...prev, message: translate("auto.components.browser.pane.BrowserPane.f30d2d35a7", "Screenshotted") } : null
                           )
                         }
                       }}
                     >
                       <Image className="size-3.5" />
-                      Copy Screenshot
-                      <DropdownMenuShortcut>S</DropdownMenuShortcut>
+                      {translate("auto.components.browser.pane.BrowserPane.1ded0d3168", "Copy Screenshot")}<DropdownMenuShortcut>S</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

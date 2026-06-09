@@ -9,6 +9,7 @@ import {
   type KeybindingOverrides
 } from '../../../shared/keybindings'
 import { useAppStore } from '../store'
+import { translate } from '@/i18n/i18n'
 
 const STORAGE_PREFIX = 'orca.terminalShortcutCapturedNotice.'
 const NOTICE_DURATION_MS = 20_000
@@ -63,7 +64,7 @@ export function showTerminalShortcutCaptureNotification({
   )
   // Why: this toast stays up longer than normal, so keep it compact while still
   // exposing the captured shortcut and the edit path.
-  toast.message('Terminal shortcut handled', {
+  toast.message(translate("auto.lib.terminal.shortcut.capture.notification.141ad6c004", "Terminal shortcut handled"), {
     description: `${definition.title} (${bindingLabel})`,
     // Why: this is the user's one-time rebind path for a captured shortcut; it
     // needs enough reading time without becoming persistent chrome.
@@ -78,7 +79,7 @@ export function showTerminalShortcutCaptureNotification({
     },
     icon: <Keyboard className="size-4 text-muted-foreground" />,
     action: {
-      label: 'Open Shortcuts',
+      label: translate("auto.lib.terminal.shortcut.capture.notification.b0536028c9", "Open Shortcuts"),
       onClick: openShortcutSettings
     }
   })

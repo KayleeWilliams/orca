@@ -11,6 +11,7 @@ import { getConnectionId } from '@/lib/connection-context'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getRuntimeGitRemoteFileUrl } from '@/runtime/runtime-git-client'
 import { formatPathLineReference } from './line-copy-path'
+import { translate } from '@/i18n/i18n'
 
 type MonacoGutterContextMenuProps = {
   open: boolean
@@ -44,16 +45,14 @@ export function MonacoGutterContextMenu({
           onSelect={() => window.api.ui.writeClipboardText(formatPathLineReference(filePath, line))}
         >
           <Copy className="w-3.5 h-3.5 mr-1.5" />
-          Copy Path to Line
-        </DropdownMenuItem>
+          {translate("auto.components.editor.MonacoGutterContextMenu.4eaa991bde", "Copy Path to Line")}</DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() =>
             window.api.ui.writeClipboardText(formatPathLineReference(relativePath, line))
           }
         >
           <Copy className="w-3.5 h-3.5 mr-1.5" />
-          Copy Rel. Path to Line
-        </DropdownMenuItem>
+          {translate("auto.components.editor.MonacoGutterContextMenu.2e0b1cdc05", "Copy Rel. Path to Line")}</DropdownMenuItem>
         <DropdownMenuItem
           onSelect={async () => {
             const state = useAppStore.getState()
@@ -81,8 +80,7 @@ export function MonacoGutterContextMenu({
           }}
         >
           <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-          Copy Remote URL
-        </DropdownMenuItem>
+          {translate("auto.components.editor.MonacoGutterContextMenu.7b57b1b468", "Copy Remote URL")}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

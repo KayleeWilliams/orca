@@ -3,6 +3,7 @@
 import type { HostedReviewCreationEligibility } from '../../../../shared/hosted-review'
 import type { GitUpstreamStatus, PRState } from '../../../../shared/types'
 import { shouldForcePushWithLeaseForUpstream } from '../../../../shared/git-upstream-status'
+import { translate } from '@/i18n/i18n'
 
 // Why: this module owns the pure state-machine logic for the Source Control
 // primary action (split button). Keeping the logic outside the React component
@@ -150,8 +151,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (isCommitting) {
     return {
       kind: 'commit',
-      label: 'Commit',
-      title: 'Commit in progress…',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.16aee3a5c1", "Commit in progress…"),
       disabled: true
     }
   }
@@ -178,8 +179,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     if (inFlightRemoteOpKind === 'force_push') {
       return {
         kind: 'push',
-        label: 'Force Push',
-        title: 'Force Push in progress…',
+        label: translate("auto.components.right.sidebar.source.control.primary.action.390abeab93", "Force Push"),
+        title: translate("auto.components.right.sidebar.source.control.primary.action.74fc171e99", "Force Push in progress…"),
         disabled: true
       }
     }
@@ -189,7 +190,7 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
       return {
         kind: inFlightRemoteOpKind,
         label,
-        title: `${label} in progress…`,
+        title: translate("auto.components.right.sidebar.source.control.primary.action.484f45c439", "{{value0}} in progress…", { value0: label }),
         disabled: true
       }
     }
@@ -216,8 +217,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (hasUnresolvedConflicts) {
     return {
       kind: 'commit',
-      label: 'Commit',
-      title: 'Resolve conflicts before committing',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.a6457b46a7", "Resolve conflicts before committing"),
       disabled: true
     }
   }
@@ -230,8 +231,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (hasStaged && hasPartiallyStagedChanges) {
     return {
       kind: 'stage',
-      label: 'Stage All',
-      title: 'Stage all changes before committing partially staged files',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.18a0fca877", "Stage All"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.2d8f185fbc", "Stage all changes before committing partially staged files"),
       disabled: false
     }
   }
@@ -244,8 +245,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (hasStaged && hasMessage) {
     return {
       kind: 'commit',
-      label: 'Commit',
-      title: 'Commit staged changes',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.ab41fb926b", "Commit staged changes"),
       disabled: false
     }
   }
@@ -254,8 +255,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (hasStaged && !hasMessage) {
     return {
       kind: 'commit',
-      label: 'Commit',
-      title: 'Enter a commit message to commit',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.f01f16d77f", "Enter a commit message to commit"),
       disabled: true
     }
   }
@@ -268,8 +269,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (!hasStaged && hasStageableChanges) {
     return {
       kind: 'stage',
-      label: 'Stage All',
-      title: 'Stage all changes',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.18a0fca877", "Stage All"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.5a477d80cb", "Stage all changes"),
       disabled: false
     }
   }
@@ -278,8 +279,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (!upstreamStatus) {
     return {
       kind: 'commit',
-      label: 'Commit',
-      title: 'Stage at least one file to commit',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.fa3bd4f40c", "Stage at least one file to commit"),
       disabled: true
     }
   }
@@ -288,8 +289,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     if (branchCommitsAhead === 0) {
       return {
         kind: 'commit',
-        label: 'Commit',
-        title: 'Nothing to commit. Branch has no changes to publish.',
+        label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+        title: translate("auto.components.right.sidebar.source.control.primary.action.acce237921", "Nothing to commit. Branch has no changes to publish."),
         disabled: true
       }
     }
@@ -297,8 +298,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     if (isPRStateLoading) {
       return {
         kind: 'commit',
-        label: 'Commit',
-        title: 'Checking PR status…',
+        label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+        title: translate("auto.components.right.sidebar.source.control.primary.action.41d4bcf157", "Checking PR status…"),
         disabled: true
       }
     }
@@ -306,16 +307,16 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     if (prState === 'merged') {
       return {
         kind: 'commit',
-        label: 'Commit',
-        title: 'Nothing to commit. PR is already merged.',
+        label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
+        title: translate("auto.components.right.sidebar.source.control.primary.action.3d5dccef0b", "Nothing to commit. PR is already merged."),
         disabled: true
       }
     }
 
     return {
       kind: 'publish',
-      label: 'Publish Branch',
-      title: 'Publish this branch to origin',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.7b4d02e6b8", "Publish Branch"),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.1884cf34af", "Publish this branch to origin"),
       disabled: false
     }
   }
@@ -324,14 +325,14 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     if (shouldForcePushWithLeaseForUpstream(upstreamStatus)) {
       return {
         kind: 'push',
-        label: 'Force Push',
+        label: translate("auto.components.right.sidebar.source.control.primary.action.390abeab93", "Force Push"),
         title: describeForcePushWithLease(branchCommitsAhead, upstreamStatus.upstreamName),
         disabled: false
       }
     }
     return {
       kind: 'sync',
-      label: 'Sync',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.795f1509c5", "Sync"),
       title: describeSyncCounts(upstreamStatus.ahead, upstreamStatus.behind),
       disabled: false
     }
@@ -339,7 +340,7 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (upstreamStatus.behind > 0) {
     return {
       kind: 'pull',
-      label: 'Pull',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.d64292a938", "Pull"),
       title: describePullCount(upstreamStatus.behind),
       disabled: false
     }
@@ -347,7 +348,7 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   if (upstreamStatus.ahead > 0) {
     return {
       kind: 'push',
-      label: 'Push',
+      label: translate("auto.components.right.sidebar.source.control.primary.action.95550cff15", "Push"),
       title: describePushCount(upstreamStatus.ahead),
       disabled: false
     }
@@ -357,8 +358,8 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
     const copy = reviewCopy(hostedReviewCreation.provider)
     return {
       kind: 'create_pr',
-      label: `Create ${copy.shortLabel}`,
-      title: `Create a ${copy.reviewLabel} for this branch`,
+      label: translate("auto.components.right.sidebar.source.control.primary.action.e7ffa46946", "Create {{value0}}", { value0: copy.shortLabel }),
+      title: translate("auto.components.right.sidebar.source.control.primary.action.946a8a05ea", "Create a {{value0}} for this branch", { value0: copy.reviewLabel }),
       disabled: false
     }
   }
@@ -367,7 +368,7 @@ export function resolvePrimaryAction(inputs: PrimaryActionInputs): PrimaryAction
   // needs staging before commit can proceed.
   return {
     kind: 'commit',
-    label: 'Commit',
+    label: translate("auto.components.right.sidebar.source.control.primary.action.ed93b4f14f", "Commit"),
     title: hasUnstagedChanges
       ? 'Stage at least one file to commit'
       : 'Nothing to commit. Branch is up to date.',

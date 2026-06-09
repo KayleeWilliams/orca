@@ -1,4 +1,5 @@
 import { ChevronLeft, CornerDownLeft, Loader2 } from 'lucide-react'
+import { translate } from '@/i18n/i18n'
 
 type OnboardingFooterProps = {
   shouldShowSkipToProjectSetup: boolean
@@ -33,8 +34,7 @@ export function OnboardingFooter({
           disabled={Boolean(busyLabel)}
           onClick={onSkipToRepo}
         >
-          Skip to project setup
-        </button>
+          {translate("auto.components.onboarding.OnboardingFooter.111d3f8d92", "Skip to project setup")}</button>
       ) : (
         <span />
       )}
@@ -46,8 +46,7 @@ export function OnboardingFooter({
             onClick={onBack}
           >
             <ChevronLeft className="size-4" />
-            Back
-          </button>
+            {translate("auto.components.onboarding.OnboardingFooter.ba58547306", "Back")}</button>
         )}
         {showPrimary && (
           <button

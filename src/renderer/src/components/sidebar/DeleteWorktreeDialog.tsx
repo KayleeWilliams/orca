@@ -24,6 +24,7 @@ import {
   getDeleteWorktreeLineageDialogCopy,
   isFolderWorkspaceDelete as getIsFolderWorkspaceDelete
 } from './delete-worktree-dialog-copy'
+import { translate } from '@/i18n/i18n'
 
 const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -235,11 +236,11 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
     // Why: the toast confirms the preference was saved and points the user at
     // where to undo it. The "Open Settings" action deep-links to the General
     // pane so they never have to hunt for the toggle if they change their mind.
-    toast.success("We'll skip this confirmation next time.", {
-      description: 'You can change this in Settings.',
+    toast.success(translate("auto.components.sidebar.DeleteWorktreeDialog.dd3a45bbbd", "We'll skip this confirmation next time."), {
+      description: translate("auto.components.sidebar.DeleteWorktreeDialog.2b56b35f53", "You can change this in Settings."),
       duration: 8000,
       action: {
-        label: 'Open Settings',
+        label: translate("auto.components.sidebar.DeleteWorktreeDialog.5cc1a6701c", "Open Settings"),
         onClick: () => {
           openSettingsPage()
           openSettingsTarget({
@@ -281,7 +282,7 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
         deletePromise
           .then((result) => {
             if (!result.ok) {
-              toast.error('Force delete failed', {
+              toast.error(translate("auto.components.sidebar.DeleteWorktreeDialog.42e610d6cf", "Force delete failed"), {
                 description: result.error
               })
               return
@@ -289,7 +290,7 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
             onDeleted?.([worktreeId])
           })
           .catch((err: unknown) => {
-            toast.error('Failed to delete workspace', {
+            toast.error(translate("auto.components.sidebar.DeleteWorktreeDialog.4f6750ca7b", "Failed to delete workspace"), {
               description: err instanceof Error ? err.message : String(err)
             })
           })
@@ -364,14 +365,14 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
       >
         <DialogHeader>
           <DialogTitle className="text-sm">
-            {isBatchDelete ? 'Delete Workspaces' : 'Delete Workspace'}
+            {isBatchDelete ? translate("auto.components.sidebar.DeleteWorktreeDialog.86f0ae1257", "Delete Workspaces") : translate("auto.components.sidebar.DeleteWorktreeDialog.fc23c4cbdf", "Delete Workspace")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Remove <span className={deleteCopy.targetClassName}>{deleteCopy.targetLabel}</span>
+            {translate("auto.components.sidebar.DeleteWorktreeDialog.91492c9ad6", "Remove")}<span className={deleteCopy.targetClassName}>{deleteCopy.targetLabel}</span>
             {canDeleteAllLineage ? (
               <>
                 {' '}
-                and{' '}
+                {translate("auto.components.sidebar.DeleteWorktreeDialog.ff2a74ac0e", "and")}{' '}
                 <span className="font-medium text-foreground">
                   {lineageDeleteCopy.childTargetLabel}
                 </span>{' '}

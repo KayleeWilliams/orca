@@ -15,6 +15,7 @@ import { useAppStore } from '@/store'
 import type { Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import { finishProjectAddWithDefaultCheckout } from './project-added-default-checkout'
+import { translate } from '@/i18n/i18n'
 
 const NON_GIT_REPO_ERROR = 'Not a valid git repository'
 
@@ -87,7 +88,7 @@ const AddProjectFromFolderDialog = React.memo(function AddProjectFromFolderDialo
         if (!mountedRef.current || gen !== addGenRef.current) {
           return
         }
-        toast.success('Remote project added', { description: repo.displayName })
+        toast.success(translate("auto.components.sidebar.AddProjectFromFolderDialog.e643b30398", "Remote project added"), { description: repo.displayName })
       } else {
         repo = await addRepoPath(folderPath)
       }
@@ -156,8 +157,8 @@ const AddProjectFromFolderDialog = React.memo(function AddProjectFromFolderDialo
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add Project</DialogTitle>
-          <DialogDescription>Add this folder as a separate Orca project.</DialogDescription>
+          <DialogTitle>{translate("auto.components.sidebar.AddProjectFromFolderDialog.7d1f51678c", "Add Project")}</DialogTitle>
+          <DialogDescription>{translate("auto.components.sidebar.AddProjectFromFolderDialog.046751dbfb", "Add this folder as a separate Orca project.")}</DialogDescription>
         </DialogHeader>
 
         {folderPath && (
@@ -170,16 +171,14 @@ const AddProjectFromFolderDialog = React.memo(function AddProjectFromFolderDialo
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isAdding}>
-            Cancel
-          </Button>
+            {translate("auto.components.sidebar.AddProjectFromFolderDialog.7726a16374", "Cancel")}</Button>
           <Button onClick={handleConfirm} disabled={!folderPath || isAdding}>
             {isAdding ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <FolderPlus className="size-4" />
             )}
-            Add Project
-          </Button>
+            {translate("auto.components.sidebar.AddProjectFromFolderDialog.7d1f51678c", "Add Project")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

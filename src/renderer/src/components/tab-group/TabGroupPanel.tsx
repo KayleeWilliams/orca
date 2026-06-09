@@ -22,6 +22,7 @@ import {
   type TabDropZone
 } from './useTabDragSplit'
 import { tabGroupBodyAnchorName } from './tab-group-body-anchor'
+import { translate } from '@/i18n/i18n'
 
 const EditorPanel = lazy(() => import('../editor/EditorPanel'))
 
@@ -271,8 +272,8 @@ export default function TabGroupPanel({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    aria-label="Pane Actions"
-                    title="Pane Actions"
+                    aria-label={translate("auto.components.tab.group.TabGroupPanel.9acaf92093", "Pane Actions")}
+                    title={translate("auto.components.tab.group.TabGroupPanel.9acaf92093", "Pane Actions")}
                     onClick={(event) => {
                       event.stopPropagation()
                     }}
@@ -288,32 +289,28 @@ export default function TabGroupPanel({
                     }}
                   >
                     <Columns2 className="size-4" />
-                    Split Right
-                  </DropdownMenuItem>
+                    {translate("auto.components.tab.group.TabGroupPanel.ab1e2bff04", "Split Right")}</DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => {
                       commands.createSplitGroup('down')
                     }}
                   >
                     <Rows2 className="size-4" />
-                    Split Down
-                  </DropdownMenuItem>
+                    {translate("auto.components.tab.group.TabGroupPanel.4df2a06d36", "Split Down")}</DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => {
                       commands.createSplitGroup('left')
                     }}
                   >
                     <Columns2 className="size-4" />
-                    Split Left
-                  </DropdownMenuItem>
+                    {translate("auto.components.tab.group.TabGroupPanel.30137df7d0", "Split Left")}</DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => {
                       commands.createSplitGroup('up')
                     }}
                   >
                     <Rows2 className="size-4" />
-                    Split Up
-                  </DropdownMenuItem>
+                    {translate("auto.components.tab.group.TabGroupPanel.0db2081805", "Split Up")}</DropdownMenuItem>
                   {hasSplitGroups ? (
                     <>
                       <DropdownMenuSeparator />
@@ -324,8 +321,7 @@ export default function TabGroupPanel({
                         }}
                       >
                         <X className="size-4" />
-                        Close Group
-                      </DropdownMenuItem>
+                        {translate("auto.components.tab.group.TabGroupPanel.f7d6ce445e", "Close Group")}</DropdownMenuItem>
                     </>
                   ) : null}
                 </DropdownMenuContent>
@@ -370,17 +366,16 @@ export default function TabGroupPanel({
         ) : null}
         {activeDropZone ? <TabGroupDropOverlay zone={activeDropZone} /> : null}
         {activeTab &&
-          activeTab.contentType !== 'terminal' &&
-          activeTab.contentType !== 'browser' &&
-          activeTab.contentType !== 'simulator' && (
+          activeTab.contentType !== "terminal" &&
+          activeTab.contentType !== "browser" &&
+          activeTab.contentType !== "simulator" && (
             <div className="absolute inset-0 flex min-h-0 min-w-0">
               {/* Why: split groups render editor content inside a plain relative pane body
                   instead of the legacy flex column in Terminal.tsx. */}
               <Suspense
                 fallback={
                   <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-                    Loading editor...
-                  </div>
+                    {translate("auto.components.tab.group.TabGroupPanel.814fb04c43", "Loading editor...")}</div>
                 }
               >
                 <EditorPanel activeFileId={activeTab.entityId} activeViewStateId={activeTab.id} />

@@ -99,7 +99,7 @@ function Sidebar({
                 : 'border-worktree-sidebar-ring/70'
             )}
           >
-            {affordance.tone === 'busy' ? (
+            {affordance.tone === "busy" ? (
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
             ) : (
               <FolderPlus className="size-5 text-muted-foreground" />

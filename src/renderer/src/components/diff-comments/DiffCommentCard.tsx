@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { getDiffCommentLineLabel } from '@/lib/diff-comment-compat'
 import { useMountedRef } from '@/hooks/useMountedRef'
+import { translate } from '@/i18n/i18n'
 
 // Why: the saved-note card lives inside a Monaco view zone's DOM node.
 // useDiffCommentDecorator creates a React root per zone and renders this
@@ -158,16 +159,15 @@ export function DiffCommentCard({
                   <button
                     type="button"
                     className="orca-diff-comment-pill-btn"
-                    title="Open in browser"
-                    aria-label="Open in browser"
+                    title={translate("auto.components.diff.comments.DiffCommentCard.508ee678a5", "Open in browser")}
+                    aria-label={translate("auto.components.diff.comments.DiffCommentCard.508ee678a5", "Open in browser")}
                     onClick={(ev) => {
                       ev.preventDefault()
                       ev.stopPropagation()
                       void window.api.shell.openUrl(url)
                     }}
                   >
-                    Open
-                  </button>
+                    {translate("auto.components.diff.comments.DiffCommentCard.6978871a3d", "Open")}</button>
                   {(onSubmitEdit || onDelete) && (
                     <span className="orca-diff-comment-pill-divider" />
                   )}
@@ -178,8 +178,8 @@ export function DiffCommentCard({
                   <button
                     type="button"
                     className="orca-diff-comment-pill-btn"
-                    title="Edit note"
-                    aria-label="Edit note"
+                    title={translate("auto.components.diff.comments.DiffCommentCard.cad3384faa", "Edit note")}
+                    aria-label={translate("auto.components.diff.comments.DiffCommentCard.cad3384faa", "Edit note")}
                     onClick={(ev) => {
                       ev.preventDefault()
                       ev.stopPropagation()
@@ -195,8 +195,8 @@ export function DiffCommentCard({
                 <button
                   type="button"
                   className="orca-diff-comment-pill-btn orca-diff-comment-pill-btn-danger"
-                  title="Delete note"
-                  aria-label="Delete note"
+                  title={translate("auto.components.diff.comments.DiffCommentCard.cce596969e", "Delete note")}
+                  aria-label={translate("auto.components.diff.comments.DiffCommentCard.cce596969e", "Delete note")}
                   onClick={(ev) => {
                     ev.preventDefault()
                     ev.stopPropagation()
@@ -249,16 +249,14 @@ export function DiffCommentCard({
             />
             <div className="orca-diff-comment-popover-footer">
               <Button variant="ghost" size="sm" onClick={handleCancel} disabled={submitting}>
-                Cancel
-              </Button>
+                {translate("auto.components.diff.comments.DiffCommentCard.0203bed775", "Cancel")}</Button>
               <Button
                 size="sm"
                 onClick={() => void handleSubmit()}
                 disabled={!canSubmit}
-                title={submitting ? 'Saving…' : undefined}
+                title={submitting ? translate("auto.components.diff.comments.DiffCommentCard.bb0a55f856", "Saving…") : undefined}
               >
-                Save
-                <CornerDownLeft className="ml-1 size-3 opacity-70" />
+                {translate("auto.components.diff.comments.DiffCommentCard.109a791e7b", "Save")}<CornerDownLeft className="ml-1 size-3 opacity-70" />
               </Button>
             </div>
           </div>

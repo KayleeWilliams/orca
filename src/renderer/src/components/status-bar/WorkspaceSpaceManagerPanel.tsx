@@ -80,6 +80,7 @@ import {
   type WorkspaceSpaceSortDirection,
   type WorkspaceSpaceSortKey
 } from './workspace-space-presentation'
+import { translate } from '@/i18n/i18n'
 
 const TREEMAP_FILLS = [
   'color-mix(in srgb, var(--chart-2) 34%, var(--card))',
@@ -305,7 +306,7 @@ function UpdatedMetric({
 
   return (
     <Metric
-      label="Updated"
+      label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.52b629eb84", "Updated")}
       title={scannedAt === null ? undefined : getWorkspaceSpaceScanDateTimeLabel(scannedAt)}
       value={
         scannedAt === null
@@ -392,15 +393,13 @@ function StatusBadge({
     return (
       <Badge variant="outline" className="gap-1.5 text-muted-foreground">
         <Loader2 className="size-3 animate-spin" />
-        Deleting
-      </Badge>
+        {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.33653dbac2", "Deleting")}</Badge>
     )
   }
   if (deleteState?.error) {
     return (
       <Badge variant="outline" className="border-destructive/30 text-destructive">
-        Failed
-      </Badge>
+        {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.39801484e0", "Failed")}</Badge>
     )
   }
   if (worktree.status !== 'ok') {
@@ -411,41 +410,40 @@ function StatusBadge({
     )
   }
   if (worktree.isMainWorktree) {
-    return <Badge variant="outline">Keep: main</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.2b501ee391", "Keep: main")}</Badge>
   }
   if (decisionDetails?.isActive) {
-    return <Badge variant="outline">Keep: active</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.7f7895514e", "Keep: active")}</Badge>
   }
   if ((decisionDetails?.changedFileCount ?? 0) > 0) {
-    return <Badge variant="outline">Keep: changed files</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.7ab8d7e2d7", "Keep: changed files")}</Badge>
   }
   if (decisionDetails?.changedFileCount === null) {
-    return <Badge variant="outline">Keep: git not checked</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.ec7b076a75", "Keep: git not checked")}</Badge>
   }
   if ((decisionDetails?.dirtyEditorBufferCount ?? 0) > 0) {
-    return <Badge variant="outline">Keep: unsaved edits</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.2055bc6a5a", "Keep: unsaved edits")}</Badge>
   }
   if (
     (decisionDetails?.activeAgentCount ?? 0) > 0 ||
     (decisionDetails?.liveTerminalCount ?? 0) > 0 ||
     (decisionDetails?.browserTabCount ?? 0) > 0
   ) {
-    return <Badge variant="outline">Keep: in use</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.cbc343a7a8", "Keep: in use")}</Badge>
   }
   if (
     decisionDetails?.reviewLabel ||
     decisionDetails?.issueLabel ||
     decisionDetails?.linearIssueLabel
   ) {
-    return <Badge variant="outline">Keep: linked</Badge>
+    return <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.720870a18e", "Keep: linked")}</Badge>
   }
   return (
     <Badge
       variant="outline"
       className="border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
     >
-      Can delete
-    </Badge>
+      {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.7d7745bb8f", "Can delete")}</Badge>
   )
 }
 
@@ -590,19 +588,19 @@ function WorkspaceDecisionHoverCard({
       <div className="space-y-3 px-4 py-3">
         <DecisionLine
           icon={<Trash2 />}
-          label="Delete decision"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.d384a4ce9f", "Delete decision")}
           value={deleteDecision}
           tone={worktree.canDelete && worktree.status === 'ok' ? 'default' : 'warning'}
         />
-        <DecisionLine icon={<Bot />} label="Agents" value={getAgentDecisionLabel(details)} />
+        <DecisionLine icon={<Bot />} label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.a8d9e0de79", "Agents")} value={getAgentDecisionLabel(details)} />
         <DecisionLine
           icon={<Terminal />}
-          label="Terminals"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e9528a89b3", "Terminals")}
           value={getTerminalDecisionLabel(details)}
         />
         <DecisionLine
           icon={<FileWarning />}
-          label="Git changes"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.0bc756efaf", "Git changes")}
           value={getGitDecisionLabel(details, gitRefreshState)}
           tone={
             (details.changedFileCount ?? 0) > 0 || gitRefreshState?.error ? 'warning' : 'default'
@@ -610,27 +608,27 @@ function WorkspaceDecisionHoverCard({
         />
         <DecisionLine
           icon={<FileWarning />}
-          label="Editor buffers"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.c432278ec7", "Editor buffers")}
           value={getEditorDecisionLabel(details)}
           tone={details.dirtyEditorBufferCount > 0 ? 'warning' : 'default'}
         />
         <DecisionLine
           icon={<GitBranch />}
-          label="Branch"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.b9b4a3a25d", "Branch")}
           value={details.branchStatus ?? getWorkspaceSpaceBranchLabel(worktree)}
         />
         <DecisionLine
           icon={<GitPullRequest />}
-          label="Review"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.fb2069acb7", "Review")}
           value={details.reviewLabel ?? 'No linked PR'}
         />
-        <DecisionLine icon={<ExternalLink />} label="Issue" value={issueLabel} />
+        <DecisionLine icon={<ExternalLink />} label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.66870929fb", "Issue")} value={issueLabel} />
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-border/60 px-4 py-3">
         <div className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
           {details.browserTabCount > 0
-            ? `${pluralize(details.browserTabCount, 'browser tab')} open`
+            ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.131662ac65", "{{value0}} open", { value0: pluralize(details.browserTabCount, 'browser tab') })
             : worktree.path}
         </div>
         <Button
@@ -646,8 +644,7 @@ function WorkspaceDecisionHoverCard({
           className="shrink-0 gap-1.5"
         >
           <ExternalLink className="size-3.5" />
-          Go to workspace
-        </Button>
+          {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.c28643d3da", "Go to workspace")}</Button>
       </div>
     </HoverCardContent>
   )
@@ -707,16 +704,15 @@ function WorkspaceTreemap({
             className="absolute right-2 top-2 gap-1.5 bg-background/90 px-2.5 backdrop-blur"
           >
             <ZoomOut className="size-3" />
-            All
-          </Button>
+            {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.ef890d31b9", "All")}</Button>
         ) : null}
         <span className="flex items-center gap-2">
           {isScanning ? <Loader2 className="size-4 animate-spin" /> : null}
           {isScanning
-            ? 'Scanning workspace sizes. You can leave this page.'
+            ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.c5135e7e4a", "Scanning workspace sizes. You can leave this page.")
             : isZoomed
-              ? 'No top-level items to show.'
-              : 'No scanned workspace sizes yet.'}
+              ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.977bdf9a36", "No top-level items to show.")
+              : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.0990a63160", "No scanned workspace sizes yet.")}
         </span>
       </div>
     )
@@ -737,8 +733,7 @@ function WorkspaceTreemap({
               className="gap-1.5 bg-background/90 px-2.5 backdrop-blur"
             >
               <ZoomOut className="size-3" />
-              All
-            </Button>
+              {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.ef890d31b9", "All")}</Button>
           </>
         ) : canZoomSelected ? (
           <Button
@@ -748,8 +743,7 @@ function WorkspaceTreemap({
             className="gap-1.5 bg-background/90 px-2.5 backdrop-blur"
           >
             <ZoomIn className="size-3" />
-            Zoom
-          </Button>
+            {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.d3f9c69ddc", "Zoom")}</Button>
         ) : null}
       </div>
       {rects.map((rect) => {
@@ -830,8 +824,8 @@ function BreakdownList({
         <span className="flex items-center gap-2">
           {isScanning ? <Loader2 className="size-4 animate-spin" /> : null}
           {isScanning
-            ? 'Scanning workspace sizes. You can leave this page.'
-            : 'Select a workspace to inspect.'}
+            ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.c5135e7e4a", "Scanning workspace sizes. You can leave this page.")
+            : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.5c6d25720c", "Select a workspace to inspect.")}
         </span>
       </div>
     )
@@ -854,19 +848,18 @@ function BreakdownList({
               {formatBytes(worktree.sizeBytes)}
             </div>
             <div className="text-[11px] text-muted-foreground">
-              {formatCompactCount(topLevelItemCount)} top-level items
-            </div>
+              {formatCompactCount(topLevelItemCount)} {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.b25c2c1086", "top-level items")}</div>
           </div>
         </div>
       </div>
 
-      {worktree.status !== 'ok' ? (
+      {worktree.status !== "ok" ? (
         <div className="flex items-start gap-2 px-4 py-4 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0 break-words">{worktree.error ?? 'Scan failed.'}</span>
+          <span className="min-w-0 break-words">{worktree.error ?? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.0ba046fbc5", "Scan failed.")}</span>
         </div>
       ) : worktree.topLevelItems.length === 0 ? (
-        <div className="px-4 py-8 text-center text-sm text-muted-foreground">No files found.</div>
+        <div className="px-4 py-8 text-center text-sm text-muted-foreground">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.16988df079", "No files found.")}</div>
       ) : (
         <div className="max-h-72 overflow-y-auto scrollbar-sleek px-3 py-3">
           <div className="space-y-2">
@@ -958,7 +951,7 @@ function WorkspaceRow({
       <CheckButton
         checked={canDelete && selected}
         disabled={!canDelete}
-        label={`Select ${worktree.displayName}`}
+        label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.f39d291997", "Select {{value0}}", { value0: worktree.displayName })}
         onClick={onToggleSelected}
       />
 
@@ -968,7 +961,7 @@ function WorkspaceRow({
           {worktree.isRemote ? (
             <Server className="size-3.5 shrink-0 text-muted-foreground" />
           ) : null}
-          {worktree.isSparse ? <Badge variant="outline">Sparse</Badge> : null}
+          {worktree.isSparse ? <Badge variant="outline">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.9155381019", "Sparse")}</Badge> : null}
         </div>
         <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <GitBranch className="size-3 shrink-0" />
@@ -992,8 +985,7 @@ function WorkspaceRow({
                 className="h-6 shrink-0 gap-1 px-2"
               >
                 <Trash2 className="size-3" />
-                Force
-              </Button>
+                {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.a998501630", "Force")}</Button>
             ) : null}
           </div>
         ) : null}
@@ -1008,7 +1000,7 @@ function WorkspaceRow({
 
       <div className="min-w-0 space-y-1.5">
         <div className="text-right text-sm font-medium tabular-nums">
-          {worktree.status === 'ok' ? formatBytes(worktree.sizeBytes) : '—'}
+          {worktree.status === "ok" ? formatBytes(worktree.sizeBytes) : '—'}
         </div>
         <SizeBar value={worktree.sizeBytes} max={maxSize} />
       </div>
@@ -1049,8 +1041,7 @@ function WorkspaceRow({
       <ContextMenuContent>
         <ContextMenuItem variant="destructive" onSelect={onDelete}>
           <Trash2 className="size-3.5" />
-          Delete workspace
-        </ContextMenuItem>
+          {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.792a214457", "Delete workspace")}</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )
@@ -1393,8 +1384,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
         }
         return next
       })
-      toast.success(deletedIds.length === 1 ? 'Workspace deleted' : 'Workspaces deleted', {
-        description: `${deletedIds.length} ${deletedIds.length === 1 ? 'workspace' : 'workspaces'} removed from Space.`
+      toast.success(deletedIds.length === 1 ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.9afc97f9a3", "Workspace deleted") : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.eee5240810", "Workspaces deleted"), {
+        description: translate(
+          'auto.components.status.bar.WorkspaceSpaceManagerPanel.63efebe0e6',
+          '{{value0}} {{value1}} removed from Space.',
+          { value0: deletedIds.length, value1: deletedIds.length === 1 ? 'workspace' : 'workspaces' }
+        )
       })
     },
     [removeWorkspaceSpaceWorktrees]
@@ -1420,7 +1415,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
       void removeWorktree(worktree.worktreeId, true)
         .then((result) => {
           if (!result.ok) {
-            toast.error('Force delete failed', {
+            toast.error(translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.2965415393", "Force delete failed"), {
               description: result.error
             })
             return
@@ -1428,7 +1423,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           handleDeletedWorktrees([worktree.worktreeId])
         })
         .catch((error: unknown) => {
-          toast.error('Force delete failed', {
+          toast.error(translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.2965415393", "Force delete failed"), {
             description: error instanceof Error ? error.message : String(error)
           })
         })
@@ -1446,13 +1441,13 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   return (
     <div className="space-y-5">
       <div className="grid overflow-hidden rounded-lg border border-border/65 bg-background/35 md:grid-cols-4 md:divide-x md:divide-border/60">
-        <Metric label="Scanned" value={analysis ? formatBytes(analysis.totalSizeBytes) : '—'} />
+        <Metric label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.09960d86bd", "Scanned")} value={analysis ? formatBytes(analysis.totalSizeBytes) : '—'} />
         <Metric
-          label="Reclaimable"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.83f1a0a932", "Reclaimable")}
           value={analysis ? formatBytes(analysis.reclaimableBytes) : '—'}
         />
         <Metric
-          label="Workspaces"
+          label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.43171f3e60", "Workspaces")}
           value={
             analysis
               ? analysis.unavailableWorktreeCount > 0
@@ -1474,11 +1469,11 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           <span className="truncate">
             {analysis
               ? isScanning
-                ? `${progressLabel ?? 'Scanning workspace sizes'}. You can leave this page; the last result stays visible.`
-                : `${formatBytes(analysis.reclaimableBytes)} can be reclaimed from linked worktrees.`
+                ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.34174bd83d", "{{value0}}. You can leave this page; the last result stays visible.", { value0: progressLabel ?? 'Scanning workspace sizes' })
+                : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.d595295d7d", "{{value0}} can be reclaimed from linked worktrees.", { value0: formatBytes(analysis.reclaimableBytes) })
               : isScanning
-                ? `${progressLabel ?? 'Scanning workspace sizes'}. You can leave this page.`
-                : 'Run a scan to inspect workspace sizes.'}
+                ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.265d956765", "{{value0}}. You can leave this page.", { value0: progressLabel ?? 'Scanning workspace sizes' })
+                : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e91dd2a9ae", "Run a scan to inspect workspace sizes.")}
           </span>
         </div>
         <Button
@@ -1489,7 +1484,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           className="w-28 gap-1.5"
         >
           {isScanning ? (
-            progress?.state === 'cancelling' ? (
+            progress?.state === "cancelling" ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
               <X className="size-3.5" />
@@ -1498,12 +1493,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             <RefreshCw className="size-3.5" />
           )}
           {isScanning
-            ? progress?.state === 'cancelling'
-              ? 'Stopping'
-              : 'Cancel'
+            ? progress?.state === "cancelling"
+              ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.1fce91d1b9", "Stopping")
+              : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.8dc9ddac8a", "Cancel")
             : analysis
-              ? 'Refresh'
-              : 'Scan'}
+              ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.508673bac0", "Refresh")
+              : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.8c7c57fbf8", "Scan")}
         </Button>
       </div>
 
@@ -1512,7 +1507,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span className="min-w-0 break-words">
             {scanError}
-            {analysis ? ' Last successful results remain visible.' : ''}
+            {analysis ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.20a4204dce", "Last successful results remain visible.") : ''}
           </span>
         </div>
       ) : null}
@@ -1548,10 +1543,9 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
         <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-background/95 px-3 py-2 shadow-xs backdrop-blur">
           <div className="min-w-0 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">
-              {selectedDeletableIds.length} selected
-            </span>
+              {selectedDeletableIds.length} {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.65402b7192", "selected")}</span>
             <span className="mx-1.5">·</span>
-            <span>{formatBytes(selectedReclaimableBytes)} reclaimable</span>
+            <span>{formatBytes(selectedReclaimableBytes)} {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.0cb1501ccf", "reclaimable")}</span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Button
@@ -1561,8 +1555,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               disabled={selectedDeletableIds.length === 0}
               className="!px-3"
             >
-              Clear
-            </Button>
+              {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e4a12c455b", "Clear")}</Button>
             <Button
               variant="destructive"
               size="sm"
@@ -1571,8 +1564,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               className="min-w-[9.5rem] gap-1.5 !px-3.5"
             >
               <Trash2 className="size-3.5" />
-              Delete selected
-            </Button>
+              {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.5caccea440", "Delete selected")}</Button>
           </div>
         </div>
       ) : null}
@@ -1584,7 +1576,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter workspaces"
+              placeholder={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.6f8f6a6b04", "Filter workspaces")}
               className="pl-9"
             />
           </div>
@@ -1597,10 +1589,10 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="size">Size</SelectItem>
-              <SelectItem value="name">Name</SelectItem>
-              <SelectItem value="repo">Repository</SelectItem>
-              <SelectItem value="activity">Activity</SelectItem>
+              <SelectItem value="size">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.33aef3e9cc", "Size")}</SelectItem>
+              <SelectItem value="name">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.243287ac60", "Name")}</SelectItem>
+              <SelectItem value="repo">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.81f14d9924", "Repository")}</SelectItem>
+              <SelectItem value="activity">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.d7ac56452e", "Activity")}</SelectItem>
             </SelectContent>
           </Select>
 
@@ -1609,9 +1601,9 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             size="sm"
             onClick={() => setOnlyDeletable((current) => !current)}
             className="w-32"
-            aria-label="Show only deletable workspaces"
+            aria-label={translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.81aaf1de65", "Show only deletable workspaces")}
           >
-            {onlyDeletable ? 'Deletable' : 'All'}
+            {onlyDeletable ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.b2f82ed5ae", "Deletable") : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.ef890d31b9", "All")}
           </Button>
 
           <Button
@@ -1621,11 +1613,11 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             disabled={visibleDeletableIds.length === 0}
             className="w-32 gap-1.5"
             aria-label={
-              allVisibleSelected ? 'Clear visible selection' : 'Select visible deletable workspaces'
+              allVisibleSelected ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.697d60c456", "Clear visible selection") : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.1d0f8300d1", "Select visible deletable workspaces")
             }
           >
             <Check className="size-3.5" />
-            {allVisibleSelected ? 'Clear' : 'Select'}
+            {allVisibleSelected ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e4a12c455b", "Clear") : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.f39d291997", "Select")}
           </Button>
         </div>
       ) : null}
@@ -1640,8 +1632,8 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                   disabled={visibleDeletableIds.length === 0}
                   label={
                     allVisibleSelected
-                      ? 'Clear visible selection'
-                      : 'Select visible deletable workspaces'
+                      ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.697d60c456", "Clear visible selection")
+                      : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.1d0f8300d1", "Select visible deletable workspaces")
                   }
                   onClick={toggleVisibleSelection}
                 />
@@ -1651,38 +1643,33 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                 onClick={() => toggleSort('name')}
                 className="flex items-center gap-1 text-left"
               >
-                Workspace
-                <SortIndicator sortKey="name" activeKey={sortKey} direction={sortDirection} />
+                {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e4aebea158", "Workspace")}<SortIndicator sortKey="name" activeKey={sortKey} direction={sortDirection} />
               </button>
               <button
                 type="button"
                 onClick={() => toggleSort('repo')}
                 className="flex items-center gap-1 text-left"
               >
-                Repository
-                <SortIndicator sortKey="repo" activeKey={sortKey} direction={sortDirection} />
+                {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.81f14d9924", "Repository")}<SortIndicator sortKey="repo" activeKey={sortKey} direction={sortDirection} />
               </button>
               <button
                 type="button"
                 onClick={() => toggleSort('size')}
                 className="flex items-center justify-end gap-1 text-right"
               >
-                Size
-                <SortIndicator sortKey="size" activeKey={sortKey} direction={sortDirection} />
+                {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.33aef3e9cc", "Size")}<SortIndicator sortKey="size" activeKey={sortKey} direction={sortDirection} />
               </button>
-              <div className="text-right">State</div>
+              <div className="text-right">{translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.be37293b10", "State")}</div>
             </div>
 
             <div className="max-h-[28rem] overflow-y-auto scrollbar-sleek">
               {isInitialScan ? (
                 <div className="flex items-center justify-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  Scanning workspaces. You can leave this page.
-                </div>
+                  {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.a02d84d2d2", "Scanning workspaces. You can leave this page.")}</div>
               ) : rows.length === 0 ? (
                 <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-                  No matching workspaces.
-                </div>
+                  {translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e031e93219", "No matching workspaces.")}</div>
               ) : (
                 rows.map((worktree) => (
                   <WorkspaceRow
@@ -1730,10 +1717,10 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
       ) : (
         <div className="rounded-lg border border-border/70 bg-background/30 px-4 py-10 text-center text-sm text-muted-foreground">
           {scanError
-            ? 'Scan failed before any workspace sizes were collected.'
+            ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.8194a4fb29", "Scan failed before any workspace sizes were collected.")
             : analysis
-              ? 'No workspace rows were available from the scan.'
-              : 'Run a scan to inspect workspace sizes.'}
+              ? translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.61e25239da", "No workspace rows were available from the scan.")
+              : translate("auto.components.status.bar.WorkspaceSpaceManagerPanel.e91dd2a9ae", "Run a scan to inspect workspace sizes.")}
         </div>
       )}
     </div>

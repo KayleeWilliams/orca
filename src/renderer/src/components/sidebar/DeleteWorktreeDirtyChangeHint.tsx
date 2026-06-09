@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { translate } from '@/i18n/i18n'
 
 export function DeleteWorktreeDirtyChangeHint({
   changeCount
@@ -25,8 +26,7 @@ export function DeleteWorktreeDirtyChangeHint({
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={4}>
-        Deleting this workspace permanently removes these changes from disk.
-      </TooltipContent>
+        {translate("auto.components.sidebar.DeleteWorktreeDirtyChangeHint.8e2994ce28", "Deleting this workspace permanently removes these changes from disk.")}</TooltipContent>
     </Tooltip>
   )
 }

@@ -21,6 +21,7 @@ import {
   type CrashReportRecord
 } from '../../../../shared/crash-reporting'
 import type { GitHubViewer } from '../../../../shared/types'
+import { translate } from '@/i18n/i18n'
 
 function formatSummary(report: CrashReportRecord): string {
   if (isReactErrorBoundaryReport(report)) {
@@ -196,7 +197,7 @@ export function CrashReportDialog(): React.JSX.Element {
       toast.error(result.error)
       return
     }
-    toast.success('Crash report copied.')
+    toast.success(translate("auto.components.crash.report.CrashReportDialog.8b8473c544", "Crash report copied."))
   }
 
   const dismissReportIfNeeded = async (): Promise<void> => {
@@ -238,10 +239,10 @@ export function CrashReportDialog(): React.JSX.Element {
       }
       setReport(result.report)
       setNotes('')
-      toast.success('Crash report sent.')
+      toast.success(translate("auto.components.crash.report.CrashReportDialog.8e24fe4f75", "Crash report sent."))
       closeDialog()
     } catch (error) {
-      toast.error('Failed to send crash report.')
+      toast.error(translate("auto.components.crash.report.CrashReportDialog.56a3dfa283", "Failed to send crash report."))
       console.error('Failed to submit crash report:', error)
     } finally {
       if (mountedRef.current) {
@@ -283,8 +284,7 @@ export function CrashReportDialog(): React.JSX.Element {
             <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-xs">
               <div className="font-medium text-foreground">{formatSummary(report)}</div>
               <div className="mt-1 text-muted-foreground">
-                {new Date(report.createdAt).toLocaleString()} · {report.platform} {report.arch} ·
-                Orca {report.appVersion}
+                {new Date(report.createdAt).toLocaleString()} · {report.platform} {report.arch} {translate("auto.components.crash.report.CrashReportDialog.835037edc9", "· Orca")}{report.appVersion}
               </div>
             </div>
             <textarea
@@ -295,7 +295,7 @@ export function CrashReportDialog(): React.JSX.Element {
               className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             />
             <div className="space-y-1.5">
-              <div className="text-[11px] font-medium text-muted-foreground">Diagnostic text</div>
+              <div className="text-[11px] font-medium text-muted-foreground">{translate("auto.components.crash.report.CrashReportDialog.6d3ebe216a", "Diagnostic text")}</div>
               <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-[11px] leading-5 text-muted-foreground scrollbar-sleek">
                 {diagnosticText}
               </pre>
@@ -303,15 +303,14 @@ export function CrashReportDialog(): React.JSX.Element {
           </div>
         ) : (
           <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
-            {loading ? 'Checking for crash reports...' : 'No crash report is available.'}
+            {loading ? translate("auto.components.crash.report.CrashReportDialog.765591798d", "Checking for crash reports...") : translate("auto.components.crash.report.CrashReportDialog.b175e90213", "No crash report is available.")}
           </div>
         )}
 
         <DialogFooter className="gap-2">
           <Button type="button" variant="outline" size="sm" onClick={handleCopy} disabled={!report}>
             <Clipboard className="size-3.5" />
-            Copy Details
-          </Button>
+            {translate("auto.components.crash.report.CrashReportDialog.50b00dc327", "Copy Details")}</Button>
           <Button
             type="button"
             variant="ghost"
@@ -319,12 +318,10 @@ export function CrashReportDialog(): React.JSX.Element {
             onClick={handleDismiss}
             disabled={submitting}
           >
-            Don&apos;t Send
-          </Button>
+            {translate("auto.components.crash.report.CrashReportDialog.88fea8e84e", "Don't Send")}</Button>
           <Button type="button" size="sm" onClick={handleSubmit} disabled={!report || submitting}>
             <Send className="size-3.5" />
-            Send Report
-          </Button>
+            {translate("auto.components.crash.report.CrashReportDialog.b4951cd27c", "Send Report")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
