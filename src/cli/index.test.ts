@@ -245,6 +245,9 @@ describe('orca root help', () => {
     expect(createHelp).toContain('folder:<id>')
     expect(createHelp).toContain('folder:<folderId>')
     expect(createHelp).toContain('worktree:<id>')
+    expect(createHelp).toContain(
+      '--no-parent only affects Orca lineage; omit --base-branch to use the repo default base'
+    )
 
     logSpy.mockClear()
     await main(['worktree', 'set', '--help'], '/tmp/repo')
