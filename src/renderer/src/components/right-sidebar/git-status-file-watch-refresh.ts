@@ -137,9 +137,5 @@ export function useGitStatusFileWatchRefresh({
       }
       window.removeEventListener(ORCA_WORKTREE_FILE_CHANGE_EVENT, handleFsChanged as EventListener)
     }
-  }, [
-    activeRuntimeEnvironmentId,
-    shouldSubscribe,
-    worktreePath
-  ])
+  }, [activeRuntimeEnvironmentId, shouldSubscribe, worktreePath])
 }

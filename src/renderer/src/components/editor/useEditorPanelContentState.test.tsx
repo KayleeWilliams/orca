@@ -335,9 +335,7 @@ describe('useEditorPanelContentState', () => {
       secondRead.resolve({ content: 'fresh content', isBinary: false })
       await secondRead.promise
     })
-    await vi.waitFor(() =>
-      expect(latestFileContents[activeFile.id]?.content).toBe('fresh content')
-    )
+    await vi.waitFor(() => expect(latestFileContents[activeFile.id]?.content).toBe('fresh content'))
   })
 
   it('ignores an older file read that resolves after a newer forced read', async () => {
@@ -364,9 +362,7 @@ describe('useEditorPanelContentState', () => {
       freshRead.resolve({ content: 'fresh content', isBinary: false })
       await freshRead.promise
     })
-    await vi.waitFor(() =>
-      expect(latestFileContents[activeFile.id]?.content).toBe('fresh content')
-    )
+    await vi.waitFor(() => expect(latestFileContents[activeFile.id]?.content).toBe('fresh content'))
 
     // The older read resolving last must not clobber the fresh content.
     await act(async () => {
@@ -418,7 +414,10 @@ describe('useEditorPanelContentState', () => {
     await vi.waitFor(() => expect(mocks.readRuntimeFileContent).toHaveBeenCalledTimes(1))
 
     await act(async () => {
-      conflictRead.resolve({ content: '<<<<<<< HEAD\ncurrent\n=======\nincoming\n>>>>>>> branch', isBinary: false })
+      conflictRead.resolve({
+        content: '<<<<<<< HEAD\ncurrent\n=======\nincoming\n>>>>>>> branch',
+        isBinary: false
+      })
       await conflictRead.promise
     })
 

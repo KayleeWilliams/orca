@@ -246,9 +246,7 @@ describe('useGitStatusPolling', () => {
 
   it('filters filesystem payloads to files inside the active worktree', async () => {
     vi.resetModules()
-    const { shouldRefreshGitStatusForFileChange } = await import(
-      './git-status-file-watch-refresh'
-    )
+    const { shouldRefreshGitStatusForFileChange } = await import('./git-status-file-watch-refresh')
 
     expect(
       shouldRefreshGitStatusForFileChange(
