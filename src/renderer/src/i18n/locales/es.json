@@ -8554,15 +8554,6 @@
           "notificationPlayground": "Notification playground",
           "notificationPlaygroundDescription": "Dev-only triggers for checking toast layout, recovery actions, and long-copy wrapping.",
           "devOnly": "Dev only"
-        },
-        "devToolsSearch": {
-          "notificationPlayground": "Notification playground",
-          "notificationPlaygroundDescription": "Trigger representative toast and notification UI states.",
-          "keywordDev": "dev",
-          "keywordToast": "toast",
-          "keywordSonner": "sonner",
-          "keywordError": "error",
-          "keywordNotification": "notification"
         }
       },
       "right": {

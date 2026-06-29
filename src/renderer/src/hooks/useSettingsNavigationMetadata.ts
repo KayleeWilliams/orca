@@ -9,6 +9,7 @@ import {
   Bell,
   Blocks,
   Bot,
+  Bug,
   Cable,
   FlaskConical,
   GitBranch,
@@ -516,7 +517,9 @@ export function buildSettingsNavigationMetadata({
               'auto.hooks.useSettingsNavigationMetadata.devDescription',
               'Dev-only tools for exercising UI states.'
             ),
-            icon: Wrench,
+            // Why: distinct from the sibling Advanced section's Wrench so the two
+            // entries in the same 'advanced' group stay visually distinguishable.
+            icon: Bug,
             searchEntries: getDevToolsPaneSearchEntries(),
             group: 'advanced',
             badge: translate('auto.hooks.useSettingsNavigationMetadata.devBadge', 'Dev')

@@ -88,10 +88,12 @@ describe('showDeleteWorktreeFailureToast', () => {
   })
 
   it('keeps non-forceable failures destructive without a force action', () => {
+    const onViewChanges = vi.fn()
+
     showDeleteWorktreeFailureToast({
       error: 'permission denied',
       canForceDelete: false,
-      onViewChanges: vi.fn(),
+      onViewChanges,
       onForceDelete: vi.fn(),
       worktreeId: 'wt-2',
       worktreeName: 'feature/bar'
@@ -108,7 +110,10 @@ describe('showDeleteWorktreeFailureToast', () => {
 
     const body = renderToastBody('error')
     expect(body.textContent).toContain('permission denied')
-    expect(body.textContent).toContain('View')
     expect(body.textContent).not.toContain('Force Delete')
+
+    clickButton(body, 'View')
+    expect(toast.dismiss).toHaveBeenCalledWith('delete-worktree-failure:wt-2')
+    expect(onViewChanges).toHaveBeenCalled()
   })
 })

@@ -39,7 +39,7 @@ function DeleteWorktreeFailureToastBody({
   }
 
   return (
-    <div className="flex w-full max-w-[28rem] flex-col gap-3">
+    <div className="flex w-full flex-col gap-3">
       {description ? (
         <p className="text-sm leading-5 text-popover-foreground/80">{description}</p>
       ) : null}

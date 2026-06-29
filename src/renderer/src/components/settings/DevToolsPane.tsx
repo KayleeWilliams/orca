@@ -221,30 +221,28 @@ export function DevToolsPane(): React.JSX.Element {
   ]
 
   return (
-    <div className="space-y-5">
-      <section className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <SettingsSubsectionHeader
-            title={translate(
-              'auto.components.settings.DevToolsPane.notificationPlayground',
-              'Notification playground'
-            )}
-            description={translate(
-              'auto.components.settings.DevToolsPane.notificationPlaygroundDescription',
-              'Dev-only triggers for checking toast layout, recovery actions, and long-copy wrapping.'
-            )}
-          />
-          <Badge variant="outline" className="mt-0.5">
-            {translate('auto.components.settings.DevToolsPane.devOnly', 'Dev only')}
-          </Badge>
-        </div>
+    <section className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <SettingsSubsectionHeader
+          title={translate(
+            'auto.components.settings.DevToolsPane.notificationPlayground',
+            'Notification playground'
+          )}
+          description={translate(
+            'auto.components.settings.DevToolsPane.notificationPlaygroundDescription',
+            'Dev-only triggers for checking toast layout, recovery actions, and long-copy wrapping.'
+          )}
+        />
+        <Badge variant="outline" className="mt-0.5">
+          {translate('auto.components.settings.DevToolsPane.devOnly', 'Dev only')}
+        </Badge>
+      </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          {actions.map((action) => (
-            <DevToastActionButton key={action.title} action={action} />
-          ))}
-        </div>
-      </section>
-    </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {actions.map((action) => (
+          <DevToastActionButton key={action.title} action={action} />
+        ))}
+      </div>
+    </section>
   )
 }

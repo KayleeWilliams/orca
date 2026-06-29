@@ -152,6 +152,11 @@ describe('settings navigation metadata', () => {
     expect(desktopIds.indexOf('privacy')).toBeLessThan(desktopIds.indexOf('advanced'))
   })
 
+  // Note: this exercises the isDev parameter and isWebClient branches only.
+  // Production safety rests on the hard `import.meta.env.DEV` term in the
+  // builder, which is compile-time-inlined per build and cannot be flipped from
+  // a test (vitest always runs with DEV=true) — don't mistake this for full
+  // prod-gate coverage. The bundle exclusion is what guarantees prod safety.
   it('shows Dev tools only in desktop development metadata', () => {
     expect(ids()).not.toContain('dev')
     expect(ids({ isDev: true })).toContain('dev')

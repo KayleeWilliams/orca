@@ -334,7 +334,10 @@
 }
 
 [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-description] {
-  color: color-mix(in srgb, var(--popover-foreground) 76%, transparent);
+  /* Why: match the 80% body-copy opacity used by the custom-React toast bodies
+     (delete-worktree-failure, local-base-ref-suggestion) so string and JSX
+     descriptions read at the same weight. */
+  color: color-mix(in srgb, var(--popover-foreground) 80%, transparent);
   line-height: 1.45;
 }
 
