@@ -638,7 +638,17 @@
         "b1c2f8b0ac": "Claude, Codex, Gemini 및 OpenCode Go에 대한 선택적 계정 전환.",
         "f70ac54d38": "AI 제공업체 계정",
         "4121f7a0a2": "AI agents를 관리하고, 기본값을 설정하고, 명령을 사용자 정의하세요.",
-        "b49abbd2f7": "에이전트"
+        "b49abbd2f7": "에이전트",
+        "dev": "Dev Tools",
+        "devDescription": "Dev-only tools for exercising UI states.",
+        "devBadge": "Dev",
+        "devSearchNotificationPlayground": "Notification playground",
+        "devSearchNotificationPlaygroundDescription": "Trigger representative toast and notification UI states.",
+        "devSearchKeywordDev": "dev",
+        "devSearchKeywordToast": "toast",
+        "devSearchKeywordSonner": "sonner",
+        "devSearchKeywordError": "error",
+        "devSearchKeywordNotification": "notification"
       },
       "useAppMenuPaste": {
         "pasteTooLarge": "붙여넣기 내용이 너무 큽니다."
@@ -6032,7 +6042,9 @@
           "9abb9be3bc": "설정 시작",
           "23c6874fdf": "AI 기능",
           "2309068a6f": "파괴적",
-          "65358016ea": "버리기"
+          "65358016ea": "버리기",
+          "dev": "Dev Tools",
+          "devDescription": "Dev-only tools for exercising UI states."
         },
         "SettingsFormControls": {
           "42a4d15a30": "일치하는 글꼴이 없습니다.",
@@ -8512,6 +8524,45 @@
         },
         "AppearanceAdvancedDisclosure": {
           "advanced": "고급"
+        },
+        "DevToolsPane": {
+          "nativeActionLayoutCheck": "Native action layout check",
+          "secondary": "Secondary",
+          "secondaryActionClicked": "Secondary action clicked",
+          "primaryAction": "Primary action",
+          "primaryActionClicked": "Primary action clicked",
+          "branchHasChanges": "branch has changes",
+          "viewChangesClicked": "View Changes clicked",
+          "forceDeleteClicked": "Force Delete clicked",
+          "devOnlyCallback": "Dev-only callback.",
+          "infoToast": "Info toast",
+          "infoToastDescription": "Long informational copy with no explicit action.",
+          "localCanaryBehind": "Local canary is behind origin/canary",
+          "successToast": "Success toast",
+          "successToastDescription": "Short confirmation state.",
+          "settingsSaved": "Settings saved",
+          "shortSuccessCopy": "Short success copy.",
+          "errorToast": "Error toast",
+          "errorToastDescription": "Long error copy without recovery actions.",
+          "failedToSyncWorkspaceMetadata": "Failed to sync workspace metadata",
+          "nativeActionToast": "Native action toast",
+          "nativeActionToastDescription": "Uses Sonner action and cancel slots.",
+          "deleteFailureToast": "Delete failure toast",
+          "deleteFailureToastDescription": "Custom footer with View and Force Delete.",
+          "behindBaseRefToast": "Behind base ref toast",
+          "behindBaseRefToastDescription": "Persistent prompt with an inline Settings link and footer action.",
+          "notificationPlayground": "Notification playground",
+          "notificationPlaygroundDescription": "Dev-only triggers for checking toast layout, recovery actions, and long-copy wrapping.",
+          "devOnly": "Dev only"
+        },
+        "devToolsSearch": {
+          "notificationPlayground": "Notification playground",
+          "notificationPlaygroundDescription": "Trigger representative toast and notification UI states.",
+          "keywordDev": "dev",
+          "keywordToast": "toast",
+          "keywordSonner": "sonner",
+          "keywordError": "error",
+          "keywordNotification": "notification"
         }
       },
       "right": {

@@ -13,11 +13,14 @@ const repo = {
   addedAt: 0
 } satisfies Repo
 
-function ids(args: { isMac?: boolean; isWindows?: boolean; isWebClient?: boolean } = {}): string[] {
+function ids(
+  args: { isMac?: boolean; isWindows?: boolean; isWebClient?: boolean; isDev?: boolean } = {}
+): string[] {
   return buildSettingsNavigationMetadata({
     isMac: args.isMac ?? false,
     isWindows: args.isWindows ?? false,
     isWebClient: args.isWebClient ?? false,
+    isDev: args.isDev ?? false,
     repos: [repo]
   }).map((section) => section.id)
 }
@@ -147,6 +150,12 @@ describe('settings navigation metadata', () => {
     expect(desktopIds).toContain('advanced')
     expect(desktopIds.indexOf('advanced')).toBeLessThan(desktopIds.indexOf('experimental'))
     expect(desktopIds.indexOf('privacy')).toBeLessThan(desktopIds.indexOf('advanced'))
+  })
+
+  it('shows Dev tools only in desktop development metadata', () => {
+    expect(ids()).not.toContain('dev')
+    expect(ids({ isDev: true })).toContain('dev')
+    expect(ids({ isDev: true, isWebClient: true })).not.toContain('dev')
   })
 
   it('keeps macOS permissions mac-only', () => {

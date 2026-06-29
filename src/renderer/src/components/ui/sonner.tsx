@@ -15,6 +15,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps['theme']}
       position="bottom-right"
+      // Why: Orca has persistent bottom chrome, so bottom-right toasts need
+      // breathing room above the status bar instead of sitting on its edge.
+      offset={{ bottom: 'calc(2.5rem + env(safe-area-inset-bottom, 0px))' }}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
@@ -28,7 +31,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
           '--normal-bg': 'var(--popover)',
           '--normal-text': 'var(--popover-foreground)',
           '--normal-border': 'var(--border)',
-          '--border-radius': 'var(--radius)'
+          '--border-radius': 'var(--radius)',
+          '--width': 'min(26rem, calc(100vw - 2rem))'
         } as React.CSSProperties
       }
       {...props}

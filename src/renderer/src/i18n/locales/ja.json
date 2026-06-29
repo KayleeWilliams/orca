@@ -638,7 +638,17 @@
         "b1c2f8b0ac": "Claude、Codex、Gemini、OpenCode Go のオプションのアカウント切り替え。",
         "f70ac54d38": "AI プロバイダー アカウント",
         "4121f7a0a2": "AI agents を管理し、デフォルトを設定し、コマンドをカスタマイズします。",
-        "b49abbd2f7": "エージェント"
+        "b49abbd2f7": "エージェント",
+        "dev": "Dev Tools",
+        "devDescription": "Dev-only tools for exercising UI states.",
+        "devBadge": "Dev",
+        "devSearchNotificationPlayground": "Notification playground",
+        "devSearchNotificationPlaygroundDescription": "Trigger representative toast and notification UI states.",
+        "devSearchKeywordDev": "dev",
+        "devSearchKeywordToast": "toast",
+        "devSearchKeywordSonner": "sonner",
+        "devSearchKeywordError": "error",
+        "devSearchKeywordNotification": "notification"
       },
       "useAppMenuPaste": {
         "pasteTooLarge": "貼り付け内容が大きすぎます。"
@@ -6069,7 +6079,9 @@
           "9abb9be3bc": "セットアップ",
           "23c6874fdf": "AI 機能",
           "2309068a6f": "破壊的な",
-          "65358016ea": "破棄"
+          "65358016ea": "破棄",
+          "dev": "Dev Tools",
+          "devDescription": "Dev-only tools for exercising UI states."
         },
         "SettingsFormControls": {
           "42a4d15a30": "一致するフォントがありません。",
@@ -8512,6 +8524,45 @@
         },
         "AppearanceAdvancedDisclosure": {
           "advanced": "詳細設定"
+        },
+        "DevToolsPane": {
+          "nativeActionLayoutCheck": "Native action layout check",
+          "secondary": "Secondary",
+          "secondaryActionClicked": "Secondary action clicked",
+          "primaryAction": "Primary action",
+          "primaryActionClicked": "Primary action clicked",
+          "branchHasChanges": "branch has changes",
+          "viewChangesClicked": "View Changes clicked",
+          "forceDeleteClicked": "Force Delete clicked",
+          "devOnlyCallback": "Dev-only callback.",
+          "infoToast": "Info toast",
+          "infoToastDescription": "Long informational copy with no explicit action.",
+          "localCanaryBehind": "Local canary is behind origin/canary",
+          "successToast": "Success toast",
+          "successToastDescription": "Short confirmation state.",
+          "settingsSaved": "Settings saved",
+          "shortSuccessCopy": "Short success copy.",
+          "errorToast": "Error toast",
+          "errorToastDescription": "Long error copy without recovery actions.",
+          "failedToSyncWorkspaceMetadata": "Failed to sync workspace metadata",
+          "nativeActionToast": "Native action toast",
+          "nativeActionToastDescription": "Uses Sonner action and cancel slots.",
+          "deleteFailureToast": "Delete failure toast",
+          "deleteFailureToastDescription": "Custom footer with View and Force Delete.",
+          "behindBaseRefToast": "Behind base ref toast",
+          "behindBaseRefToastDescription": "Persistent prompt with an inline Settings link and footer action.",
+          "notificationPlayground": "Notification playground",
+          "notificationPlaygroundDescription": "Dev-only triggers for checking toast layout, recovery actions, and long-copy wrapping.",
+          "devOnly": "Dev only"
+        },
+        "devToolsSearch": {
+          "notificationPlayground": "Notification playground",
+          "notificationPlaygroundDescription": "Trigger representative toast and notification UI states.",
+          "keywordDev": "dev",
+          "keywordToast": "toast",
+          "keywordSonner": "sonner",
+          "keywordError": "error",
+          "keywordNotification": "notification"
         }
       },
       "right": {
